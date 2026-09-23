@@ -52,8 +52,9 @@ services:
     runtime: node
     plan: free
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm db:generate && pnpm --filter @b2b-crm/contracts build && pnpm --filter @b2b-crm/api build
-    preDeployCommand: pnpm db:migrate && pnpm db:seed:foundation
-    startCommand: pnpm --filter @b2b-crm/api start
+    # Render free web services do not support preDeployCommand. Run the
+    # isolated staging migrations before the API process starts instead.
+    startCommand: pnpm db:migrate && pnpm db:seed:foundation && pnpm --filter @b2b-crm/api start
     healthCheckPath: /api/health
     envVars:
       - key: API_PORT
@@ -115,24 +116,6 @@ services:
         value: Sandbox Founder
       - key: FOUNDATION_ADMIN_USER_ID
         value: usr-kha-founder
-
-  # Refreshes the isolated staging DB every night at 02:00 Vietnam time.
-  - type: cron
-    name: demo-uplark-nightly-sync
-    runtime: docker
-    plan: free
-    schedule: "0 19 * * *"
-    dockerfilePath: ./infra/nightly-sync/Dockerfile
-    dockerContext: .
-    envVars:
-      - key: ALLOW_NIGHTLY_STAGING_REFRESH
-        value: "false"
-      - key: PRODUCTION_DATABASE_URL
-        sync: false
-      - key: STAGING_DATABASE_URL
-        fromDatabase:
-          name: demo-uplark-staging-db
-          property: connectionString
 
   # Redis-compatible cache used by API readiness and worker features.
   - type: keyvalue
