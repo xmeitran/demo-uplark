@@ -18,7 +18,7 @@
     "@b2b-crm/contracts": "workspace:*",
     "@nestjs/common": "^11.0.0",
     "@nestjs/core": "^11.0.0",
-    "@nestjs/platform-express": "^11.0.0",
+    "@nestjs/platform-express": "^12.0.3",
     "@prisma/client": "6.19.3",
     "ioredis": "^5.4.2",
     "nodemailer": "10.0.0",
