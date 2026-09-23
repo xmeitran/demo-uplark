@@ -1,0 +1,16 @@
+services:
+  # Nightly one-way production snapshot for the isolated staging environment.
+  # Render schedules are UTC: 19:00 UTC = 02:00 Asia/Ho_Chi_Minh.
+  - type: cron
+    name: demo-uplark-nightly-sync
+    runtime: docker
+    schedule: "0 19 * * *"
+    dockerfilePath: ./infra/nightly-sync/Dockerfile
+    dockerContext: .
+    envVars:
+      - key: ALLOW_NIGHTLY_STAGING_REFRESH
+        value: "false"
+      - key: PRODUCTION_DATABASE_URL
+        sync: false
+      - key: STAGING_DATABASE_URL
+        sync: false
