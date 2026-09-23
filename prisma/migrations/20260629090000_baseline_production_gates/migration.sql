@@ -149,7 +149,7 @@ CREATE TABLE "Role" (
     "description" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CON./STRAINT "Role_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "Role_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -2325,4 +2325,3 @@ ALTER TABLE "ProjectProgressShareLink" ADD CONSTRAINT "ProjectProgressShareLink_
 
 -- AddForeignKey
 ALTER TABLE "PolicyDecisionLog" ADD CONSTRAINT "PolicyDecisionLog_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
