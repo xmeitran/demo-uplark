@@ -84,7 +84,7 @@ export function matchProductRoute(pathname: string): ProductRoute | undefined {
     ?? PRODUCT_ROUTES.find((route) => route.classification === "beta" && normalized.startsWith(`${route.href}/`));
 }
 
-export function getShellRoutes(shell: ProductShell, environment = process.env.NODE_ENV): ProductRoute[] {
+export function getShellRoutes(shell: ProductShell, environment: string = process.env.NODE_ENV ?? "production"): ProductRoute[] {
   return PRODUCT_ROUTES.filter((route) => route.shells?.includes(shell) && (
     route.classification === "visible" || (environment !== "production" && route.classification === "beta")
   ));
@@ -99,7 +99,13 @@ export function getProductionRouteDecision(
   // Render's demo deployment is an isolated staging runtime. Expose the
   // completed beta surfaces there for review without promoting them to a
   // real production deployment yet.
-  if (route.classification === "beta" && process.env.CRM_ENV === "staging") return "allow";
+  // The Render review/demo runtime is intentionally isolated from production
+  // writes.  It may be configured either with the server-side CRM_ENV flag or
+  // the public staging bypass flag (the latter is useful when a service was
+  // provisioned from an older blueprint and has not received CRM_ENV yet).
+  const stagingRuntime = process.env.CRM_ENV === "staging"
+    || process.env.NEXT_PUBLIC_STAGING_BYPASS_AUTH === "true";
+  if (route.classification === "beta" && stagingRuntime) return "allow";
   if (route.classification !== "visible" && route.classification !== "detail") return "unavailable";
   if (!isProductionFlagEnabled(route, environment)) return "unavailable";
   return "allow";

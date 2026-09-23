@@ -29,7 +29,13 @@ export function Header({ title }: HeaderProps) {
   const profileTriggerRef = useRef<HTMLButtonElement>(null);
   const notificationOpenRef = useRef(false);
   const profileOpenRef = useRef(false);
-  const routes = useMemo(() => getShellRoutes("constructor", "production"), []);
+  // Keep quick navigation in sync with the sidebar.  The review/staging
+  // deployment intentionally exposes the beta CRM modules (Timesheet and
+  // P&L), while a real production build keeps them gated until promoted.
+  const navigationEnvironment = process.env.NEXT_PUBLIC_STAGING_BYPASS_AUTH === "true"
+    ? "staging"
+    : "production";
+  const routes = useMemo(() => getShellRoutes("constructor", navigationEnvironment), [navigationEnvironment]);
   const results = routes.filter((route) => `${route.label} ${route.href}`.toLowerCase().includes(searchValue.trim().toLowerCase()));
   const currentTitle = title || matchProductRoute(pathname)?.label || "Dashboard";
 
