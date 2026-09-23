@@ -1,9 +1,110 @@
 services:
-  # Nightly one-way production snapshot for the isolated staging environment.
-  # Render schedules are UTC: 19:00 UTC = 02:00 Asia/Ho_Chi_Minh.
+  # Public Next.js web app. This service never receives production database
+  # credentials; it talks to the isolated API service below.
+  - type: web
+    name: demo-uplark
+    runtime: node
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build:frontend
+    startCommand: pnpm --filter @b2b-crm/web exec next start -p $PORT
+    healthCheckPath: /login
+    envVars:
+      - key: CRM_ENV
+        value: staging
+      - key: CRM_BLOCK_PRODUCTION_WRITES
+        value: "true"
+      - key: CRM_API_INTERNAL_URL
+        value: https://demo-uplark-api.onrender.com
+      - key: NEXT_PUBLIC_API_URL
+        value: https://demo-uplark.onrender.com/api
+      - key: CRM_API_CORS_ORIGINS
+        value: https://demo-uplark.onrender.com
+      - key: CRM_AUTH_PUBLIC_ORIGIN
+        value: https://demo-uplark.onrender.com
+      - key: LARK_OAUTH_REDIRECT_URIS
+        value: https://demo-uplark.onrender.com/api/auth/lark/callback
+      - key: CRM_DEMO_AUTH_ENABLED
+        value: "false"
+      - key: CRM_ENABLE_DEMO_SESSION
+        value: "false"
+      - key: CRM_LOCAL_AUTO_AUTH
+        value: "false"
+      - key: NEXT_PUBLIC_LOCAL_AUTO_AUTH
+        value: "false"
+      - key: CRM_PUBLIC_SESSION_REQUIRED
+        value: "true"
+      - key: LARK_APP_ID
+        sync: false
+      - key: LARK_APP_SECRET
+        sync: false
+      - key: LARK_OAUTH_STATE_SECRET
+        sync: false
+      - key: CRM_AUTH_ENCRYPTION_KEY
+        sync: false
+
+  # NestJS API responsible for Lark OAuth, sessions, RBAC and CRM data.
+  - type: web
+    name: demo-uplark-api
+    runtime: node
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm db:generate && pnpm --filter @b2b-crm/contracts build && pnpm --filter @b2b-crm/api build
+    preDeployCommand: pnpm db:migrate
+    startCommand: pnpm --filter @b2b-crm/api start
+    healthCheckPath: /api/health
+    envVars:
+      - key: API_PORT
+        value: "10000"
+      - key: CRM_ENV
+        value: staging
+      - key: CRM_BLOCK_PRODUCTION_WRITES
+        value: "true"
+      - key: CRM_API_CORS_ORIGINS
+        value: https://demo-uplark.onrender.com
+      - key: CRM_AUTH_PUBLIC_ORIGIN
+        value: https://demo-uplark.onrender.com
+      - key: DATABASE_URL
+        fromDatabase:
+          name: demo-uplark-staging-db
+          property: connectionString
+      - key: MIGRATION_DATABASE_URL
+        fromDatabase:
+          name: demo-uplark-staging-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: demo-uplark-redis
+          property: connectionString
+      - key: LARK_APP_ID
+        sync: false
+      - key: LARK_APP_SECRET
+        sync: false
+      - key: LARK_OAUTH_STATE_SECRET
+        sync: false
+      - key: LARK_OAUTH_REDIRECT_URIS
+        value: https://demo-uplark.onrender.com/api/auth/lark/callback
+      - key: LARK_OAUTH_SCOPES
+        value: contact:user.email:readonly contact:user.employee_id:readonly
+      - key: CRM_LARK_AUTO_PROVISION
+        value: "false"
+      - key: CRM_LARK_DEFAULT_ROLE_CODE
+        value: SALES_OWNER
+      - key: CRM_AUTH_ENCRYPTION_KEY
+        sync: false
+      - key: FOUNDATION_TENANT_KEY
+        value: prod
+      - key: FOUNDATION_WORKSPACE_ID
+        value: twk-foundation
+      - key: FOUNDATION_WORKSPACE_KEY
+        value: default
+      - key: FOUNDATION_PRODUCTION_STRICT
+        value: "true"
+
+  # Refreshes the isolated staging DB every night at 02:00 Vietnam time.
   - type: cron
     name: demo-uplark-nightly-sync
     runtime: docker
+    plan: free
     schedule: "0 19 * * *"
     dockerfilePath: ./infra/nightly-sync/Dockerfile
     dockerContext: .
@@ -13,4 +114,21 @@ services:
       - key: PRODUCTION_DATABASE_URL
         sync: false
       - key: STAGING_DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: demo-uplark-staging-db
+          property: connectionString
+
+  # Redis-compatible cache used by API readiness and worker features.
+  - type: keyvalue
+    name: demo-uplark-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
+
+databases:
+  # This database is isolated from production. The nightly job is the only
+  # component that receives the production read-only connection string.
+  - name: demo-uplark-staging-db
+    plan: free
+    databaseName: lark_partner_crm_staging
+    user: lark_partner_crm_staging
