@@ -54,7 +54,10 @@ services:
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm db:generate && pnpm --filter @b2b-crm/contracts build && pnpm --filter @b2b-crm/api build
     # Render free web services do not support preDeployCommand. Run the
     # isolated staging migrations before the API process starts instead.
-    startCommand: pnpm db:migrate && pnpm db:seed:foundation && pnpm --filter @b2b-crm/api start
+    # A failed first boot can leave Prisma's migration ledger marked as failed
+    # (P3009). Clear only this staging baseline migration before retrying; on a
+    # fresh database the resolve command is harmlessly ignored.
+    startCommand: pnpm prisma migrate resolve --rolled-back 20260629090000_baseline_production_gates || true; pnpm db:migrate && pnpm db:seed:foundation && pnpm --filter @b2b-crm/api start
     healthCheckPath: /api/health
     envVars:
       - key: API_PORT
