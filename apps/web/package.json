@@ -21,14 +21,14 @@
     "lucide-react": "^1.22.0",
     "next": "^15.5.21",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "react-dom": "^19.3.0",
     "recharts": "^3.8.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.2",
     "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
+    "@types/react-dom": "^19.3.0",
     "agentation": "^3.0.2",
     "autoprefixer": "^10.5.2",
     "postcss": "^8.5.18",
