@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: b2b-crm-saas-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-b2b_crm_saas}
+      POSTGRES_USER: ${POSTGRES_USER:-b2b_crm_saas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    ports:
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-15438}:5432"
+    volumes:
+      - b2b_crm_saas_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - b2b-crm-saas
+
+  redis:
+    image: redis:7-alpine
+    container_name: b2b-crm-saas-redis
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
+    ports:
+      - "${REDIS_BIND:-127.0.0.1}:${REDIS_PORT:-16388}:6379"
+    volumes:
+      - b2b_crm_saas_redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - b2b-crm-saas
+
+volumes:
+  b2b_crm_saas_postgres_data:
+  b2b_crm_saas_redis_data:
+
+networks:
+  b2b-crm-saas:
+    name: b2b-crm-saas

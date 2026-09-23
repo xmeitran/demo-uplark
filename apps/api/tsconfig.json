@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": true,
+    "sourceMap": true,
+    "baseUrl": "../..",
+    "paths": {
+      "@b2b-crm/contracts": ["packages/contracts/dist/index.d.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

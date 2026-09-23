@@ -1,0 +1,111 @@
+services:
+  api:
+    image: ${IMAGE_REGISTRY:-ghcr.io/khanguyen09/b2b-crm-saas}/api:${IMAGE_TAG:?set IMAGE_TAG to a pushed SHA tag}
+    pull_policy: always
+    container_name: b2b-crm-saas-api
+    restart: unless-stopped
+    env_file:
+      - ${APP_ENV_FILE:-.env}
+    environment:
+      API_PORT: "4000"
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${APP_DATABASE_USER:-${POSTGRES_USER:-b2b_crm_saas}}:${APP_DATABASE_PASSWORD:-${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}}@postgres:5432/${POSTGRES_DB:-b2b_crm_saas}?schema=public
+      MIGRATION_DATABASE_URL: postgresql://${POSTGRES_USER:-b2b_crm_saas}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-b2b_crm_saas}?schema=public
+      REDIS_URL: ${APP_REDIS_URL:?APP_REDIS_URL is required}
+      CRM_FILE_STORAGE_ROOT: /app/apps/api/var/crm-files
+      CRM_MAX_UPLOAD_BYTES: ${CRM_MAX_UPLOAD_BYTES:-10485760}
+      CRM_API_CORS_ORIGINS: ${CRM_API_CORS_ORIGINS:-https://b2b-crm.mindtheoperation.com,https://lark-upbase.mindtheoperation.com}
+      CRM_READY_DETAIL_ENABLED: ${CRM_READY_DETAIL_ENABLED:-false}
+      WORKFORCE_ANALYTICS_GA_ENABLED: ${WORKFORCE_ANALYTICS_GA_ENABLED:-false}
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-4400}:4000"
+    volumes:
+      - file-storage:/app/apps/api/var/crm-files
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - b2b-crm-saas
+
+  worker:
+    image: ${IMAGE_REGISTRY:-ghcr.io/khanguyen09/b2b-crm-saas}/worker:${IMAGE_TAG:?set IMAGE_TAG to a pushed SHA tag}
+    pull_policy: always
+    container_name: b2b-crm-saas-worker
+    restart: unless-stopped
+    env_file:
+      - ${APP_ENV_FILE:-.env}
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${APP_DATABASE_USER:-${POSTGRES_USER:-b2b_crm_saas}}:${APP_DATABASE_PASSWORD:-${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}}@postgres:5432/${POSTGRES_DB:-b2b_crm_saas}?schema=public
+      MIGRATION_DATABASE_URL: postgresql://${POSTGRES_USER:-b2b_crm_saas}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-b2b_crm_saas}?schema=public
+      REDIS_URL: ${APP_REDIS_URL:?APP_REDIS_URL is required}
+      LARK_DIRECTORY_SYNC_ENABLED: ${LARK_DIRECTORY_SYNC_ENABLED:-false}
+      LARK_DIRECTORY_SYNC_INTERVAL_MS: ${LARK_DIRECTORY_SYNC_INTERVAL_MS:-900000}
+      LARK_DIRECTORY_SYNC_STARTUP_DELAY_MS: ${LARK_DIRECTORY_SYNC_STARTUP_DELAY_MS:-60000}
+      LARK_DIRECTORY_SYNC_LEASE_TTL_MS: ${LARK_DIRECTORY_SYNC_LEASE_TTL_MS:-1200000}
+      LARK_DIRECTORY_SYNC_HEARTBEAT_MS: ${LARK_DIRECTORY_SYNC_HEARTBEAT_MS:-30000}
+      LARK_DIRECTORY_HTTP_TIMEOUT_MS: ${LARK_DIRECTORY_HTTP_TIMEOUT_MS:-15000}
+      LARK_DIRECTORY_RETRY_ATTEMPTS: ${LARK_DIRECTORY_RETRY_ATTEMPTS:-3}
+      LARK_CDS_DEPARTMENT_ID: ${LARK_CDS_DEPARTMENT_ID:-CDS}
+      LARK_CDS_DEPARTMENT_ID_TYPE: ${LARK_CDS_DEPARTMENT_ID_TYPE:-department_id}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-https://lark-upbase.mindtheoperation.com}
+      LARK_TASK_REMINDER_ENABLED: ${LARK_TASK_REMINDER_ENABLED:-false}
+      LARK_TASK_REMINDER_WORKSPACE_ID: ${LARK_TASK_REMINDER_WORKSPACE_ID:-twk-foundation}
+      LARK_TASK_REMINDER_WEBHOOK_URL: ${LARK_TASK_REMINDER_WEBHOOK_URL:-}
+      LARK_TASK_REMINDER_WEBHOOK_SECRET: ${LARK_TASK_REMINDER_WEBHOOK_SECRET:-}
+      LARK_TASK_REMINDER_PM_OPEN_IDS: ${LARK_TASK_REMINDER_PM_OPEN_IDS:-}
+      LARK_TASK_REMINDER_USER_IDS: ${LARK_TASK_REMINDER_USER_IDS:-}
+      LARK_TASK_REMINDER_EXCLUDED_DATES: ${LARK_TASK_REMINDER_EXCLUDED_DATES:-}
+      LARK_TASK_REMINDER_TARGET_MINUTES: ${LARK_TASK_REMINDER_TARGET_MINUTES:-480}
+      LARK_TASK_REMINDER_CATCH_UP_MINUTES: ${LARK_TASK_REMINDER_CATCH_UP_MINUTES:-60}
+      LARK_TASK_REMINDER_POLL_INTERVAL_MS: ${LARK_TASK_REMINDER_POLL_INTERVAL_MS:-30000}
+      LARK_TASK_REMINDER_STARTUP_DELAY_MS: ${LARK_TASK_REMINDER_STARTUP_DELAY_MS:-5000}
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - b2b-crm-saas
+
+  web:
+    image: ${IMAGE_REGISTRY:-ghcr.io/khanguyen09/b2b-crm-saas}/web:${IMAGE_TAG:?set IMAGE_TAG to a pushed SHA tag}
+    pull_policy: always
+    container_name: b2b-crm-saas-web
+    restart: unless-stopped
+    env_file:
+      - ${APP_ENV_FILE:-.env}
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${APP_DATABASE_USER:-${POSTGRES_USER:-b2b_crm_saas}}:${APP_DATABASE_PASSWORD:-${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}}@postgres:5432/${POSTGRES_DB:-b2b_crm_saas}?schema=public
+      MIGRATION_DATABASE_URL: postgresql://${POSTGRES_USER:-b2b_crm_saas}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-b2b_crm_saas}?schema=public
+      REDIS_URL: ${APP_REDIS_URL:?APP_REDIS_URL is required}
+      CRM_API_INTERNAL_URL: http://api:4000
+      # Leave blank in multi-domain production so auth/session redirects use
+      # the Nginx X-Forwarded-Host and preserve the requested hostname.
+      PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:-}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://b2b-crm.mindtheoperation.com/api}
+      WORKFORCE_ANALYTICS_GA_ENABLED: ${WORKFORCE_ANALYTICS_GA_ENABLED:-false}
+    ports:
+      - "127.0.0.1:${WEB_HOST_PORT:-3004}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - b2b-crm-saas
+
+networks:
+  b2b-crm-saas:
+    external: true
+    name: b2b-crm-saas
+
+volumes:
+  file-storage:
+    name: b2b-crm-saas-file-storage

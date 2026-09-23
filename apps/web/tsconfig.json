@@ -1,0 +1,40 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "jsx": "preserve",
+    "noEmit": true,
+    "incremental": false,
+    "strict": true,
+    "types": [
+      "@shopify/polaris-types"
+    ],
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "isolatedModules": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*", "./src/*"],
+      "@b2b-crm/contracts": ["../../packages/contracts/src/index.ts"],
+      "@b2b-crm/ui-tokens": ["../../packages/ui-tokens/src/index.ts"]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "../../packages/**/*.ts",
+    ".next/types/**/*.ts",
+    "next-env.d.ts",
+    ".next-dev/types/**/*.ts",
+    ".next-dev-3000/types/**/*.ts",
+    ".next-dev-3002/types/**/*.ts",
+    ".next-dev-3003/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "vitest.config.ts"
+  ]
+}

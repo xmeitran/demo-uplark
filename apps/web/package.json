@@ -1,0 +1,37 @@
+{
+  "name": "@b2b-crm/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "NEXT_DIST_DIR=${NEXT_DIST_DIR:-.next-dev-3000} next dev",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@b2b-crm/contracts": "workspace:*",
+    "@b2b-crm/ui-tokens": "workspace:*",
+    "@dnd-kit/core": "6.3.1",
+    "@dnd-kit/sortable": "10.0.0",
+    "@dnd-kit/utilities": "3.2.2",
+    "@shopify/polaris-types": "^1.0.7",
+    "framer-motion": "^12.42.0",
+    "lucide-react": "^1.22.0",
+    "next": "^15.5.21",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^3.8.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "agentation": "^3.0.2",
+    "autoprefixer": "^10.5.2",
+    "postcss": "^8.5.18",
+    "tailwindcss": "^4.3.2"
+  }
+}

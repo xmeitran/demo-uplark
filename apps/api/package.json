@@ -1,0 +1,35 @@
+{
+  "name": "@b2b-crm/api",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main.js",
+  "types": "dist/main.d.ts",
+  "scripts": {
+    "dev": "NODE_ENV=development WORKFORCE_ANALYTICS_GA_ENABLED=true tsx watch src/main.ts",
+    "dev:compiled": "pnpm build && NODE_ENV=development WORKFORCE_ANALYTICS_GA_ENABLED=true node dist/main.js",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@b2b-crm/contracts": "workspace:*",
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/platform-express": "^11.0.0",
+    "@prisma/client": "6.19.3",
+    "ioredis": "^5.4.2",
+    "nodemailer": "10.0.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.29",
+    "@types/nodemailer": "8.0.1",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.0"
+  }
+}

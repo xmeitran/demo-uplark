@@ -1,0 +1,46 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalEnv": [
+    "DATABASE_URL",
+    "REDIS_URL"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [
+        "dist/**",
+        ".next/**",
+        ".next-dev/**",
+        "!.next/cache/**",
+        "!.next-dev/cache/**"
+      ],
+      "env": [
+        "NEXT_PUBLIC_API_URL",
+        "NEXT_PUBLIC_AGENTATION_ENDPOINT",
+        "NODE_ENV"
+      ]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "lint": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": [
+        "coverage/**"
+      ],
+      "env": [
+        "DATABASE_URL",
+        "REDIS_URL"
+      ]
+    },
+    "typecheck": {
+      "dependsOn": ["^build", "build"],
+      "outputs": []
+    }
+  }
+}

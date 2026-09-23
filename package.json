@@ -1,0 +1,86 @@
+{
+  "name": "b2b-crm-saas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Nền tảng CRM và quản lý vận hành B2B tích hợp Lark: khách hàng, dự án, công việc, lịch và nguồn lực.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/UpBase-DX/lark-partner-crm.git"
+  },
+  "homepage": "https://github.com/UpBase-DX/lark-partner-crm#readme",
+  "bugs": {
+    "url": "https://github.com/UpBase-DX/lark-partner-crm/issues"
+  },
+  "engines": {
+    "node": ">=22 <23",
+    "pnpm": "10.12.4"
+  },
+  "packageManager": "pnpm@10.12.4",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "dev:api": "pnpm --filter @b2b-crm/api dev",
+    "dev:api:compiled": "pnpm --filter @b2b-crm/api dev:compiled",
+    "dev:worker": "pnpm --filter @b2b-crm/worker dev",
+    "dev:frontend": "pnpm dev:web:3003",
+    "dev:web:3000": "NEXT_DIST_DIR=.next-dev-3000 pnpm --dir apps/web dev -p 3000",
+    "dev:web:3002": "NEXT_DIST_DIR=.next-dev-3002 pnpm --dir apps/web dev -p 3002",
+    "dev:web:3003": "NEXT_DIST_DIR=.next-dev-3003 pnpm --dir apps/web dev -p 3003",
+    "build:frontend": "pnpm --filter @b2b-crm/contracts build && pnpm --filter @b2b-crm/ui-tokens build && pnpm --filter @b2b-crm/web build",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:e2e": "playwright test --config=playwright.config.ts",
+    "test:e2e:route-smoke": "CRM_PUBLIC_SESSION_REQUIRED=1 PLAYWRIGHT_PORT=3903 playwright test --config=playwright.config.ts apps/web/e2e/crm-auth-required.spec.ts apps/web/e2e/constructor-projects.spec.ts",
+    "test:e2e:public-auth": "CRM_PUBLIC_AUTH_SMOKE_REQUIRED=1 CRM_PUBLIC_SESSION_REQUIRED=1 PLAYWRIGHT_PORT=3903 playwright test --config=playwright.config.ts apps/web/e2e/public-auth-smoke.spec.ts",
+    "test:e2e:public-auth:local-demo": "CRM_E2E_START_API=1 CRM_E2E_USE_DEMO_SESSION=1 CRM_PUBLIC_AUTH_SMOKE_REQUIRED=1 CRM_PUBLIC_SESSION_REQUIRED=1 PLAYWRIGHT_PORT=3903 playwright test --config=playwright.config.ts apps/web/e2e/public-auth-smoke.spec.ts",
+    "test:analytics:ga": "test -n \"$DATABASE_URL\" && pnpm --filter @b2b-crm/api exec vitest run src/modules/workforce-analytics && pnpm --filter @b2b-crm/api exec vitest run --config vitest.integration.config.ts src/modules/workforce-analytics/workforce-analytics.integration-spec.ts && pnpm --filter @b2b-crm/web exec vitest run src/lib/analytics-url-state.spec.ts src/lib/csv-export.spec.ts src/lib/production-route-readiness.spec.ts src/lib/production-analytics-route.spec.ts && CRM_PUBLIC_SESSION_REQUIRED=1 PLAYWRIGHT_PORT=3903 pnpm exec playwright test --config=playwright.config.ts apps/web/e2e/analytics.spec.ts && CRM_PUBLIC_SESSION_REQUIRED=1 PLAYWRIGHT_PORT=3903 pnpm exec playwright test --config=playwright.config.ts apps/web/e2e/crm-auth-required.spec.ts --grep \"business BFF routes reject\" --timeout=120000",
+    "verify:frontend": "pnpm typecheck && pnpm test && pnpm build:frontend && pnpm test:e2e",
+    "test:integration": "pnpm --filter @b2b-crm/api test:integration",
+    "lint": "turbo run lint",
+    "audit:high": "pnpm audit --audit-level high",
+    "audit:security": "pnpm audit --audit-level moderate && pnpm audit --prod --audit-level moderate",
+    "test:dependency-security": "node --test scripts/security/dependency-regression.test.mjs",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:verify-critical-tables": "node scripts/operations/verify-critical-tables.mjs",
+    "db:migrate:verify": "pnpm db:migrate && pnpm db:verify-critical-tables",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:push": "prisma db push",
+    "db:seed": "pnpm db:seed:foundation",
+    "db:seed:foundation": "tsx prisma/seed-foundation.ts",
+    "db:seed:demo": "tsx prisma/seed.ts",
+    "db:verify-foundation": "node scripts/operations/verify-foundation-seed.mjs",
+    "db:migrate:lark-base": "node scripts/operations/migrate-lark-base.mjs",
+    "db:reconcile-project-assignment-members": "node scripts/operations/reconcile-project-assignment-members.mjs",
+    "test:project-assignment-membership": "node --test scripts/operations/project-assignment-membership.test.mjs",
+    "db:sync:lark-cds-users": "node scripts/operations/sync-lark-cds-users.mjs",
+    "test:lark-directory-sync": "node --test scripts/operations/lark-cds-sync.test.mjs && pnpm --filter @b2b-crm/worker test",
+    "db:production:verify": "pnpm db:migrate && pnpm db:verify-critical-tables && pnpm db:seed:foundation && pnpm db:verify-foundation",
+    "verify": "turbo run typecheck test build"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@types/node": "^22.15.29",
+    "prisma": "6.19.3",
+    "tsx": "^4.19.4",
+    "turbo": "^2.9.16",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.0"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "@prisma/config@6.19.3>deepmerge-ts": "8.0.2",
+      "browserslist@^4.0.0": "4.28.8",
+      "esbuild": "^0.28.1",
+      "multer": "^2.2.0",
+      "nanoid@^3.0.0": "3.3.18",
+      "postcss": "^8.5.18",
+      "qs@^6.0.0": "6.16.0",
+      "sharp": "^0.35.0"
+    }
+  }
+}

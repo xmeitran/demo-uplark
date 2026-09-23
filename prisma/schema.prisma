@@ -1,0 +1,2679 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SubjectType {
+  INTERNAL_USER
+  PORTAL_USER
+  SERVICE_ACCOUNT
+}
+
+enum SubjectStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum RoleType {
+  SYSTEM
+  BUSINESS
+  PORTAL
+  SERVICE
+}
+
+enum Action {
+  LIST
+  READ
+  CREATE
+  UPDATE
+  APPROVE
+  EXPORT
+  DOWNLOAD
+  DELETE
+}
+
+enum Resource {
+  ACCOUNT
+  OPPORTUNITY
+  PROPOSAL
+  PROJECT
+  TASK
+  CONTRACT
+  PAYMENT
+  CAPACITY
+  DASHBOARD
+  INTEGRATION_EVENT
+  POLICY_DECISION
+  TICKET
+  ARTIFACT
+}
+
+enum ScopeType {
+  GLOBAL
+  TEAM
+  OWNED
+  ASSIGNED_ACCOUNT
+  ASSIGNED_PROJECT
+  CUSTOMER_ACCOUNT
+  CUSTOMER_PROJECT
+  NONE
+}
+
+enum DefaultDecision {
+  ALLOW
+  DENY
+}
+
+enum FieldSensitivity {
+  PUBLIC
+  INTERNAL
+  COMMERCIAL
+  FINANCIAL
+  CONFIDENTIAL
+}
+
+enum ProjectionMode {
+  FULL
+  MASK
+  OMIT
+}
+
+enum AccountMemberRelation {
+  OWNER
+  COLLABORATOR
+  DELIVERY_LEAD
+  FINANCE_OWNER
+}
+
+enum IntegrationEventStatus {
+  RECEIVED
+  VALIDATED
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+enum PortalInvitationStatus {
+  PENDING
+  REVIEW_REQUIRED
+  ACCEPTED
+  REVOKED
+  EXPIRED
+  REJECTED
+}
+
+enum ProposalPackageType {
+  QUICK_SETUP_DISCOVERY
+  STANDARD_IMPLEMENTATION
+  COMPLEX_MULTI_PHASE
+  MONTHLY_RETAINER_SUPPORT
+  CHANGE_REQUEST
+  LICENSE_SUBSCRIPTION_PASS_THROUGH
+}
+
+enum ProposalPackageStatus {
+  DRAFT
+  INTERNAL_REVIEW
+  REVISION_REQUIRED
+  INTERNALLY_APPROVED
+  SENT_TO_CUSTOMER
+  CUSTOMER_REVISION_REQUESTED
+  CUSTOMER_ACCEPTED
+  SUPERSEDED
+  WITHDRAWN
+  EXPIRED
+}
+
+enum ProposalDocumentType {
+  PROPOSAL
+  SOW
+  QUOTATION
+  PAYMENT_SCHEDULE
+  RISK_REGISTER
+  APPENDIX
+  VENDOR_QUOTE
+  CUSTOMER_ACCEPTANCE
+  OTHER
+}
+
+enum DealApprovalRequestType {
+  PROPOSAL_READINESS
+  DISCOUNT
+  PAYMENT_TERM
+  SCOPE_RISK
+  UNUSUAL_COMMITMENT
+  LICENSE_PASS_THROUGH
+  CHANGE_REQUEST_IMPACT
+}
+
+enum DealApprovalRequestStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  REVISION_REQUESTED
+  CANCELLED
+  EXPIRED
+}
+
+enum ScopeRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ContractStatus {
+  DRAFT
+  INTERNAL_REVIEW
+  READY_FOR_SIGNATURE
+  SENT_FOR_SIGNATURE
+  SIGNED
+  ACTIVE
+  VOIDED
+  EXPIRED
+}
+
+enum ContractSignatureStatus {
+  NOT_READY
+  READY
+  SENT
+  SIGNED
+  VOIDED
+  EXPIRED
+}
+
+enum ContractDocumentType {
+  CONTRACT_PDF
+  SIGNED_CONTRACT
+  APPENDIX
+  SOW
+  PAYMENT_SCHEDULE
+  LEGAL_REVIEW
+  OTHER
+}
+
+enum PaymentScheduleStatus {
+  DRAFT
+  ACTIVE
+  SUPERSEDED
+  CANCELLED
+}
+
+enum PaymentMilestoneStatus {
+  PLANNED
+  READY_FOR_FINANCE_REVIEW
+  READY_TO_INVOICE
+  INVOICED
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  DISPUTED
+  WAIVED
+  CANCELLED
+}
+
+enum PaymentTriggerType {
+  CONTRACT_SIGNING
+  KICKOFF
+  DELIVERY_STAGE
+  ACCEPTANCE
+  CALENDAR_DATE
+  MONTHLY_RETAINER
+  MANUAL
+  OTHER
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  SENT
+  CANCELLED
+  VOIDED
+}
+
+enum InvoicePaymentStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  DISPUTED
+  WRITTEN_OFF
+}
+
+enum ArFollowUpStatus {
+  OPEN
+  SNOOZED
+  RESOLVED
+  CANCELLED
+}
+
+enum PaymentEvidenceType {
+  INVOICE_FILE
+  PAYMENT_RECEIPT
+  BANK_TRANSFER
+  CUSTOMER_CONFIRMATION
+  ACCEPTANCE_EVIDENCE
+  EXCEPTION_APPROVAL
+  OTHER
+}
+
+enum ResourceAllocationStatus {
+  REQUESTED
+  TENTATIVE
+  RESERVED
+  CONFIRMED
+  RELEASED
+  CANCELLED
+}
+
+enum ProjectBudgetStatus {
+  DRAFT
+  ACTIVE
+  LOCKED
+  SUPERSEDED
+}
+
+enum ProjectCostType {
+  LABOR
+  EXTERNAL
+  SOFTWARE
+  TRAVEL
+  WRITE_OFF
+  OTHER
+}
+
+enum ProjectPlSnapshotStatus {
+  DRAFT
+  LOCKED
+  SUPERSEDED
+}
+
+model AuthActionToken {
+  id          String    @id @default(cuid())
+  tokenHash   String    @unique
+  purpose     String
+  userId      String?
+  workspaceId String?
+  payload     Json?
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  user        User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+  @@index([expiresAt])
+}
+
+model AuthRateLimit {
+  key       String   @id
+  attempts  Int
+  expiresAt DateTime
+
+  @@index([expiresAt])
+}
+
+model User {
+  id                             String                      @id @default(cuid())
+  email                          String                      @unique
+  passwordHash                   String?
+  emailVerifiedAt                DateTime?
+  mfaSecret                      String?
+  mfaPendingSecret               String?
+  mfaEnabledAt                   DateTime?
+  mfaLastStep                    Int?
+  mfaRecoveryHashes              String[]                    @default([])
+  authActionTokens               AuthActionToken[]
+  displayName                    String
+  avatarUrl                      String?
+  subjectType                    SubjectType                 @default(INTERNAL_USER)
+  status                         SubjectStatus               @default(ACTIVE)
+  departmentCode                 String?
+  createdAt                      DateTime                    @default(now())
+  updatedAt                      DateTime                    @updatedAt
+  identities                     PortalIdentity[]
+  sessions                       PortalSession[]
+  roleBindings                   RoleBinding[]
+  accountMembers                 AccountMember[]
+  accountUsageReviews            AccountUsageReview[]
+  picAccounts                    Account[]                   @relation("AccountPic")
+  projectMembers                 ProjectMember[]
+  createdActivities              OpportunityActivity[]
+  stageChanges                   OpportunityStageHistory[]
+  createdPaymentSchedules        PaymentSchedule[]           @relation("PaymentScheduleCreatedBy")
+  createdPaymentMilestones       PaymentMilestone[]          @relation("PaymentMilestoneCreatedBy")
+  financeOwnedMilestones         PaymentMilestone[]          @relation("PaymentMilestoneFinanceOwner")
+  overdueOwnedMilestones         PaymentMilestone[]          @relation("PaymentMilestoneOverdueOwner")
+  createdInvoices                Invoice[]                   @relation("InvoiceCreatedBy")
+  ownedArFollowUps               ArFollowUp[]                @relation("ArFollowUpOwner")
+  createdArFollowUps             ArFollowUp[]                @relation("ArFollowUpCreatedBy")
+  createdPaymentEvidence         PaymentEvidence[]           @relation("PaymentEvidenceCreatedBy")
+  invoicePayments                InvoicePayment[]            @relation("InvoicePaymentCreatedBy")
+  resourceProfile                ResourceProfile?
+  capacityPeriods                ResourceCapacityPeriod[]
+  resourceAllocations            ResourceAllocation[]        @relation("ResourceAllocationUser")
+  createdResourceAllocations     ResourceAllocation[]        @relation("ResourceAllocationCreatedBy")
+  approvedResourceAllocations    ResourceAllocation[]        @relation("ResourceAllocationApprovedBy")
+  costRateProfiles               CostRateProfile[]
+  createdProjectBudgets          ProjectBudget[]             @relation("ProjectBudgetCreatedBy")
+  createdProjectCosts            ProjectCost[]               @relation("ProjectCostCreatedBy")
+  createdProjectPlSnapshots      ProjectPlSnapshot[]         @relation("ProjectPlSnapshotCreatedBy")
+  ownedProjectStages             ProjectStage[]
+  ownedTasks                     ProjectTask[]               @relation("ProjectTaskOwner")
+  assignedTasks                  ProjectTask[]               @relation("ProjectTaskAssignee")
+  createdTasks                   ProjectTask[]               @relation("ProjectTaskCreatedBy")
+  archivedTasks                  ProjectTask[]               @relation("ProjectTaskArchivedBy")
+  taskStatusChanges              TaskStatusHistory[]
+  ticketStatusChanges            TicketStatusHistory[]       @relation("TicketStatusHistoryChangedBy")
+  taskTimeEntries                TaskTimeEntry[]
+  reviewedTaskTimeEntries        TaskTimeEntry[]             @relation("TaskTimeEntryReviewedBy")
+  taskPlanningBlocks             TaskPlanningBlock[]
+  lockedTaskPlanningBlocks       TaskPlanningBlock[]         @relation("TaskPlanningBlockLocker")
+  ownedLeads                     Lead[]
+  ownedOpportunities             Opportunity[]
+  requestedTickets               Ticket[]
+  customerGrants                 CustomerAccessGrant[]
+  createdProgressShareLinks      ProjectProgressShareLink[]  @relation("ProgressShareCreatedBy")
+  revokedProgressShareLinks      ProjectProgressShareLink[]  @relation("ProgressShareRevokedBy")
+  createdFileObjects             FileObject[]                @relation("FileObjectCreatedBy")
+  revokedFileObjects             FileObject[]                @relation("FileObjectRevokedBy")
+  createdFileDownloadGrants      FileDownloadGrant[]         @relation("FileDownloadGrantCreatedBy")
+  createdTaskComments            TaskComment[]               @relation("TaskCommentCreatedBy")
+  deletedTaskComments            TaskComment[]               @relation("TaskCommentDeletedBy")
+  createdProjectComments         ProjectComment[]            @relation("ProjectCommentCreatedBy")
+  deletedProjectComments         ProjectComment[]            @relation("ProjectCommentDeletedBy")
+  createdProjectActivities       ProjectActivity[]           @relation("ProjectActivityCreatedBy")
+  ownedProjectRisks              ProjectRisk[]               @relation("ProjectRiskOwner")
+  createdProjectRisks            ProjectRisk[]               @relation("ProjectRiskCreatedBy")
+  createdTaskAttachments         TaskAttachment[]            @relation("TaskAttachmentCreatedBy")
+  createdProjectAttachments      ProjectAttachment[]         @relation("ProjectAttachmentCreatedBy")
+  createdProjectDocumentVersions ProjectDocumentVersion[]    @relation("ProjectDocumentVersionCreatedBy")
+  policyDecisions                PolicyDecisionLog[]
+  workspaceTeamMemberships       WorkspaceTeamMember[]
+  workspaceMemberProfiles        WorkspaceMemberProfile[]
+  analyticsSavedViews            AnalyticsSavedView[]        @relation("AnalyticsSavedViewOwner")
+  createdWorkspaceDayOffs        WorkspaceDayOff[]           @relation("WorkspaceDayOffCreatedBy")
+  approvedTaskPlans              ProjectTask[]               @relation("ProjectTaskPlanApprover")
+  requestedTimelineChanges       TaskTimelineChangeRequest[] @relation("TimelineChangeRequestedBy")
+  reviewedTimelineChanges        TaskTimelineChangeRequest[] @relation("TimelineChangeReviewedBy")
+  changedTaskPlanHistories       TaskPlanHistory[]           @relation("TaskPlanHistoryChangedBy")
+  approvedTaskPlanHistories      TaskPlanHistory[]           @relation("TaskPlanHistoryApprovedBy")
+  requestedOvertimePlans         OvertimePlan[]              @relation("OvertimeRequestedBy")
+  approvedOvertimePlans          OvertimePlan[]              @relation("OvertimeApprovedBy")
+  overtimePlansForSelf           OvertimePlan[]              @relation("OvertimeForUser")
+  monthlyCostProfiles            ResourceMonthlyCost[]
+  confirmedPnlPeriods            PnlPeriod[]                 @relation("PnlPeriodConfirmedBy")
+  lockedPnlPeriods               PnlPeriod[]                 @relation("PnlPeriodLockedBy")
+  reopenedPnlPeriods             PnlPeriod[]                 @relation("PnlPeriodReopenedBy")
+  reminderDeliveryLogs           ReminderDeliveryLog[]
+  reminderPmLogs                 ReminderDeliveryLog[]       @relation("ReminderPm")
+  updatedReminderPolicies        WorkspaceReminderPolicy[]   @relation("WorkspaceReminderPolicyUpdatedBy")
+}
+
+model TenantWorkspace {
+  id                         String                      @id @default(cuid())
+  tenantKey                  String
+  workspaceKey               String
+  name                       String
+  status                     String                      @default("active")
+  planCode                   String                      @default("foundation")
+  regionCode                 String?
+  createdAt                  DateTime                    @default(now())
+  updatedAt                  DateTime                    @updatedAt
+  sessions                   PortalSession[]
+  roleBindings               RoleBinding[]
+  accounts                   Account[]
+  accountMembers             AccountMember[]
+  accountUsageReviews        AccountUsageReview[]
+  contacts                   Contact[]
+  leads                      Lead[]
+  opportunities              Opportunity[]
+  proposalPackages           ProposalPackage[]
+  proposalDocuments          ProposalDocument[]
+  dealApprovalRequests       DealApprovalRequest[]
+  dealApprovalDecisions      DealApprovalDecision[]
+  contracts                  Contract[]
+  contractDocuments          ContractDocument[]
+  paymentSchedules           PaymentSchedule[]
+  paymentMilestones          PaymentMilestone[]
+  invoices                   Invoice[]
+  invoicePayments            InvoicePayment[]
+  arFollowUps                ArFollowUp[]
+  paymentEvidence            PaymentEvidence[]
+  opportunityActivities      OpportunityActivity[]
+  opportunityStageHistory    OpportunityStageHistory[]
+  projects                   Project[]
+  projectMembers             ProjectMember[]
+  projectMilestones          ProjectMilestone[]
+  projectStages              ProjectStage[]
+  resourceAllocations        ResourceAllocation[]
+  resourceCapacityPeriods    ResourceCapacityPeriod[]
+  projectBudgets             ProjectBudget[]
+  projectCosts               ProjectCost[]
+  projectPlSnapshots         ProjectPlSnapshot[]
+  tickets                    Ticket[]
+  ticketStatusHistory        TicketStatusHistory[]
+  artifacts                  ProjectArtifact[]
+  projectDocumentVersions    ProjectDocumentVersion[]
+  files                      FileObject[]
+  fileDownloadGrants         FileDownloadGrant[]
+  projectTasks               ProjectTask[]
+  taskComments               TaskComment[]
+  projectComments            ProjectComment[]
+  projectActivities          ProjectActivity[]
+  projectRisks               ProjectRisk[]
+  taskAttachments            TaskAttachment[]
+  projectAttachments         ProjectAttachment[]
+  taskStatusHistory          TaskStatusHistory[]
+  taskTimeEntries            TaskTimeEntry[]
+  taskPlanningBlocks         TaskPlanningBlock[]
+  customerGrants             CustomerAccessGrant[]
+  portalInvitations          PortalInvitation[]
+  progressShareLinks         ProjectProgressShareLink[]
+  policyDecisions            PolicyDecisionLog[]
+  integrationEvents          IntegrationEventLog[]
+  auditEvents                AuditEvent[]
+  departments                Department[]
+  workspaceTeams             WorkspaceTeam[]
+  workspaceTeamMembers       WorkspaceTeamMember[]
+  workspaceMemberProfiles    WorkspaceMemberProfile[]
+  analyticsSavedViews        AnalyticsSavedView[]
+  dayOffs                    WorkspaceDayOff[]
+  taskTypeCatalogs           TaskTypeCatalog[]
+  taskTimelineChangeRequests TaskTimelineChangeRequest[]
+  taskPlanHistories          TaskPlanHistory[]
+  overtimePlans              OvertimePlan[]
+  monthlyCostProfiles        ResourceMonthlyCost[]
+  pnlPeriods                 PnlPeriod[]
+  pnlAllocations             PnlTimeEntryAllocation[]
+  reminderDeliveryLogs       ReminderDeliveryLog[]
+  reminderPolicy             WorkspaceReminderPolicy?
+
+  @@unique([tenantKey, workspaceKey])
+  @@index([status])
+}
+
+model PortalIdentity {
+  id             String   @id @default(cuid())
+  userId         String
+  provider       String
+  providerUserId String
+  tenantKey      String
+  createdAt      DateTime @default(now())
+  user           User     @relation(fields: [userId], references: [id])
+
+  @@unique([provider, providerUserId, tenantKey])
+  @@index([tenantKey])
+}
+
+model PortalSession {
+  authMethod      String          @default("legacy")
+  userAgent       String?
+  ipAddress       String?
+  mfaVerifiedAt   DateTime?
+  authenticatedAt DateTime        @default(now())
+  id              String          @id @default(cuid())
+  userId          String
+  tenantKey       String
+  workspaceId     String          @default("twk-foundation")
+  tokenHash       String          @unique
+  roleVersion     String
+  grantVersion    String
+  expiresAt       DateTime
+  lastSeenAt      DateTime        @default(now())
+  revokedAt       DateTime?
+  createdAt       DateTime        @default(now())
+  user            User            @relation(fields: [userId], references: [id])
+  workspace       TenantWorkspace @relation(fields: [workspaceId], references: [id])
+
+  @@index([userId])
+  @@index([tenantKey])
+  @@index([workspaceId])
+  @@index([expiresAt])
+}
+
+model Role {
+  id             String          @id @default(cuid())
+  code           String          @unique
+  name           String
+  type           RoleType
+  description    String?
+  createdAt      DateTime        @default(now())
+  permissionSets PermissionSet[]
+  bindings       RoleBinding[]
+}
+
+model PermissionSet {
+  id              String          @id @default(cuid())
+  roleId          String
+  action          Action
+  resource        Resource
+  scope           ScopeType
+  defaultDecision DefaultDecision @default(DENY)
+  createdAt       DateTime        @default(now())
+  role            Role            @relation(fields: [roleId], references: [id])
+
+  @@index([resource, action])
+}
+
+model RoleBinding {
+  id          String           @id @default(cuid())
+  userId      String
+  roleId      String
+  tenantKey   String
+  workspaceId String?
+  startsAt    DateTime         @default(now())
+  endsAt      DateTime?
+  createdAt   DateTime         @default(now())
+  user        User             @relation(fields: [userId], references: [id])
+  role        Role             @relation(fields: [roleId], references: [id])
+  workspace   TenantWorkspace? @relation(fields: [workspaceId], references: [id])
+
+  @@unique([userId, roleId, tenantKey, workspaceId])
+  @@index([tenantKey])
+  @@index([workspaceId])
+  @@index([userId, roleId])
+}
+
+model Team {
+  id        String        @id @default(cuid())
+  code      String        @unique
+  name      String
+  createdAt DateTime      @default(now())
+  members   TeamMember[]
+  accounts  Account[]
+  tasks     ProjectTask[]
+}
+
+model TeamMember {
+  id        String   @id @default(cuid())
+  teamId    String
+  userId    String
+  createdAt DateTime @default(now())
+  team      Team     @relation(fields: [teamId], references: [id])
+
+  @@unique([teamId, userId])
+}
+
+model Account {
+  id                      String                     @id @default(cuid())
+  workspaceId             String                     @default("twk-foundation")
+  code                    String
+  name                    String
+  stage                   String
+  ownerTeamId             String?
+  picUserId               String?
+  annualValue             Decimal                    @default(0)
+  commercialNote          String?
+  createdAt               DateTime                   @default(now())
+  updatedAt               DateTime                   @updatedAt
+  workspace               TenantWorkspace            @relation(fields: [workspaceId], references: [id])
+  ownerTeam               Team?                      @relation(fields: [ownerTeamId], references: [id])
+  picUser                 User?                      @relation("AccountPic", fields: [picUserId], references: [id])
+  members                 AccountMember[]
+  contacts                Contact[]
+  usageReviews            AccountUsageReview[]
+  leads                   Lead[]
+  projects                Project[]
+  opportunities           Opportunity[]
+  proposalPackages        ProposalPackage[]
+  contracts               Contract[]
+  paymentSchedules        PaymentSchedule[]
+  paymentMilestones       PaymentMilestone[]
+  invoices                Invoice[]
+  invoicePayments         InvoicePayment[]
+  arFollowUps             ArFollowUp[]
+  paymentEvidence         PaymentEvidence[]
+  resourceAllocations     ResourceAllocation[]
+  projectBudgets          ProjectBudget[]
+  projectCosts            ProjectCost[]
+  projectPlSnapshots      ProjectPlSnapshot[]
+  activities              OpportunityActivity[]
+  stageHistory            OpportunityStageHistory[]
+  customerGrants          CustomerAccessGrant[]
+  tickets                 Ticket[]
+  ticketStatusHistory     TicketStatusHistory[]
+  artifacts               ProjectArtifact[]
+  projectDocumentVersions ProjectDocumentVersion[]
+  files                   FileObject[]
+  taskComments            TaskComment[]
+  projectComments         ProjectComment[]
+  projectActivities       ProjectActivity[]
+  projectRisks            ProjectRisk[]
+  taskAttachments         TaskAttachment[]
+  projectAttachments      ProjectAttachment[]
+  progressShareLinks      ProjectProgressShareLink[]
+  projectMilestones       ProjectMilestone[]
+  projectStages           ProjectStage[]
+  tasks                   ProjectTask[]
+  taskPlanningBlocks      TaskPlanningBlock[]
+
+  @@unique([workspaceId, code])
+  @@index([workspaceId, stage])
+  @@index([stage])
+  @@index([ownerTeamId])
+  @@index([picUserId])
+}
+
+model AccountMember {
+  id          String                @id @default(cuid())
+  workspaceId String                @default("twk-foundation")
+  accountId   String
+  userId      String
+  relation    AccountMemberRelation
+  createdAt   DateTime              @default(now())
+  workspace   TenantWorkspace       @relation(fields: [workspaceId], references: [id])
+  account     Account               @relation(fields: [accountId], references: [id])
+  user        User                  @relation(fields: [userId], references: [id])
+
+  @@unique([workspaceId, accountId, userId, relation])
+  @@index([workspaceId, userId])
+  @@index([userId])
+}
+
+model AccountUsageReview {
+  id                   String          @id @default(cuid())
+  workspaceId          String          @default("twk-foundation")
+  accountId            String
+  month                String
+  dataSource           String
+  confidence           String
+  metricsAvailable     Boolean         @default(true)
+  unavailabilityReason String?
+  licensedUsers        Int?
+  activeUsersMau       Int?
+  adoptionRate         Decimal?
+  weeklyActivityWeeks  Int?
+  docsUsage            Int?
+  baseUsage            Int?
+  taskUsage            Int?
+  workflowUsage        Int?
+  ticketCount          Int?
+  slaBreaches          Int?
+  csat                 Int?
+  trainingAttendance   Int?
+  healthScore          String
+  interpretation       String?
+  expansionSignal      String
+  nextAction           String
+  nextReviewDate       DateTime?
+  owner                String
+  escalationOwner      String?
+  escalationNote       String?
+  createdByUserId      String?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  workspace            TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  account              Account         @relation(fields: [accountId], references: [id])
+  createdBy            User?           @relation(fields: [createdByUserId], references: [id])
+
+  @@index([workspaceId, accountId, month])
+  @@index([accountId, month])
+  @@index([createdByUserId])
+}
+
+model Contact {
+  id          String          @id @default(cuid())
+  workspaceId String          @default("twk-foundation")
+  accountId   String
+  name        String
+  email       String?
+  phone       String?
+  role        String?
+  influence   String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  workspace   TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  account     Account         @relation(fields: [accountId], references: [id])
+  leads       Lead[]
+
+  @@unique([workspaceId, email])
+  @@index([workspaceId])
+  @@index([accountId])
+  @@index([name])
+}
+
+model Lead {
+  id                   String          @id @default(cuid())
+  workspaceId          String          @default("twk-foundation")
+  accountId            String
+  contactId            String?
+  companyName          String
+  contactName          String
+  contactEmail         String?
+  source               String
+  painPoint            String?
+  serviceFit           String?
+  timeline             String?
+  budgetRange          String?
+  authority            String?
+  status               String          @default("captured")
+  ownerUserId          String?
+  duplicateOfLeadId    String?
+  duplicateReason      String?
+  qualificationSummary String?
+  nextActivityAt       DateTime?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  workspace            TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  account              Account         @relation(fields: [accountId], references: [id])
+  contact              Contact?        @relation(fields: [contactId], references: [id])
+  owner                User?           @relation(fields: [ownerUserId], references: [id])
+  duplicateOf          Lead?           @relation("LeadDuplicate", fields: [duplicateOfLeadId], references: [id])
+  duplicates           Lead[]          @relation("LeadDuplicate")
+  opportunities        Opportunity[]
+
+  @@index([workspaceId, status])
+  @@index([accountId, status])
+  @@index([contactId])
+  @@index([ownerUserId])
+  @@index([duplicateOfLeadId])
+  @@index([contactEmail])
+}
+
+model Opportunity {
+  id                  String                    @id @default(cuid())
+  workspaceId         String                    @default("twk-foundation")
+  accountId           String
+  leadId              String?
+  title               String
+  ownerUserId         String?
+  stage               String
+  amount              Decimal                   @default(0)
+  probability         Int                       @default(0)
+  forecastCategory    String                    @default("pipeline")
+  stageEnteredAt      DateTime                  @default(now())
+  closedAt            DateTime?
+  closeReason         String?
+  handoffConfirmedAt  DateTime?
+  handoffChecklist    Json?
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+  workspace           TenantWorkspace           @relation(fields: [workspaceId], references: [id])
+  account             Account                   @relation(fields: [accountId], references: [id])
+  lead                Lead?                     @relation(fields: [leadId], references: [id])
+  owner               User?                     @relation(fields: [ownerUserId], references: [id])
+  activities          OpportunityActivity[]
+  stageHistory        OpportunityStageHistory[]
+  proposalPackages    ProposalPackage[]
+  contracts           Contract[]
+  paymentSchedules    PaymentSchedule[]
+  resourceAllocations ResourceAllocation[]
+  tasks               ProjectTask[]
+  projects            Project[]
+
+  @@unique([workspaceId, accountId, title])
+  @@index([workspaceId, stage])
+  @@index([accountId, stage])
+  @@index([leadId])
+  @@index([ownerUserId])
+  @@index([forecastCategory])
+  @@index([stageEnteredAt])
+  @@index([closedAt])
+}
+
+model ProposalPackage {
+  id                 String                @id @default(cuid())
+  workspaceId        String                @default("twk-foundation")
+  accountId          String
+  opportunityId      String
+  packageType        ProposalPackageType
+  status             ProposalPackageStatus @default(DRAFT)
+  version            Int                   @default(1)
+  title              String
+  currency           String                @default("VND")
+  proposedAmount     Decimal               @default(0)
+  discountPercent    Decimal               @default(0)
+  paymentTermSummary String?
+  scopeRiskLevel     ScopeRiskLevel        @default(LOW)
+  customerVisible    Boolean               @default(false)
+  createdByUserId    String?
+  submittedAt        DateTime?
+  approvedAt         DateTime?
+  sentAt             DateTime?
+  acceptedAt         DateTime?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+  workspace          TenantWorkspace       @relation(fields: [workspaceId], references: [id])
+  account            Account               @relation(fields: [accountId], references: [id])
+  opportunity        Opportunity           @relation(fields: [opportunityId], references: [id])
+  documents          ProposalDocument[]
+  approvalRequests   DealApprovalRequest[]
+  contracts          Contract[]
+  paymentSchedules   PaymentSchedule[]
+
+  @@unique([workspaceId, opportunityId, version])
+  @@index([workspaceId, status])
+  @@index([accountId, status])
+  @@index([opportunityId, status])
+  @@index([packageType, status])
+}
+
+model ProposalDocument {
+  id                String               @id @default(cuid())
+  workspaceId       String               @default("twk-foundation")
+  proposalPackageId String
+  documentType      ProposalDocumentType
+  version           Int                  @default(1)
+  title             String
+  storageProvider   String               @default("lark_drive")
+  storageKey        String?
+  externalUrl       String?
+  customerVisible   Boolean              @default(false)
+  checksum          String?
+  createdByUserId   String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  workspace         TenantWorkspace      @relation(fields: [workspaceId], references: [id])
+  proposalPackage   ProposalPackage      @relation(fields: [proposalPackageId], references: [id])
+
+  @@unique([workspaceId, proposalPackageId, documentType, version])
+  @@index([workspaceId, documentType])
+  @@index([proposalPackageId, documentType])
+  @@index([customerVisible])
+}
+
+model DealApprovalRequest {
+  id                       String                    @id @default(cuid())
+  workspaceId              String                    @default("twk-foundation")
+  proposalPackageId        String
+  opportunityId            String
+  requestType              DealApprovalRequestType
+  status                   DealApprovalRequestStatus @default(DRAFT)
+  requiredRoleCode         String
+  requestedByUserId        String?
+  assignedToUserId         String?
+  severity                 String                    @default("standard")
+  reason                   String
+  evidenceJson             Json?
+  larkApprovalInstanceCode String?                   @unique
+  submittedAt              DateTime?
+  decidedAt                DateTime?
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  workspace                TenantWorkspace           @relation(fields: [workspaceId], references: [id])
+  proposalPackage          ProposalPackage           @relation(fields: [proposalPackageId], references: [id])
+  decisions                DealApprovalDecision[]
+
+  @@unique([workspaceId, proposalPackageId, requestType, requiredRoleCode])
+  @@index([workspaceId, status])
+  @@index([proposalPackageId, status])
+  @@index([opportunityId, status])
+  @@index([requestType, status])
+}
+
+model DealApprovalDecision {
+  id                String              @id @default(cuid())
+  workspaceId       String              @default("twk-foundation")
+  approvalRequestId String
+  decision          String
+  decidedByUserId   String?
+  comment           String?
+  larkTaskId        String?
+  decidedAt         DateTime            @default(now())
+  createdAt         DateTime            @default(now())
+  workspace         TenantWorkspace     @relation(fields: [workspaceId], references: [id])
+  approvalRequest   DealApprovalRequest @relation(fields: [approvalRequestId], references: [id])
+
+  @@index([workspaceId, decision])
+  @@index([approvalRequestId, decidedAt])
+  @@index([decidedByUserId])
+}
+
+model Contract {
+  id                String                  @id @default(cuid())
+  workspaceId       String                  @default("twk-foundation")
+  accountId         String
+  opportunityId     String?
+  projectId         String?
+  proposalPackageId String?
+  code              String                  @unique
+  title             String
+  status            ContractStatus          @default(DRAFT)
+  signatureStatus   ContractSignatureStatus @default(NOT_READY)
+  currency          String                  @default("VND")
+  contractValue     Decimal                 @default(0)
+  effectiveDate     DateTime?
+  expiresAt         DateTime?
+  signedAt          DateTime?
+  signedByName      String?
+  signedByEmail     String?
+  customerVisible   Boolean                 @default(false)
+  allowedRoles      String[]
+  createdByUserId   String?
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  workspace         TenantWorkspace         @relation(fields: [workspaceId], references: [id])
+  account           Account                 @relation(fields: [accountId], references: [id])
+  opportunity       Opportunity?            @relation(fields: [opportunityId], references: [id])
+  project           Project?                @relation(fields: [projectId], references: [id])
+  proposalPackage   ProposalPackage?        @relation(fields: [proposalPackageId], references: [id])
+  documents         ContractDocument[]
+  paymentSchedules  PaymentSchedule[]
+  paymentMilestones PaymentMilestone[]
+  invoices          Invoice[]
+
+  @@index([workspaceId, status])
+  @@index([accountId, status])
+  @@index([opportunityId])
+  @@index([projectId])
+  @@index([proposalPackageId])
+  @@index([signatureStatus])
+  @@index([customerVisible])
+}
+
+model ContractDocument {
+  id              String               @id @default(cuid())
+  workspaceId     String               @default("twk-foundation")
+  contractId      String
+  documentType    ContractDocumentType
+  version         Int                  @default(1)
+  title           String
+  storageProvider String               @default("lark_drive")
+  storageKey      String?
+  externalUrl     String?
+  customerVisible Boolean              @default(false)
+  checksum        String?
+  signedAt        DateTime?
+  createdByUserId String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  workspace       TenantWorkspace      @relation(fields: [workspaceId], references: [id])
+  contract        Contract             @relation(fields: [contractId], references: [id])
+
+  @@unique([workspaceId, contractId, documentType, version])
+  @@index([workspaceId, documentType])
+  @@index([contractId, documentType])
+  @@index([customerVisible])
+}
+
+model PaymentSchedule {
+  id                String                @id @default(cuid())
+  workspaceId       String                @default("twk-foundation")
+  accountId         String
+  contractId        String?
+  opportunityId     String?
+  projectId         String?
+  proposalPackageId String?
+  code              String                @unique
+  title             String
+  status            PaymentScheduleStatus @default(DRAFT)
+  currency          String                @default("VND")
+  totalAmount       Decimal               @default(0)
+  customerVisible   Boolean               @default(false)
+  allowedRoles      String[]
+  createdByUserId   String?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  workspace         TenantWorkspace       @relation(fields: [workspaceId], references: [id])
+  account           Account               @relation(fields: [accountId], references: [id])
+  contract          Contract?             @relation(fields: [contractId], references: [id])
+  opportunity       Opportunity?          @relation(fields: [opportunityId], references: [id])
+  project           Project?              @relation(fields: [projectId], references: [id])
+  proposalPackage   ProposalPackage?      @relation(fields: [proposalPackageId], references: [id])
+  createdBy         User?                 @relation("PaymentScheduleCreatedBy", fields: [createdByUserId], references: [id])
+  milestones        PaymentMilestone[]
+
+  @@index([workspaceId, status])
+  @@index([accountId, status])
+  @@index([contractId])
+  @@index([opportunityId])
+  @@index([projectId])
+  @@index([proposalPackageId])
+  @@index([customerVisible])
+}
+
+model PaymentMilestone {
+  id                 String                 @id @default(cuid())
+  workspaceId        String                 @default("twk-foundation")
+  scheduleId         String
+  accountId          String
+  contractId         String?
+  projectId          String?
+  code               String                 @unique
+  sequence           Int
+  label              String
+  triggerType        PaymentTriggerType     @default(MANUAL)
+  triggerRef         String?
+  percentage         Decimal?
+  amount             Decimal                @default(0)
+  dueAt              DateTime?
+  invoiceReadyAt     DateTime?
+  invoicedAt         DateTime?
+  paidAt             DateTime?
+  status             PaymentMilestoneStatus @default(PLANNED)
+  invoiceStatus      InvoiceStatus          @default(DRAFT)
+  paymentStatus      InvoicePaymentStatus   @default(UNPAID)
+  financeOwnerUserId String?
+  overdueOwnerUserId String?
+  customerVisible    Boolean                @default(false)
+  internalNote       String?
+  customerNote       String?
+  createdByUserId    String?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+  workspace          TenantWorkspace        @relation(fields: [workspaceId], references: [id])
+  schedule           PaymentSchedule        @relation(fields: [scheduleId], references: [id])
+  account            Account                @relation(fields: [accountId], references: [id])
+  contract           Contract?              @relation(fields: [contractId], references: [id])
+  project            Project?               @relation(fields: [projectId], references: [id])
+  financeOwner       User?                  @relation("PaymentMilestoneFinanceOwner", fields: [financeOwnerUserId], references: [id])
+  overdueOwner       User?                  @relation("PaymentMilestoneOverdueOwner", fields: [overdueOwnerUserId], references: [id])
+  createdBy          User?                  @relation("PaymentMilestoneCreatedBy", fields: [createdByUserId], references: [id])
+  invoices           Invoice[]
+  invoicePayments    InvoicePayment[]
+  arFollowUps        ArFollowUp[]
+  evidence           PaymentEvidence[]
+
+  @@unique([workspaceId, scheduleId, sequence])
+  @@index([workspaceId, status])
+  @@index([accountId, status])
+  @@index([contractId])
+  @@index([projectId])
+  @@index([dueAt])
+  @@index([paymentStatus])
+  @@index([customerVisible])
+}
+
+model Invoice {
+  id                String               @id @default(cuid())
+  workspaceId       String               @default("twk-foundation")
+  milestoneId       String
+  accountId         String
+  contractId        String?
+  projectId         String?
+  code              String               @unique
+  status            InvoiceStatus        @default(DRAFT)
+  paymentStatus     InvoicePaymentStatus @default(UNPAID)
+  currency          String               @default("VND")
+  amount            Decimal              @default(0)
+  paidAmount        Decimal              @default(0)
+  issuedAt          DateTime?
+  sentAt            DateTime?
+  dueAt             DateTime?
+  paidAt            DateTime?
+  externalInvoiceNo String?
+  customerVisible   Boolean              @default(false)
+  storageProvider   String               @default("lark_drive")
+  storageKey        String?
+  externalUrl       String?
+  createdByUserId   String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  workspace         TenantWorkspace      @relation(fields: [workspaceId], references: [id])
+  milestone         PaymentMilestone     @relation(fields: [milestoneId], references: [id])
+  account           Account              @relation(fields: [accountId], references: [id])
+  contract          Contract?            @relation(fields: [contractId], references: [id])
+  project           Project?             @relation(fields: [projectId], references: [id])
+  createdBy         User?                @relation("InvoiceCreatedBy", fields: [createdByUserId], references: [id])
+  arFollowUps       ArFollowUp[]
+  evidence          PaymentEvidence[]
+  payments          InvoicePayment[]
+
+  @@index([workspaceId, paymentStatus])
+  @@index([milestoneId, status])
+  @@index([accountId, paymentStatus])
+  @@index([contractId])
+  @@index([projectId])
+  @@index([dueAt])
+  @@index([customerVisible])
+}
+
+model InvoicePayment {
+  id              String               @id @default(cuid())
+  workspaceId     String               @default("twk-foundation")
+  invoiceId       String
+  milestoneId     String
+  accountId       String
+  projectId       String?
+  currency        String               @default("VND")
+  amount          Decimal
+  paidAt          DateTime             @default(now())
+  evidenceType    PaymentEvidenceType?
+  evidenceTitle   String?
+  storageProvider String?
+  storageKey      String?
+  externalUrl     String?
+  note            String?
+  createdByUserId String?
+  createdAt       DateTime             @default(now())
+  workspace       TenantWorkspace      @relation(fields: [workspaceId], references: [id])
+  invoice         Invoice              @relation(fields: [invoiceId], references: [id])
+  milestone       PaymentMilestone     @relation(fields: [milestoneId], references: [id])
+  account         Account              @relation(fields: [accountId], references: [id])
+  project         Project?             @relation(fields: [projectId], references: [id])
+  createdBy       User?                @relation("InvoicePaymentCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([workspaceId, paidAt])
+  @@index([invoiceId, paidAt])
+  @@index([milestoneId])
+  @@index([accountId, paidAt])
+  @@index([projectId, paidAt])
+  @@index([createdByUserId])
+}
+
+model ArFollowUp {
+  id              String           @id @default(cuid())
+  workspaceId     String           @default("twk-foundation")
+  milestoneId     String
+  invoiceId       String?
+  accountId       String
+  ownerUserId     String?
+  status          ArFollowUpStatus @default(OPEN)
+  reason          String
+  nextActionAt    DateTime?
+  resolvedAt      DateTime?
+  note            String?
+  createdByUserId String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  workspace       TenantWorkspace  @relation(fields: [workspaceId], references: [id])
+  milestone       PaymentMilestone @relation(fields: [milestoneId], references: [id])
+  invoice         Invoice?         @relation(fields: [invoiceId], references: [id])
+  account         Account          @relation(fields: [accountId], references: [id])
+  owner           User?            @relation("ArFollowUpOwner", fields: [ownerUserId], references: [id])
+  createdBy       User?            @relation("ArFollowUpCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([workspaceId, status])
+  @@index([milestoneId, status])
+  @@index([invoiceId, status])
+  @@index([accountId, status])
+  @@index([ownerUserId, status])
+  @@index([nextActionAt])
+}
+
+model PaymentEvidence {
+  id              String              @id @default(cuid())
+  workspaceId     String              @default("twk-foundation")
+  milestoneId     String?
+  invoiceId       String?
+  accountId       String
+  evidenceType    PaymentEvidenceType
+  title           String
+  storageProvider String              @default("lark_drive")
+  storageKey      String?
+  externalUrl     String?
+  customerVisible Boolean             @default(false)
+  createdByUserId String?
+  createdAt       DateTime            @default(now())
+  workspace       TenantWorkspace     @relation(fields: [workspaceId], references: [id])
+  milestone       PaymentMilestone?   @relation(fields: [milestoneId], references: [id])
+  invoice         Invoice?            @relation(fields: [invoiceId], references: [id])
+  account         Account             @relation(fields: [accountId], references: [id])
+  createdBy       User?               @relation("PaymentEvidenceCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([workspaceId, evidenceType])
+  @@index([milestoneId, evidenceType])
+  @@index([invoiceId, evidenceType])
+  @@index([accountId, evidenceType])
+  @@index([customerVisible])
+}
+
+model OpportunityActivity {
+  id              String          @id @default(cuid())
+  workspaceId     String          @default("twk-foundation")
+  opportunityId   String
+  accountId       String
+  type            String
+  subject         String
+  note            String?
+  dueAt           DateTime?
+  status          String          @default("open")
+  createdByUserId String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  workspace       TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  opportunity     Opportunity     @relation(fields: [opportunityId], references: [id])
+  account         Account         @relation(fields: [accountId], references: [id])
+  createdBy       User?           @relation(fields: [createdByUserId], references: [id])
+
+  @@index([workspaceId, status])
+  @@index([opportunityId, status])
+  @@index([accountId, createdAt])
+  @@index([createdByUserId])
+}
+
+model OpportunityStageHistory {
+  id               String          @id @default(cuid())
+  workspaceId      String          @default("twk-foundation")
+  opportunityId    String
+  accountId        String
+  fromStage        String?
+  toStage          String
+  probability      Int
+  amount           Decimal         @default(0)
+  forecastCategory String
+  changedByUserId  String?
+  changedAt        DateTime        @default(now())
+  reason           String?
+  workspace        TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  opportunity      Opportunity     @relation(fields: [opportunityId], references: [id])
+  account          Account         @relation(fields: [accountId], references: [id])
+  changedBy        User?           @relation(fields: [changedByUserId], references: [id])
+
+  @@index([workspaceId, changedAt])
+  @@index([opportunityId, changedAt])
+  @@index([accountId, changedAt])
+  @@index([changedByUserId])
+}
+
+model Project {
+  id                     String                      @id @default(cuid())
+  workspaceId            String                      @default("twk-foundation")
+  accountId              String
+  opportunityId          String?
+  code                   String
+  name                   String
+  status                 String
+  projectType            String                      @default("delivery")
+  scopeSummary           String?
+  marginPercent          Decimal?
+  priority               String?
+  tags                   String[]                    @default([])
+  color                  String?
+  hierarchyOrderVersion  Int                         @default(0)
+  createdAt              DateTime                    @default(now())
+  updatedAt              DateTime                    @updatedAt
+  workspace              TenantWorkspace             @relation(fields: [workspaceId], references: [id])
+  account                Account                     @relation(fields: [accountId], references: [id])
+  opportunity            Opportunity?                @relation(fields: [opportunityId], references: [id])
+  members                ProjectMember[]
+  customerGrants         CustomerAccessGrant[]
+  tickets                Ticket[]
+  ticketStatusHistory    TicketStatusHistory[]
+  artifacts              ProjectArtifact[]
+  documentVersions       ProjectDocumentVersion[]
+  files                  FileObject[]
+  comments               ProjectComment[]
+  activities             ProjectActivity[]
+  risks                  ProjectRisk[]
+  attachments            ProjectAttachment[]
+  taskComments           TaskComment[]
+  taskAttachments        TaskAttachment[]
+  progressShareLinks     ProjectProgressShareLink[]
+  stages                 ProjectStage[]
+  milestones             ProjectMilestone[]
+  tasks                  ProjectTask[]
+  taskPlanningBlocks     TaskPlanningBlock[]
+  contracts              Contract[]
+  paymentSchedules       PaymentSchedule[]
+  paymentMilestones      PaymentMilestone[]
+  invoices               Invoice[]
+  invoicePayments        InvoicePayment[]
+  resourceAllocations    ResourceAllocation[]
+  budgets                ProjectBudget[]
+  costs                  ProjectCost[]
+  plSnapshots            ProjectPlSnapshot[]
+  timelineChangeRequests TaskTimelineChangeRequest[]
+  planHistories          TaskPlanHistory[]
+  overtimePlans          OvertimePlan[]
+  pnlPeriods             PnlPeriod[]
+
+  @@unique([workspaceId, code])
+  @@index([workspaceId, status])
+  @@index([workspaceId, updatedAt(sort: Desc), name])
+  @@index([workspaceId, projectType])
+  @@index([workspaceId, priority])
+  @@index([accountId, status])
+  @@index([opportunityId])
+}
+
+model ProjectMilestone {
+  id            String          @id @default(cuid())
+  workspaceId   String          @default("twk-foundation")
+  accountId     String
+  projectId     String
+  name          String
+  normalizedKey String
+  sortOrder     Int
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  workspace     TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  account       Account         @relation(fields: [accountId], references: [id])
+  project       Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stages        ProjectStage[]
+
+  @@unique([projectId, normalizedKey])
+  @@index([workspaceId, projectId, sortOrder])
+  @@index([accountId])
+}
+
+model ProjectStage {
+  id                 String           @id @default(cuid())
+  workspaceId        String           @default("twk-foundation")
+  accountId          String
+  projectId          String
+  milestoneId        String
+  stageKey           String
+  phase              String
+  activity           String
+  sortOrder          Int
+  cumulativePercent  Int
+  activityPercent    Int
+  criteria           String
+  description        String?
+  upbaseRole         String?
+  customerRole       String?
+  status             String           @default("not_started")
+  ownerUserId        String?
+  plannedStartAt     DateTime?
+  plannedEndAt       DateTime?
+  actualStartAt      DateTime?
+  actualEndAt        DateTime?
+  acceptanceCriteria String?
+  blockerSummary     String?
+  scopeSummary       String?
+  standardMinutes    Int?
+  progressPercent    Int              @default(0)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  workspace          TenantWorkspace  @relation(fields: [workspaceId], references: [id])
+  account            Account          @relation(fields: [accountId], references: [id])
+  project            Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  milestone          ProjectMilestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  owner              User?            @relation(fields: [ownerUserId], references: [id])
+  tasks              ProjectTask[]
+
+  @@unique([projectId, stageKey])
+  @@index([workspaceId, status])
+  @@index([accountId, status])
+  @@index([projectId, milestoneId, sortOrder])
+  @@index([ownerUserId, status])
+}
+
+model ResourceProfile {
+  id                           String   @id @default(cuid())
+  userId                       String   @unique
+  displayRole                  String?
+  defaultWeeklyCapacityMinutes Int      @default(2400)
+  billableTargetPercent        Int      @default(70)
+  skills                       String[]
+  active                       Boolean  @default(true)
+  createdAt                    DateTime @default(now())
+  updatedAt                    DateTime @updatedAt
+  user                         User     @relation(fields: [userId], references: [id])
+
+  @@index([active])
+}
+
+model ResourceCapacityPeriod {
+  id                  String           @id @default(cuid())
+  workspaceId         String?
+  userId              String
+  periodStart         DateTime
+  periodEnd           DateTime
+  availableMinutes    Int
+  plannedLeaveMinutes Int              @default(0)
+  note                String?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  workspace           TenantWorkspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  user                User             @relation(fields: [userId], references: [id])
+
+  @@unique([workspaceId, userId, periodStart, periodEnd], map: "ResourceCapacityPeriod_ws_user_period_key")
+  @@index([workspaceId, userId, periodStart, periodEnd], map: "ResourceCapacityPeriod_ws_user_period_idx")
+  @@index([periodStart, periodEnd])
+}
+
+model ResourceAllocation {
+  id                String                   @id @default(cuid())
+  workspaceId       String                   @default("twk-foundation")
+  accountId         String
+  projectId         String?
+  opportunityId     String?
+  userId            String
+  role              String
+  skill             String?
+  status            ResourceAllocationStatus @default(REQUESTED)
+  allocationPercent Int                      @default(100)
+  plannedMinutes    Int                      @default(0)
+  startAt           DateTime
+  endAt             DateTime
+  overbookApproved  Boolean                  @default(false)
+  approvedByUserId  String?
+  note              String?
+  createdByUserId   String?
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+  workspace         TenantWorkspace          @relation(fields: [workspaceId], references: [id])
+  account           Account                  @relation(fields: [accountId], references: [id])
+  project           Project?                 @relation(fields: [projectId], references: [id])
+  opportunity       Opportunity?             @relation(fields: [opportunityId], references: [id])
+  user              User                     @relation("ResourceAllocationUser", fields: [userId], references: [id])
+  createdBy         User?                    @relation("ResourceAllocationCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy        User?                    @relation("ResourceAllocationApprovedBy", fields: [approvedByUserId], references: [id])
+
+  @@index([workspaceId, status])
+  @@index([accountId, status])
+  @@index([projectId, status])
+  @@index([opportunityId])
+  @@index([userId, status])
+  @@index([startAt, endAt])
+  @@index([approvedByUserId])
+}
+
+model CostRateProfile {
+  id             String    @id @default(cuid())
+  userId         String?
+  role           String
+  currency       String    @default("VND")
+  hourlyCostRate Decimal
+  effectiveFrom  DateTime
+  effectiveTo    DateTime?
+  active         Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  user           User?     @relation(fields: [userId], references: [id])
+
+  @@index([userId, active])
+  @@index([role, active])
+  @@index([effectiveFrom, effectiveTo])
+}
+
+model ProjectBudget {
+  id                   String              @id @default(cuid())
+  workspaceId          String              @default("twk-foundation")
+  accountId            String
+  projectId            String
+  code                 String              @unique
+  currency             String              @default("VND")
+  revenueBasis         String              @default("contracted")
+  plannedRevenueAmount Decimal             @default(0)
+  plannedCostAmount    Decimal             @default(0)
+  baselineMinutes      Int                 @default(0)
+  contingencyPercent   Decimal             @default(0)
+  status               ProjectBudgetStatus @default(DRAFT)
+  createdByUserId      String?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  workspace            TenantWorkspace     @relation(fields: [workspaceId], references: [id])
+  account              Account             @relation(fields: [accountId], references: [id])
+  project              Project             @relation(fields: [projectId], references: [id])
+  createdBy            User?               @relation("ProjectBudgetCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([workspaceId, status])
+  @@index([accountId, status])
+  @@index([projectId, status])
+}
+
+model ProjectCost {
+  id              String          @id @default(cuid())
+  workspaceId     String          @default("twk-foundation")
+  accountId       String
+  projectId       String
+  taskTimeEntryId String?
+  costType        ProjectCostType @default(OTHER)
+  label           String
+  currency        String          @default("VND")
+  amount          Decimal
+  occurredAt      DateTime        @default(now())
+  billable        Boolean         @default(false)
+  note            String?
+  createdByUserId String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  workspace       TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  account         Account         @relation(fields: [accountId], references: [id])
+  project         Project         @relation(fields: [projectId], references: [id])
+  taskTimeEntry   TaskTimeEntry?  @relation(fields: [taskTimeEntryId], references: [id])
+  createdBy       User?           @relation("ProjectCostCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([workspaceId, occurredAt])
+  @@index([accountId, occurredAt])
+  @@index([projectId, occurredAt])
+  @@index([taskTimeEntryId])
+  @@index([costType])
+}
+
+model ProjectPlSnapshot {
+  id                    String                  @id @default(cuid())
+  workspaceId           String                  @default("twk-foundation")
+  accountId             String
+  projectId             String
+  periodStart           DateTime
+  periodEnd             DateTime
+  currency              String                  @default("VND")
+  revenueAmount         Decimal                 @default(0)
+  budgetAmount          Decimal                 @default(0)
+  plannedCostAmount     Decimal                 @default(0)
+  actualLaborCostAmount Decimal                 @default(0)
+  directCostAmount      Decimal                 @default(0)
+  writeOffAmount        Decimal                 @default(0)
+  totalCostAmount       Decimal                 @default(0)
+  grossMarginAmount     Decimal                 @default(0)
+  grossMarginPercent    Decimal?
+  status                ProjectPlSnapshotStatus @default(DRAFT)
+  createdByUserId       String?
+  createdAt             DateTime                @default(now())
+  workspace             TenantWorkspace         @relation(fields: [workspaceId], references: [id])
+  account               Account                 @relation(fields: [accountId], references: [id])
+  project               Project                 @relation(fields: [projectId], references: [id])
+  createdBy             User?                   @relation("ProjectPlSnapshotCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([workspaceId, periodStart, periodEnd])
+  @@index([accountId, periodStart, periodEnd])
+  @@index([projectId, periodStart, periodEnd])
+  @@index([status])
+}
+
+model Ticket {
+  id                       String                @id @default(cuid())
+  workspaceId              String                @default("twk-foundation")
+  accountId                String
+  projectId                String?
+  requesterUserId          String?
+  code                     String                @unique
+  title                    String
+  description              String                @default("")
+  category                 String                @default("other_triage")
+  source                   String                @default("internal")
+  ownerQueue               String                @default("customer_success")
+  priority                 String
+  status                   String
+  firstResponseDueAt       DateTime?
+  resolutionDueAt          DateTime?
+  customerVisibleNote      String?
+  internalNote             String?
+  resolutionSummary        String?
+  resolutionType           String?
+  closureReason            String?
+  confirmationState        String?
+  reopenCount              Int                   @default(0)
+  escalationOwnerUserId    String?
+  escalationReason         String?
+  recoveryAction           String?
+  nextUpdateAt             DateTime?
+  requestedAction          String?
+  customerOwner            String?
+  customerDueAt            DateTime?
+  resolutionSlaPausedAt    DateTime?
+  convertedChangeRequestId String?
+  idempotencyKey           String?
+  createdAt                DateTime              @default(now())
+  updatedAt                DateTime              @updatedAt
+  workspace                TenantWorkspace       @relation(fields: [workspaceId], references: [id])
+  account                  Account               @relation(fields: [accountId], references: [id])
+  project                  Project?              @relation(fields: [projectId], references: [id])
+  requester                User?                 @relation(fields: [requesterUserId], references: [id])
+  statusHistory            TicketStatusHistory[]
+  tasks                    ProjectTask[]
+
+  @@index([workspaceId, status])
+  @@index([accountId, status])
+  @@index([projectId])
+  @@index([requesterUserId])
+  @@index([category, priority])
+  @@index([ownerQueue, status])
+  @@index([firstResponseDueAt])
+  @@index([resolutionDueAt])
+}
+
+model TicketStatusHistory {
+  id                  String          @id @default(cuid())
+  workspaceId         String          @default("twk-foundation")
+  ticketId            String
+  accountId           String
+  projectId           String?
+  fromStatus          String?
+  toStatus            String
+  changedByUserId     String?
+  reason              String?
+  customerVisibleNote String?
+  internalNote        String?
+  createdAt           DateTime        @default(now())
+  workspace           TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  ticket              Ticket          @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  account             Account         @relation(fields: [accountId], references: [id])
+  project             Project?        @relation(fields: [projectId], references: [id])
+  changedBy           User?           @relation("TicketStatusHistoryChangedBy", fields: [changedByUserId], references: [id])
+
+  @@index([workspaceId, createdAt])
+  @@index([ticketId, createdAt])
+  @@index([accountId, createdAt])
+  @@index([projectId])
+  @@index([toStatus])
+}
+
+model ProjectArtifact {
+  id                      String                   @id @default(cuid())
+  workspaceId             String                   @default("twk-foundation")
+  accountId               String
+  projectId               String?
+  code                    String                   @unique
+  name                    String
+  artifactType            String
+  storageKey              String
+  customerVisible         Boolean                  @default(false)
+  internalOnly            Boolean                  @default(false)
+  allowedRoles            String[]
+  signedUrlExpiresSeconds Int                      @default(300)
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  workspace               TenantWorkspace          @relation(fields: [workspaceId], references: [id])
+  account                 Account                  @relation(fields: [accountId], references: [id])
+  project                 Project?                 @relation(fields: [projectId], references: [id])
+  versions                ProjectDocumentVersion[]
+
+  @@index([workspaceId, artifactType])
+  @@index([accountId, artifactType])
+  @@index([projectId])
+  @@index([customerVisible])
+}
+
+model ProjectDocumentVersion {
+  id              String          @id @default(cuid())
+  workspaceId     String          @default("twk-foundation")
+  accountId       String
+  projectId       String
+  artifactId      String
+  fileObjectId    String          @unique
+  version         Int
+  note            String?
+  createdByUserId String?
+  createdAt       DateTime        @default(now())
+  workspace       TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  account         Account         @relation(fields: [accountId], references: [id])
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  artifact        ProjectArtifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  fileObject      FileObject      @relation(fields: [fileObjectId], references: [id], onDelete: Restrict)
+  createdBy       User?           @relation("ProjectDocumentVersionCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([artifactId, version])
+  @@index([workspaceId, createdAt])
+  @@index([accountId, createdAt])
+  @@index([projectId, createdAt])
+  @@index([createdByUserId])
+}
+
+model FileObject {
+  id                 String                   @id @default(cuid())
+  workspaceId        String                   @default("twk-foundation")
+  accountId          String
+  projectId          String?
+  fileName           String
+  contentType        String
+  byteSize           Int
+  checksumSha256     String
+  storageProvider    String                   @default("local")
+  storageKey         String                   @unique
+  externalUrl        String?
+  ownerType          String                   @default("general")
+  ownerId            String?
+  customerVisible    Boolean                  @default(false)
+  internalOnly       Boolean                  @default(true)
+  allowedRoles       String[]
+  scanStatus         String                   @default("pending")
+  status             String                   @default("active")
+  createdByUserId    String?
+  revokedByUserId    String?
+  revokedAt          DateTime?
+  deletedAt          DateTime?
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+  workspace          TenantWorkspace          @relation(fields: [workspaceId], references: [id])
+  account            Account                  @relation(fields: [accountId], references: [id])
+  project            Project?                 @relation(fields: [projectId], references: [id])
+  createdBy          User?                    @relation("FileObjectCreatedBy", fields: [createdByUserId], references: [id])
+  revokedBy          User?                    @relation("FileObjectRevokedBy", fields: [revokedByUserId], references: [id])
+  downloadGrants     FileDownloadGrant[]
+  taskAttachments    TaskAttachment[]
+  projectAttachments ProjectAttachment[]
+  documentVersions   ProjectDocumentVersion[]
+
+  @@index([workspaceId, status])
+  @@index([accountId, status])
+  @@index([projectId, status])
+  @@index([ownerType, ownerId])
+  @@index([customerVisible])
+  @@index([scanStatus])
+}
+
+model FileDownloadGrant {
+  id              String          @id @default(cuid())
+  workspaceId     String          @default("twk-foundation")
+  fileObjectId    String
+  accountId       String
+  projectId       String?
+  tokenHash       String          @unique
+  expiresAt       DateTime
+  revokedAt       DateTime?
+  usedAt          DateTime?
+  createdByUserId String?
+  createdAt       DateTime        @default(now())
+  workspace       TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  fileObject      FileObject      @relation(fields: [fileObjectId], references: [id])
+  createdBy       User?           @relation("FileDownloadGrantCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([workspaceId, expiresAt])
+  @@index([fileObjectId, expiresAt])
+  @@index([accountId, expiresAt])
+  @@index([projectId, expiresAt])
+  @@index([revokedAt])
+}
+
+model ProjectMember {
+  id          String          @id @default(cuid())
+  workspaceId String          @default("twk-foundation")
+  projectId   String
+  userId      String
+  relation    String
+  createdAt   DateTime        @default(now())
+  workspace   TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  project     Project         @relation(fields: [projectId], references: [id])
+  user        User            @relation(fields: [userId], references: [id])
+
+  @@unique([workspaceId, projectId, userId, relation])
+  @@index([workspaceId, userId])
+  @@index([userId])
+}
+
+model ProjectTask {
+  id                      String                      @id @default(cuid())
+  workspaceId             String                      @default("twk-foundation")
+  accountId               String
+  projectId               String?
+  stageId                 String?
+  opportunityId           String?
+  ticketId                String?
+  parentTaskId            String?
+  sortOrder               Int                         @default(10)
+  title                   String
+  description             String?
+  taskType                String                      @default("implementation")
+  taskTypeLayer1          String?
+  taskTypeLayer2          String?
+  taskTypeVersion         Int                         @default(1)
+  status                  String                      @default("todo")
+  priority                String                      @default("medium")
+  ownerUserId             String?
+  assigneeUserId          String?
+  ownerTeamId             String?
+  plannedStartAt          DateTime?
+  dueAt                   DateTime?
+  startedAt               DateTime?
+  completedAt             DateTime?
+  cancelledAt             DateTime?
+  estimateMinutes         Int                         @default(0)
+  planApprovalStatus      String                      @default("DRAFT")
+  planSubmittedAt         DateTime?
+  planApprovedAt          DateTime?
+  planApprovedByUserId    String?
+  baselineStartAt         DateTime?
+  baselineEndAt           DateTime?
+  baselineEstimateMinutes Int?
+  customerVisible         Boolean                     @default(false)
+  createdByUserId         String?
+  archivedByUserId        String?
+  archiveReason           String?
+  archivedAt              DateTime?
+  createdAt               DateTime                    @default(now())
+  updatedAt               DateTime                    @updatedAt
+  workspace               TenantWorkspace             @relation(fields: [workspaceId], references: [id])
+  account                 Account                     @relation(fields: [accountId], references: [id])
+  project                 Project?                    @relation(fields: [projectId], references: [id])
+  stage                   ProjectStage?               @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  opportunity             Opportunity?                @relation(fields: [opportunityId], references: [id])
+  ticket                  Ticket?                     @relation(fields: [ticketId], references: [id])
+  parentTask              ProjectTask?                @relation("TaskHierarchy", fields: [parentTaskId], references: [id])
+  subtasks                ProjectTask[]               @relation("TaskHierarchy")
+  owner                   User?                       @relation("ProjectTaskOwner", fields: [ownerUserId], references: [id])
+  assignee                User?                       @relation("ProjectTaskAssignee", fields: [assigneeUserId], references: [id])
+  ownerTeam               Team?                       @relation(fields: [ownerTeamId], references: [id])
+  createdBy               User?                       @relation("ProjectTaskCreatedBy", fields: [createdByUserId], references: [id])
+  archivedBy              User?                       @relation("ProjectTaskArchivedBy", fields: [archivedByUserId], references: [id])
+  planApprovedBy          User?                       @relation("ProjectTaskPlanApprover", fields: [planApprovedByUserId], references: [id])
+  statusHistory           TaskStatusHistory[]
+  timeEntries             TaskTimeEntry[]
+  planningBlocks          TaskPlanningBlock[]
+  comments                TaskComment[]
+  attachments             TaskAttachment[]
+  timelineChangeRequests  TaskTimelineChangeRequest[]
+  planHistories           TaskPlanHistory[]
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, archivedAt, updatedAt(sort: Desc)])
+  @@index([accountId, status])
+  @@index([projectId, status])
+  @@index([projectId, archivedAt, status])
+  @@index([projectId, stageId, parentTaskId, archivedAt, sortOrder], map: "ProjectTask_hierarchy_order_idx")
+  @@index([stageId, status])
+  @@index([opportunityId])
+  @@index([ticketId])
+  @@index([parentTaskId])
+  @@index([assigneeUserId, status])
+  @@index([assigneeUserId, archivedAt, status])
+  @@index([ownerUserId, status])
+  @@index([ownerTeamId, status])
+  @@index([workspaceId, planApprovalStatus])
+  @@index([projectId, taskTypeLayer1, taskTypeLayer2])
+  @@index([dueAt])
+  @@index([archivedByUserId])
+}
+
+model TaskComment {
+  id              String           @id @default(cuid())
+  workspaceId     String           @default("twk-foundation")
+  taskId          String
+  accountId       String
+  projectId       String?
+  parentCommentId String?
+  body            String
+  visibility      String           @default("internal")
+  status          String           @default("active")
+  larkTaskGuid    String?
+  larkCommentId   String?
+  syncStatus      String           @default("not_synced")
+  syncError       String?
+  createdByUserId String?
+  deletedByUserId String?
+  editedAt        DateTime?
+  deletedAt       DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  workspace       TenantWorkspace  @relation(fields: [workspaceId], references: [id])
+  task            ProjectTask      @relation(fields: [taskId], references: [id])
+  account         Account          @relation(fields: [accountId], references: [id])
+  project         Project?         @relation(fields: [projectId], references: [id])
+  parentComment   TaskComment?     @relation("TaskCommentThread", fields: [parentCommentId], references: [id])
+  replies         TaskComment[]    @relation("TaskCommentThread")
+  createdBy       User?            @relation("TaskCommentCreatedBy", fields: [createdByUserId], references: [id])
+  deletedBy       User?            @relation("TaskCommentDeletedBy", fields: [deletedByUserId], references: [id])
+  attachments     TaskAttachment[]
+
+  @@index([workspaceId, createdAt])
+  @@index([taskId, createdAt])
+  @@index([accountId, createdAt])
+  @@index([projectId, createdAt])
+  @@index([visibility])
+  @@index([status])
+}
+
+model ProjectComment {
+  id              String              @id @default(cuid())
+  workspaceId     String              @default("twk-foundation")
+  projectId       String
+  accountId       String
+  parentCommentId String?
+  body            String
+  visibility      String              @default("internal")
+  status          String              @default("active")
+  syncStatus      String              @default("not_synced")
+  syncError       String?
+  createdByUserId String?
+  deletedByUserId String?
+  editedAt        DateTime?
+  deletedAt       DateTime?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  workspace       TenantWorkspace     @relation(fields: [workspaceId], references: [id])
+  project         Project             @relation(fields: [projectId], references: [id])
+  account         Account             @relation(fields: [accountId], references: [id])
+  parentComment   ProjectComment?     @relation("ProjectCommentThread", fields: [parentCommentId], references: [id])
+  replies         ProjectComment[]    @relation("ProjectCommentThread")
+  createdBy       User?               @relation("ProjectCommentCreatedBy", fields: [createdByUserId], references: [id])
+  deletedBy       User?               @relation("ProjectCommentDeletedBy", fields: [deletedByUserId], references: [id])
+  attachments     ProjectAttachment[]
+
+  @@index([workspaceId, createdAt])
+  @@index([projectId, createdAt])
+  @@index([accountId, createdAt])
+  @@index([visibility])
+  @@index([status])
+}
+
+model ProjectActivity {
+  id              String          @id @default(cuid())
+  workspaceId     String          @default("twk-foundation")
+  projectId       String
+  accountId       String
+  activityType    String          @default("note")
+  subject         String
+  note            String?
+  target          String?
+  occurredAt      DateTime        @default(now())
+  status          String          @default("active")
+  createdByUserId String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  workspace       TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  account         Account         @relation(fields: [accountId], references: [id])
+  createdBy       User?           @relation("ProjectActivityCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([workspaceId, occurredAt])
+  @@index([projectId, occurredAt])
+  @@index([accountId, occurredAt])
+  @@index([activityType])
+  @@index([status])
+  @@index([createdByUserId])
+}
+
+model ProjectRisk {
+  id              String          @id @default(cuid())
+  workspaceId     String          @default("twk-foundation")
+  projectId       String
+  accountId       String
+  category        String          @default("Operational")
+  description     String
+  likelihood      String          @default("Medium")
+  impact          String          @default("Medium")
+  response        String          @default("")
+  switchTrigger   String?
+  ownerUserId     String?
+  status          String          @default("open")
+  createdByUserId String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  workspace       TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  account         Account         @relation(fields: [accountId], references: [id])
+  owner           User?           @relation("ProjectRiskOwner", fields: [ownerUserId], references: [id])
+  createdBy       User?           @relation("ProjectRiskCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([workspaceId, status])
+  @@index([projectId, status])
+  @@index([accountId, status])
+  @@index([ownerUserId, status])
+  @@index([category])
+  @@index([createdByUserId])
+}
+
+model TaskAttachment {
+  id                  String          @id @default(cuid())
+  workspaceId         String          @default("twk-foundation")
+  taskId              String
+  accountId           String
+  projectId           String?
+  fileObjectId        String
+  commentId           String?
+  larkTaskGuid        String?
+  larkAttachmentToken String?
+  syncStatus          String          @default("not_synced")
+  syncError           String?
+  createdByUserId     String?
+  createdAt           DateTime        @default(now())
+  workspace           TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  task                ProjectTask     @relation(fields: [taskId], references: [id])
+  account             Account         @relation(fields: [accountId], references: [id])
+  project             Project?        @relation(fields: [projectId], references: [id])
+  fileObject          FileObject      @relation(fields: [fileObjectId], references: [id])
+  comment             TaskComment?    @relation(fields: [commentId], references: [id])
+  createdBy           User?           @relation("TaskAttachmentCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([workspaceId, createdAt])
+  @@index([taskId, createdAt])
+  @@index([fileObjectId])
+  @@index([commentId])
+  @@index([accountId, createdAt])
+  @@index([projectId, createdAt])
+}
+
+model ProjectAttachment {
+  id              String          @id @default(cuid())
+  workspaceId     String          @default("twk-foundation")
+  projectId       String
+  accountId       String
+  fileObjectId    String
+  commentId       String?
+  syncStatus      String          @default("not_synced")
+  syncError       String?
+  createdByUserId String?
+  createdAt       DateTime        @default(now())
+  workspace       TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  project         Project         @relation(fields: [projectId], references: [id])
+  account         Account         @relation(fields: [accountId], references: [id])
+  fileObject      FileObject      @relation(fields: [fileObjectId], references: [id])
+  comment         ProjectComment? @relation(fields: [commentId], references: [id])
+  createdBy       User?           @relation("ProjectAttachmentCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([workspaceId, createdAt])
+  @@index([projectId, createdAt])
+  @@index([fileObjectId])
+  @@index([commentId])
+  @@index([accountId, createdAt])
+}
+
+model TaskStatusHistory {
+  id              String          @id @default(cuid())
+  workspaceId     String          @default("twk-foundation")
+  taskId          String
+  accountId       String
+  projectId       String?
+  fromStatus      String?
+  toStatus        String
+  changedByUserId String?
+  changedAt       DateTime        @default(now())
+  reason          String?
+  workspace       TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  task            ProjectTask     @relation(fields: [taskId], references: [id])
+  changedBy       User?           @relation(fields: [changedByUserId], references: [id])
+
+  @@index([workspaceId, changedAt])
+  @@index([taskId, changedAt])
+  @@index([accountId, changedAt])
+  @@index([projectId, changedAt])
+  @@index([changedByUserId])
+}
+
+model TaskTimeEntry {
+  id                     String                  @id @default(cuid())
+  workspaceId            String                  @default("twk-foundation")
+  taskId                 String
+  accountId              String
+  projectId              String?
+  userId                 String
+  workDate               DateTime
+  startAt                DateTime?
+  endAt                  DateTime?
+  timeZone               String?                 @default("Asia/Ho_Chi_Minh")
+  minutes                Int
+  regularMinutes         Int                     @default(0)
+  overtimeMinutes        Int                     @default(0)
+  billable               Boolean                 @default(true)
+  workType               String                  @default("delivery")
+  taskTypeLayer1         String?
+  taskTypeLayer2         String?
+  approvalStatus         String                  @default("approved")
+  overtimeApprovalStatus String                  @default("not_required")
+  overtimePlanId         String?
+  pnlStatus              String                  @default("pending")
+  pnlReason              String?
+  classificationVersion  Int                     @default(1)
+  note                   String?
+  reviewedByUserId       String?
+  reviewedAt             DateTime?
+  reviewNote             String?
+  sourcePlanningBlockId  String?                 @unique
+  dayOffId               String?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  workspace              TenantWorkspace         @relation(fields: [workspaceId], references: [id])
+  task                   ProjectTask             @relation(fields: [taskId], references: [id])
+  user                   User                    @relation(fields: [userId], references: [id])
+  reviewedBy             User?                   @relation("TaskTimeEntryReviewedBy", fields: [reviewedByUserId], references: [id])
+  sourcePlanningBlock    TaskPlanningBlock?      @relation("PlanningBlockGeneratedTimeEntry", fields: [sourcePlanningBlockId], references: [id], onDelete: SetNull)
+  dayOff                 WorkspaceDayOff?        @relation(fields: [dayOffId], references: [id], onDelete: SetNull)
+  overtimePlan           OvertimePlan?           @relation(fields: [overtimePlanId], references: [id], onDelete: SetNull)
+  projectCosts           ProjectCost[]
+  pnlAllocation          PnlTimeEntryAllocation?
+
+  @@index([workspaceId, workDate])
+  @@index([workspaceId, startAt])
+  @@index([taskId, workDate])
+  @@index([taskId, startAt])
+  @@index([accountId, workDate])
+  @@index([projectId, workDate])
+  @@index([projectId, startAt])
+  @@index([userId, workDate])
+  @@index([userId, startAt])
+  @@index([approvalStatus])
+  @@index([pnlStatus, workDate])
+  @@index([overtimeApprovalStatus, workDate])
+  @@index([overtimePlanId])
+  @@index([reviewedByUserId])
+  @@index([dayOffId])
+}
+
+model WorkspaceDayOff {
+  id              String          @id @default(cuid())
+  workspaceId     String
+  date            DateTime        @db.Date
+  name            String
+  category        String          @default("national_holiday")
+  note            String?
+  isActive        Boolean         @default(true)
+  createdByUserId String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  workspace       TenantWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy       User?           @relation("WorkspaceDayOffCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  timeEntries     TaskTimeEntry[]
+
+  @@unique([workspaceId, date])
+  @@index([workspaceId, isActive, date])
+  @@index([createdByUserId])
+}
+
+model TaskPlanningBlock {
+  id                 String          @id @default(cuid())
+  workspaceId        String          @default("twk-foundation")
+  taskId             String
+  accountId          String
+  projectId          String?
+  userId             String
+  title              String
+  notes              String?
+  startAt            DateTime
+  endAt              DateTime
+  plannedMinutes     Int
+  billable           Boolean         @default(true)
+  workType           String          @default("delivery")
+  status             String          @default("planned")
+  approvalStatus     String          @default("DRAFT")
+  lockedAt           DateTime?
+  lockedByUserId     String?
+  source             String          @default("manual")
+  createdByUserId    String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  workspace          TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  task               ProjectTask     @relation(fields: [taskId], references: [id])
+  account            Account         @relation(fields: [accountId], references: [id])
+  project            Project?        @relation(fields: [projectId], references: [id])
+  user               User            @relation(fields: [userId], references: [id])
+  generatedTimeEntry TaskTimeEntry?  @relation("PlanningBlockGeneratedTimeEntry")
+  lockedBy           User?           @relation("TaskPlanningBlockLocker", fields: [lockedByUserId], references: [id])
+
+  @@index([workspaceId, startAt])
+  @@index([workspaceId, endAt])
+  @@index([taskId, startAt])
+  @@index([accountId, startAt])
+  @@index([projectId, startAt])
+  @@index([userId, startAt])
+  @@index([status])
+  @@index([approvalStatus, startAt])
+}
+
+// BRD v2 catalog: every task carries a controlled two-layer classification.
+// Keeping this workspace-scoped allows PM/HR to extend labels without changing code.
+model TaskTypeCatalog {
+  id          String          @id @default(cuid())
+  workspaceId String
+  layer1      String
+  layer2      String
+  code        String
+  name        String
+  active      Boolean         @default(true)
+  source      String          @default("system")
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  workspace   TenantWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, layer1, layer2])
+  @@unique([workspaceId, code])
+  @@index([workspaceId, active])
+}
+
+// EV-061: timeline changes are requests, never silent edits to an approved baseline.
+model TaskTimelineChangeRequest {
+  id                      String          @id @default(cuid())
+  workspaceId             String
+  projectId               String?
+  taskId                  String
+  requestedByUserId       String
+  proposedStartAt         DateTime?
+  proposedEndAt           DateTime?
+  proposedEstimateMinutes Int?
+  reason                  String
+  status                  String          @default("PENDING")
+  reviewedByUserId        String?
+  reviewedAt              DateTime?
+  reviewNote              String?
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+  workspace               TenantWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project                 Project?        @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  task                    ProjectTask     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  requestedBy             User            @relation("TimelineChangeRequestedBy", fields: [requestedByUserId], references: [id])
+  reviewedBy              User?           @relation("TimelineChangeReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  @@index([workspaceId, status, createdAt])
+  @@index([projectId, status])
+  @@index([taskId, createdAt])
+}
+
+// Immutable baseline/audit chain used by project history and P&L explanations.
+model TaskPlanHistory {
+  id               String          @id @default(cuid())
+  workspaceId      String
+  projectId        String?
+  taskId           String
+  version          Int
+  action           String
+  reason           String?
+  before           Json?
+  after            Json
+  changedByUserId  String
+  approvedByUserId String?
+  changedAt        DateTime        @default(now())
+  workspace        TenantWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project          Project?        @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  task             ProjectTask     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  changedBy        User            @relation("TaskPlanHistoryChangedBy", fields: [changedByUserId], references: [id])
+  approvedBy       User?           @relation("TaskPlanHistoryApprovedBy", fields: [approvedByUserId], references: [id])
+
+  @@unique([taskId, version])
+  @@index([workspaceId, changedAt])
+  @@index([projectId, changedAt])
+}
+
+// OT is kept separate from standard hours and only becomes financial after approval.
+model OvertimePlan {
+  id                String          @id @default(cuid())
+  workspaceId       String
+  projectId         String?
+  userId            String
+  workDate          DateTime        @db.Date
+  plannedMinutes    Int
+  reason            String
+  approvalStatus    String          @default("PENDING")
+  requestedByUserId String
+  approvedByUserId  String?
+  approvedAt        DateTime?
+  reviewNote        String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  workspace         TenantWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project           Project?        @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  user              User            @relation("OvertimeForUser", fields: [userId], references: [id])
+  requestedBy       User            @relation("OvertimeRequestedBy", fields: [requestedByUserId], references: [id])
+  approvedBy        User?           @relation("OvertimeApprovedBy", fields: [approvedByUserId], references: [id])
+  timeEntries       TaskTimeEntry[]
+
+  @@index([workspaceId, workDate, approvalStatus])
+  @@index([projectId, workDate])
+  @@index([requestedByUserId, workDate])
+}
+
+// Effective-dated P1-P4 components; changing a new month never mutates a locked month.
+model ResourceMonthlyCost {
+  id                    String          @id @default(cuid())
+  workspaceId           String
+  userId                String
+  periodStart           DateTime        @db.Date
+  periodEnd             DateTime        @db.Date
+  periodKey             String
+  currency              String          @default("VND")
+  p1BaseAmount          Decimal         @default(0)
+  p2AllowanceAmount     Decimal         @default(0)
+  p3PerformanceAmount   Decimal         @default(0)
+  p4OtherVariableAmount Decimal         @default(0)
+  overtimeAmount        Decimal         @default(0)
+  socialInsuranceAmount Decimal         @default(0)
+  pitAmount             Decimal         @default(0)
+  otherAmount           Decimal         @default(0)
+  totalMonthlyIncome    Decimal         @default(0)
+  hourlyCostRate        Decimal?
+  status                String          @default("DRAFT")
+  source                String          @default("manual")
+  lockedAt              DateTime?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  workspace             TenantWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user                  User            @relation(fields: [userId], references: [id])
+
+  @@unique([workspaceId, userId, periodKey])
+  @@index([workspaceId, periodStart, periodEnd])
+  @@index([userId, periodStart, periodEnd])
+  @@index([status])
+}
+
+// One period record is the authority for lock/reopen and reconciliation state.
+model PnlPeriod {
+  id                String                   @id @default(cuid())
+  workspaceId       String
+  projectId         String?
+  periodStart       DateTime                 @db.Date
+  periodEnd         DateTime                 @db.Date
+  periodKey         String
+  currency          String                   @default("VND")
+  revenueAmount     Decimal                  @default(0)
+  status            String                   @default("OPEN")
+  confirmedByUserId String?
+  confirmedAt       DateTime?
+  lockedByUserId    String?
+  lockedAt          DateTime?
+  reopenedByUserId  String?
+  reopenedAt        DateTime?
+  reopenReason      String?
+  formulaVersion    Int                      @default(1)
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+  workspace         TenantWorkspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project           Project?                 @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  confirmedBy       User?                    @relation("PnlPeriodConfirmedBy", fields: [confirmedByUserId], references: [id])
+  lockedBy          User?                    @relation("PnlPeriodLockedBy", fields: [lockedByUserId], references: [id])
+  reopenedBy        User?                    @relation("PnlPeriodReopenedBy", fields: [reopenedByUserId], references: [id])
+  allocations       PnlTimeEntryAllocation[]
+
+  @@unique([workspaceId, projectId, periodKey])
+  @@index([workspaceId, periodStart, periodEnd, status])
+  @@index([projectId, periodStart, periodEnd])
+}
+
+// Materialized classification of every worklog; this is what makes P&L auditable.
+model PnlTimeEntryAllocation {
+  id                 String          @id @default(cuid())
+  workspaceId        String
+  periodId           String
+  timeEntryId        String          @unique
+  status             String          @default("PENDING")
+  reason             String?
+  standardMinutes    Int             @default(0)
+  overtimeMinutes    Int             @default(0)
+  hourlyCostRate     Decimal?
+  laborCostAmount    Decimal?
+  classifiedAt       DateTime?
+  classifiedByUserId String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  workspace          TenantWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  period             PnlPeriod       @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  timeEntry          TaskTimeEntry   @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, status])
+  @@index([periodId, status])
+}
+
+model ReminderDeliveryLog {
+  id             String          @id @default(cuid())
+  workspaceId    String
+  localDate      DateTime        @db.Date
+  moment         String
+  userId         String
+  pmUserId       String?
+  missingType    String
+  conditionKey   String
+  channel        String          @default("lark")
+  deliveryStatus String          @default("PENDING")
+  attemptCount   Int             @default(0)
+  deepLink       String?
+  payload        Json?
+  errorMessage   String?
+  lastAttemptAt  DateTime?
+  sentAt         DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  workspace      TenantWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user           User            @relation(fields: [userId], references: [id])
+  pm             User?           @relation("ReminderPm", fields: [pmUserId], references: [id])
+
+  @@unique([workspaceId, localDate, moment, userId, missingType])
+  @@index([workspaceId, localDate, moment, deliveryStatus])
+  @@index([userId, localDate])
+}
+
+model WorkspaceReminderPolicy {
+  id              String          @id @default(cuid())
+  workspaceId     String          @unique
+  enabled         Boolean         @default(true)
+  timezone        String          @default("Asia/Ho_Chi_Minh")
+  slots           Json
+  weekdaysOnly    Boolean         @default(true)
+  updatedByUserId String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  workspace       TenantWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  updatedBy       User?           @relation("WorkspaceReminderPolicyUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, enabled])
+  @@index([updatedByUserId])
+}
+
+model CustomerAccessGrant {
+  id          String          @id @default(cuid())
+  workspaceId String          @default("twk-foundation")
+  userId      String
+  accountId   String?
+  projectId   String?
+  scope       ScopeType
+  startsAt    DateTime        @default(now())
+  endsAt      DateTime?
+  createdAt   DateTime        @default(now())
+  workspace   TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  user        User            @relation(fields: [userId], references: [id])
+  account     Account?        @relation(fields: [accountId], references: [id])
+  project     Project?        @relation(fields: [projectId], references: [id])
+
+  @@index([workspaceId])
+  @@index([userId, accountId])
+  @@index([userId, projectId])
+}
+
+model PortalInvitation {
+  id                 String                 @id @default(cuid())
+  workspaceId        String                 @default("twk-foundation")
+  tenantKey          String
+  invitedEmail       String
+  requestedEmail     String?
+  requestedOpenId    String?
+  requestedTenantKey String?
+  requestedName      String?
+  accountId          String?
+  projectId          String?
+  scope              ScopeType
+  roleCode           String
+  tokenHash          String                 @unique
+  status             PortalInvitationStatus @default(PENDING)
+  invitedByUserId    String
+  activatedUserId    String?
+  reviewReason       String?
+  expiresAt          DateTime
+  consumedAt         DateTime?
+  revokedAt          DateTime?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+  workspace          TenantWorkspace        @relation(fields: [workspaceId], references: [id])
+
+  @@index([workspaceId, status])
+  @@index([tenantKey, invitedEmail])
+  @@index([status, expiresAt])
+  @@index([accountId])
+  @@index([projectId])
+}
+
+model ProjectProgressShareLink {
+  id              String          @id @default(cuid())
+  workspaceId     String          @default("twk-foundation")
+  accountId       String
+  projectId       String
+  tokenHash       String          @unique
+  label           String?
+  viewerEmail     String?
+  viewerDomain    String?
+  createdByUserId String
+  revokedByUserId String?
+  expiresAt       DateTime
+  revokedAt       DateTime?
+  lastAccessedAt  DateTime?
+  accessCount     Int             @default(0)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  workspace       TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  account         Account         @relation(fields: [accountId], references: [id])
+  project         Project         @relation(fields: [projectId], references: [id])
+  createdBy       User            @relation("ProgressShareCreatedBy", fields: [createdByUserId], references: [id])
+  revokedBy       User?           @relation("ProgressShareRevokedBy", fields: [revokedByUserId], references: [id])
+
+  @@index([workspaceId])
+  @@index([accountId])
+  @@index([projectId, expiresAt])
+  @@index([createdByUserId])
+  @@index([revokedAt])
+}
+
+model FieldPolicy {
+  id           String           @id @default(cuid())
+  resource     Resource
+  fieldName    String
+  sensitivity  FieldSensitivity
+  allowedRoles String[]
+  projection   ProjectionMode   @default(OMIT)
+  createdAt    DateTime         @default(now())
+
+  @@unique([resource, fieldName])
+}
+
+model PolicyDecisionLog {
+  id          String           @id @default(cuid())
+  workspaceId String?
+  userId      String?
+  subjectType SubjectType
+  action      Action
+  resource    Resource
+  resourceId  String?
+  decision    DefaultDecision
+  reason      String
+  requestId   String
+  context     Json
+  createdAt   DateTime         @default(now())
+  workspace   TenantWorkspace? @relation(fields: [workspaceId], references: [id])
+  user        User?            @relation(fields: [userId], references: [id])
+
+  @@index([workspaceId, createdAt])
+  @@index([requestId])
+  @@index([resource, action, decision])
+  @@index([createdAt])
+}
+
+model IntegrationEventLog {
+  id              String                 @id @default(cuid())
+  workspaceId     String?
+  provider        String
+  eventType       String
+  externalEventId String
+  idempotencyKey  String                 @unique
+  status          IntegrationEventStatus @default(RECEIVED)
+  payload         Json
+  receivedAt      DateTime               @default(now())
+  processedAt     DateTime?
+  errorMessage    String?
+  workspace       TenantWorkspace?       @relation(fields: [workspaceId], references: [id])
+
+  @@unique([provider, externalEventId])
+  @@index([workspaceId, status])
+  @@index([eventType, status])
+}
+
+model AuditEvent {
+  id          String           @id @default(cuid())
+  workspaceId String?
+  actorUserId String?
+  action      String
+  resource    String
+  resourceId  String?
+  before      Json?
+  after       Json?
+  requestId   String
+  createdAt   DateTime         @default(now())
+  workspace   TenantWorkspace? @relation(fields: [workspaceId], references: [id])
+
+  @@index([workspaceId, createdAt])
+  @@index([resource, resourceId])
+  @@index([requestId])
+}
+
+// Workspace-scoped, effective-dated membership model for workforce analytics.
+// Legacy global fields (User.departmentCode, Team, TeamMember) stay read-compatible
+// during cutover; these tables are the analytics source of truth for coverage.
+
+model Department {
+  id             String                   @id @default(cuid())
+  workspaceId    String
+  code           String
+  name           String
+  active         Boolean                  @default(true)
+  source         String                   @default("manual")
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+  workspace      TenantWorkspace          @relation(fields: [workspaceId], references: [id])
+  memberProfiles WorkspaceMemberProfile[]
+
+  @@unique([workspaceId, code])
+  @@index([workspaceId, active])
+}
+
+model WorkspaceTeam {
+  id                    String                   @id @default(cuid())
+  workspaceId           String
+  code                  String
+  name                  String
+  active                Boolean                  @default(true)
+  source                String                   @default("manual")
+  sourceTeamId          String?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+  workspace             TenantWorkspace          @relation(fields: [workspaceId], references: [id])
+  members               WorkspaceTeamMember[]
+  primaryMemberProfiles WorkspaceMemberProfile[] @relation("WorkspaceMemberPrimaryTeam")
+
+  @@unique([workspaceId, code])
+  @@index([workspaceId, active])
+}
+
+model WorkspaceTeamMember {
+  id            String          @id @default(cuid())
+  workspaceId   String
+  teamId        String
+  userId        String
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  source        String          @default("manual")
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  workspace     TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  team          WorkspaceTeam   @relation(fields: [teamId], references: [id])
+  user          User            @relation(fields: [userId], references: [id])
+
+  @@unique([workspaceId, teamId, userId, effectiveFrom])
+  @@index([workspaceId, userId, effectiveFrom])
+  @@index([teamId, effectiveFrom])
+  @@index([userId])
+}
+
+model WorkspaceMemberProfile {
+  id                    String          @id @default(cuid())
+  workspaceId           String
+  userId                String
+  departmentId          String?
+  primaryTeamId         String?
+  weeklyCapacityMinutes Int?
+  billableTargetPercent Int?
+  effectiveFrom         DateTime
+  effectiveTo           DateTime?
+  source                String          @default("manual")
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  workspace             TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  user                  User            @relation(fields: [userId], references: [id])
+  department            Department?     @relation(fields: [departmentId], references: [id])
+  primaryTeam           WorkspaceTeam?  @relation("WorkspaceMemberPrimaryTeam", fields: [primaryTeamId], references: [id])
+
+  @@unique([workspaceId, userId, effectiveFrom])
+  @@index([workspaceId, userId])
+  @@index([workspaceId, departmentId])
+  @@index([workspaceId, primaryTeamId])
+  @@index([userId])
+}
+
+model AnalyticsSavedView {
+  id          String          @id @default(cuid())
+  workspaceId String
+  ownerUserId String
+  name        String          @db.VarChar(80)
+  searchState String          @db.VarChar(1500)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  workspace   TenantWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  owner       User            @relation("AnalyticsSavedViewOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, ownerUserId, name])
+  @@index([workspaceId, ownerUserId, updatedAt(sort: Desc)])
+}
+
+// Durable receipt survives project deletion so replay cannot recreate a deleted project.
+model ProjectCreateReceipt {
+  keyHash     String   @id
+  workspaceId String
+  actorUserId String
+  requestHash String
+  projectId   String
+  response    Json
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, actorUserId, createdAt])
+}

@@ -1,0 +1,12 @@
+export { AccountsFunctionPage } from "./accounts";
+export { BusinessFunctionWorkbench } from "./business-function-workbench";
+export { CrmDashboardPage, CrmWorkspace } from "./dashboard";
+export { DataFunctionPage } from "./data";
+export { FinanceFunctionPage, FinanceScheduleDetailPage } from "./finance-workbench";
+export { PipelineFunctionPage } from "./pipeline";
+export { PolicyFunctionPage } from "./policy";
+export { ResourceMgmtFunctionPage } from "./resource-mgmt";
+export { ProjectControlsFunctionPage } from "./project-controls";
+export { PortalFunctionPage } from "./portal";
+export { TasksFunctionPage } from "./tasks";
+export { TaskDetailFunctionPage } from "./task-detail-page";
