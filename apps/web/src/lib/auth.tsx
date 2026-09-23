@@ -54,7 +54,7 @@ function authUserFromPrincipal(principal: SessionPrincipal): AuthUser {
   };
 }
 
-const LOCAL_AUTO_AUTH_ENABLED = process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_LOCAL_AUTO_AUTH === "true";
+const LOCAL_AUTO_AUTH_ENABLED = (process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_LOCAL_AUTO_AUTH === "true") || process.env.NEXT_PUBLIC_STAGING_BYPASS_AUTH === "true";
 const LOCAL_FOUNDER_USER = authUserFromPrincipal({
   subjectId: "local-founder",
   displayName: "Founder Local",
@@ -69,7 +69,7 @@ async function fetchSessionUser() {
   });
 
   if (!response.ok) {
-    if (process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_LOCAL_AUTO_AUTH === "true") {
+    if ((process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_LOCAL_AUTO_AUTH === "true") || process.env.NEXT_PUBLIC_STAGING_BYPASS_AUTH === "true") {
       return authUserFromPrincipal({
         subjectId: "local-founder",
         displayName: "Founder Local",

@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getProductionRouteDecision, matchProductRoute } from "./src/lib/production-route-readiness";
+import { isStagingBypassAuthEnabled } from "./src/lib/crm-public-session-policy";
 
 export function middleware(request: NextRequest) {
   if (request.nextUrl.pathname === "/favicon.ico") {
@@ -15,7 +16,7 @@ export function middleware(request: NextRequest) {
     return withDocumentNoStore(NextResponse.next());
   }
 
-  const localAutoAuth = process.env.NODE_ENV !== "production" && process.env.CRM_LOCAL_AUTO_AUTH === "true";
+  const localAutoAuth = (process.env.NODE_ENV !== "production" && process.env.CRM_LOCAL_AUTO_AUTH === "true") || isStagingBypassAuthEnabled();
   if (!isAuthenticated && !localAutoAuth) {
     const target = request.nextUrl.clone();
     target.pathname = "/login";

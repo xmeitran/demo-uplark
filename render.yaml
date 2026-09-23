@@ -13,6 +13,10 @@ services:
         value: staging
       - key: CRM_BLOCK_PRODUCTION_WRITES
         value: "true"
+      - key: CRM_STAGING_BYPASS_AUTH
+        value: "true"
+      - key: NEXT_PUBLIC_STAGING_BYPASS_AUTH
+        value: "true"
       - key: CRM_API_INTERNAL_URL
         value: https://demo-uplark-api.onrender.com
       - key: NEXT_PUBLIC_API_URL
@@ -48,7 +52,7 @@ services:
     runtime: node
     plan: free
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm db:generate && pnpm --filter @b2b-crm/contracts build && pnpm --filter @b2b-crm/api build
-    preDeployCommand: pnpm db:migrate
+    preDeployCommand: pnpm db:migrate && pnpm db:seed:foundation
     startCommand: pnpm --filter @b2b-crm/api start
     healthCheckPath: /api/health
     envVars:
@@ -58,6 +62,12 @@ services:
         value: staging
       - key: CRM_BLOCK_PRODUCTION_WRITES
         value: "true"
+      - key: CRM_STAGING_BYPASS_AUTH
+        value: "true"
+      - key: CRM_ALLOW_PRINCIPAL_FALLBACK
+        value: "true"
+      - key: CRM_PUBLIC_SESSION_REQUIRED
+        value: "0"
       - key: CRM_API_CORS_ORIGINS
         value: https://demo-uplark.onrender.com
       - key: CRM_AUTH_PUBLIC_ORIGIN
@@ -99,6 +109,12 @@ services:
         value: default
       - key: FOUNDATION_PRODUCTION_STRICT
         value: "true"
+      - key: FOUNDATION_ADMIN_EMAIL
+        sync: false
+      - key: FOUNDATION_ADMIN_NAME
+        value: Sandbox Founder
+      - key: FOUNDATION_ADMIN_USER_ID
+        value: usr-kha-founder
 
   # Refreshes the isolated staging DB every night at 02:00 Vietnam time.
   - type: cron

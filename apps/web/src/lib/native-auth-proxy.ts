@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { buildCrmApiEndpoint, CRM_SESSION_COOKIE_NAME } from "./crm-bff-proxy";
 import { clearCrmSessionCookies, setCrmSessionCookie } from "./session-cookie";
 import { isSameOriginAuthRequest, redactAuthCredentials } from "./auth-bff-security";
+import { isStagingBypassAuthEnabled } from "./crm-public-session-policy";
 
 export const MFA_COOKIE = "lcrm_mfa_challenge";
 export function setMfaChallengeCookie(response: NextResponse, token: string) {
@@ -21,7 +22,7 @@ export async function proxyNativeAuth(request: Request, path: string) {
   }
   try {
     const endpoint = new URL(buildCrmApiEndpoint(`/auth/${path}`));
-    if (!session && request.method === "GET" && process.env.NODE_ENV !== "production" && process.env.CRM_LOCAL_AUTO_AUTH === "true" && ["account", "sessions", "workspaces"].includes(path)) {
+    if (!session && request.method === "GET" && ((process.env.NODE_ENV !== "production" && process.env.CRM_LOCAL_AUTO_AUTH === "true") || isStagingBypassAuthEnabled()) && ["account", "sessions", "workspaces"].includes(path)) {
       endpoint.searchParams.set("principal", "founder");
     }
     const upstream = await fetch(endpoint, {

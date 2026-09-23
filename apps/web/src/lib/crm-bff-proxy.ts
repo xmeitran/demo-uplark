@@ -1,5 +1,5 @@
 import { isSameOriginAuthRequest } from "./auth-bff-security";
-import { shouldFailClosedOnProtectedFallback } from "./crm-public-session-policy";
+import { isStagingBypassAuthEnabled, shouldFailClosedOnProtectedFallback } from "./crm-public-session-policy";
 
 export const CRM_SESSION_COOKIE_NAME = "lcrm_session";
 export const DEFAULT_CRM_API_BASE_URL = "http://localhost:4000";
@@ -9,7 +9,7 @@ export const DEFAULT_CRM_API_BASE_URL = "http://localhost:4000";
 const LOCAL_DEV_SESSION_TOKEN = "local-founder-dev-session";
 
 function localAutoAuthEnabled() {
-  return process.env.NODE_ENV !== "production" && process.env.CRM_LOCAL_AUTO_AUTH === "true";
+  return (process.env.NODE_ENV !== "production" && process.env.CRM_LOCAL_AUTO_AUTH === "true") || isStagingBypassAuthEnabled();
 }
 
 export type CrmBffMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";

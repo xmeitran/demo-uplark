@@ -3,11 +3,12 @@ import { NextResponse } from "next/server";
 import type { PrincipalContext } from "@b2b-crm/contracts";
 import { buildCrmApiEndpoint, CRM_SESSION_COOKIE_NAME } from "../../../../src/lib/crm-bff-proxy";
 import { clearCrmSessionCookies } from "../../../../src/lib/session-cookie";
+import { isStagingBypassAuthEnabled } from "../../../../src/lib/crm-public-session-policy";
 
 export const dynamic = "force-dynamic";
 
 function localAutoAuthEnabled() {
-  return process.env.NODE_ENV !== "production" && process.env.CRM_LOCAL_AUTO_AUTH === "true";
+  return (process.env.NODE_ENV !== "production" && process.env.CRM_LOCAL_AUTO_AUTH === "true") || isStagingBypassAuthEnabled();
 }
 
 export async function GET() {

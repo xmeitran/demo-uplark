@@ -28,7 +28,9 @@ export function canUsePrincipalFallback({
   crmPublicSessionRequired?: string;
   nodeEnv?: string;
 } = {}) {
-  if (nodeEnv === "production") {
+  const stagingBypass = process.env.CRM_ENV === "staging" && process.env.CRM_STAGING_BYPASS_AUTH === "true";
+
+  if (nodeEnv === "production" && !stagingBypass) {
     return false;
   }
 
