@@ -96,6 +96,10 @@ export function getProductionRouteDecision(
 ): "allow" | "unavailable" | "unclassified" {
   const route = matchProductRoute(pathname);
   if (!route) return "unclassified";
+  // Render's demo deployment is an isolated staging runtime. Expose the
+  // completed beta surfaces there for review without promoting them to a
+  // real production deployment yet.
+  if (route.classification === "beta" && process.env.CRM_ENV === "staging") return "allow";
   if (route.classification !== "visible" && route.classification !== "detail") return "unavailable";
   if (!isProductionFlagEnabled(route, environment)) return "unavailable";
   return "allow";
@@ -123,5 +127,7 @@ export function isProductionDisabledRoute(href: string) {
 
 export function isLocalNavigationVisibleRoute(href: string) {
   const route = matchProductRoute(href);
-  return route?.classification === "visible" || (process.env.NODE_ENV !== "production" && route?.classification === "beta");
+  const stagingBetaEnabled = process.env.NODE_ENV !== "production"
+    || process.env.NEXT_PUBLIC_STAGING_BYPASS_AUTH === "true";
+  return route?.classification === "visible" || (stagingBetaEnabled && route?.classification === "beta");
 }

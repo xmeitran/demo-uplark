@@ -91,9 +91,15 @@ const visibleNavItems = NAV_ITEMS.filter((item) => isLocalNavigationVisibleRoute
 const visibleMoreItems = NAV_MORE.filter((item) => isLocalNavigationVisibleRoute(item.href));
 const visibleBottomItems = NAV_BOTTOM.filter((item) => item.isToggle || isLocalNavigationVisibleRoute(item.href));
 const PROJECT_SUB = [
+  { label: "Overview", tab: "Overview" },
+  { label: "Project Sheet", tab: "Project Sheet" },
+  { label: "Issues", tab: "Issues" },
   { label: "Dashboard", tab: "Dashboard" },
-  { label: "Stages", tab: "Timeline" },
-  { label: "Tasks", tab: "Tasks" }
+  { label: "Tasks", tab: "Tasks" },
+  { label: "Timeline", tab: "Timeline" },
+  { label: "Team", tab: "Team" },
+  { label: "Activity", tab: "Activity" },
+  { label: "Documents", tab: "Documents" }
 ] as const;
 
 type ProjectSubTab = typeof PROJECT_SUB[number]["tab"];
@@ -505,6 +511,12 @@ export function Sidebar({ activeRoute = "/", onCreateProjectClick, variant = "de
                       Pinned projects unavailable
                     </div>
                   )}
+                  <Link
+                    href="/projects"
+                    className="mt-1 flex min-h-9 items-center justify-center rounded-lg px-3 py-1.5 text-[11px] font-medium text-primary hover:bg-primary/5"
+                  >
+                    Xem tất cả dự án
+                  </Link>
                 </div>
 
                 {/* Add new project */}

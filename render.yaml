@@ -17,6 +17,8 @@ services:
         value: "true"
       - key: NEXT_PUBLIC_STAGING_BYPASS_AUTH
         value: "true"
+      - key: WORKFORCE_ANALYTICS_GA_ENABLED
+        value: "true"
       - key: CRM_API_INTERNAL_URL
         value: https://demo-uplark-api.onrender.com
       - key: NEXT_PUBLIC_API_URL

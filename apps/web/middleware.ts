@@ -58,6 +58,7 @@ export const config = {
     // App routes
     "/calendar", "/calendar/:path*",
     "/projects", "/projects/:path*",
+    "/admin", "/admin/:path*",
     "/users",    "/users/:path*",
     "/tasks",    "/tasks/:path*",
     "/notes",    "/notes/:path*",
@@ -74,6 +75,8 @@ export const config = {
     // Legacy/existing routes
     "/accounts/:path*",
     "/analytics", "/analytics/:path*",
+    "/timesheet", "/timesheet/:path*",
+    "/pnl", "/pnl/:path*",
     "/data/:path*",
     "/delivery/:path*",
     "/finance/:path*",
@@ -95,7 +98,7 @@ function isMatchedBusinessPrefix(pathname: string) {
     "/accounts", "/activity", "/analytics", "/calendar", "/chats", "/clients", "/constructor-x", "/data",
     "/delivery", "/files", "/finance", "/invoices", "/knowledge", "/mail", "/management",
     "/messenger", "/notes", "/pipeline", "/policy", "/portal", "/project-controls", "/projects",
-    "/proposals", "/resource-mgmt", "/settings", "/support", "/tasks", "/users"
+    "/proposals", "/resource-mgmt", "/settings", "/support", "/tasks", "/timesheet", "/pnl", "/admin", "/users"
   ].some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
