@@ -349,7 +349,7 @@ export function WorkspaceAdminDashboard() {
 }
 
 function AdminSectionButton({ active, icon, label, badge, onClick }: { active: boolean; icon: ReactNode; label: string; badge?: number; onClick: () => void }) {
-  return <button type="button" aria-current={active ? "page" : undefined} onClick={onClick} className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg px-3.5 text-sm font-semibold transition ${active ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>{icon}{label}{typeof badge === "number" ? <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${active ? "bg-white/15 text-white" : "bg-amber-100 text-amber-800"}`}>{badge}</span> : null}</button>;
+  return <button type="button" aria-current={active ? "page" : undefined} onClick={onClick} className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg px-3.5 text-sm font-semibold transition-colors ${active ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>{icon}{label}{typeof badge === "number" ? <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${active ? "bg-primary/15 text-primary" : "bg-amber-100 text-amber-800"}`}>{badge}</span> : null}</button>;
 }
 
 function OverviewPanel({ overview, loading, onRefresh, onOpen }: { overview: AdminOverviewResponse["data"] | null; loading: boolean; onRefresh: () => void; onOpen: (section: AdminSection) => void }) {
