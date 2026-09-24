@@ -4,9 +4,54 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ArrowLeft, CalendarDays, Check, CircleDollarSign, Clock3, History, Save, UserRound } from "lucide-react";
+import type { AdminAccessMemberSummary } from "@b2b-crm/contracts";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { useAuth } from "@/lib/auth";
 import { PEOPLE_PROFILES, type PeopleProfile, formatHours, formatVnd, statusClass } from "@/features/people/people-data";
+
+type LiveTimeEntry = { userId?: string; minutes?: number };
+
+function initialsForName(name: string) {
+  return name.trim().split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]?.toUpperCase()).join("") || "U";
+}
+
+function colorForId(id: string) {
+  const palette = ["#2563eb", "#7c3aed", "#059669", "#db2777", "#d97706", "#0891b2"];
+  return palette[Math.abs(Array.from(id).reduce((sum, char) => sum + char.charCodeAt(0), 0)) % palette.length];
+}
+
+function roleLabel(member: AdminAccessMemberSummary) {
+  if (member.resourceDisplayRole) return member.resourceDisplayRole;
+  if (member.roleCodes.includes("FOUNDER_GM")) return "Founder / GM";
+  if (member.roleCodes.includes("WORKSPACE_ADMIN")) return "Workspace Admin";
+  if (member.roleCodes.includes("WORKSPACE_USER")) return "Workspace User";
+  return member.roleCodes[0]?.replaceAll("_", " ") || "Workspace User";
+}
+
+function mapLiveProfile(member: AdminAccessMemberSummary, minutesByUser: Map<string, number>): PeopleProfile {
+  const name = member.displayName || member.email || member.id;
+  return {
+    id: member.id,
+    name,
+    initials: initialsForName(name),
+    color: colorForId(member.id),
+    role: roleLabel(member),
+    department: member.departmentCode || "Chưa phân loại",
+    level: "L3",
+    employmentType: "Full-time",
+    manager: "—",
+    status: member.status === "active" ? "Active" : "Inactive",
+    userId: member.larkOpenId || member.id,
+    rateCategory: member.hasResourceProfile ? "Resource profile" : "Chưa cấu hình",
+    hourlyCostRate: 0,
+    effectiveFrom: "Chưa cấu hình",
+    overtimeHours: 0,
+    planHours: 0,
+    actualHours: (minutesByUser.get(member.id) ?? 0) / 60,
+    pnlHours: 0,
+    rateHistory: []
+  };
+}
 
 function Avatar({ person }: { person: PeopleProfile }) {
   return <span style={{ backgroundColor: person.color }} className="inline-flex h-16 w-16 items-center justify-center rounded-2xl text-lg font-bold text-white">{person.initials}</span>;
@@ -22,14 +67,54 @@ export default function PeopleProfilePage() {
   const { user } = useAuth();
   const canViewFinancials = Boolean(user?.roleCodes?.some((role) => ["FOUNDER_GM", "WORKSPACE_ADMIN", "FINANCE_ADMIN", "DX_DIRECTOR", "PM", "BD_LEAD"].includes(role)));
   const params = useParams<{ personId: string }>();
-  const source = PEOPLE_PROFILES.find((person) => person.id === params.personId);
+  const personId = Array.isArray(params.personId) ? params.personId[0] : params.personId;
+  const source = PEOPLE_PROFILES.find((person) => person.id === personId);
   const [profile, setProfile] = useState<PeopleProfile | null>(source ?? null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => { setProfile(source ?? null); setSaved(false); }, [source]);
+  useEffect(() => {
+    let active = true;
+    const now = new Date();
+    const startAt = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    const endAt = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
+    setProfile(source ?? null);
+    setSaved(false);
+    setLoading(true);
+    setLoadError(null);
+
+    Promise.all([
+      fetch("/api/admin/users?includeSuspended=true", { credentials: "same-origin", cache: "no-store" }).then(async (response) => {
+        if (!response.ok) throw new Error("Không thể tải dữ liệu nhân sự.");
+        return response.json() as Promise<{ data?: AdminAccessMemberSummary[] }>;
+      }),
+      fetch(`/api/tasks/time-entries?limit=500&startAt=${encodeURIComponent(startAt)}&endAt=${encodeURIComponent(endAt)}`, { credentials: "same-origin", cache: "no-store" }).then(async (response) => response.ok ? response.json() as Promise<{ data?: LiveTimeEntry[] }> : { data: [] })
+    ])
+      .then(([membersPayload, entriesPayload]) => {
+        if (!active) return;
+        const member = (membersPayload.data ?? []).find((item) => item.id === personId || item.larkOpenId === personId);
+        if (!member) throw new Error("Không tìm thấy user trong workspace.");
+        const minutesByUser = new Map<string, number>();
+        for (const entry of entriesPayload.data ?? []) if (entry.userId) minutesByUser.set(entry.userId, (minutesByUser.get(entry.userId) ?? 0) + (entry.minutes ?? 0));
+        setProfile(mapLiveProfile(member, minutesByUser));
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setLoadError(error instanceof Error ? error.message : "Không thể tải hồ sơ nhân sự.");
+        if (!source) setProfile(null);
+      })
+      .finally(() => { if (active) setLoading(false); });
+
+    return () => { active = false; };
+  }, [personId, source]);
+
+  if (loading && !profile) {
+    return <AppShell activeRoute="/people" title="Hồ sơ nhân sự"><main className="flex min-h-0 flex-1 items-center justify-center bg-[#f7f9fd] p-6"><div className="rounded-2xl border border-border bg-card px-8 py-7 text-center shadow-sm"><div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-blue-100 border-t-blue-600" /><p className="mt-3 text-sm text-muted-foreground">Đang tải hồ sơ nhân sự…</p></div></main></AppShell>;
+  }
 
   if (!profile) {
-    return <AppShell activeRoute="/people" title="Hồ sơ nhân sự"><main className="flex min-h-0 flex-1 items-center justify-center bg-[#f7f9fd] p-6"><div className="rounded-2xl border border-border bg-card p-8 text-center shadow-sm"><h1 className="text-xl font-semibold">Không tìm thấy hồ sơ nhân sự</h1><Link href="/people" className="mt-4 inline-flex text-sm font-semibold text-blue-600 hover:underline">Quay lại danh sách nhân sự</Link></div></main></AppShell>;
+    return <AppShell activeRoute="/people" title="Hồ sơ nhân sự"><main className="flex min-h-0 flex-1 items-center justify-center bg-[#f7f9fd] p-6"><div className="rounded-2xl border border-border bg-card p-8 text-center shadow-sm"><h1 className="text-xl font-semibold">Không tìm thấy hồ sơ nhân sự</h1><p className="mt-2 text-sm text-muted-foreground">{loadError ?? "User này không còn thuộc workspace hiện tại."}</p><Link href="/people" className="mt-4 inline-flex text-sm font-semibold text-blue-600 hover:underline">Quay lại danh sách nhân sự</Link></div></main></AppShell>;
   }
 
   const update = <K extends keyof PeopleProfile>(key: K, value: PeopleProfile[K]) => setProfile((current) => current ? { ...current, [key]: value } : current);
@@ -39,6 +124,7 @@ export default function PeopleProfilePage() {
     <AppShell activeRoute="/people" title="Hồ sơ nhân sự">
       <main data-testid="people-profile-detail" className="min-h-0 flex-1 overflow-y-auto bg-[#f7f9fd] p-4 sm:p-6">
         <div className="mx-auto max-w-[1280px] space-y-5">
+          {loadError && <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Đang hiển thị dữ liệu hồ sơ đã lưu cục bộ. {loadError}</div>}
           <div className="rounded-2xl border border-sky-100 bg-gradient-to-r from-sky-50 via-blue-50 to-violet-50 px-4 py-3 text-xs text-slate-600"><strong className="font-semibold text-slate-700">Hồ sơ nhân sự / Chi tiết thông tin</strong> · Thông tin nhân sự, Rate Category, Cost Rate, OT và ngày hiệu lực</div>
           <Link href="/people" className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition-colors hover:text-blue-600"><ArrowLeft className="h-4 w-4" /> Quay lại danh sách nhân sự</Link>
 
@@ -55,7 +141,7 @@ export default function PeopleProfilePage() {
 
             <aside className="space-y-5 lg:sticky lg:top-4 lg:h-fit"><section className="rounded-2xl border border-border bg-card p-5 shadow-sm"><h2 className="font-semibold text-slate-900">Tóm tắt kỳ hiện tại</h2><div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-muted-foreground">Plan</p><p className="mt-1 text-lg font-semibold">{formatHours(profile.planHours)}</p></div><div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-muted-foreground">Actual</p><p className="mt-1 text-lg font-semibold">{formatHours(profile.actualHours)}</p></div>{canViewFinancials && <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-muted-foreground">P&amp;L Hour</p><p className="mt-1 text-lg font-semibold">{formatHours(profile.pnlHours)}</p></div>}<div className="rounded-xl bg-amber-50 p-3"><p className="text-xs text-amber-700">OT</p><p className="mt-1 text-lg font-semibold text-amber-900">{formatHours(profile.overtimeHours)}</p></div></div>{canViewFinancials && <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50/70 p-3"><div className="flex items-center gap-2 text-blue-700"><CircleDollarSign className="h-4 w-4" /><p className="text-xs font-semibold">Cost Rate hiện tại</p></div><p className="mt-1 text-xl font-semibold text-slate-900">{formatVnd(profile.hourlyCostRate)} <span className="text-sm font-normal text-slate-500">/ giờ</span></p><p className="mt-1 text-xs text-muted-foreground">Hiệu lực từ {profile.effectiveFrom}</p></div>}</section>{canViewFinancials && <section className="rounded-2xl border border-border bg-card p-5 shadow-sm"><div className="flex items-center gap-2"><History className="h-4 w-4 text-blue-600" /><h2 className="font-semibold text-slate-900">Lịch sử Cost Rate</h2></div><div className="mt-5 space-y-0">{profile.rateHistory.map((item, index) => <div key={`${item.effectiveFrom}-${item.hourlyCostRate}`} className="relative flex gap-3 pb-5 last:pb-0"><span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${item.active ? "bg-emerald-500 ring-4 ring-emerald-50" : "bg-slate-300"}`} />{index < profile.rateHistory.length - 1 && <span className="absolute left-[4px] top-5 h-[calc(100%-16px)] w-px bg-slate-200" />}<div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><p className="font-semibold text-slate-800">{formatVnd(item.hourlyCostRate)} / giờ</p>{item.active && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700"><Check className="h-3 w-3" /> Đang áp dụng</span>}</div><p className="mt-0.5 text-xs text-muted-foreground">Hiệu lực từ {item.effectiveFrom}</p></div></div>)}</div></section>}</aside>
           </div>
-          <p className="text-center text-xs text-muted-foreground">Bản dựng local theo wireframe. Nút lưu giữ thay đổi trong phiên hiện tại; kết nối API nguồn nhân sự sẽ được triển khai ở bước tích hợp dữ liệu.</p>
+          <p className="text-center text-xs text-muted-foreground">Định danh, quyền workspace và Actual Hour được tải từ dữ liệu workspace hiện tại. Các trường chỉnh sửa hồ sơ đang được giữ trong phiên làm việc này.</p>
         </div>
       </main>
     </AppShell>

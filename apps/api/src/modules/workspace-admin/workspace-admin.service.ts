@@ -107,6 +107,97 @@ async function postReminderWebhook(payload: Record<string, unknown>) {
   }
 }
 
+function directMessageConfig() {
+  const appId = process.env.LARK_APP_ID?.trim();
+  const appSecret = process.env.LARK_APP_SECRET?.trim();
+  if (!appId || !appSecret) return null;
+  const baseUrl = (process.env.LARK_OPEN_API_BASE_URL?.trim() || "https://open.larksuite.com").replace(/\/$/, "");
+  return { appId, appSecret, baseUrl };
+}
+
+async function fetchTenantAccessToken(config: NonNullable<ReturnType<typeof directMessageConfig>>) {
+  const response = await fetch(`${config.baseUrl}/open-apis/auth/v3/tenant_access_token/internal`, {
+    method: "POST",
+    headers: { "content-type": "application/json; charset=utf-8" },
+    body: JSON.stringify({ app_id: config.appId, app_secret: config.appSecret })
+  });
+  const body = await response.json().catch(() => ({})) as { code?: number; msg?: string; tenant_access_token?: string };
+  if (!response.ok || body.code !== 0 || !body.tenant_access_token) {
+    throw new BadRequestException(`Không lấy được Lark tenant access token: ${body.msg ?? `HTTP ${response.status}`}`);
+  }
+  return body.tenant_access_token;
+}
+
+async function postReminderDirectMessage(
+  config: NonNullable<ReturnType<typeof directMessageConfig>>,
+  tenantAccessToken: string,
+  receiveId: string,
+  receiveIdType: "email" | "open_id",
+  payload: Record<string, unknown>
+) {
+  const response = await fetch(`${config.baseUrl}/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${tenantAccessToken}`,
+      "content-type": "application/json; charset=utf-8"
+    },
+    body: JSON.stringify({
+      receive_id: receiveId,
+      msg_type: "interactive",
+      content: JSON.stringify((payload as { card?: unknown }).card ?? payload)
+    })
+  });
+  const body = await response.json().catch(() => ({})) as { code?: number; msg?: string };
+  if (!response.ok || (body.code !== undefined && body.code !== 0)) {
+    throw new BadRequestException(`Lark không gửi được tin nhắn tới người nhận đã chọn: ${body.msg ?? `HTTP ${response.status}`}`);
+  }
+}
+
+async function resolveLarkOpenIdByEmail(
+  config: NonNullable<ReturnType<typeof directMessageConfig>>,
+  tenantAccessToken: string,
+  email: string
+) : Promise<string | null> {
+  const response = await fetch(`${config.baseUrl}/open-apis/contact/v3/users/batch_get_id?user_id_type=open_id`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${tenantAccessToken}`,
+      "content-type": "application/json; charset=utf-8"
+    },
+    body: JSON.stringify({ emails: [email] })
+  });
+  // Lark's `batch_get_id` response calls the identifier `user_id` even when
+  // `user_id_type=open_id` is requested. Treat both shapes as valid so a
+  // directory lookup can remap legacy identities to the current custom app.
+  const body = await response.json().catch(() => ({})) as { code?: number; msg?: string; data?: { user_list?: Array<{ email?: string; open_id?: string; user_id?: string }> } };
+  const match = body.data?.user_list?.find((user) => user.email === email) ?? body.data?.user_list?.[0];
+  const openId = match?.open_id ?? match?.user_id;
+  if (!response.ok || body.code !== 0) {
+    throw new BadRequestException(`Không tra được Lark open_id từ email người nhận: ${body.msg ?? `HTTP ${response.status}`}`);
+  }
+  return openId ?? null;
+}
+
+async function resolveLarkOpenIdByUserId(
+  config: NonNullable<ReturnType<typeof directMessageConfig>>,
+  tenantAccessToken: string,
+  userId: string
+) : Promise<string | null> {
+  const response = await fetch(`${config.baseUrl}/open-apis/contact/v3/users/${encodeURIComponent(userId)}?user_id_type=user_id`, {
+    headers: { authorization: `Bearer ${tenantAccessToken}` }
+  });
+  const body = await response.json().catch(() => ({})) as {
+    code?: number;
+    msg?: string;
+    data?: { user?: { open_id?: string; user_id?: string } };
+  };
+  if (body.code === 99992351 || body.code === 99992361) return null;
+  if (!response.ok || body.code !== 0) {
+    throw new BadRequestException(`Không tra được Lark open_id từ user_id người nhận: ${body.msg ?? `HTTP ${response.status}`}`);
+  }
+  return body.data?.user?.open_id ?? null;
+}
+
 const REMINDER_SLOT_TITLES: Record<WorkspaceReminderSlotCode, string> = {
   morning_plan: "Nhắc nhở hoàn tất kế hoạch Task trước 09:00",
   pm_follow_up: "Danh sách nhân sự chưa hoàn tất kế hoạch Task",
@@ -205,7 +296,14 @@ export class WorkspaceAdminService {
         where: { status: "ACTIVE", subjectType: "INTERNAL_USER" },
         select: {
           id: true,
+          email: true,
           displayName: true,
+          avatarUrl: true,
+          departmentCode: true,
+          roleBindings: {
+            where: { endsAt: null },
+            select: { role: { select: { code: true } } }
+          },
           workspaceTeamMemberships: { where: { workspaceId: principal.workspaceId, effectiveTo: null }, select: { teamId: true } }
         },
         orderBy: [{ displayName: "asc" }, { id: "asc" }]
@@ -213,7 +311,15 @@ export class WorkspaceAdminService {
     ]);
     return {
       data: {
-        users: users.map((user) => ({ id: user.id, displayName: user.displayName, teamIds: user.workspaceTeamMemberships.map((membership) => membership.teamId) })),
+        users: users.map((user) => ({
+          id: user.id,
+          displayName: user.displayName,
+          email: user.email,
+          avatarUrl: user.avatarUrl ?? undefined,
+          departmentCode: user.departmentCode ?? undefined,
+          roleCodes: user.roleBindings.map((binding) => binding.role.code),
+          teamIds: user.workspaceTeamMemberships.map((membership) => membership.teamId)
+        })),
         teams: teams.map((team) => ({ id: team.id, name: team.name, memberCount: team._count.members }))
       }
     };
@@ -253,7 +359,8 @@ export class WorkspaceAdminService {
       select: {
         id: true,
         displayName: true,
-        identities: { where: { provider: "lark", tenantKey: workspace.tenantKey }, select: { providerUserId: true }, take: 1 }
+        email: true,
+        identities: { where: { provider: { in: ["lark", "lark_user_id"] }, tenantKey: workspace.tenantKey }, select: { id: true, provider: true, providerUserId: true }, take: 10 }
       },
       orderBy: [{ displayName: "asc" }, { id: "asc" }]
     });
@@ -295,9 +402,14 @@ export class WorkspaceAdminService {
       const missingActualTasks = plannedTasks.filter((task) => !actualTaskIds.has(task.id));
       return { user, operationalTasks, userPlan, actualMinutes, planIssues, missingActualTasks };
     });
-    const lines = userFacts.flatMap(({ user, operationalTasks, userPlan, actualMinutes, planIssues, missingActualTasks }) => {
+    const directDeliveryRequested = Boolean(input.userId || input.teamId);
+    const renderUserLines = ({ user, operationalTasks, userPlan, actualMinutes, planIssues, missingActualTasks }: typeof userFacts[number]) => {
       const projects = [...new Set(operationalTasks.map((task) => task.project?.name).filter((name): name is string => Boolean(name)))].join(", ") || "các Project đang active";
-      const mention = at(user.identities[0]?.providerUserId);
+      // Legacy open_ids are scoped to the previous Lark app. Do not embed them
+      // in a card sent by the custom app; an unresolved recipient falls back to
+      // email delivery below and the card should remain valid without a stale
+      // cross-app mention.
+      const mention = directDeliveryRequested ? "" : at(user.identities[0]?.providerUserId);
       if (input.slot === "pm_follow_up") {
         const taskNames = planIssues.length ? planIssues.slice(0, 3).map(({ task }) => task.title).join(", ") : "Chưa có Task";
         const missingFields = planIssues.length ? [...new Set(planIssues.flatMap(({ missingFields }) => missingFields))].join(", ") : "Chưa lập kế hoạch Task";
@@ -331,34 +443,80 @@ export class WorkspaceAdminService {
         ...(userPlan.length ? (planIssues.length ? planIssues.slice(0, 5).map(({ task, missingFields }) => `• **${task.title}**${task.project?.name ? ` · ${task.project.name}` : ""} — còn thiếu: ${missingFields.join(", ")}.`) : ["• Kế hoạch đã đủ trường bắt buộc."]) : ["• Bạn chưa lập Task cho ngày hôm nay."]),
         "Vui lòng hoàn tất kế hoạch Task trước 09:00 hôm nay để bảo đảm dữ liệu kế hoạch được ghi nhận đầy đủ."
       ];
-    });
+    };
     const origin = appPublicOrigin();
     const manualButton = input.slot === "morning_plan"
       ? { text: "Cập nhật kế hoạch Task", url: origin + "/calendar?date=" + encodeURIComponent(localDate) }
       : input.slot === "pm_follow_up"
         ? { text: "Xem Timesheet", url: origin + "/timesheet?view=daily&date=" + encodeURIComponent(localDate) }
         : { text: "Mở Timesheet hôm nay", url: origin + "/timesheet?view=daily&date=" + encodeURIComponent(localDate) };
-    const pmActions = input.slot === "pm_follow_up"
-      ? userFacts.flatMap(({ user }) => [{ tag: "action", actions: [
-        { tag: "button", type: "primary", text: { tag: "plain_text", content: "Gửi nhắc" }, url: origin + "/admin?tab=reminders&scope=user&userId=" + encodeURIComponent(user.id) + "&date=" + encodeURIComponent(localDate) },
-        { tag: "button", type: "default", text: { tag: "plain_text", content: "Xem Timesheet" }, url: origin + "/timesheet?view=daily&date=" + encodeURIComponent(localDate) + "&userId=" + encodeURIComponent(user.id) }
-      ] }])
-      : [];
-    const payload = {
-      msg_type: "interactive",
-      card: {
-        config: { wide_screen_mode: true },
-        header: { template: input.slot === "evening_actual" ? "red" : input.slot === "pm_follow_up" ? "orange" : "blue", title: { tag: "plain_text", content: REMINDER_SLOT_TITLES[input.slot] } },
-        elements: [
-          { tag: "div", text: { tag: "lark_md", content: [`**Ngày:** ${localDate}`, `**Người nhận:** ${users.length}`, "", ...lines].join("\n") } },
-          ...pmActions,
-          { tag: "hr" },
-          { tag: "note", elements: [{ tag: "plain_text", content: "Thông báo được gửi thủ công từ Admin workspace; ngày off/ngày lễ và dữ liệu đã hoàn tất vẫn được loại trừ theo nghiệp vụ." }] },
-          ...(input.slot === "pm_follow_up" ? [] : [{ tag: "action", actions: [{ tag: "button", type: "primary", text: { tag: "plain_text", content: manualButton.text }, url: manualButton.url }] }])
-        ]
-      }
+    const buildPayload = (facts: typeof userFacts) => {
+      const lines = facts.flatMap(renderUserLines);
+      const pmActions = input.slot === "pm_follow_up"
+        ? facts.flatMap(({ user }) => [{ tag: "action", actions: [
+          { tag: "button", type: "primary", text: { tag: "plain_text", content: "Gửi nhắc" }, url: origin + "/admin?tab=reminders&scope=user&userId=" + encodeURIComponent(user.id) + "&date=" + encodeURIComponent(localDate) },
+          { tag: "button", type: "default", text: { tag: "plain_text", content: "Xem Timesheet" }, url: origin + "/timesheet?view=daily&date=" + encodeURIComponent(localDate) + "&userId=" + encodeURIComponent(user.id) }
+        ] }])
+        : [];
+      return {
+        msg_type: "interactive",
+        card: {
+          config: { wide_screen_mode: true },
+          header: { template: input.slot === "evening_actual" ? "red" : input.slot === "pm_follow_up" ? "orange" : "blue", title: { tag: "plain_text", content: REMINDER_SLOT_TITLES[input.slot] } },
+          elements: [
+            { tag: "div", text: { tag: "lark_md", content: [`**Ngày:** ${localDate}`, `**Người nhận:** ${facts.length}`, "", ...lines].join("\n") } },
+            ...pmActions,
+            { tag: "hr" },
+            { tag: "note", elements: [{ tag: "plain_text", content: "Thông báo được gửi thủ công từ Admin workspace; ngày off/ngày lễ và dữ liệu đã hoàn tất vẫn được loại trừ theo nghiệp vụ." }] },
+            ...(input.slot === "pm_follow_up" ? [] : [{ tag: "action", actions: [{ tag: "button", type: "primary", text: { tag: "plain_text", content: manualButton.text }, url: manualButton.url }] }])
+          ]
+        }
+      };
     };
-    await postReminderWebhook(payload);
+    const payload = buildPayload(userFacts);
+    if (directDeliveryRequested) {
+      const config = directMessageConfig();
+      if (!config) throw new BadRequestException("Chưa cấu hình LARK_APP_ID/LARK_APP_SECRET để gửi tin nhắn riêng. Không dùng webhook group cho lựa chọn Một người/Team.");
+      const missingIdentity = users.find((user) => !user.email && !user.identities[0]?.providerUserId);
+      if (missingIdentity) throw new BadRequestException(`Người nhận ${missingIdentity.displayName} chưa có email workspace hoặc Lark open_id, không thể gửi tin nhắn riêng.`);
+      const tenantAccessToken = await fetchTenantAccessToken(config);
+      for (const fact of userFacts) {
+        let resolvedOpenId = fact.user.email
+          ? await resolveLarkOpenIdByEmail(config, tenantAccessToken, fact.user.email)
+          : null;
+        // The CRM may still hold a tenant User ID (for example HCM273) while
+        // the directory email has changed. Resolve that tenant ID to the
+        // custom app's current Open ID before sending the direct message.
+        if (!resolvedOpenId) {
+          const legacyUserId = fact.user.identities.find((identity) => identity.provider === "lark_user_id")?.providerUserId;
+          if (legacyUserId) resolvedOpenId = await resolveLarkOpenIdByUserId(config, tenantAccessToken, legacyUserId);
+        }
+        if (resolvedOpenId && !fact.user.identities.some((identity) => identity.provider === "lark" && identity.providerUserId === resolvedOpenId)) {
+          const larkIdentity = fact.user.identities.find((identity) => identity.provider === "lark");
+          if (larkIdentity) {
+            await this.prisma.portalIdentity.update({ where: { id: larkIdentity.id }, data: { providerUserId: resolvedOpenId } });
+          } else {
+            await this.prisma.portalIdentity.create({ data: { userId: fact.user.id, provider: "lark", providerUserId: resolvedOpenId, tenantKey: workspace.tenantKey } });
+          }
+        }
+        // Never send an email fallback when the custom app cannot resolve the
+        // recipient. Lark's message API may accept `email` in some tenants,
+        // but in this workspace it returns `invalid receive_id`; using an old
+        // app-scoped open_id is also invalid for the current custom app.
+        if (fact.user.email && !resolvedOpenId) {
+          throw new BadRequestException(
+            `Người nhận ${fact.user.displayName} chưa được liên kết với custom app Lark hiện tại (${fact.user.email}). ` +
+            "Không thể dùng Open ID cũ của app trước; hãy xác minh email Lark workspace hoặc liên kết lại tài khoản."
+          );
+        }
+        const receiveId = resolvedOpenId;
+        const receiveIdType = "open_id" as const;
+        if (!receiveId) throw new BadRequestException(`Người nhận ${fact.user.displayName} chưa có email workspace hoặc Lark open_id, không thể gửi tin nhắn riêng.`);
+        await postReminderDirectMessage(config, tenantAccessToken, receiveId, receiveIdType, buildPayload([fact]));
+      }
+    } else {
+      await postReminderWebhook(payload);
+    }
     const conditionKey = `manual:${randomUUID()}`;
     await this.prisma.reminderDeliveryLog.createMany({
       data: users.map((user) => ({

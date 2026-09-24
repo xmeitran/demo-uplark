@@ -48,6 +48,7 @@ import { stageOptions } from "../sales-pipeline/constants";
 import { formatStageLabel } from "../sales-pipeline/utils";
 import { ShopifyModal } from "../shopify-modal";
 import { ShopifyBanner, ShopifyDataTable, ShopifyIcon } from "../shopify-ui";
+import { WorkspaceTabBar } from "@/components/workspace-tab-bar";
 
 type SalesTimeRange = "all" | "month" | "quarter" | "year";
 
@@ -2488,28 +2489,19 @@ export function DashboardWorkbench({
 
   return (
     <>
-      <div className="dashboard-tabbar" aria-label="Khu vực dashboard" role="tablist">
-        {[
-          { id: "overview", label: "Tổng quan", shortLabel: "Tổng quan", icon: "target", meta: `${overviewReviewCount} việc` },
-          { id: "sales", label: "Cơ hội & bán hàng", shortLabel: "Cơ hội", icon: "trend", meta: `${staleCount} stale` },
-          { id: "delivery", label: "Triển khai & nguồn lực", shortLabel: "Triển khai", icon: "users", meta: `${overbookedW24} quá tải` },
-          { id: "finance", label: "Tài chính & kiểm soát", shortLabel: "Tài chính", icon: "cash", meta: `${pendingTimesheetCount} chờ` }
-        ].map((tab) => (
-          <button
-            aria-selected={activeTab === tab.id}
-            className="dashboard-tab"
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id as typeof activeTab)}
-            role="tab"
-            type="button"
-          >
-            <ShopifyIcon name={tab.icon as React.ComponentProps<typeof ShopifyIcon>["name"]} size={14} />
-            <span className="dashboard-tab-label-full">{tab.label}</span>
-            <span className="dashboard-tab-label-short">{tab.shortLabel}</span>
-            <span className="dashboard-tab-meta">{tab.meta}</span>
-          </button>
-        ))}
-      </div>
+      <WorkspaceTabBar
+        ariaLabel="Khu vực dashboard"
+        value={activeTab}
+        onChange={setActiveTab}
+        idPrefix="dashboard"
+        className="w-full"
+        items={[
+          { id: "overview", label: "Tổng quan", description: `${overviewReviewCount} việc cần xem`, icon: <ShopifyIcon name="target" size={14} /> },
+          { id: "sales", label: "Cơ hội & bán hàng", description: `${staleCount} cơ hội cần theo dõi`, icon: <ShopifyIcon name="trend" size={14} /> },
+          { id: "delivery", label: "Triển khai & nguồn lực", description: `${overbookedW24} người quá tải`, icon: <ShopifyIcon name="users" size={14} /> },
+          { id: "finance", label: "Tài chính & kiểm soát", description: `${pendingTimesheetCount} bảng giờ chờ`, icon: <ShopifyIcon name="cash" size={14} /> }
+        ]}
+      />
 
       {toastMessage && (
         <div style={{ margin: "16px 0" }}>

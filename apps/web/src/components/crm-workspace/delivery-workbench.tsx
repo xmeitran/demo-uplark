@@ -401,11 +401,20 @@ function buildDeliveryAccounts(
 function buildDeliveryResourceOptions(resources: CapacitySummaryItem[], includeUnassigned = false): TaskSelectOption[] {
   const options = resources
     .filter((resource) => resource.userId && resource.userDisplayName)
-    .map((resource) => ({
-      value: resource.userId,
-      label: resource.displayRole ? `${resource.userDisplayName} (${resource.displayRole})` : resource.userDisplayName,
-      icon: "person"
-    }));
+    .map((resource) => {
+      const nameParts = resource.userDisplayName.trim().split(/\s+/).filter(Boolean);
+      const initials = nameParts.length > 1
+        ? `${nameParts[0][0] ?? ""}${nameParts[nameParts.length - 1][0] ?? ""}`.toUpperCase()
+        : (nameParts[0]?.slice(0, 2) || "U").toUpperCase();
+      return {
+        value: resource.userId,
+        label: resource.userDisplayName,
+        subtext: `${resource.displayRole || "Workspace User"}${resource.userEmail ? ` · ${resource.userEmail}` : ""}`,
+        avatarUrl: resource.userAvatarUrl,
+        initials,
+        color: "#2563eb"
+      };
+    });
 
   const deduped = Array.from(new Map(options.map((option) => [option.value, option])).values());
   const actualOptions = deduped;

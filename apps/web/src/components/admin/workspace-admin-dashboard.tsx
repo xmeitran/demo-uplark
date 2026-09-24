@@ -44,10 +44,18 @@ import type {
 } from "@b2b-crm/contracts";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { WorkspaceDayOffSettings } from "@/components/settings/workspace-day-off-settings";
+import { CustomDropdown, type TaskSelectOption } from "@/components/crm-workspace/tasks-workbench";
 import { useAuth } from "@/lib/auth";
+import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-tab-bar";
 
 const ADMIN_ROLES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN"]);
 type AdminSection = "overview" | "alerts" | "day-offs" | "reminders" | "milestones";
+type MilestoneView = "templates" | "project-gates";
+
+const MILESTONE_TAB_ITEMS: WorkspaceTabItem<MilestoneView>[] = [
+  { id: "templates", label: "Thư viện template", description: "Format dùng cho project mới" },
+  { id: "project-gates", label: "Cấu hình theo Project", description: "Gate & điều kiện mở khóa" }
+];
 
 function errorMessage(body: unknown, fallback: string) {
   if (!body || typeof body !== "object") return fallback;
@@ -75,6 +83,26 @@ function slotLabel(slot: WorkspaceReminderSlot) {
   return slot.label || ({ morning_plan: "Kế hoạch đầu ngày", pm_follow_up: "Nhắc lại cho PM", evening_actual: "Actual Hour cuối ngày" } as Record<WorkspaceReminderSlotCode, string>)[slot.slot];
 }
 
+function reminderRecipientOptions(users: WorkspaceReminderRecipientsResponse["data"]["users"]): TaskSelectOption[] {
+  return users.map((user) => {
+    const parts = user.displayName.trim().split(/\s+/).filter(Boolean);
+    const initials = parts.length > 1
+      ? `${parts[0]?.[0] ?? ""}${parts[parts.length - 1]?.[0] ?? ""}`.toUpperCase()
+      : (parts[0]?.slice(0, 2) || "U").toUpperCase();
+    const role = user.roleCodes?.[0]
+      ? user.roleCodes[0].toLowerCase().split("_").filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ")
+      : "Workspace User";
+    return {
+      value: user.id,
+      label: user.displayName,
+      subtext: `${role}${user.email ? ` · ${user.email}` : ""}`,
+      avatarUrl: user.avatarUrl,
+      initials,
+      color: "#2563eb"
+    };
+  });
+}
+
 export function WorkspaceAdminDashboard() {
   const { user, isLoading: authLoading } = useAuth();
   const isAdmin = Boolean(user?.roleCodes?.some((role) => ADMIN_ROLES.has(role)));
@@ -96,7 +124,7 @@ export function WorkspaceAdminDashboard() {
   const [milestoneTemplates, setMilestoneTemplates] = useState<ProjectMilestoneTemplateSummary[]>([]);
   const [milestoneTemplatesLoading, setMilestoneTemplatesLoading] = useState(false);
   const [milestoneTemplatesSaving, setMilestoneTemplatesSaving] = useState(false);
-  const [milestoneView, setMilestoneView] = useState<"templates" | "project-gates">("templates");
+  const [milestoneView, setMilestoneView] = useState<MilestoneView>("templates");
 
   const load = useCallback(async () => {
     if (!isAdmin) return;
@@ -264,14 +292,23 @@ export function WorkspaceAdminDashboard() {
             </div>
           </header>
 
-          <div className="sticky top-0 z-40 -mx-4 bg-background/95 px-4 py-1.5 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:-mx-6 sm:px-6">
-            <nav aria-label="Admin sections" className="flex gap-1 overflow-x-auto rounded-xl border border-border bg-card/95 p-1 shadow-sm">
-              <AdminSectionButton active={section === "overview"} icon={<LayoutDashboard className="h-4 w-4" />} label="Tổng quan" onClick={() => selectSection("overview")} />
-              <AdminSectionButton active={section === "alerts"} icon={<TriangleAlert className="h-4 w-4" />} label="Cảnh báo" badge={alertDetails.length || undefined} onClick={() => selectSection("alerts")} />
-              <AdminSectionButton active={section === "day-offs"} icon={<CalendarDays className="h-4 w-4" />} label="Ngày nghỉ" onClick={() => selectSection("day-offs")} />
-              <AdminSectionButton active={section === "reminders"} icon={<BellRing className="h-4 w-4" />} label="Nhắc Lark" onClick={() => selectSection("reminders")} />
-              <AdminSectionButton active={section === "milestones"} icon={<LockKeyhole className="h-4 w-4" />} label="Milestone" onClick={() => selectSection("milestones")} />
-              {alertCount > 0 ? <span className="ml-auto hidden items-center gap-1.5 px-3 text-xs font-semibold text-amber-700 sm:inline-flex"><TriangleAlert className="h-3.5 w-3.5" /> {alertCount} cần xử lý</span> : null}
+          <div className="-mx-4 -mt-4 bg-background/95 px-4 py-1.5 sm:-mx-6 sm:-mt-6 sm:px-6">
+            <nav aria-label="Admin sections" className="mx-auto max-w-[1480px]">
+                <WorkspaceTabBar
+                  items={[
+                    { id: "overview" as AdminSection, label: "Tổng quan", description: "Sức khỏe workspace", icon: <LayoutDashboard className="h-4 w-4" /> },
+                    { id: "alerts" as AdminSection, label: "Cảnh báo", description: "Estimate & Actual", badge: alertDetails.length || undefined, icon: <TriangleAlert className="h-4 w-4" /> },
+                    { id: "day-offs" as AdminSection, label: "Ngày nghỉ", description: "Khóa ngày & loại phí", icon: <CalendarDays className="h-4 w-4" /> },
+                    { id: "reminders" as AdminSection, label: "Nhắc Lark", description: "Lịch gửi & người nhận", icon: <BellRing className="h-4 w-4" /> },
+                    { id: "milestones" as AdminSection, label: "Milestone", description: "Template & gate", icon: <LockKeyhole className="h-4 w-4" /> }
+                  ]}
+                  value={section}
+                  onChange={selectSection}
+                  ariaLabel="Admin sections"
+                  idPrefix="admin"
+                  className="w-full"
+                />
+                {alertCount > 0 ? <div className="mt-2 flex items-center justify-end gap-1.5 px-1 text-xs font-semibold text-amber-700"><TriangleAlert className="h-3.5 w-3.5" /> {alertCount} cần xử lý</div> : null}
             </nav>
           </div>
 
@@ -284,16 +321,7 @@ export function WorkspaceAdminDashboard() {
             {section === "day-offs" ? <section aria-label="Quản lý ngày nghỉ"><WorkspaceDayOffSettings /></section> : null}
             {section === "reminders" ? <ReminderPolicyPanel policy={policy} saving={saving} sending={sending} recipients={reminderRecipients} onSave={() => void savePolicy()} onSendManual={(input) => void sendManualReminder(input)} onUpdateSlot={updateSlot} onSetPolicy={setPolicy} /> : null}
             {section === "milestones" ? <>
-              <div role="tablist" aria-label="Quản lý milestone" className="flex min-w-max items-center overflow-x-auto border-b border-border">
-                <button type="button" role="tab" aria-selected={milestoneView === "templates"} onClick={() => setMilestoneView("templates")} className={`relative px-4 py-2.5 text-sm font-medium transition-colors ${milestoneView === "templates" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-                  Thư viện template
-                  {milestoneView === "templates" ? <span aria-hidden="true" className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-primary" /> : null}
-                </button>
-                <button type="button" role="tab" aria-selected={milestoneView === "project-gates"} onClick={() => setMilestoneView("project-gates")} className={`relative px-4 py-2.5 text-sm font-medium transition-colors ${milestoneView === "project-gates" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-                  Cấu hình theo Project
-                  {milestoneView === "project-gates" ? <span aria-hidden="true" className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-primary" /> : null}
-                </button>
-              </div>
+              <WorkspaceTabBar items={MILESTONE_TAB_ITEMS} value={milestoneView} onChange={setMilestoneView} ariaLabel="Quản lý milestone" idPrefix="milestone" className="w-full" />
               {milestoneView === "templates" ? <MilestoneTemplateManager templates={milestoneTemplates} loading={milestoneTemplatesLoading} saving={milestoneTemplatesSaving} onCreate={async (input) => {
                 setMilestoneTemplatesSaving(true); setError(null);
                 try {
@@ -348,10 +376,6 @@ export function WorkspaceAdminDashboard() {
       </main>
     </AppShell>
   );
-}
-
-function AdminSectionButton({ active, icon, label, badge, onClick }: { active: boolean; icon: ReactNode; label: string; badge?: number; onClick: () => void }) {
-  return <button type="button" aria-current={active ? "page" : undefined} onClick={onClick} className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg px-3.5 text-sm font-semibold transition-colors ${active ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>{icon}{label}{typeof badge === "number" ? <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${active ? "bg-primary/15 text-primary" : "bg-amber-100 text-amber-800"}`}>{badge}</span> : null}</button>;
 }
 
 function OverviewPanel({ overview, loading, onRefresh, onOpen }: { overview: AdminOverviewResponse["data"] | null; loading: boolean; onRefresh: () => void; onOpen: (section: AdminSection) => void }) {
@@ -620,6 +644,7 @@ function ReminderPolicyPanel({
   const [localDate, setLocalDate] = useState(() => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }));
   const [slot, setSlot] = useState<WorkspaceReminderSlotCode>("morning_plan");
   const selectedSlot = policy?.slots.find((candidate) => candidate.slot === slot);
+  const recipientOptions = reminderRecipientOptions(recipients.users);
 
   const submitManual = () => {
     onSendManual({ localDate, slot, ...(scope === "user" && userId ? { userId } : {}), ...(scope === "team" && teamId ? { teamId } : {}) });
@@ -637,7 +662,7 @@ function ReminderPolicyPanel({
       <div className="p-5 sm:p-7">
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           <label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Phạm vi người nhận</span><select value={scope} onChange={(event) => { const next = event.target.value as typeof scope; setScope(next); setUserId(""); setTeamId(""); }} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700"><option value="all">Tất cả người đang active</option><option value="user">Một người</option><option value="team">Một team</option></select></label>
-          {scope === "user" ? <label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Người nhận</span><select value={userId} onChange={(event) => setUserId(event.target.value)} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700"><option value="">Chọn người nhận…</option>{recipients.users.map((user) => <option key={user.id} value={user.id}>{user.displayName}</option>)}</select></label> : null}
+          {scope === "user" ? <div><span className="mb-1.5 block text-xs font-semibold text-slate-600">Người nhận</span><CustomDropdown label={null} value={userId} onChange={setUserId} options={[{ value: "", label: "Chọn người nhận…" }, ...recipientOptions]} /></div> : null}
           {scope === "team" ? <label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Team nhận</span><select value={teamId} onChange={(event) => setTeamId(event.target.value)} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700"><option value="">Chọn team…</option>{recipients.teams.map((team) => <option key={team.id} value={team.id}>{team.name} ({team.memberCount})</option>)}</select></label> : null}
           <label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Ngày gửi</span><input type="date" value={localDate} onChange={(event) => setLocalDate(event.target.value)} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700" /></label>
           <label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Mốc giờ</span><select value={slot} onChange={(event) => setSlot(event.target.value as WorkspaceReminderSlotCode)} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700">{(policy?.slots ?? []).map((candidate) => <option key={candidate.slot} value={candidate.slot}>{slotLabel(candidate)} · {candidate.time}</option>)}</select></label>

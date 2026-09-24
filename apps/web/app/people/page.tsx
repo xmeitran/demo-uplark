@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
-  BadgeDollarSign,
   CheckCircle2,
   Clock3,
   Download,
@@ -187,42 +186,7 @@ export default function PeoplePage() {
               <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl">Hồ sơ nhân sự</h1>
               <p className="mt-1 text-xs text-muted-foreground">Nguồn chuẩn cho User ID, Cost Rate, Timesheet và P&amp;L.</p>
             </div>
-            {canViewFinancials && <button type="button" className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700">
-              <BadgeDollarSign className="h-4 w-4" /> Quản lý Cost Rate
-            </button>}
           </header>
-
-          <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-primary" /><h2 className="text-sm font-bold text-foreground">Phân quyền workspace</h2></div>
-                <p className="mt-1 text-xs text-muted-foreground">Chọn theo Lark User ID. User thường không xem được cost rate, P&amp;L và cảnh báo tài chính.</p>
-              </div>
-              <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">Admin/User policy</span>
-            </div>
-            {roleMessage && <p className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-800">{roleMessage}</p>}
-            {directoryLoading ? (
-              <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Đang tải danh sách Lark users…</div>
-            ) : adminMembers.length ? (
-              <div className="mt-4 overflow-x-auto rounded-xl border border-border">
-                <table className="w-full min-w-[720px] text-left text-sm">
-                  <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">User / Lark User ID</th><th className="px-4 py-3">Trạng thái</th><th className="px-4 py-3">Quyền workspace</th><th className="px-4 py-3 text-right">Hiệu lực</th></tr></thead>
-                  <tbody className="divide-y divide-border">
-                    {adminMembers.map((member) => {
-                      const isFounder = member.roleCodes.includes("FOUNDER_GM");
-                      const isAdmin = isFounder || member.roleCodes.includes("WORKSPACE_ADMIN");
-                      return <tr key={member.id}>
-                        <td className="px-4 py-3"><p className="font-semibold text-slate-900">{member.displayName}</p><p className="mt-0.5 font-mono text-xs text-muted-foreground">{member.larkOpenId ?? "Chưa map Lark ID"}</p></td>
-                        <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-xs font-medium ${member.status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{member.status === "active" ? "Active" : "Suspended"}</span></td>
-                        <td className="px-4 py-3">{isFounder ? <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-700"><ShieldCheck className="h-3.5 w-3.5" /> Founder/GM</span> : <select value={isAdmin ? "WORKSPACE_ADMIN" : "WORKSPACE_USER"} disabled={roleSavingId === member.id} onChange={(event) => void changeWorkspaceRole(member, event.target.value as "WORKSPACE_ADMIN" | "WORKSPACE_USER")} className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-sm font-medium text-slate-700 outline-none focus:border-indigo-400"><option value="WORKSPACE_ADMIN">Workspace Admin</option><option value="WORKSPACE_USER">Workspace User</option></select>}</td>
-                        <td className="px-4 py-3 text-right text-xs text-muted-foreground">{isFounder ? "Không thể hạ quyền" : isAdmin ? <span className="inline-flex items-center gap-1 text-indigo-700"><ShieldCheck className="h-3.5 w-3.5" /> Được xem cost/P&amp;L</span> : <span className="inline-flex items-center gap-1 text-slate-500"><ShieldOff className="h-3.5 w-3.5" /> Ẩn cost/P&amp;L</span>}</td>
-                      </tr>;
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            ) : <div className="mt-4 rounded-xl border border-dashed border-border bg-slate-50 px-4 py-3 text-sm text-muted-foreground">Chưa tải được workspace directory. Hãy đăng nhập bằng Founder/GM hoặc Workspace Admin để quản lý role.</div>}
-          </section>
 
           <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <KpiCard icon={UsersRound} label="Tổng nhân sự" value={directoryLoading ? "—" : String(profiles.length)} note={directoryLoading ? "Đang đồng bộ" : `${activeCount} Active`} />
@@ -300,6 +264,38 @@ export default function PeoplePage() {
               <Link href={`/people/${selected.id}`} className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-blue-200 px-3 py-2.5 text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-50">Xem hồ sơ chi tiết <ArrowRight className="h-4 w-4" /></Link>
             </aside>}
           </div>
+
+          <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-primary" /><h2 className="text-sm font-bold text-foreground">Phân quyền workspace</h2></div>
+                <p className="mt-1 text-xs text-muted-foreground">Chọn theo Lark User ID. User thường không xem được cost rate, P&amp;L và cảnh báo tài chính.</p>
+              </div>
+              <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">Admin/User policy</span>
+            </div>
+            {roleMessage && <p className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-800">{roleMessage}</p>}
+            {directoryLoading ? (
+              <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Đang tải danh sách Lark users…</div>
+            ) : adminMembers.length ? (
+              <div className="mt-4 overflow-x-auto rounded-xl border border-border">
+                <table className="w-full min-w-[720px] text-left text-sm">
+                  <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">User / Lark User ID</th><th className="px-4 py-3">Trạng thái</th><th className="px-4 py-3">Quyền workspace</th><th className="px-4 py-3 text-right">Hiệu lực</th></tr></thead>
+                  <tbody className="divide-y divide-border">
+                    {adminMembers.map((member) => {
+                      const isFounder = member.roleCodes.includes("FOUNDER_GM");
+                      const isAdmin = isFounder || member.roleCodes.includes("WORKSPACE_ADMIN");
+                      return <tr key={member.id}>
+                        <td className="px-4 py-3"><p className="font-semibold text-slate-900">{member.displayName}</p><p className="mt-0.5 font-mono text-xs text-muted-foreground">{member.larkOpenId ?? "Chưa map Lark ID"}</p></td>
+                        <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-xs font-medium ${member.status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{member.status === "active" ? "Active" : "Suspended"}</span></td>
+                        <td className="px-4 py-3">{isFounder ? <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-700"><ShieldCheck className="h-3.5 w-3.5" /> Founder/GM</span> : <select value={isAdmin ? "WORKSPACE_ADMIN" : "WORKSPACE_USER"} disabled={roleSavingId === member.id} onChange={(event) => void changeWorkspaceRole(member, event.target.value as "WORKSPACE_ADMIN" | "WORKSPACE_USER")} className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-sm font-medium text-slate-700 outline-none focus:border-indigo-400"><option value="WORKSPACE_ADMIN">Workspace Admin</option><option value="WORKSPACE_USER">Workspace User</option></select>}</td>
+                        <td className="px-4 py-3 text-right text-xs text-muted-foreground">{isFounder ? "Không thể hạ quyền" : isAdmin ? <span className="inline-flex items-center gap-1 text-indigo-700"><ShieldCheck className="h-3.5 w-3.5" /> Được xem cost/P&amp;L</span> : <span className="inline-flex items-center gap-1 text-slate-500"><ShieldOff className="h-3.5 w-3.5" /> Ẩn cost/P&amp;L</span>}</td>
+                      </tr>;
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : <div className="mt-4 rounded-xl border border-dashed border-border bg-slate-50 px-4 py-3 text-sm text-muted-foreground">Chưa tải được workspace directory. Hãy đăng nhập bằng Founder/GM hoặc Workspace Admin để quản lý role.</div>}
+          </section>
         </div>
       </main>
     </AppShell>

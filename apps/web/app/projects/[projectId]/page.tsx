@@ -17,6 +17,7 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { PROJECT_TAB_NAV_EVENT } from "@/components/constructor-x/sidebar";
 import { AppShell } from "@/components/constructor-x/app-shell";
+import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-tab-bar";
 import { CustomDropdown, CustomDatePicker } from "@/components/constructor-x/custom-controls";
 import { ModalLayer } from "@/components/modal-layer";
 import { useAuth } from "@/lib/auth";
@@ -1047,7 +1048,7 @@ function ProjectSheetPanel({
           <div className="grid gap-2 sm:grid-cols-3 xl:w-[620px]">
             <label className="flex items-center gap-2 rounded-xl border border-input bg-background px-3 py-2.5 sm:col-span-1"><Search className="h-4 w-4 shrink-0 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm task, người thực hiện..." className="min-w-0 flex-1 bg-transparent text-sm outline-none" /></label>
             <select aria-label="Lọc trạng thái" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)} className="rounded-xl border border-input bg-background px-3 py-2.5 text-sm font-medium text-foreground outline-none focus:ring-2 focus:ring-primary/20"><option value="all">Tất cả trạng thái</option><option value="done">Hoàn tất</option><option value="in-progress">Đang thực hiện</option><option value="todo">Chưa bắt đầu</option></select>
-            <select aria-label="Lọc người thực hiện" value={memberFilter} onChange={(event) => setMemberFilter(event.target.value)} className="rounded-xl border border-input bg-background px-3 py-2.5 text-sm font-medium text-foreground outline-none focus:ring-2 focus:ring-primary/20"><option value="all">Tất cả người thực hiện</option>{teamMembers.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select>
+            <div className="min-w-0" aria-label="Lọc người thực hiện"><TeamMemberSingleSelect members={teamMembers} value={memberFilter === "all" ? undefined : teamMembers.find((member) => member.id === memberFilter)} onChange={(member) => setMemberFilter(member?.id ?? "all")} placeholder="Tất cả người thực hiện" /></div>
           </div>
         </div>
 
@@ -1393,7 +1394,7 @@ function ProjectIssuesPanel({
         <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           <label className="lg:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Mô tả vấn đề</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="Ví dụ: Chờ dữ liệu đầu vào từ khách hàng để hoàn thành stage…" className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15" /></label>
           <label><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Phân loại</span><select value={category} onChange={(event) => setCategory(event.target.value as RiskItem["category"])} className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm"><option value="Operational">Vận hành</option><option value="Financial">Tài chính</option><option value="External">Đối ngoại</option><option value="Strategic">Chiến lược</option></select></label>
-          <label><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Owner</span><select value={ownerUserId} onChange={(event) => setOwnerUserId(event.target.value)} className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm"><option value="">Chưa phân công</option>{teamMembers.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
+          <div><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Owner</span><TeamMemberSingleSelect members={teamMembers} value={teamMembers.find((member) => member.id === ownerUserId)} onChange={(member) => setOwnerUserId(member?.id ?? "")} placeholder="Chưa phân công" /></div>
           <label><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Khả năng</span><select value={likelihood} onChange={(event) => setLikelihood(event.target.value as RiskItem["likelihood"])} className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm"><option value="Low">Thấp</option><option value="Medium">Vừa</option><option value="High">Cao</option></select></label>
           <label><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Tác động</span><select value={impact} onChange={(event) => setImpact(event.target.value as RiskItem["impact"])} className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm"><option value="Low">Thấp</option><option value="Medium">Vừa</option><option value="High">Cao</option></select></label>
           <label className="lg:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Phương án xử lý</span><input value={response} onChange={(event) => setResponse(event.target.value)} placeholder="Giảm thiểu, chờ phê duyệt, cập nhật dữ liệu…" className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-primary" /></label>
@@ -1443,6 +1444,18 @@ const MILESTONE_STATUS = {
 
 const TABS = ["Overview", "Project Sheet", "Issues", "Dashboard", "Tasks", "Timeline", "Team", "Activity", "Documents"] as const;
 type Tab = typeof TABS[number];
+
+const PROJECT_TAB_ITEMS: WorkspaceTabItem<Tab>[] = [
+  { id: "Overview", label: "Overview", description: "Tổng quan dự án" },
+  { id: "Project Sheet", label: "Project Sheet", description: "Milestone & ngân sách" },
+  { id: "Issues", label: "Issues", description: "Rủi ro & blockers" },
+  { id: "Dashboard", label: "Dashboard", description: "KPI vận hành" },
+  { id: "Tasks", label: "Tasks", description: "Công việc & tiến độ" },
+  { id: "Timeline", label: "Timeline", description: "Lịch thực hiện" },
+  { id: "Team", label: "Team", description: "Nhân sự tham gia" },
+  { id: "Activity", label: "Activity", description: "Lịch sử thay đổi" },
+  { id: "Documents", label: "Documents", description: "Tài liệu dự án" }
+];
 
 function isProjectDetailTab(value: string | null): value is Tab {
   return TABS.includes(value as Tab);
@@ -1646,6 +1659,7 @@ function TeamMemberMultiSelect({
         type="button"
         disabled={members.length === 0}
         aria-expanded={open}
+        aria-haspopup="listbox"
         onClick={() => setOpen((current) => !current)}
         onKeyDown={(event) => {
           if (event.key === "Escape") setOpen(false);
@@ -1661,10 +1675,11 @@ function TeamMemberMultiSelect({
                   <TeamMemberAvatar key={member.id} member={member} size="sm" />
                 ))}
               </span>
-              <span className="min-w-0 truncate text-xs font-semibold">
-                {selectedMembers.length === 1
-                  ? selectedMembers[0].name
-                  : `${selectedMembers.length} users selected`}
+              <span className="min-w-0">
+                <span className="block truncate text-xs font-semibold">
+                  {selectedMembers.length === 1 ? selectedMembers[0].name : `${selectedMembers.length} users selected`}
+                </span>
+                {selectedMembers.length === 1 ? <span className="block truncate text-[10px] text-muted-foreground">{selectedMembers[0].department || selectedMembers[0].role || selectedMembers[0].email}</span> : null}
               </span>
             </>
           ) : (
@@ -1686,7 +1701,7 @@ function TeamMemberMultiSelect({
           >
             <div className="flex items-center justify-between border-b border-border px-3 py-2">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                {selectedMembers.length} selected
+                PROJECT MEMBERS · {selectedMembers.length} selected
               </span>
               {selectedMembers.length > 0 && (
                 <button
@@ -1803,7 +1818,7 @@ function TeamMemberSingleSelect({
           >
             <div className="border-b border-border px-3 py-2">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Project members
+                PROJECT MEMBERS
               </span>
             </div>
             <div className="max-h-64 overflow-y-auto py-1">
@@ -6691,23 +6706,19 @@ export default function ProjectDetailPage() {
           </div>
 
           {/* Tabs */}
-          <div className="mt-8 overflow-x-auto px-4 sm:px-6">
-            <div className="flex min-w-max items-center border-b border-border" role="tablist" aria-label="Project detail sections">
-              {TABS.map(t => (
-                <button key={t} onClick={() => handleTabChange(t)} role="tab"
-                  id={`project-tab-${t.toLowerCase()}`} aria-selected={tab === t}
-                  aria-controls="project-tab-panel" tabIndex={tab === t ? 0 : -1}
-                  onKeyDown={(event) => handleTabKeyDown(event, t)}
-                  className={`relative px-4 py-2.5 text-sm font-medium transition-colors ${tab===t?"text-foreground":"text-muted-foreground hover:text-foreground"}`}>
-                  {t}
-                  {tab===t && <motion.div layoutId="proj-tab-indicator" className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full" style={{ backgroundColor:project.color }} />}
-                </button>
-              ))}
-            </div>
+          <div className="mt-8 px-4 sm:px-6">
+            <WorkspaceTabBar
+              items={PROJECT_TAB_ITEMS}
+              value={tab}
+              onChange={handleTabChange}
+              ariaLabel="Project detail sections"
+              idPrefix="project"
+              onKeyDown={(event, value) => handleTabKeyDown(event, value)}
+            />
           </div>
 
           {/* Tab content */}
-          <div id="project-tab-panel" role="tabpanel" aria-labelledby={`project-tab-${tab.toLowerCase()}`}
+          <div id="project-tab-panel" role="tabpanel" aria-labelledby={`project-tab-${tab.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
             className="px-4 py-7 sm:px-6">
 
               {/* ─── PROJECT SHEET ─── */}

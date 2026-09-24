@@ -423,7 +423,7 @@ export default function CalendarPage() {
     return allUsers.map(u => ({
       value: u.id,
       label: u.name,
-      subtext: u.role,
+      subtext: `${u.role || "Workspace User"}${u.email ? ` · ${u.email}` : ""}`,
       avatarUrl: u.avatarUrl,
       initials: u.initials,
       color: u.color

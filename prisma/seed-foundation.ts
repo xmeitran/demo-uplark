@@ -248,7 +248,6 @@ async function main() {
     };
     const governedUsers = await tx.user.findMany({
       where: {
-        status: "ACTIVE" as any,
         subjectType: "INTERNAL_USER" as any,
         roleBindings: { some: activeWorkspaceBinding }
       },

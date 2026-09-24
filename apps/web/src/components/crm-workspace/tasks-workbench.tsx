@@ -210,6 +210,7 @@ export function CustomDropdown({
   const selectedOpt = options.find((o) => o.value === value) ?? options[0];
   const controlId = id ?? `task-select-${generatedId.replace(/:/g, "")}`;
   const listboxId = `${controlId}-listbox`;
+  const isPersonList = options.some((option) => Boolean(option.avatarUrl || option.initials) && Boolean(option.subtext));
 
   const handleBlur = (event: React.FocusEvent<HTMLDivElement>) => {
     const nextFocus = event.relatedTarget as Node | null;
@@ -279,7 +280,10 @@ export function CustomDropdown({
             />
           ) : null}
           {!selectedOpt?.pillBg && (
-            <span className="text-xs font-semibold text-slate-800 truncate">{selectedOpt?.label ?? "Select option"}</span>
+            <span className="min-w-0">
+              <span className="block truncate text-xs font-semibold text-slate-800">{selectedOpt?.label ?? "Select option"}</span>
+              {selectedOpt?.subtext ? <span className="block truncate text-[10px] font-normal text-slate-400">{selectedOpt.subtext}</span> : null}
+            </span>
           )}
         </span>
         <ShopifyIcon className={`text-slate-400 transition-transform duration-200 ${open ? "rotate-180" : ""}`} name="chevron-down" size={14} />
@@ -294,6 +298,11 @@ export function CustomDropdown({
           id={listboxId}
           role="listbox"
         >
+          {isPersonList ? (
+            <div className="border-b border-slate-100 px-2.5 py-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">PROJECT MEMBERS</span>
+            </div>
+          ) : null}
           {options.map((opt) => {
             const isSelected = opt.value === value;
             const isUnassigned = opt.value === "none" || opt.value === "unassigned" || opt.value === "";
@@ -1523,7 +1532,7 @@ export function LogWorkModal({
   selectedWorkDate?: string;
 }) {
   const people = useTaskPeople(task?.projectId, isOpen);
-  const performerOptions = allowedPerformers(people.members, people.principalUserId, people.permissions.canLogForOthers).map(member => ({ value: member.id, label: member.name, subtext: member.email }));
+  const performerOptions = allowedPerformers(people.members, people.principalUserId, people.permissions.canLogForOthers).map(toTaskAssigneeOption);
   const [step, setStep] = useState<"choice" | "actual" | "plan">("choice");
 
   // Shared Form state

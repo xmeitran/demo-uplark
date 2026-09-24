@@ -7,7 +7,7 @@ import { useDialogAccessibility } from "@/hooks/use-dialog-accessibility";
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Search, Plus, LayoutGrid, List, Download,
+  Search, Plus, Download,
   ChevronDown,
   Briefcase, Calendar, TrendingUp, AlertCircle,
   CheckCircle2, Clock, ArrowRight, Wallet, BarChart2, Layers, X, Pin, Pencil, Trash2, Check
@@ -38,6 +38,7 @@ import {
 } from "@/lib/workspace-users";
 import { downloadCsv } from "@/lib/csv-export";
 import { uiProjectDateToIso } from "@/lib/project-date";
+import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-tab-bar";
 import {
   ProjectSheet,
   type ProjectSheetSortDir,
@@ -48,6 +49,13 @@ import {
 
 type SortKey = ProjectSheetSortKey;
 type SortDir = ProjectSheetSortDir;
+
+type ProjectListView = "grid" | "sheet" | "timeline";
+const PROJECT_LIST_VIEW_TABS: WorkspaceTabItem<ProjectListView>[] = [
+  { id: "grid", label: "Tổng quan", description: "Cards dự án & trạng thái" },
+  { id: "sheet", label: "Project Sheet", description: "Bảng dữ liệu & chi phí" },
+  { id: "timeline", label: "Timeline", description: "Lịch thực hiện dự án" }
+];
 
 import { Project, PROJECTS, type Member } from "./data";
 import type { ProjectMilestoneTemplateSummary, ResourceListPaginationMeta } from "@b2b-crm/contracts";
@@ -401,6 +409,8 @@ function ProjectUserDropdown({
         type="button"
         disabled={users.length === 0}
         onClick={() => setOpen((current) => !current)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
         className="flex min-h-11 w-full items-center justify-between gap-3 rounded-xl border border-input bg-background px-3 py-2 text-left text-sm text-foreground transition-all focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
         style={{ borderColor: open ? "var(--color-primary)" : "var(--color-input)" }}
       >
@@ -409,7 +419,7 @@ function ProjectUserDropdown({
             <UserAvatar user={selected} size="sm" />
             <span className="min-w-0">
               <span className="block truncate text-xs font-semibold">{selected.name}</span>
-              <span className="block truncate text-[10px] text-muted-foreground">{selected.email}</span>
+              <span className="block truncate text-[10px] text-muted-foreground">{selected.department || selected.role || "Workspace User"}{selected.email ? ` · ${selected.email}` : ""}</span>
             </span>
           </span>
         ) : (
@@ -427,6 +437,9 @@ function ProjectUserDropdown({
             transition={{ duration: 0.15 }}
             className="absolute left-0 right-0 z-[70] mt-1.5 overflow-hidden rounded-xl border border-border bg-card shadow-xl"
           >
+            <div className="border-b border-border px-3 py-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">PROJECT MEMBERS</span>
+            </div>
             <div className="max-h-64 overflow-y-auto py-1">
               <button
                 type="button"
@@ -509,6 +522,8 @@ function ProjectMemberMultiSelect({
         type="button"
         disabled={users.length === 0}
         onClick={() => setOpen((current) => !current)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
         className="flex min-h-11 w-full items-center justify-between gap-3 rounded-xl border border-input bg-background px-3 py-2 text-left text-sm text-foreground transition-all focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
         style={{ borderColor: open ? "var(--color-primary)" : "var(--color-input)" }}
       >
@@ -520,8 +535,11 @@ function ProjectMemberMultiSelect({
                   <UserAvatar key={user.id} user={user} size="sm" />
                 ))}
               </span>
-              <span className="min-w-0 truncate text-xs font-semibold">
-                {selectedUsers.length === 1 ? selectedUsers[0].name : `${selectedUsers.length} users selected`}
+              <span className="min-w-0">
+                <span className="block truncate text-xs font-semibold">
+                  {selectedUsers.length === 1 ? selectedUsers[0].name : `${selectedUsers.length} users selected`}
+                </span>
+                {selectedUsers.length === 1 ? <span className="block truncate text-[10px] text-muted-foreground">{selectedUsers[0].department || selectedUsers[0].role || selectedUsers[0].email}</span> : null}
               </span>
             </>
           ) : (
@@ -541,7 +559,7 @@ function ProjectMemberMultiSelect({
             className="absolute left-0 right-0 z-[70] mt-1.5 overflow-hidden rounded-xl border border-border bg-card shadow-xl"
           >
             <div className="flex items-center justify-between border-b border-border px-3 py-2">
-              <span className="text-[11px] font-semibold uppercase text-muted-foreground">{selectedUsers.length} selected</span>
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">PROJECT MEMBERS · {selectedUsers.length} selected</span>
               {selectedUsers.length > 0 && (
                 <button
                   type="button"
@@ -960,7 +978,7 @@ export default function ProjectsPage() {
   const [loadingWorkspaceUsers, setLoadingWorkspaceUsers] = useState(true);
   const [workspaceUsersError, setWorkspaceUsersError] = useState<string | null>(null);
   const [pushedIds, setPushedIds] = useState<string[]>([]);
-  const [view, setView]         = useState<"grid" | "sheet" | "timeline">("grid");
+  const [view, setView]         = useState<ProjectListView>("grid");
   const [query, setQuery]       = useState("");
   const [statusFilter, setStatusFilter]   = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -1462,6 +1480,17 @@ export default function ProjectsPage() {
             ))}
           </div>
 
+          <div className="mb-4 shrink-0 sm:mb-5">
+            <WorkspaceTabBar
+              items={PROJECT_LIST_VIEW_TABS}
+              value={view}
+              onChange={setView}
+              ariaLabel="Chế độ xem danh sách Project"
+              idPrefix="projects-view"
+              className="w-full"
+            />
+          </div>
+
           {/* Filters */}
           <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm" data-testid="projects-stable-shell">
             <div className="flex min-h-[4.25rem] shrink-0 flex-col items-stretch gap-3 border-b border-border px-3 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:px-4 xl:flex-nowrap" data-testid="projects-control-bar">
@@ -1485,17 +1514,6 @@ export default function ProjectsPage() {
                 className="w-full shrink-0 sm:w-44"
               />
 
-              <div className="flex items-center self-end bg-muted rounded-xl p-0.5 sm:ml-auto sm:self-auto">
-                <button onClick={() => setView("grid")} className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-semibold transition-all ${view==="grid" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground"}`} title="Grid View">
-                  <LayoutGrid className="w-4 h-4" /><span className="hidden 2xl:inline">Grid View</span>
-                </button>
-                <button aria-label="Project Sheet View" onClick={() => setView("sheet")} className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-semibold transition-all ${view==="sheet" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground"}`} title="Project Sheet View">
-                  <List className="w-4 h-4" /><span className="hidden 2xl:inline">Project Sheet View</span>
-                </button>
-                <button onClick={() => setView("timeline")} className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-semibold transition-all ${view==="timeline" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground"}`} title="Timeline View">
-                  <Calendar className="w-4 h-4" /><span className="hidden 2xl:inline">Timeline View</span>
-                </button>
-              </div>
             </div>
 
             <AnimatePresence>

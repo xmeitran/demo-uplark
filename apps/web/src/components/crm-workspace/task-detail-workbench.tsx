@@ -631,7 +631,7 @@ export function TaskDetailWorkbench({
 
   const workDateContext = useSearchParams().get("workDate") ?? undefined;
   const projectPeople = useTaskPeople(currentTask?.projectId, Boolean(currentTask));
-  const workspaceAssigneeOptions = projectPeople.members.map(user => ({ value: user.id, label: user.name, subtext: user.email, avatarUrl: user.avatarUrl, initials: user.initials, color: user.color }));
+  const workspaceAssigneeOptions = projectPeople.members.map(user => ({ value: user.id, label: user.name, subtext: `${user.role || "Workspace User"}${user.email ? ` · ${user.email}` : ""}`, avatarUrl: user.avatarUrl, initials: user.initials, color: user.color }));
 
   const triggerToast = (message: string, type: ToastTone = "success") => {
     setToast({ message, type });

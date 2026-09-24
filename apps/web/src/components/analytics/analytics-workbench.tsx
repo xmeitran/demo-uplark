@@ -40,6 +40,7 @@ import {
 import { downloadCsv } from "@/lib/csv-export";
 import { formatHours, formatPercent, SERIES_COLORS } from "./analytics-format";
 import { AnalyticsFilterControls } from "./analytics-filter-controls";
+import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-tab-bar";
 import {
   ANALYTICS_BREAKDOWN_LABELS,
   ANALYTICS_METRIC_LABELS,
@@ -58,11 +59,11 @@ const ResourceComparisonChart = dynamic(() => import("./analytics-charts").then(
 const StatusDistributionChart = dynamic(() => import("./analytics-charts").then((m) => ({ default: m.StatusDistributionChart })), { ssr: false, loading: chartLoading });
 const WorkMixBar = dynamic(() => import("./analytics-charts").then((m) => ({ default: m.WorkMixBar })), { ssr: false, loading: () => <div className="h-14 animate-pulse rounded-lg bg-muted" aria-hidden /> });
 
-const VIEW_TABS: Array<{ id: AnalyticsView; label: string }> = [
-  { id: "overview", label: "Tổng quan" },
-  { id: "workforce", label: "Nhân lực" },
-  { id: "projects", label: "Dự án" },
-  { id: "resources", label: "Phân bổ nguồn lực" }
+const VIEW_TABS: WorkspaceTabItem<AnalyticsView>[] = [
+  { id: "overview", label: "Tổng quan", description: "KPI toàn workspace" },
+  { id: "workforce", label: "Nhân lực", description: "Giờ & mức độ đầy đủ" },
+  { id: "projects", label: "Dự án", description: "So sánh theo project" },
+  { id: "resources", label: "Phân bổ nguồn lực", description: "Capacity & allocation" }
 ];
 
 type WidgetStatus = "loading" | "ready" | "updating" | "empty" | "error" | "forbidden" | "stale";
@@ -282,28 +283,22 @@ export function AnalyticsWorkbench() {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       {/* View tabs */}
-      <div role="tablist" aria-label="Chế độ xem phân tích" className="flex flex-wrap items-center gap-1 rounded-xl border border-border bg-card p-1">
-        {VIEW_TABS.map((tab) => (
-          <button
-            key={tab.id}
-            role="tab"
-            aria-selected={state.view === tab.id}
-            onClick={() => setView(tab.id)}
-            className={`rounded-lg px-3 py-1.5 text-[13px] font-semibold transition-colors ${
-              state.view === tab.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"
-            }`}
-            type="button"
-          >
-            {tab.label}
-          </button>
-        ))}
-        <span className="ml-auto hidden items-center gap-2 pr-2 text-[11px] text-muted-foreground sm:flex">
+      <div className="space-y-2">
+        <WorkspaceTabBar
+          items={VIEW_TABS}
+          value={state.view}
+          onChange={setView}
+          ariaLabel="Chế độ xem phân tích"
+          idPrefix="analytics"
+          className="w-full"
+        />
+        <div className="flex min-h-5 items-center justify-end px-1 text-[11px] text-muted-foreground">
           {summary ? (
             <span>
               {summary.meta.range.from.slice(0, 10)} → {exclusiveEndDateToInclusiveEndDate(summary.meta.range.to.slice(0, 10)) ?? summary.meta.range.to.slice(0, 10)} · Giờ Việt Nam · cập nhật {new Date(summary.meta.generatedAt).toLocaleTimeString("vi-VN")}
             </span>
           ) : null}
-        </span>
+        </div>
       </div>
 
       {/* Desktop filter bar */}

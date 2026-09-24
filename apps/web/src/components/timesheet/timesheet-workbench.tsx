@@ -20,6 +20,7 @@ import { ProjectTimesheet } from "./project-timesheet";
 import { DailyWeeklyTimesheet } from "./daily-weekly-timesheet";
 import { useAuth } from "@/lib/auth";
 import { exportTimesheetWorkbook } from "./timesheet-export";
+import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-tab-bar";
 
 /**
  * /timesheet workbench — the shell that owns filters, permission scope and the
@@ -31,10 +32,10 @@ import { exportTimesheetWorkbook } from "./timesheet-export";
 
 type TimesheetView = "monthly" | "project" | "daily";
 
-const VIEW_TABS: Array<{ id: TimesheetView; label: string; hint: string }> = [
-  { id: "monthly", label: "Bảng giờ theo tháng", hint: "Tổng hợp theo nhân sự" },
-  { id: "project", label: "Bảng giờ theo dự án", hint: "Tổng hợp theo dự án" },
-  { id: "daily", label: "Theo ngày & theo tuần", hint: "Chi tiết ngày công và tuần" }
+const VIEW_TABS: WorkspaceTabItem<TimesheetView>[] = [
+  { id: "monthly", label: "Bảng giờ theo tháng", description: "Tổng hợp theo nhân sự" },
+  { id: "project", label: "Bảng giờ theo dự án", description: "Tổng hợp theo dự án" },
+  { id: "daily", label: "Theo ngày & theo tuần", description: "Chi tiết ngày công và tuần" }
 ];
 
 type FilterKind = "month" | "department" | "person" | "project" | "workGroup" | "scope";
@@ -302,24 +303,14 @@ export function TimesheetWorkbench() {
       </header>
 
       {/* ── View tabs ──────────────────────────────────────────────────── */}
-      <div role="tablist" aria-label="Chế độ xem bảng chấm công" className="flex flex-wrap items-center gap-1 rounded-xl border border-border bg-card p-1">
-        {VIEW_TABS.map((tab) => {
-          const active = view === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => commit({ view: tab.id })}
-              className={`flex-1 rounded-lg px-3 py-2 text-left transition-colors ${active ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
-            >
-              <span className="block text-[13px] font-bold">{tab.label}</span>
-              <span className="block text-[10.5px] opacity-80">{tab.hint}</span>
-            </button>
-          );
-        })}
-      </div>
+      <WorkspaceTabBar
+        items={VIEW_TABS}
+        value={view}
+        onChange={(nextView) => commit({ view: nextView })}
+        ariaLabel="Chế độ xem bảng chấm công"
+        idPrefix="timesheet"
+        className="w-full"
+      />
 
       {/* ── Filters + permission scope ─────────────────────────────────── */}
       <section aria-label="Bộ lọc Timesheet" className="rounded-xl border border-border bg-card p-3">

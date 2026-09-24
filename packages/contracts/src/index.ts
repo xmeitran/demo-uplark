@@ -3328,6 +3328,10 @@ export interface UpdateWorkspaceReminderPolicyInput {
 export interface WorkspaceReminderRecipientOption {
   id: string;
   displayName: string;
+  email?: string;
+  avatarUrl?: string;
+  departmentCode?: string;
+  roleCodes?: string[];
   teamIds: string[];
 }
 
