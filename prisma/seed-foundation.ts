@@ -178,20 +178,28 @@ async function main() {
       tx.user.findUnique({ where: { id: adminUserId } }),
       tx.user.findUnique({ where: { email: resolvedAdminEmail } })
     ]);
-    if (adminById && adminByEmail && adminById.id !== adminByEmail.id) {
-      throw new Error(`foundation admin identity conflict: ${adminUserId} and ${resolvedAdminEmail} belong to different users.`);
+    // The stable foundation user id is authoritative for staging restores. A
+    // snapshot can already contain the configured email on another user (for
+    // example after a Lark directory sync); failing the whole API boot in that
+    // case leaves the isolated staging service unavailable. Keep the existing
+    // id/email pair intact and only apply the configured email when it does not
+    // collide with another user.
+    const identityConflict = Boolean(adminById && adminByEmail && adminById.id !== adminByEmail.id);
+    if (identityConflict) {
+      console.warn(`foundation admin email ${resolvedAdminEmail} belongs to ${adminByEmail?.id}; using configured id ${adminUserId}.`);
     }
 
     const existingAdmin = adminById ?? adminByEmail;
+    const adminUpdate = {
+      ...(identityConflict ? {} : { email: resolvedAdminEmail }),
+      displayName: adminName,
+      subjectType: "INTERNAL_USER" as any,
+      status: "ACTIVE" as any
+    };
     const admin = existingAdmin
       ? await tx.user.update({
           where: { id: existingAdmin.id },
-          data: {
-            email: resolvedAdminEmail,
-            displayName: adminName,
-            subjectType: "INTERNAL_USER" as any,
-            status: "ACTIVE" as any
-          }
+          data: adminUpdate
         })
       : await tx.user.create({
           data: {
