@@ -62,6 +62,20 @@ function appPublicOrigin() {
   return (process.env.PUBLIC_APP_URL ?? process.env.CRM_AUTH_PUBLIC_ORIGIN ?? "http://localhost:3000").replace(/\/$/, "");
 }
 
+function reminderMinutesLabel(minutes: number) {
+  const hours = minutes / 60;
+  return `${Number.isInteger(hours) ? hours.toFixed(0) : hours.toFixed(1)} giờ`;
+}
+
+function taskMissingFields(task: { assigneeUserId: string | null; plannedStartAt: Date | null; dueAt: Date | null; estimateMinutes: number }) {
+  const fields: string[] = [];
+  if (!task.assigneeUserId) fields.push("Người phụ trách");
+  if (!task.plannedStartAt) fields.push("Ngày bắt đầu");
+  if (!task.dueAt) fields.push("Hạn hoàn tất");
+  if (!task.estimateMinutes || task.estimateMinutes <= 0) fields.push("Giờ ước tính");
+  return fields;
+}
+
 function reminderWebhookConfig() {
   const raw = process.env.LARK_TASK_REMINDER_WEBHOOK_URL?.trim();
   if (!raw) throw new BadRequestException("Chưa cấu hình Lark custom-bot webhook trên worker.");
@@ -263,25 +277,73 @@ export class WorkspaceAdminService {
     ]);
 
     const at = (openId?: string) => openId ? `<at id=${openId}></at> ` : "";
-    const lines = users.map((user) => {
+    const userFacts = users.map((user) => {
       const operationalTasks = tasks.filter((task) => (task.assigneeUserId ?? task.ownerUserId) === user.id);
       const userPlan = planningBlocks.filter((block) => block.userId === user.id);
       const userActual = timeEntries.filter((entry) => entry.userId === user.id);
       const actualMinutes = userActual.reduce((sum, entry) => sum + entry.minutes, 0);
-      const missingEstimate = operationalTasks.filter((task) => !task.estimateMinutes || task.estimateMinutes <= 0).length;
-      const detail = input.slot === "evening_actual"
-        ? `đã ghi ${Math.round(actualMinutes / 6) / 10}h / 8h, ${userPlan.length} task có kế hoạch`
-        : input.slot === "pm_follow_up"
-          ? `${userPlan.length} task có kế hoạch, ${missingEstimate} task thiếu Estimate Hour`
-          : `${userPlan.length} task có kế hoạch, ${operationalTasks.length} task đang mở`;
-      return `• ${at(user.identities[0]?.providerUserId)}**${user.displayName}**: ${detail}.`;
+      const taskById = new Map(operationalTasks.map((task) => [task.id, task]));
+      const plannedTasks = userPlan.flatMap((block) => {
+        const task = taskById.get(block.taskId);
+        return task ? [task] : [];
+      });
+      const planIssues = plannedTasks.flatMap((task) => {
+        const missingFields = taskMissingFields(task);
+        return missingFields.length ? [{ task, missingFields }] : [];
+      });
+      const actualTaskIds = new Set(userActual.map((entry) => entry.taskId));
+      const missingActualTasks = plannedTasks.filter((task) => !actualTaskIds.has(task.id));
+      return { user, operationalTasks, userPlan, actualMinutes, planIssues, missingActualTasks };
+    });
+    const lines = userFacts.flatMap(({ user, operationalTasks, userPlan, actualMinutes, planIssues, missingActualTasks }) => {
+      const projects = [...new Set(operationalTasks.map((task) => task.project?.name).filter((name): name is string => Boolean(name)))].join(", ") || "các Project đang active";
+      const mention = at(user.identities[0]?.providerUserId);
+      if (input.slot === "pm_follow_up") {
+        const taskNames = planIssues.length ? planIssues.slice(0, 3).map(({ task }) => task.title).join(", ") : "Chưa có Task";
+        const missingFields = planIssues.length ? [...new Set(planIssues.flatMap(({ missingFields }) => missingFields))].join(", ") : "Chưa lập kế hoạch Task";
+        return [
+          `1. **${user.displayName}**`,
+          `• Trạng thái: ${userPlan.length ? "Kế hoạch chưa đủ dữ liệu" : "Chưa có kế hoạch"}`,
+          `• Task liên quan: ${taskNames}`,
+          `• Nội dung còn thiếu: ${missingFields}`,
+          "• Lần nhắc tự động: 08:30"
+        ];
+      }
+      if (input.slot === "evening_actual") {
+        const missingMinutes = Math.max(0, 480 - actualMinutes);
+        return [
+          `${mention}Chào **${user.displayName}**,`,
+          `Đến 17:00 ngày ${localDate}, dữ liệu Actual Hour của bạn chưa đầy đủ.`,
+          "Tổng giờ trong ngày:",
+          `• Đã ghi nhận: ${reminderMinutesLabel(actualMinutes)}`,
+          "• Giờ tiêu chuẩn: 8 giờ",
+          `• Còn thiếu: ${reminderMinutesLabel(missingMinutes)}`,
+          "",
+          "Task chưa có Actual Hour:",
+          ...(missingActualTasks.length ? missingActualTasks.slice(0, 5).map((task, index) => `${index + 1}. **${task.title}**${task.project?.name ? ` · ${task.project.name}` : ""}\n— Estimate Hour: ${reminderMinutesLabel(task.estimateMinutes)}`) : ["• Không có Task nào thiếu Actual Hour; vui lòng bổ sung đủ giờ trong ngày."]),
+          `Vui lòng ghi Actual Hour thực tế đã làm trong ngày. Không tự động sử dụng Estimate Hour thay cho Actual Hour; chuyển Task sang Hoàn tất cũng không thay thế việc ghi giờ. Trường hợp có OT, số giờ vượt 8 giờ chỉ được ghi nhận theo quy tắc đã được phê duyệt.`
+        ];
+      }
+      return [
+        `${mention}Chào **${user.displayName}**,`,
+        `Đến 08:30 ngày ${localDate}, kế hoạch Task của các Project ${projects} hôm nay của bạn chưa đầy đủ.`,
+        "Nội dung cần bổ sung:",
+        ...(userPlan.length ? (planIssues.length ? planIssues.slice(0, 5).map(({ task, missingFields }) => `• **${task.title}**${task.project?.name ? ` · ${task.project.name}` : ""} — còn thiếu: ${missingFields.join(", ")}.`) : ["• Kế hoạch đã đủ trường bắt buộc."]) : ["• Bạn chưa lập Task cho ngày hôm nay."]),
+        "Vui lòng hoàn tất kế hoạch Task trước 09:00 hôm nay để bảo đảm dữ liệu kế hoạch được ghi nhận đầy đủ."
+      ];
     });
     const origin = appPublicOrigin();
     const manualButton = input.slot === "morning_plan"
-      ? { text: "Cập nhật kế hoạch Task", url: `${origin}/calendar?date=${encodeURIComponent(localDate)}` }
+      ? { text: "Cập nhật kế hoạch Task", url: origin + "/calendar?date=" + encodeURIComponent(localDate) }
       : input.slot === "pm_follow_up"
-        ? { text: "Xem Timesheet", url: `${origin}/timesheet?view=daily&date=${encodeURIComponent(localDate)}` }
-        : { text: "Mở Timesheet hôm nay", url: `${origin}/timesheet?view=daily&date=${encodeURIComponent(localDate)}` };
+        ? { text: "Xem Timesheet", url: origin + "/timesheet?view=daily&date=" + encodeURIComponent(localDate) }
+        : { text: "Mở Timesheet hôm nay", url: origin + "/timesheet?view=daily&date=" + encodeURIComponent(localDate) };
+    const pmActions = input.slot === "pm_follow_up"
+      ? userFacts.flatMap(({ user }) => [{ tag: "action", actions: [
+        { tag: "button", type: "primary", text: { tag: "plain_text", content: "Gửi nhắc" }, url: origin + "/admin?tab=reminders&scope=user&userId=" + encodeURIComponent(user.id) + "&date=" + encodeURIComponent(localDate) },
+        { tag: "button", type: "default", text: { tag: "plain_text", content: "Xem Timesheet" }, url: origin + "/timesheet?view=daily&date=" + encodeURIComponent(localDate) + "&userId=" + encodeURIComponent(user.id) }
+      ] }])
+      : [];
     const payload = {
       msg_type: "interactive",
       card: {
@@ -289,9 +351,10 @@ export class WorkspaceAdminService {
         header: { template: input.slot === "evening_actual" ? "red" : input.slot === "pm_follow_up" ? "orange" : "blue", title: { tag: "plain_text", content: REMINDER_SLOT_TITLES[input.slot] } },
         elements: [
           { tag: "div", text: { tag: "lark_md", content: [`**Ngày:** ${localDate}`, `**Người nhận:** ${users.length}`, "", ...lines].join("\n") } },
+          ...pmActions,
           { tag: "hr" },
           { tag: "note", elements: [{ tag: "plain_text", content: "Thông báo được gửi thủ công từ Admin workspace; ngày off/ngày lễ và dữ liệu đã hoàn tất vẫn được loại trừ theo nghiệp vụ." }] },
-          { tag: "action", actions: [{ tag: "button", type: "primary", text: { tag: "plain_text", content: manualButton.text }, url: manualButton.url }] }
+          ...(input.slot === "pm_follow_up" ? [] : [{ tag: "action", actions: [{ tag: "button", type: "primary", text: { tag: "plain_text", content: manualButton.text }, url: manualButton.url }] }])
         ]
       }
     };
