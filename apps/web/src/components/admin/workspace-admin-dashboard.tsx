@@ -284,17 +284,13 @@ export function WorkspaceAdminDashboard() {
             {section === "day-offs" ? <section aria-label="Quản lý ngày nghỉ"><WorkspaceDayOffSettings /></section> : null}
             {section === "reminders" ? <ReminderPolicyPanel policy={policy} saving={saving} sending={sending} recipients={reminderRecipients} onSave={() => void savePolicy()} onSendManual={(input) => void sendManualReminder(input)} onUpdateSlot={updateSlot} onSetPolicy={setPolicy} /> : null}
             {section === "milestones" ? <>
-              <div className="sticky top-20 z-10 rounded-2xl border border-border bg-white/95 p-1.5 shadow-sm backdrop-blur" role="tablist" aria-label="Quản lý milestone">
-                <div className="grid grid-cols-2 gap-1">
-                  <button type="button" role="tab" aria-selected={milestoneView === "templates"} onClick={() => setMilestoneView("templates")} className={`min-h-10 rounded-xl px-3 text-sm font-bold transition ${milestoneView === "templates" ? "bg-primary text-primary-foreground shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"}`}>
-                    Thư viện template
-                    <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] ${milestoneView === "templates" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"}`}>{milestoneTemplates.length}</span>
-                  </button>
-                  <button type="button" role="tab" aria-selected={milestoneView === "project-gates"} onClick={() => setMilestoneView("project-gates")} className={`min-h-10 rounded-xl px-3 text-sm font-bold transition ${milestoneView === "project-gates" ? "bg-primary text-primary-foreground shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"}`}>
-                    Cấu hình theo Project
-                    <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] ${milestoneView === "project-gates" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"}`}>{milestoneGates.length || "—"}</span>
-                  </button>
-                </div>
+              <div role="tablist" aria-label="Quản lý milestone" className="flex flex-wrap items-center gap-1 rounded-xl border border-border bg-card p-1">
+                <button type="button" role="tab" aria-selected={milestoneView === "templates"} onClick={() => setMilestoneView("templates")} className={`rounded-lg px-3 py-1.5 text-[13px] font-semibold transition-colors ${milestoneView === "templates" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
+                  Thư viện template
+                </button>
+                <button type="button" role="tab" aria-selected={milestoneView === "project-gates"} onClick={() => setMilestoneView("project-gates")} className={`rounded-lg px-3 py-1.5 text-[13px] font-semibold transition-colors ${milestoneView === "project-gates" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
+                  Cấu hình theo Project
+                </button>
               </div>
               {milestoneView === "templates" ? <MilestoneTemplateManager templates={milestoneTemplates} loading={milestoneTemplatesLoading} saving={milestoneTemplatesSaving} onCreate={async (input) => {
                 setMilestoneTemplatesSaving(true); setError(null);
