@@ -50,7 +50,7 @@ type SortKey = ProjectSheetSortKey;
 type SortDir = ProjectSheetSortDir;
 
 import { Project, PROJECTS, type Member } from "./data";
-import type { ResourceListPaginationMeta } from "@b2b-crm/contracts";
+import type { ProjectMilestoneTemplateSummary, ResourceListPaginationMeta } from "@b2b-crm/contracts";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -1117,6 +1117,8 @@ export default function ProjectsPage() {
   const [tags, setTags] = useState("");
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
   const [milestoneMode, setMilestoneMode] = useState<"auto" | "manual">("auto");
+  const [milestoneTemplateKey, setMilestoneTemplateKey] = useState("pilot-v1");
+  const [milestoneTemplates, setMilestoneTemplates] = useState<ProjectMilestoneTemplateSummary[]>([]);
   const [projectMilestones, setProjectMilestones] = useState<string[]>(PILOT_PROJECT_MILESTONES);
 
   const handleSort = (k: SortKey, direction?: SortDir) => {
@@ -1186,6 +1188,25 @@ export default function ProjectsPage() {
     }
   }, [accountOptions, client]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/milestone-templates?principal=founder", { cache: "no-store", credentials: "same-origin", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const body = await response.json().catch(() => null) as { data?: ProjectMilestoneTemplateSummary[] } | null;
+        const templates = body?.data ?? [];
+        if (controller.signal.aborted) return;
+        setMilestoneTemplates(templates);
+        const preferred = templates.find((template) => template.key === "pilot-v1") ?? templates[0];
+        if (preferred) {
+          setMilestoneTemplateKey(preferred.key);
+          setProjectMilestones(preferred.milestones.map((milestone) => milestone.name));
+        }
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || createSubmittingRef.current) return;
@@ -1221,7 +1242,7 @@ export default function ProjectsPage() {
           color,
           createStageTemplate: true,
           milestoneMode,
-          milestoneTemplateKey: milestoneMode === "auto" ? "pilot-v1" : undefined,
+          milestoneTemplateKey: milestoneMode === "auto" ? milestoneTemplateKey : undefined,
           manualMilestones: projectMilestones.map((milestone, index) => ({
             name: milestone.trim(),
             sortOrder: (index + 1) * 10,
@@ -1264,6 +1285,7 @@ export default function ProjectsPage() {
       setTags("");
       setSelectedMembers([]);
       setMilestoneMode("auto");
+      setMilestoneTemplateKey("pilot-v1");
       setProjectMilestones(PILOT_PROJECT_MILESTONES);
     } catch (error) {
       setProjectsError(error instanceof Error ? error.message : "Could not create project");
@@ -1803,8 +1825,8 @@ export default function ProjectsPage() {
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <label className={`flex gap-2 rounded-xl border p-3 cursor-pointer ${milestoneMode === "auto" ? "border-primary bg-primary/5" : "border-border bg-background"}`}>
-                        <input type="radio" name="projects-milestone-mode" checked={milestoneMode === "auto"} onChange={() => { setMilestoneMode("auto"); setProjectMilestones(PILOT_PROJECT_MILESTONES); }} />
-                        <span><strong className="block text-xs">Theo dự án</strong><small className="text-[11px] text-muted-foreground">4 milestone / 9 stage pilot UpLark</small></span>
+                        <input type="radio" name="projects-milestone-mode" checked={milestoneMode === "auto"} onChange={() => { setMilestoneMode("auto"); const selected = milestoneTemplates.find((template) => template.key === milestoneTemplateKey) ?? milestoneTemplates.find((template) => template.key === "pilot-v1"); setProjectMilestones(selected?.milestones.map((milestone) => milestone.name) ?? PILOT_PROJECT_MILESTONES); }} />
+                        <span className="min-w-0 flex-1"><strong className="block text-xs">Theo template đã lưu</strong><small className="text-[11px] text-muted-foreground">Chọn format milestone admin đã setup</small>{milestoneMode === "auto" ? <select aria-label="Template milestone" value={milestoneTemplateKey} onChange={(event) => { const key = event.target.value; setMilestoneTemplateKey(key); const selected = milestoneTemplates.find((template) => template.key === key); if (selected) setProjectMilestones(selected.milestones.map((milestone) => milestone.name)); }} className="mt-2 h-9 w-full rounded-lg border border-input bg-background px-2 text-xs font-semibold"><option value="pilot-v1">Pilot UpLark chuẩn</option>{milestoneTemplates.filter((template) => template.key !== "pilot-v1").map((template) => <option key={template.key} value={template.key}>{template.name} · {template.milestoneCount} milestone</option>)}</select> : null}</span>
                       </label>
                       <label className={`flex gap-2 rounded-xl border p-3 cursor-pointer ${milestoneMode === "manual" ? "border-primary bg-primary/5" : "border-border bg-background"}`}>
                         <input type="radio" name="projects-milestone-mode" checked={milestoneMode === "manual"} onChange={() => setMilestoneMode("manual")} />

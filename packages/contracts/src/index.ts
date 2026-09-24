@@ -558,6 +558,34 @@ export interface CreateProjectMilestoneInput extends ProjectMilestoneConditionIn
   }>;
 }
 
+export interface ProjectMilestoneTemplateSummary {
+  id: string;
+  key: string;
+  name: string;
+  description?: string;
+  status: string;
+  readOnly?: boolean;
+  milestones: CreateProjectMilestoneInput[];
+  milestoneCount: number;
+  stageCount: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CreateProjectMilestoneTemplateInput {
+  key?: string;
+  name: string;
+  description?: string;
+  milestones: CreateProjectMilestoneInput[];
+}
+
+export interface UpdateProjectMilestoneTemplateInput {
+  name?: string;
+  description?: string;
+  milestones?: CreateProjectMilestoneInput[];
+  status?: string;
+}
+
 export interface UpdateProjectInput {
   accountId?: string;
   opportunityId?: string | null;

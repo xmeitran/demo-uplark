@@ -23,6 +23,29 @@ export class ProjectsController {
     return this.projects.createProject(body, principal, idempotencyKey);
   }
 
+  @Get("milestone-templates")
+  async listMilestoneTemplates(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.listMilestoneTemplates(principal);
+  }
+
+  @Post("milestone-templates")
+  async createMilestoneTemplate(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Body() body: any) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.createMilestoneTemplate(body, principal);
+  }
+
+  @Patch("milestone-templates/:templateId")
+  async updateMilestoneTemplate(
+    @Headers("authorization") authorization: string | undefined,
+    @Query("principal") principalFallback: string | undefined,
+    @Param("templateId") templateId: string,
+    @Body() body: any
+  ) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.updateMilestoneTemplate(templateId, body, principal);
+  }
+
   @Get("projects/:projectId/members")
   async listProjectMembers(@Headers("authorization") authorization: string | undefined, @Param("projectId") projectId: string, @Query() query: any) {
     const principal = await this.principals.resolveFromAuthorization(authorization, query.principal);

@@ -4,6 +4,8 @@ import { activeMembershipWhere } from "../identity-access/active-membership";
 import { SubjectStatus, type Prisma } from "@prisma/client";
 import type {
   CreateProjectInput,
+  CreateProjectMilestoneInput,
+  CreateProjectMilestoneTemplateInput,
   CreateProjectActivityInput,
   CreateProjectDocumentInput,
   CreateProjectDocumentVersionInput,
@@ -24,6 +26,7 @@ import type {
   UpdateProjectActivityInput,
   UpdateProjectDocumentInput,
   UpdateProjectInput,
+  UpdateProjectMilestoneTemplateInput,
   UpdateProjectRiskInput,
   UpdateProjectStageInput,
   UpdateProjectTaskInput
@@ -226,6 +229,8 @@ const TIME_REVIEW_STATUSES = new Set(["approved", "rejected"]);
 const TIME_REVIEW_ROLE_CODES = new Set(["FOUNDER_GM", "DELIVERY_LEAD"]);
 const WORKSPACE_DAY_OFF_OVERRIDE_ROLES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN"]);
 const PROJECT_HIERARCHY_EDIT_ROLE_CODES = new Set(["FOUNDER_GM", "DELIVERY_LEAD"]);
+const MILESTONE_TEMPLATE_ADMIN_ROLES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN"]);
+const BUILTIN_MILESTONE_TEMPLATE_KEY = "pilot-v1";
 const PROJECT_PRIORITIES = new Set(["critical", "high", "medium", "low"]);
 const DEFAULT_TIME_ENTRY_APPROVAL_STATUS = "approved";
 const DEFAULT_TIME_ENTRY_TIME_ZONE = "Asia/Ho_Chi_Minh";
@@ -831,6 +836,80 @@ function mapStoredProjectActivityToFeedItem(activity: any): ProjectActivityFeedI
   };
 }
 
+type MilestoneTemplateRecord = CreateProjectMilestoneInput[];
+
+function milestoneTemplateKey(value: unknown, fallback: string) {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  return normalized || fallback;
+}
+
+function normalizeMilestoneTemplateMilestones(value: unknown): MilestoneTemplateRecord {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new BadRequestException("A milestone template must contain at least one milestone");
+  }
+  return value.map((rawMilestone, milestoneIndex) => {
+    if (!rawMilestone || typeof rawMilestone !== "object") throw new BadRequestException("Invalid milestone template item");
+    const item = rawMilestone as Record<string, unknown>;
+    const name = String(item.name ?? "").trim();
+    if (!name) throw new BadRequestException(`Milestone ${milestoneIndex + 1} needs a name`);
+    const rawStages = Array.isArray(item.stages) ? item.stages : [];
+    if (rawStages.length === 0) throw new BadRequestException(`Milestone ${milestoneIndex + 1} needs at least one stage`);
+    const stages = rawStages.map((rawStage, stageIndex) => {
+      if (!rawStage || typeof rawStage !== "object") throw new BadRequestException("Invalid milestone stage");
+      const stage = rawStage as Record<string, unknown>;
+      const activity = String(stage.activity ?? "").trim();
+      if (!activity) throw new BadRequestException(`Stage ${stageIndex + 1} in milestone ${milestoneIndex + 1} needs a name`);
+      return {
+        stageKey: milestoneTemplateKey(stage.stageKey, `stage-${milestoneIndex + 1}-${stageIndex + 1}`),
+        phase: String(stage.phase ?? activity).trim() || activity,
+        activity,
+        sortOrder: Number.isFinite(Number(stage.sortOrder)) ? Number(stage.sortOrder) : (stageIndex + 1) * 10,
+        criteria: String(stage.criteria ?? "").trim() || undefined,
+        slaDays: Number.isFinite(Number(stage.slaDays)) ? Math.max(0, Number(stage.slaDays)) : undefined,
+        upbaseRole: String(stage.upbaseRole ?? "").trim() || undefined,
+        customerRole: String(stage.customerRole ?? "").trim() || undefined
+      };
+    });
+    const requiredDocumentTypes = Array.isArray(item.requiredDocumentTypes)
+      ? item.requiredDocumentTypes.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((value) => value.trim())
+      : [];
+    return {
+      name,
+      sortOrder: Number.isFinite(Number(item.sortOrder)) ? Number(item.sortOrder) : (milestoneIndex + 1) * 10,
+      requiredDocumentCount: Number.isFinite(Number(item.requiredDocumentCount)) ? Math.max(0, Number(item.requiredDocumentCount)) : 0,
+      requiredDocumentTypes,
+      unlockCriteria: String(item.unlockCriteria ?? "").trim() || undefined,
+      customerConfirmationRequired: Boolean(item.customerConfirmationRequired),
+      reviewerRole: String(item.reviewerRole ?? "").trim() || undefined,
+      stages
+    };
+  });
+}
+
+function mapMilestoneTemplateSummary(row: any, readOnly = false) {
+  const milestones = normalizeMilestoneTemplateMilestones(row.milestones);
+  return {
+    id: row.id,
+    key: row.key,
+    name: row.name,
+    description: row.description ?? undefined,
+    status: row.status ?? "active",
+    readOnly: readOnly || undefined,
+    milestones,
+    milestoneCount: milestones.length,
+    stageCount: milestones.reduce((total, milestone) => total + milestone.stages.length, 0),
+    createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : undefined,
+    updatedAt: row.updatedAt ? new Date(row.updatedAt).toISOString() : undefined
+  };
+}
+
 @Injectable()
 export class ProjectsService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
@@ -890,6 +969,67 @@ export class ProjectsService {
     };
   }
 
+  async listMilestoneTemplates(principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Milestone templates are internal");
+    const rows = await this.prisma.projectMilestoneTemplate.findMany({
+      where: { workspaceId: principal.workspaceId, status: { not: "archived" } },
+      orderBy: [{ updatedAt: "desc" }, { name: "asc" }]
+    });
+    const builtin = mapMilestoneTemplateSummary({
+      id: `builtin:${BUILTIN_MILESTONE_TEMPLATE_KEY}`,
+      key: BUILTIN_MILESTONE_TEMPLATE_KEY,
+      name: "Pilot UpLark chuẩn",
+      description: "Mẫu mặc định theo format pilot hiện tại của UpLark.",
+      status: "active",
+      milestones: PILOT_PROJECT_MILESTONE_TEMPLATE
+    }, true);
+    return { data: [builtin, ...rows.map((row) => mapMilestoneTemplateSummary(row))] };
+  }
+
+  async createMilestoneTemplate(input: CreateProjectMilestoneTemplateInput, principal: PrincipalContext) {
+    this.assertCanManageMilestoneTemplates(principal);
+    const name = nonEmptyString(input?.name, "name");
+    const milestones = normalizeMilestoneTemplateMilestones(input?.milestones);
+    const key = milestoneTemplateKey(input?.key, milestoneTemplateKey(name, `template-${randomUUID().slice(0, 8)}`));
+    if (key === BUILTIN_MILESTONE_TEMPLATE_KEY) throw new ConflictException("pilot-v1 is reserved for the system template");
+    try {
+      const row = await this.prisma.projectMilestoneTemplate.create({
+        data: {
+          workspaceId: principal.workspaceId,
+          key,
+          name,
+          description: optionalString(input?.description, "description") ?? undefined,
+          milestones: milestones as unknown as Prisma.InputJsonValue,
+          createdByUserId: principal.subjectId
+        }
+      });
+      return { data: mapMilestoneTemplateSummary(row) };
+    } catch (error) {
+      if (isPrismaWriteConflict(error)) throw new ConflictException("Template key đã tồn tại trong workspace");
+      throw error;
+    }
+  }
+
+  async updateMilestoneTemplate(templateId: string, input: UpdateProjectMilestoneTemplateInput, principal: PrincipalContext) {
+    this.assertCanManageMilestoneTemplates(principal);
+    if (templateId.startsWith("builtin:")) throw new ForbiddenException("System template cannot be edited");
+    const existing = await this.prisma.projectMilestoneTemplate.findFirst({ where: { id: templateId, workspaceId: principal.workspaceId } });
+    if (!existing) throw new NotFoundException("Milestone template not found");
+    const milestones = input?.milestones === undefined ? undefined : normalizeMilestoneTemplateMilestones(input.milestones);
+    const status = input?.status === undefined ? existing.status : optionalString(input.status, "status");
+    if (status && !["active", "archived"].includes(status)) throw new BadRequestException("Invalid milestone template status");
+    const updated = await this.prisma.projectMilestoneTemplate.update({
+      where: { id: existing.id },
+      data: {
+        name: input?.name === undefined ? undefined : nonEmptyString(input.name, "name"),
+        description: input?.description === undefined ? undefined : optionalString(input.description, "description") ?? null,
+        milestones: milestones ? milestones as unknown as Prisma.InputJsonValue : undefined,
+        status: status ?? existing.status
+      }
+    });
+    return { data: mapMilestoneTemplateSummary(updated) };
+  }
+
   async getProject(projectId: string, principal: PrincipalContext) {
     const project = await this.prisma.project.findFirst({ where: { id: projectId, workspaceId: principal.workspaceId }, include: projectIncludeForPrincipal(principal) });
     if (!project) {
@@ -923,6 +1063,18 @@ export class ProjectsService {
     const priority = optionalEnum(input.priority, "priority", PROJECT_PRIORITIES) ?? undefined;
     const tags = normalizeProjectTags(input.tags) ?? [];
     const color = normalizeProjectColor(input.color) ?? undefined;
+    const usePilotTemplate = input.milestoneMode !== "manual";
+    let selectedMilestoneTemplates: readonly any[] = PILOT_PROJECT_MILESTONE_TEMPLATE;
+    if (usePilotTemplate) {
+      const templateKey = input.milestoneTemplateKey?.trim() || BUILTIN_MILESTONE_TEMPLATE_KEY;
+      if (templateKey !== BUILTIN_MILESTONE_TEMPLATE_KEY) {
+        const savedTemplate = await this.prisma.projectMilestoneTemplate.findFirst({
+          where: { workspaceId: principal.workspaceId, key: templateKey, status: "active" }
+        });
+        if (!savedTemplate) throw new BadRequestException("Milestone template không tồn tại hoặc đã được lưu trữ");
+        selectedMilestoneTemplates = normalizeMilestoneTemplateMilestones(savedTemplate.milestones);
+      }
+    }
 
     const response = await this.prisma.$transaction(async (tx) => {
       await this.ensureActiveWorkspaceUsers(tx, principal.workspaceId, principal.tenantKey, [principal.subjectId]);
@@ -969,13 +1121,12 @@ export class ProjectsService {
         // the caller explicitly chooses manual milestones. The old template is
         // retained only as an internal compatibility helper for callers that
         // opt out of the new structure.
-        const usePilotTemplate = input.milestoneMode !== "manual";
         const manualMilestones = input.milestoneMode === "manual" ? normalizeManualMilestones(input.manualMilestones) : undefined;
         if (input.milestoneMode === "manual" && (!manualMilestones || manualMilestones.length === 0)) {
           throw new BadRequestException("At least one manual milestone with one stage is required");
         }
         const milestoneTemplates: readonly any[] = usePilotTemplate
-          ? PILOT_PROJECT_MILESTONE_TEMPLATE
+          ? selectedMilestoneTemplates
           : manualMilestones ?? buildLegacyMilestoneTemplate();
         for (let milestoneIndex = 0; milestoneIndex < milestoneTemplates.length; milestoneIndex += 1) {
           const milestoneTemplate = milestoneTemplates[milestoneIndex];
@@ -4166,6 +4317,13 @@ export class ProjectsService {
     this.assertInternalTaskPrincipal(principal, "Project milestone gates are internal");
     if (!principal.roleCodes.some((roleCode) => PROJECT_HIERARCHY_EDIT_ROLE_CODES.has(roleCode) || roleCode === "WORKSPACE_ADMIN")) {
       throw new ForbiddenException("Workspace admin, Founder/GM or Delivery Lead role is required to configure milestone gates");
+    }
+  }
+
+  private assertCanManageMilestoneTemplates(principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Milestone templates are internal");
+    if (!principal.roleCodes.some((roleCode) => MILESTONE_TEMPLATE_ADMIN_ROLES.has(roleCode))) {
+      throw new ForbiddenException("Founder/GM or Workspace Admin role is required to manage milestone templates");
     }
   }
 

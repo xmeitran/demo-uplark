@@ -29,11 +29,15 @@ import type {
   AdminAlertType,
   AdminAlertsResponse,
   AdminOverviewResponse,
+  CreateProjectMilestoneInput,
+  CreateProjectMilestoneTemplateInput,
+  ProjectMilestoneTemplateSummary,
   ProjectMilestoneSummary,
   ProjectSummary,
   SendWorkspaceReminderInput,
   WorkspaceReminderRecipientsResponse,
   UpdateWorkspaceReminderPolicyInput,
+  UpdateProjectMilestoneTemplateInput,
   WorkspaceReminderPolicy,
   WorkspaceReminderSlot,
   WorkspaceReminderSlotCode
@@ -89,34 +93,42 @@ export function WorkspaceAdminDashboard() {
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [milestonesLoading, setMilestonesLoading] = useState(false);
   const [milestonesSaving, setMilestonesSaving] = useState(false);
+  const [milestoneTemplates, setMilestoneTemplates] = useState<ProjectMilestoneTemplateSummary[]>([]);
+  const [milestoneTemplatesLoading, setMilestoneTemplatesLoading] = useState(false);
+  const [milestoneTemplatesSaving, setMilestoneTemplatesSaving] = useState(false);
 
   const load = useCallback(async () => {
     if (!isAdmin) return;
     setLoading(true);
+    setMilestoneTemplatesLoading(true);
     setError(null);
     try {
-      const [overviewResponse, policyResponse, alertsResponse, recipientsResponse, projectsResponse] = await Promise.all([
+      const [overviewResponse, policyResponse, alertsResponse, recipientsResponse, projectsResponse, templatesResponse] = await Promise.all([
         fetch("/api/admin/overview", { cache: "no-store", credentials: "same-origin" }),
         fetch("/api/admin/reminders", { cache: "no-store", credentials: "same-origin" }),
         fetch("/api/admin/alerts", { cache: "no-store", credentials: "same-origin" }),
         fetch("/api/admin/reminders/recipients", { cache: "no-store", credentials: "same-origin" }),
         // Keep the local admin screen usable before an auth session is created.
         // The BFF ignores this fallback when a real Lark session is present.
-        fetch("/api/projects?limit=100&offset=0&principal=founder", { cache: "no-store", credentials: "same-origin" })
+        fetch("/api/projects?limit=100&offset=0&principal=founder", { cache: "no-store", credentials: "same-origin" }),
+        fetch("/api/milestone-templates?principal=founder", { cache: "no-store", credentials: "same-origin" })
       ]);
       const overviewBody = await overviewResponse.json().catch(() => null);
       const policyBody = await policyResponse.json().catch(() => null);
       const alertsBody = await alertsResponse.json().catch(() => null);
       const recipientsBody = await recipientsResponse.json().catch(() => null);
+      const templatesBody = await templatesResponse.json().catch(() => null);
       const projectsBody = await projectsResponse.json().catch(() => null);
       if (!overviewResponse.ok) throw new Error(errorMessage(overviewBody, "Không tải được tổng quan admin."));
       if (!policyResponse.ok) throw new Error(errorMessage(policyBody, "Không tải được lịch nhắc Lark."));
       if (!alertsResponse.ok) throw new Error(errorMessage(alertsBody, "Không tải được chi tiết cảnh báo."));
       if (!recipientsResponse.ok) throw new Error(errorMessage(recipientsBody, "Không tải được danh sách người nhận nhắc Lark."));
+      if (!templatesResponse.ok) throw new Error(errorMessage(templatesBody, "Không tải được danh sách template milestone."));
       setOverview((overviewBody as AdminOverviewResponse).data);
       setPolicy((policyBody as { data: WorkspaceReminderPolicy }).data);
       setAlertDetails((alertsBody as AdminAlertsResponse).data);
       setReminderRecipients((recipientsBody as WorkspaceReminderRecipientsResponse).data);
+      setMilestoneTemplates((templatesBody as { data?: ProjectMilestoneTemplateSummary[] }).data ?? []);
       if (projectsResponse.ok) {
         const projects = (projectsBody as { data?: ProjectSummary[] } | null)?.data ?? [];
         setProjectOptions(projects);
@@ -126,6 +138,7 @@ export function WorkspaceAdminDashboard() {
       setError(reason instanceof Error ? reason.message : "Không tải được dữ liệu admin.");
     } finally {
       setLoading(false);
+      setMilestoneTemplatesLoading(false);
     }
   }, [isAdmin]);
 
@@ -269,7 +282,32 @@ export function WorkspaceAdminDashboard() {
             {section === "alerts" ? <AlertsPanel rows={alertDetails} loading={loading} onRefresh={() => void load()} /> : null}
             {section === "day-offs" ? <section aria-label="Quản lý ngày nghỉ"><WorkspaceDayOffSettings /></section> : null}
             {section === "reminders" ? <ReminderPolicyPanel policy={policy} saving={saving} sending={sending} recipients={reminderRecipients} onSave={() => void savePolicy()} onSendManual={(input) => void sendManualReminder(input)} onUpdateSlot={updateSlot} onSetPolicy={setPolicy} /> : null}
-            {section === "milestones" ? <MilestoneGatePanel projects={projectOptions} projectId={selectedProjectId} gates={milestoneGates} loading={milestonesLoading} saving={milestonesSaving} onProjectChange={setSelectedProjectId} onSave={async (milestoneId, input) => {
+            {section === "milestones" ? <>
+              <MilestoneTemplateManager templates={milestoneTemplates} loading={milestoneTemplatesLoading} saving={milestoneTemplatesSaving} onCreate={async (input) => {
+                setMilestoneTemplatesSaving(true); setError(null);
+                try {
+                  const response = await fetch("/api/milestone-templates?principal=founder", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
+                  const body = await response.json().catch(() => null);
+                  if (!response.ok) throw new Error(errorMessage(body, "Không tạo được template milestone."));
+                  const created = (body as { data: ProjectMilestoneTemplateSummary }).data;
+                  setMilestoneTemplates((current) => [created, ...current]);
+                  setNotice(`Đã lưu template “${created.name}”. Template này sẽ xuất hiện khi tạo Project mới.`);
+                  return created;
+                } catch (reason) { setError(reason instanceof Error ? reason.message : "Không tạo được template milestone."); throw reason; }
+                finally { setMilestoneTemplatesSaving(false); }
+              }} onUpdate={async (templateId, input) => {
+                setMilestoneTemplatesSaving(true); setError(null);
+                try {
+                  const response = await fetch(`/api/milestone-templates/${encodeURIComponent(templateId)}?principal=founder`, { method: "PATCH", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
+                  const body = await response.json().catch(() => null);
+                  if (!response.ok) throw new Error(errorMessage(body, "Không cập nhật được template milestone."));
+                  const updated = (body as { data: ProjectMilestoneTemplateSummary }).data;
+                  setMilestoneTemplates((current) => current.map((template) => template.id === updated.id ? updated : template));
+                  setNotice(`Đã cập nhật template “${updated.name}”.`);
+                } catch (reason) { setError(reason instanceof Error ? reason.message : "Không cập nhật được template milestone."); throw reason; }
+                finally { setMilestoneTemplatesSaving(false); }
+              }} />
+              <MilestoneGatePanel projects={projectOptions} projectId={selectedProjectId} gates={milestoneGates} loading={milestonesLoading} saving={milestonesSaving} onProjectChange={setSelectedProjectId} onSave={async (milestoneId, input) => {
               setMilestonesSaving(true); setError(null); setNotice(null);
               try {
                 const response = await fetch(`/api/projects/${encodeURIComponent(selectedProjectId)}/milestones/${encodeURIComponent(milestoneId)}/gate`, { method: "PATCH", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
@@ -293,7 +331,8 @@ export function WorkspaceAdminDashboard() {
                 setNotice("Đã đánh giá gate và cập nhật trạng thái mở khóa.");
               } catch (reason) { setError(reason instanceof Error ? reason.message : "Không thể đánh giá gate milestone."); }
               finally { setMilestonesSaving(false); }
-            }} /> : null}
+            }} />
+            </> : null}
           </div>
         </div>
       </main>
@@ -353,6 +392,130 @@ function AlertsPanel({ rows, loading, onRefresh }: { rows: AdminAlertDetailRow[]
     <section className="rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5"><div className="flex flex-col gap-3 lg:flex-row lg:items-center"><div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm theo project, mã project hoặc nguyên nhân…" className="h-10 w-full rounded-xl border border-border bg-white pl-9 pr-3 text-sm outline-none ring-primary/30 focus:ring-2" /></div><label className="inline-flex items-center gap-2 text-sm text-slate-600"><Filter className="h-4 w-4" /><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as typeof typeFilter)} className="h-10 rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700"><option value="all">Tất cả loại cảnh báo</option>{Object.entries(ALERT_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><select aria-label="Mức độ" value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value as typeof severityFilter)} className="h-10 rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700"><option value="all">Tất cả mức độ</option><option value="critical">Critical</option><option value="warning">Warning</option><option value="info">Info</option></select></div><div className="mt-3 flex items-center justify-between text-xs text-slate-500"><span>Hiển thị {filtered.length}/{rows.length} cảnh báo</span><span>{new Date().toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" })}</span></div></section>
     <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm"><div className="flex flex-col gap-1 border-b border-border bg-gradient-to-r from-amber-50 via-white to-sky-50 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6"><div><h3 className="text-base font-bold text-slate-950">Estimate Hour và Actual Hour</h3><p className="mt-1 text-xs text-slate-500">Mỗi dòng là một nguyên nhân cảnh báo độc lập; một project có thể xuất hiện nhiều dòng.</p></div><span className="w-fit rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800">{rows.length} cảnh báo</span></div><div className="overflow-x-auto"><table className="w-full min-w-[1040px] text-left text-sm"><thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500"><tr><th className="px-5 py-3 font-bold">Project</th><th className="px-4 py-3 text-right font-bold">Estimate</th><th className="px-4 py-3 text-right font-bold">Actual</th><th className="px-4 py-3 text-right font-bold">Chênh lệch</th><th className="px-4 py-3 font-bold">Cảnh báo</th><th className="px-5 py-3 font-bold">Chi tiết cần xử lý</th><th className="px-4 py-3" /></tr></thead><tbody className="divide-y divide-border">{filtered.map((row) => <tr key={row.id} className="align-top transition hover:bg-slate-50/80"><td className="px-5 py-4"><a href={row.href} className="group block min-w-[220px]"><span className="block font-bold text-slate-900 group-hover:text-primary">{row.project.name}</span><span className="mt-1 block text-xs font-medium text-slate-500">{row.project.code}</span></a></td><td className="px-4 py-4 text-right font-semibold tabular-nums text-slate-700">{formatAlertHours(row.estimateMinutes)}</td><td className="px-4 py-4 text-right font-semibold tabular-nums text-slate-700">{formatAlertHours(row.actualMinutes)}</td><td className={`px-4 py-4 text-right font-bold tabular-nums ${row.varianceMinutes > 0 ? "text-rose-600" : "text-slate-500"}`}>{row.varianceMinutes > 0 ? "+" : ""}{formatAlertHours(row.varianceMinutes)}</td><td className="px-4 py-4"><span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold ${alertBadgeClass(row)}`}>{ALERT_TYPE_LABELS[row.type]}</span><span className="mt-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">{row.severity}</span></td><td className="max-w-[390px] px-5 py-4 text-xs leading-relaxed text-slate-600">{row.detail}<span className="mt-1 block font-semibold text-slate-400">{row.affectedTaskCount} task liên quan</span></td><td className="px-4 py-4"><a aria-label={`Mở project ${row.project.name}`} href={row.href} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border text-slate-500 hover:bg-slate-100 hover:text-slate-900"><ExternalLink className="h-3.5 w-3.5" /></a></td></tr>)}{loading && !rows.length ? <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-500">Đang tổng hợp cảnh báo từ task và time entry…</td></tr> : null}{!loading && !filtered.length ? <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-500">Không có cảnh báo phù hợp bộ lọc hiện tại.</td></tr> : null}</tbody></table></div></section>
     <div className="flex items-start gap-2 rounded-2xl border border-sky-100 bg-sky-50/70 px-4 py-3 text-xs leading-relaxed text-sky-800"><Info className="mt-0.5 h-4 w-4 shrink-0" /> “Thiếu dữ liệu” chỉ là tín hiệu cần bổ sung record; hệ thống không tự kết luận hiệu suất khi chưa đủ estimate, actual hoặc deadline.</div>
+  </section>;
+}
+
+type TemplateStageDraft = { id: string; stageKey?: string; activity: string; phase?: string; criteria?: string; slaDays?: number; upbaseRole?: string; customerRole?: string };
+type TemplateMilestoneDraft = Omit<CreateProjectMilestoneInput, "stages" | "requiredDocumentTypes"> & { id: string; requiredDocumentTypes: string; stages: TemplateStageDraft[] };
+type TemplateDraft = { id?: string; key: string; name: string; description: string; readOnly?: boolean; milestones: TemplateMilestoneDraft[] };
+
+function templateToDraft(template: ProjectMilestoneTemplateSummary): TemplateDraft {
+  return {
+    id: template.id,
+    key: template.key,
+    name: template.name,
+    description: template.description ?? "",
+    readOnly: template.readOnly,
+    milestones: template.milestones.map((milestone, milestoneIndex) => ({
+      id: `milestone-${milestoneIndex}-${template.id}`,
+      name: milestone.name,
+      sortOrder: milestone.sortOrder,
+      requiredDocumentCount: milestone.requiredDocumentCount ?? 0,
+      requiredDocumentTypes: (milestone.requiredDocumentTypes ?? []).join(", "),
+      unlockCriteria: milestone.unlockCriteria ?? "",
+      customerConfirmationRequired: Boolean(milestone.customerConfirmationRequired),
+      reviewerRole: milestone.reviewerRole ?? "PM",
+      stages: milestone.stages.map((stage, stageIndex) => ({ id: `stage-${milestoneIndex}-${stageIndex}-${template.id}`, ...stage }))
+    }))
+  };
+}
+
+function emptyTemplateDraft(): TemplateDraft {
+  return {
+    key: "",
+    name: "",
+    description: "",
+    milestones: [{
+      id: `milestone-${Date.now()}`,
+      name: "Milestone 1",
+      sortOrder: 10,
+      requiredDocumentCount: 0,
+      requiredDocumentTypes: "",
+      unlockCriteria: "",
+      customerConfirmationRequired: false,
+      reviewerRole: "PM",
+      stages: [{ id: `stage-${Date.now()}`, activity: "Stage 1", phase: "stage" }]
+    }]
+  };
+}
+
+function MilestoneTemplateManager({
+  templates,
+  loading,
+  saving,
+  onCreate,
+  onUpdate
+}: {
+  templates: ProjectMilestoneTemplateSummary[];
+  loading: boolean;
+  saving: boolean;
+  onCreate: (input: CreateProjectMilestoneTemplateInput) => Promise<ProjectMilestoneTemplateSummary | void>;
+  onUpdate: (templateId: string, input: UpdateProjectMilestoneTemplateInput) => Promise<void>;
+}) {
+  const [activeId, setActiveId] = useState("");
+  const [draft, setDraft] = useState<TemplateDraft | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+
+  useEffect(() => {
+    if (!isCreating) {
+      const active = templates.find((template) => template.id === activeId) ?? templates[0];
+      setActiveId(active?.id ?? "");
+      setDraft(active ? templateToDraft(active) : null);
+    }
+  }, [activeId, isCreating, templates]);
+
+  const selectTemplate = (template: ProjectMilestoneTemplateSummary) => {
+    setIsCreating(false);
+    setActiveId(template.id);
+    setDraft(templateToDraft(template));
+  };
+  const startCreate = () => {
+    setIsCreating(true);
+    setActiveId("");
+    setDraft(emptyTemplateDraft());
+  };
+  const updateDraft = (patch: Partial<TemplateDraft>) => setDraft((current) => current ? { ...current, ...patch } : current);
+  const updateMilestone = (id: string, patch: Partial<TemplateMilestoneDraft>) => setDraft((current) => current ? { ...current, milestones: current.milestones.map((milestone) => milestone.id === id ? { ...milestone, ...patch } : milestone) } : current);
+  const save = async () => {
+    if (!draft || draft.readOnly || !draft.name.trim() || draft.milestones.length === 0) return;
+    const milestones: CreateProjectMilestoneInput[] = draft.milestones.map((milestone, milestoneIndex) => ({
+      name: milestone.name.trim(),
+      sortOrder: (milestoneIndex + 1) * 10,
+      requiredDocumentCount: Math.max(0, Number(milestone.requiredDocumentCount) || 0),
+      requiredDocumentTypes: milestone.requiredDocumentTypes.split(",").map((value) => value.trim()).filter(Boolean),
+      unlockCriteria: milestone.unlockCriteria?.trim() || undefined,
+      customerConfirmationRequired: Boolean(milestone.customerConfirmationRequired),
+      reviewerRole: milestone.reviewerRole?.trim() || undefined,
+      stages: milestone.stages.map((stage, stageIndex) => ({
+        stageKey: stage.stageKey || `${milestone.id}-${stageIndex + 1}`,
+        activity: stage.activity.trim(),
+        phase: stage.phase?.trim() || stage.activity.trim(),
+        criteria: stage.criteria?.trim() || undefined,
+        slaDays: stage.slaDays,
+        upbaseRole: stage.upbaseRole?.trim() || undefined,
+        customerRole: stage.customerRole?.trim() || undefined
+      }))
+    }));
+    try {
+      if (isCreating) {
+        const created = await onCreate({ key: draft.key.trim() || undefined, name: draft.name.trim(), description: draft.description.trim() || undefined, milestones });
+        if (created) {
+          setActiveId(created.id);
+          setDraft(templateToDraft(created));
+        }
+        setIsCreating(false);
+      } else if (draft.id) {
+        await onUpdate(draft.id, { name: draft.name.trim(), description: draft.description.trim(), milestones });
+      }
+    } catch {
+      // The parent surfaces the API error; keep the draft open so it can be corrected.
+    }
+  };
+
+  return <section aria-labelledby="milestone-template-title" className="grid gap-4 rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5">
+    <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-700">MILESTONE LIBRARY</p><h2 id="milestone-template-title" className="mt-1 text-xl font-bold tracking-tight text-slate-950">Mẫu milestone dùng khi tạo Project</h2><p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Admin tạo một lần, sau đó người tạo Project chỉ cần chọn mẫu. Điều kiện hồ sơ và bước chuyển tiếp sẽ được copy sang Project mới.</p></div><button type="button" onClick={startCreate} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-primary-foreground shadow-sm hover:opacity-90"><span className="text-lg leading-none">+</span> Tạo template</button></div>
+    {loading ? <div className="rounded-2xl border border-border bg-slate-50 p-6 text-center text-sm text-slate-500">Đang tải thư viện template…</div> : null}
+    {!loading ? <div className="grid gap-4 lg:grid-cols-[270px_minmax(0,1fr)] lg:items-start"><aside className="rounded-2xl border border-border bg-slate-50/70 p-2"><div className="flex items-center justify-between px-2 pb-2"><span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">TEMPLATE ĐÃ LƯU</span><span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold text-slate-500">{templates.length}</span></div><div className="space-y-1">{templates.map((template) => <button type="button" key={template.id} onClick={() => selectTemplate(template)} className={`w-full rounded-xl px-3 py-3 text-left transition ${template.id === activeId && !isCreating ? "bg-white ring-1 ring-violet-200 shadow-sm" : "hover:bg-white"}`}><span className="flex items-center justify-between gap-2"><span className="truncate text-sm font-bold text-slate-900">{template.name}</span>{template.readOnly ? <span className="shrink-0 rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">Mặc định</span> : null}</span><span className="mt-1 block text-[11px] text-slate-500">{template.milestoneCount} milestone · {template.stageCount} stage</span></button>)}</div>{templates.length === 0 ? <p className="px-2 py-4 text-xs leading-relaxed text-slate-500">Chưa có template riêng. Bấm “Tạo template” để bắt đầu.</p> : null}</aside><div className="min-w-0 rounded-2xl border border-border bg-white">{draft ? <><div className="border-b border-border bg-gradient-to-r from-violet-50 via-white to-sky-50 px-4 py-4 sm:px-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><p className="text-[11px] font-bold uppercase tracking-wider text-violet-700">{isCreating ? "TEMPLATE MỚI" : draft.readOnly ? "SYSTEM TEMPLATE" : "TEMPLATE ĐÃ LƯU"}</p><h3 className="mt-1 text-lg font-bold text-slate-950">{isCreating ? "Thiết lập format milestone" : draft.name}</h3><p className="mt-1 text-xs text-slate-500">{draft.milestones.length} milestone · {draft.milestones.reduce((sum, milestone) => sum + milestone.stages.length, 0)} stage</p></div>{draft.readOnly ? <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-500">Chỉ xem</span> : <button type="button" disabled={saving || !draft.name.trim()} onClick={() => void save()} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-primary-foreground disabled:opacity-50"><Save className="h-4 w-4" />{saving ? "Đang lưu…" : isCreating ? "Lưu template" : "Cập nhật template"}</button>}</div></div><div className="space-y-4 p-4 sm:p-5"><div className="grid gap-3 sm:grid-cols-2"><label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Tên template</span><input disabled={draft.readOnly} value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} placeholder="VD: CRM triển khai chuẩn" className="h-10 w-full rounded-xl border border-border px-3 text-sm font-semibold disabled:bg-slate-50" /></label><label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Mã template <span className="font-normal text-slate-400">(tự sinh nếu bỏ trống)</span></span><input disabled={draft.readOnly || !isCreating} value={draft.key} onChange={(event) => updateDraft({ key: event.target.value })} placeholder="crm-standard-v1" className="h-10 w-full rounded-xl border border-border px-3 text-sm disabled:bg-slate-50" /></label></div><label className="block"><span className="mb-1.5 block text-xs font-semibold text-slate-600">Mô tả sử dụng</span><textarea disabled={draft.readOnly} rows={2} value={draft.description} onChange={(event) => updateDraft({ description: event.target.value })} placeholder="Template này dùng cho loại dự án nào?" className="w-full resize-none rounded-xl border border-border px-3 py-2.5 text-sm disabled:bg-slate-50" /></label><div className="flex items-center justify-between border-t border-border pt-4"><div><p className="text-sm font-bold text-slate-900">Chuỗi milestone</p><p className="mt-0.5 text-xs text-slate-500">Mỗi milestone cần ít nhất một stage để project mới tạo được hierarchy.</p></div>{!draft.readOnly ? <button type="button" onClick={() => updateDraft({ milestones: [...draft.milestones, { id: `milestone-${Date.now()}`, name: `Milestone ${draft.milestones.length + 1}`, sortOrder: (draft.milestones.length + 1) * 10, requiredDocumentCount: 0, requiredDocumentTypes: "", unlockCriteria: "", customerConfirmationRequired: false, reviewerRole: "PM", stages: [{ id: `stage-${Date.now()}`, activity: "Stage 1", phase: "stage" }] }] })} className="text-xs font-bold text-primary hover:underline">+ Thêm milestone</button> : null}</div><div className="space-y-3">{draft.milestones.map((milestone, index) => <article key={milestone.id} className="rounded-2xl border border-border bg-slate-50/70 p-3 sm:p-4"><div className="flex items-center gap-2"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-[11px] font-black text-violet-700">M{index + 1}</span><input disabled={draft.readOnly} value={milestone.name} onChange={(event) => updateMilestone(milestone.id, { name: event.target.value })} className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-white px-2.5 text-sm font-bold disabled:bg-slate-100" />{!draft.readOnly && draft.milestones.length > 1 ? <button type="button" onClick={() => updateDraft({ milestones: draft.milestones.filter((item) => item.id !== milestone.id) })} className="text-xs font-semibold text-rose-600">Xóa</button> : null}</div><div className="mt-3 grid gap-2 sm:grid-cols-3"><label><span className="mb-1 block text-[11px] font-semibold text-slate-500">Số hồ sơ</span><input disabled={draft.readOnly} type="number" min="0" value={milestone.requiredDocumentCount ?? 0} onChange={(event) => updateMilestone(milestone.id, { requiredDocumentCount: Math.max(0, Number(event.target.value) || 0) })} className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm disabled:bg-slate-100" /></label><label className="sm:col-span-2"><span className="mb-1 block text-[11px] font-semibold text-slate-500">Loại hồ sơ</span><input disabled={draft.readOnly} value={milestone.requiredDocumentTypes} onChange={(event) => updateMilestone(milestone.id, { requiredDocumentTypes: event.target.value })} placeholder="BRD, FRD, SRS" className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm disabled:bg-slate-100" /></label></div><div className="mt-2 grid gap-2 sm:grid-cols-2"><label><span className="mb-1 block text-[11px] font-semibold text-slate-500">Vai trò duyệt</span><input disabled={draft.readOnly} value={milestone.reviewerRole ?? ""} onChange={(event) => updateMilestone(milestone.id, { reviewerRole: event.target.value })} className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm disabled:bg-slate-100" /></label><label className="flex items-end gap-2 pb-2 text-xs font-semibold text-slate-600"><input disabled={draft.readOnly} type="checkbox" checked={Boolean(milestone.customerConfirmationRequired)} onChange={(event) => updateMilestone(milestone.id, { customerConfirmationRequired: event.target.checked })} className="h-4 w-4 rounded border-border text-primary" /> Cần khách hàng xác nhận</label></div><label className="mt-2 block"><span className="mb-1 block text-[11px] font-semibold text-slate-500">Điều kiện mở milestone kế tiếp</span><textarea disabled={draft.readOnly} rows={2} value={milestone.unlockCriteria ?? ""} onChange={(event) => updateMilestone(milestone.id, { unlockCriteria: event.target.value })} placeholder="Ví dụ: đủ hồ sơ và PM duyệt" className="w-full resize-none rounded-lg border border-border bg-white px-2.5 py-2 text-sm disabled:bg-slate-100" /></label><div className="mt-3 border-t border-border pt-3"><div className="flex items-center justify-between"><span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">STAGE TRONG MILESTONE</span>{!draft.readOnly ? <button type="button" onClick={() => updateMilestone(milestone.id, { stages: [...milestone.stages, { id: `stage-${Date.now()}`, activity: `Stage ${milestone.stages.length + 1}`, phase: "stage" }] })} className="text-xs font-bold text-primary hover:underline">+ Thêm stage</button> : null}</div><div className="mt-2 space-y-2">{milestone.stages.map((stage, stageIndex) => <div key={stage.id} className="grid gap-2 sm:grid-cols-[28px_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center"><span className="text-[11px] font-bold text-slate-400">{stageIndex + 1}</span><input disabled={draft.readOnly} value={stage.activity} onChange={(event) => updateMilestone(milestone.id, { stages: milestone.stages.map((item) => item.id === stage.id ? { ...item, activity: event.target.value } : item) })} className="h-9 rounded-lg border border-border bg-white px-2.5 text-sm disabled:bg-slate-100" placeholder="Tên stage" /><input disabled={draft.readOnly} value={stage.criteria ?? ""} onChange={(event) => updateMilestone(milestone.id, { stages: milestone.stages.map((item) => item.id === stage.id ? { ...item, criteria: event.target.value } : item) })} className="h-9 rounded-lg border border-border bg-white px-2.5 text-sm disabled:bg-slate-100" placeholder="Tiêu chí hoàn thành" />{!draft.readOnly && milestone.stages.length > 1 ? <button type="button" onClick={() => updateMilestone(milestone.id, { stages: milestone.stages.filter((item) => item.id !== stage.id) })} className="text-xs font-semibold text-rose-600">Xóa</button> : null}</div>)}</div></div></article>)}</div></div></> : <div className="p-8 text-center text-sm text-slate-500">Bấm “Tạo template” để tạo format milestone đầu tiên.</div>}</div></div> : null}
   </section>;
 }
 

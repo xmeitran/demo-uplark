@@ -447,6 +447,7 @@ model TenantWorkspace {
   opportunityActivities      OpportunityActivity[]
   opportunityStageHistory    OpportunityStageHistory[]
   projects                   Project[]
+  milestoneTemplates         ProjectMilestoneTemplate[]
   projectMembers             ProjectMember[]
   projectMilestones          ProjectMilestone[]
   projectStages              ProjectStage[]
@@ -1348,6 +1349,24 @@ model ProjectMilestone {
   @@unique([projectId, normalizedKey])
   @@index([workspaceId, projectId, sortOrder])
   @@index([accountId])
+}
+
+model ProjectMilestoneTemplate {
+  id            String          @id @default(cuid())
+  workspaceId   String          @default("twk-foundation")
+  key           String
+  name          String
+  description   String?
+  status        String          @default("active")
+  milestones    Json
+  createdByUserId String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  workspace     TenantWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, key])
+  @@index([workspaceId, status])
+  @@index([workspaceId, updatedAt(sort: Desc)])
 }
 
 model ProjectStage {
