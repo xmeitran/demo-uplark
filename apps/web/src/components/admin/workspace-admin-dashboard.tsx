@@ -96,6 +96,7 @@ export function WorkspaceAdminDashboard() {
   const [milestoneTemplates, setMilestoneTemplates] = useState<ProjectMilestoneTemplateSummary[]>([]);
   const [milestoneTemplatesLoading, setMilestoneTemplatesLoading] = useState(false);
   const [milestoneTemplatesSaving, setMilestoneTemplatesSaving] = useState(false);
+  const [milestoneView, setMilestoneView] = useState<"templates" | "project-gates">("templates");
 
   const load = useCallback(async () => {
     if (!isAdmin) return;
@@ -283,7 +284,19 @@ export function WorkspaceAdminDashboard() {
             {section === "day-offs" ? <section aria-label="Quản lý ngày nghỉ"><WorkspaceDayOffSettings /></section> : null}
             {section === "reminders" ? <ReminderPolicyPanel policy={policy} saving={saving} sending={sending} recipients={reminderRecipients} onSave={() => void savePolicy()} onSendManual={(input) => void sendManualReminder(input)} onUpdateSlot={updateSlot} onSetPolicy={setPolicy} /> : null}
             {section === "milestones" ? <>
-              <MilestoneTemplateManager templates={milestoneTemplates} loading={milestoneTemplatesLoading} saving={milestoneTemplatesSaving} onCreate={async (input) => {
+              <div className="sticky top-20 z-10 rounded-2xl border border-border bg-white/95 p-1.5 shadow-sm backdrop-blur" role="tablist" aria-label="Quản lý milestone">
+                <div className="grid grid-cols-2 gap-1">
+                  <button type="button" role="tab" aria-selected={milestoneView === "templates"} onClick={() => setMilestoneView("templates")} className={`min-h-10 rounded-xl px-3 text-sm font-bold transition ${milestoneView === "templates" ? "bg-primary text-primary-foreground shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"}`}>
+                    Thư viện template
+                    <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] ${milestoneView === "templates" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"}`}>{milestoneTemplates.length}</span>
+                  </button>
+                  <button type="button" role="tab" aria-selected={milestoneView === "project-gates"} onClick={() => setMilestoneView("project-gates")} className={`min-h-10 rounded-xl px-3 text-sm font-bold transition ${milestoneView === "project-gates" ? "bg-primary text-primary-foreground shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"}`}>
+                    Cấu hình theo Project
+                    <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] ${milestoneView === "project-gates" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"}`}>{milestoneGates.length || "—"}</span>
+                  </button>
+                </div>
+              </div>
+              {milestoneView === "templates" ? <MilestoneTemplateManager templates={milestoneTemplates} loading={milestoneTemplatesLoading} saving={milestoneTemplatesSaving} onCreate={async (input) => {
                 setMilestoneTemplatesSaving(true); setError(null);
                 try {
                   const response = await fetch("/api/milestone-templates?principal=founder", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
@@ -306,8 +319,7 @@ export function WorkspaceAdminDashboard() {
                   setNotice(`Đã cập nhật template “${updated.name}”.`);
                 } catch (reason) { setError(reason instanceof Error ? reason.message : "Không cập nhật được template milestone."); throw reason; }
                 finally { setMilestoneTemplatesSaving(false); }
-              }} />
-              <MilestoneGatePanel projects={projectOptions} projectId={selectedProjectId} gates={milestoneGates} loading={milestonesLoading} saving={milestonesSaving} onProjectChange={setSelectedProjectId} onSave={async (milestoneId, input) => {
+              }} /> : <MilestoneGatePanel projects={projectOptions} projectId={selectedProjectId} gates={milestoneGates} loading={milestonesLoading} saving={milestonesSaving} onProjectChange={setSelectedProjectId} onSave={async (milestoneId, input) => {
               setMilestonesSaving(true); setError(null); setNotice(null);
               try {
                 const response = await fetch(`/api/projects/${encodeURIComponent(selectedProjectId)}/milestones/${encodeURIComponent(milestoneId)}/gate`, { method: "PATCH", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
@@ -331,7 +343,7 @@ export function WorkspaceAdminDashboard() {
                 setNotice("Đã đánh giá gate và cập nhật trạng thái mở khóa.");
               } catch (reason) { setError(reason instanceof Error ? reason.message : "Không thể đánh giá gate milestone."); }
               finally { setMilestonesSaving(false); }
-            }} />
+            }} />}
             </> : null}
           </div>
         </div>
