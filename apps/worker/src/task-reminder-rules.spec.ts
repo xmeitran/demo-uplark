@@ -82,7 +82,7 @@ describe("actual reminder rules", () => {
     })]);
     expect(issues).toHaveLength(1);
     expect(issues[0]).toMatchObject({ totalMinutes: 240, targetMinutes: 480 });
-    expect(issues[0].taskWithoutActual).toEqual([{ taskId: "task-2", taskTitle: "Run workshop", projectName: undefined }]);
+    expect(issues[0].taskWithoutActual).toEqual([{ taskId: "task-2", taskTitle: "Run workshop", projectName: undefined, estimateMinutes: 240 }]);
   });
 
   it("does not remind when target and task coverage are complete", () => {

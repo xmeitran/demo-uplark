@@ -58,6 +58,10 @@ function dayWindow(localDate: string) {
   return { startAt, endAt: new Date(startAt.getTime() + 24 * 60 * 60 * 1000) };
 }
 
+function appPublicOrigin() {
+  return (process.env.PUBLIC_APP_URL ?? process.env.CRM_AUTH_PUBLIC_ORIGIN ?? "http://localhost:3000").replace(/\/$/, "");
+}
+
 function reminderWebhookConfig() {
   const raw = process.env.LARK_TASK_REMINDER_WEBHOOK_URL?.trim();
   if (!raw) throw new BadRequestException("Chưa cấu hình Lark custom-bot webhook trên worker.");
@@ -90,9 +94,9 @@ async function postReminderWebhook(payload: Record<string, unknown>) {
 }
 
 const REMINDER_SLOT_TITLES: Record<WorkspaceReminderSlotCode, string> = {
-  morning_plan: "Kế hoạch đầu ngày",
-  pm_follow_up: "Nhắc lại cho PM",
-  evening_actual: "Actual Hour cuối ngày"
+  morning_plan: "Nhắc nhở hoàn tất kế hoạch Task trước 09:00",
+  pm_follow_up: "Danh sách nhân sự chưa hoàn tất kế hoạch Task",
+  evening_actual: "Cập nhật Actual Hour hôm nay"
 };
 
 function parseSlots(input: UpdateWorkspaceReminderPolicyInput["slots"]): WorkspaceReminderSlot[] {
@@ -272,15 +276,22 @@ export class WorkspaceAdminService {
           : `${userPlan.length} task có kế hoạch, ${operationalTasks.length} task đang mở`;
       return `• ${at(user.identities[0]?.providerUserId)}**${user.displayName}**: ${detail}.`;
     });
+    const origin = appPublicOrigin();
+    const manualButton = input.slot === "morning_plan"
+      ? { text: "Cập nhật kế hoạch Task", url: `${origin}/calendar?date=${encodeURIComponent(localDate)}` }
+      : input.slot === "pm_follow_up"
+        ? { text: "Xem Timesheet", url: `${origin}/timesheet?view=daily&date=${encodeURIComponent(localDate)}` }
+        : { text: "Mở Timesheet hôm nay", url: `${origin}/timesheet?view=daily&date=${encodeURIComponent(localDate)}` };
     const payload = {
       msg_type: "interactive",
       card: {
         config: { wide_screen_mode: true },
-        header: { template: input.slot === "evening_actual" ? "red" : input.slot === "pm_follow_up" ? "orange" : "blue", title: { tag: "plain_text", content: `${REMINDER_SLOT_TITLES[input.slot]} · gửi thủ công` } },
+        header: { template: input.slot === "evening_actual" ? "red" : input.slot === "pm_follow_up" ? "orange" : "blue", title: { tag: "plain_text", content: REMINDER_SLOT_TITLES[input.slot] } },
         elements: [
           { tag: "div", text: { tag: "lark_md", content: [`**Ngày:** ${localDate}`, `**Người nhận:** ${users.length}`, "", ...lines].join("\n") } },
           { tag: "hr" },
-          { tag: "note", elements: [{ tag: "plain_text", content: "Thông báo được gửi thủ công từ Admin workspace." }] }
+          { tag: "note", elements: [{ tag: "plain_text", content: "Thông báo được gửi thủ công từ Admin workspace; ngày off/ngày lễ và dữ liệu đã hoàn tất vẫn được loại trừ theo nghiệp vụ." }] },
+          { tag: "action", actions: [{ tag: "button", type: "primary", text: { tag: "plain_text", content: manualButton.text }, url: manualButton.url }] }
         ]
       }
     };

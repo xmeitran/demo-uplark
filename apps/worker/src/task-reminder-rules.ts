@@ -31,6 +31,7 @@ export type ReminderUserFacts = {
   userId: string;
   displayName: string;
   larkOpenId?: string;
+  activeProjects?: string[];
   tasks: ReminderTask[];
   planningBlocks: ReminderPlanningBlock[];
   timeEntries: ReminderTimeEntry[];
@@ -50,6 +51,7 @@ export type PlanReminderIssue = {
   userId: string;
   displayName: string;
   larkOpenId?: string;
+  activeProjects?: string[];
   hasPlan: boolean;
   taskFieldIssues: TaskFieldIssue[];
 };
@@ -61,7 +63,7 @@ export type ActualReminderIssue = {
   larkOpenId?: string;
   totalMinutes: number;
   targetMinutes: number;
-  taskWithoutActual: Array<{ taskId: string; taskTitle: string; projectName?: string }>;
+  taskWithoutActual: Array<{ taskId: string; taskTitle: string; projectName?: string; estimateMinutes?: number }>;
 };
 
 export type VietnamWorkdayWindow = {
@@ -149,6 +151,7 @@ export function findPlanIssues(users: ReminderUserFacts[], window: VietnamWorkda
       userId: user.userId,
       displayName: user.displayName,
       larkOpenId: user.larkOpenId,
+      activeProjects: user.activeProjects ?? [...new Set(user.tasks.map((task) => task.projectName).filter((name): name is string => Boolean(name)))],
       hasPlan,
       taskFieldIssues
     }];
@@ -166,7 +169,7 @@ export function findActualIssues(
     const taskWithoutActual = [...plannedTaskIds].flatMap((taskId) => {
       if (actualTaskIds.has(taskId)) return [];
       const task = taskById.get(taskId);
-      return [{ taskId, taskTitle: task?.title ?? "Task không còn trong danh sách active", projectName: task?.projectName }];
+      return [{ taskId, taskTitle: task?.title ?? "Task không còn trong danh sách active", projectName: task?.projectName, estimateMinutes: task?.estimateMinutes }];
     });
     const totalMinutes = user.timeEntries.reduce((total, entry) => total + entry.minutes, 0);
     if (totalMinutes >= targetMinutes && taskWithoutActual.length === 0) return [];

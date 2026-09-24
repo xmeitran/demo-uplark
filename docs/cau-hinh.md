@@ -81,3 +81,9 @@ Worker hỗ trợ ba mốc theo `Asia/Ho_Chi_Minh`: 08:30 kiểm tra kế hoạc
 Redis giữ khóa idempotency theo workspace/ngày/mốc/người trong tám ngày. Nếu webhook trả lỗi giữa batch, lần thử lại bỏ qua các message đã được Lark xác nhận; như mọi webhook không có provider idempotency key, vẫn tồn tại cửa sổ rất nhỏ có thể gửi trùng nếu tiến trình chết ngay sau khi Lark nhận message nhưng trước khi Redis ghi nhận.
 
 Custom-bot webhook gửi vào **chat chứa bot**, không tạo DM riêng theo tài khoản. Card 08:30, 14:00 và 17:00 chỉ gửi khi phát hiện thiếu dữ liệu; mỗi card nêu rõ nội dung cần cập nhật và đường dẫn tương ứng. Secret webhook chỉ nằm ở worker/server, không trả về UI.
+
+Template card pilot:
+
+- **08:30 — Nhắc nhở hoàn tất kế hoạch Task trước 09:00:** chào nhân sự, ngày làm việc, các Project active, Task chưa có hoặc trường còn thiếu, kèm nút `Cập nhật kế hoạch Task`.
+- **14:00 — Danh sách nhân sự chưa hoàn tất kế hoạch Task:** chào PM, số nhân sự chưa hoàn tất, trạng thái từng người, Task liên quan, trường còn thiếu và lần nhắc 08:30; mỗi người có nút `Gửi nhắc` mở đúng phạm vi Admin và `Xem Timesheet`.
+- **17:00 — Cập nhật Actual Hour hôm nay:** tổng Actual Hour/giờ chuẩn/còn thiếu, danh sách Task chưa có Actual Hour kèm Estimate Hour để đối chiếu, nhắc không thay Estimate cho Actual và quy tắc OT, kèm nút `Mở Timesheet hôm nay`.
