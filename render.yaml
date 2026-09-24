@@ -121,6 +121,8 @@ services:
         value: Sandbox Founder
       - key: FOUNDATION_ADMIN_USER_ID
         value: usr-kha-founder
+      - key: FOUNDATION_WORKSPACE_ADMIN_USER_IDS
+        value: usr-lark-ou_6b0d15f30e67129fe6d2cbd1d830d11d,usr-lark-ou_18e253e40dccd35d6bf5175f2bcef139,usr-lark-ou_94dca8cbe54c2db32a4924e24c72ab71,usr-lark-HCM273
 
   # Redis-compatible cache used by API readiness and worker features.
   - type: keyvalue

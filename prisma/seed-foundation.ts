@@ -9,6 +9,12 @@ const workspaceName = process.env.FOUNDATION_WORKSPACE_NAME ?? "Default Workspac
 const adminEmail = process.env.FOUNDATION_ADMIN_EMAIL ?? process.env.PRODUCTION_ADMIN_EMAIL;
 const adminName = process.env.FOUNDATION_ADMIN_NAME ?? process.env.PRODUCTION_ADMIN_NAME ?? "Founder GM";
 const adminUserId = process.env.FOUNDATION_ADMIN_USER_ID ?? "usr-kha-founder";
+const workspaceAdminUserIds = new Set(
+  (process.env.FOUNDATION_WORKSPACE_ADMIN_USER_IDS ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+);
 const publicOrigin = process.env.APP_PUBLIC_ORIGIN ?? process.env.NEXT_PUBLIC_APP_URL ?? "https://b2b-crm.mindtheoperation.com";
 const strictProduction = process.env.NODE_ENV === "production" || process.env.FOUNDATION_PRODUCTION_STRICT === "true";
 const foundationAdminLarkOpenIds = (process.env.FOUNDATION_ADMIN_LARK_OPEN_IDS ?? process.env.FOUNDATION_ADMIN_LARK_OPEN_ID ?? "")
@@ -222,6 +228,64 @@ async function main() {
       create: { userId: admin.id, roleId: founderRole.id, tenantKey, workspaceId: workspace.id }
     });
 
+    // The staging workspace is a controlled copy of production. Keep its
+    // workspace access policy deterministic after every restore/boot: one
+    // configured Founder/GM, an explicit allow-list of Workspace Admins, and
+    // Workspace User for every other active internal member. Historical role
+    // bindings are retained for audit; only active bindings are replaced.
+    const workspaceAdminRole = roles.get("WORKSPACE_ADMIN");
+    const workspaceUserRole = roles.get("WORKSPACE_USER");
+    if (!workspaceAdminRole || !workspaceUserRole) {
+      throw new Error("Workspace access roles were not seeded.");
+    }
+    workspaceAdminUserIds.delete(admin.id);
+    const now = new Date();
+    const activeWorkspaceBinding = {
+      tenantKey,
+      workspaceId: workspace.id,
+      startsAt: { lte: now },
+      OR: [{ endsAt: null }, { endsAt: { gt: now } }]
+    };
+    const governedUsers = await tx.user.findMany({
+      where: {
+        status: "ACTIVE" as any,
+        subjectType: "INTERNAL_USER" as any,
+        roleBindings: { some: activeWorkspaceBinding }
+      },
+      select: {
+        id: true,
+        roleBindings: {
+          where: activeWorkspaceBinding,
+          select: { role: { select: { code: true } } }
+        }
+      }
+    });
+
+    for (const user of governedUsers) {
+      const desiredRole = user.id === admin.id
+        ? founderRole
+        : workspaceAdminUserIds.has(user.id)
+          ? workspaceAdminRole
+          : workspaceUserRole;
+      const currentRoleCodes = new Set(user.roleBindings.map((binding) => binding.role.code));
+      if (currentRoleCodes.size === 1 && currentRoleCodes.has(desiredRole.code)) continue;
+
+      await tx.roleBinding.updateMany({
+        where: {
+          userId: user.id,
+          tenantKey,
+          workspaceId: workspace.id,
+          OR: [{ endsAt: null }, { endsAt: { gt: now } }]
+        },
+        data: { endsAt: now }
+      });
+      await tx.roleBinding.upsert({
+        where: { userId_roleId_tenantKey_workspaceId: { userId: user.id, roleId: desiredRole.id, tenantKey, workspaceId: workspace.id } },
+        update: { startsAt: now, endsAt: null },
+        create: { userId: user.id, roleId: desiredRole.id, tenantKey, workspaceId: workspace.id }
+      });
+    }
+
     for (const larkOpenId of foundationAdminLarkOpenIds) {
       await tx.portalIdentity.upsert({
         where: {
@@ -276,6 +340,7 @@ async function main() {
           publicOrigin,
           adminEmail: resolvedAdminEmail,
           roles: roleDefinitions.map((role) => role[1]),
+          workspaceAdminUserIds: [...workspaceAdminUserIds],
           teams: teams.map((team) => team[1]),
           seedVersion: 1
         }
@@ -294,6 +359,7 @@ async function main() {
           publicOrigin,
           adminEmail: resolvedAdminEmail,
           roles: roleDefinitions.map((role) => role[1]),
+          workspaceAdminUserIds: [...workspaceAdminUserIds],
           teams: teams.map((team) => team[1]),
           seedVersion: 1
         }
