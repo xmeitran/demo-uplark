@@ -29,6 +29,8 @@ import type {
   AdminAlertType,
   AdminAlertsResponse,
   AdminOverviewResponse,
+  ProjectMilestoneSummary,
+  ProjectSummary,
   SendWorkspaceReminderInput,
   WorkspaceReminderRecipientsResponse,
   UpdateWorkspaceReminderPolicyInput,
@@ -41,7 +43,7 @@ import { WorkspaceDayOffSettings } from "@/components/settings/workspace-day-off
 import { useAuth } from "@/lib/auth";
 
 const ADMIN_ROLES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN"]);
-type AdminSection = "overview" | "alerts" | "day-offs" | "reminders";
+type AdminSection = "overview" | "alerts" | "day-offs" | "reminders" | "milestones";
 
 function errorMessage(body: unknown, fallback: string) {
   if (!body || typeof body !== "object") return fallback;
@@ -82,22 +84,29 @@ export function WorkspaceAdminDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [section, setSection] = useState<AdminSection>("overview");
+  const [projectOptions, setProjectOptions] = useState<ProjectSummary[]>([]);
+  const [milestoneGates, setMilestoneGates] = useState<ProjectMilestoneSummary[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [milestonesLoading, setMilestonesLoading] = useState(false);
+  const [milestonesSaving, setMilestonesSaving] = useState(false);
 
   const load = useCallback(async () => {
     if (!isAdmin) return;
     setLoading(true);
     setError(null);
     try {
-      const [overviewResponse, policyResponse, alertsResponse, recipientsResponse] = await Promise.all([
+      const [overviewResponse, policyResponse, alertsResponse, recipientsResponse, projectsResponse] = await Promise.all([
         fetch("/api/admin/overview", { cache: "no-store", credentials: "same-origin" }),
         fetch("/api/admin/reminders", { cache: "no-store", credentials: "same-origin" }),
         fetch("/api/admin/alerts", { cache: "no-store", credentials: "same-origin" }),
-        fetch("/api/admin/reminders/recipients", { cache: "no-store", credentials: "same-origin" })
+        fetch("/api/admin/reminders/recipients", { cache: "no-store", credentials: "same-origin" }),
+        fetch("/api/projects?limit=100&offset=0", { cache: "no-store", credentials: "same-origin" })
       ]);
       const overviewBody = await overviewResponse.json().catch(() => null);
       const policyBody = await policyResponse.json().catch(() => null);
       const alertsBody = await alertsResponse.json().catch(() => null);
       const recipientsBody = await recipientsResponse.json().catch(() => null);
+      const projectsBody = await projectsResponse.json().catch(() => null);
       if (!overviewResponse.ok) throw new Error(errorMessage(overviewBody, "Không tải được tổng quan admin."));
       if (!policyResponse.ok) throw new Error(errorMessage(policyBody, "Không tải được lịch nhắc Lark."));
       if (!alertsResponse.ok) throw new Error(errorMessage(alertsBody, "Không tải được chi tiết cảnh báo."));
@@ -106,6 +115,11 @@ export function WorkspaceAdminDashboard() {
       setPolicy((policyBody as { data: WorkspaceReminderPolicy }).data);
       setAlertDetails((alertsBody as AdminAlertsResponse).data);
       setReminderRecipients((recipientsBody as WorkspaceReminderRecipientsResponse).data);
+      if (projectsResponse.ok) {
+        const projects = (projectsBody as { data?: ProjectSummary[] } | null)?.data ?? [];
+        setProjectOptions(projects);
+        setSelectedProjectId((current) => current || projects[0]?.id || "");
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Không tải được dữ liệu admin.");
     } finally {
@@ -118,13 +132,28 @@ export function WorkspaceAdminDashboard() {
   useEffect(() => {
     const syncHash = () => {
       const hash = window.location.hash.replace(/^#/, "");
-      if (hash === "alerts" || hash === "day-offs" || hash === "reminders") setSection(hash);
+      if (hash === "alerts" || hash === "day-offs" || hash === "reminders" || hash === "milestones") setSection(hash);
       else setSection("overview");
     };
     syncHash();
     window.addEventListener("hashchange", syncHash);
     return () => window.removeEventListener("hashchange", syncHash);
   }, []);
+
+  useEffect(() => {
+    if (!isAdmin || !selectedProjectId) return;
+    let cancelled = false;
+    setMilestonesLoading(true);
+    fetch(`/api/projects/${encodeURIComponent(selectedProjectId)}/milestones`, { cache: "no-store", credentials: "same-origin" })
+      .then(async (response) => {
+        const body = await response.json().catch(() => null) as { data?: ProjectMilestoneSummary[] } | null;
+        if (!response.ok) throw new Error(errorMessage(body, "Không tải được cấu hình milestone."));
+        if (!cancelled) setMilestoneGates(body?.data ?? []);
+      })
+      .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "Không tải được cấu hình milestone."); })
+      .finally(() => { if (!cancelled) setMilestonesLoading(false); });
+    return () => { cancelled = true; };
+  }, [isAdmin, selectedProjectId]);
 
   const selectSection = (next: AdminSection) => {
     setSection(next);
@@ -225,6 +254,7 @@ export function WorkspaceAdminDashboard() {
               <AdminSectionButton active={section === "alerts"} icon={<TriangleAlert className="h-4 w-4" />} label="Cảnh báo" badge={alertDetails.length || undefined} onClick={() => selectSection("alerts")} />
               <AdminSectionButton active={section === "day-offs"} icon={<CalendarDays className="h-4 w-4" />} label="Ngày nghỉ" onClick={() => selectSection("day-offs")} />
               <AdminSectionButton active={section === "reminders"} icon={<BellRing className="h-4 w-4" />} label="Nhắc Lark" onClick={() => selectSection("reminders")} />
+              <AdminSectionButton active={section === "milestones"} icon={<LockKeyhole className="h-4 w-4" />} label="Milestone" onClick={() => selectSection("milestones")} />
               {alertCount > 0 ? <span className="ml-auto hidden items-center gap-1.5 px-3 text-xs font-semibold text-amber-700 sm:inline-flex"><TriangleAlert className="h-3.5 w-3.5" /> {alertCount} cần xử lý</span> : null}
             </nav>
           </div>
@@ -237,6 +267,31 @@ export function WorkspaceAdminDashboard() {
             {section === "alerts" ? <AlertsPanel rows={alertDetails} loading={loading} onRefresh={() => void load()} /> : null}
             {section === "day-offs" ? <section aria-label="Quản lý ngày nghỉ"><WorkspaceDayOffSettings /></section> : null}
             {section === "reminders" ? <ReminderPolicyPanel policy={policy} saving={saving} sending={sending} recipients={reminderRecipients} onSave={() => void savePolicy()} onSendManual={(input) => void sendManualReminder(input)} onUpdateSlot={updateSlot} onSetPolicy={setPolicy} /> : null}
+            {section === "milestones" ? <MilestoneGatePanel projects={projectOptions} projectId={selectedProjectId} gates={milestoneGates} loading={milestonesLoading} saving={milestonesSaving} onProjectChange={setSelectedProjectId} onSave={async (milestoneId, input) => {
+              setMilestonesSaving(true); setError(null); setNotice(null);
+              try {
+                const response = await fetch(`/api/projects/${encodeURIComponent(selectedProjectId)}/milestones/${encodeURIComponent(milestoneId)}/gate`, { method: "PATCH", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
+                const body = await response.json().catch(() => null);
+                if (!response.ok) throw new Error(errorMessage(body, "Không lưu được điều kiện milestone."));
+                setNotice("Đã cập nhật điều kiện milestone.");
+                const refreshed = await fetch(`/api/projects/${encodeURIComponent(selectedProjectId)}/milestones`, { cache: "no-store", credentials: "same-origin" });
+                const refreshedBody = await refreshed.json().catch(() => null) as { data?: ProjectMilestoneSummary[] } | null;
+                setMilestoneGates(refreshedBody?.data ?? []);
+              } catch (reason) { setError(reason instanceof Error ? reason.message : "Không lưu được điều kiện milestone."); }
+              finally { setMilestonesSaving(false); }
+            }} onEvaluate={async (milestoneId) => {
+              setMilestonesSaving(true); setError(null); setNotice(null);
+              try {
+                const response = await fetch(`/api/projects/${encodeURIComponent(selectedProjectId)}/milestones/${encodeURIComponent(milestoneId)}/evaluate`, { method: "POST", credentials: "same-origin" });
+                const body = await response.json().catch(() => null);
+                if (!response.ok) throw new Error(errorMessage(body, "Không thể đánh giá gate milestone."));
+                const refreshed = await fetch(`/api/projects/${encodeURIComponent(selectedProjectId)}/milestones`, { cache: "no-store", credentials: "same-origin" });
+                const refreshedBody = await refreshed.json().catch(() => null) as { data?: ProjectMilestoneSummary[] } | null;
+                setMilestoneGates(refreshedBody?.data ?? []);
+                setNotice("Đã đánh giá gate và cập nhật trạng thái mở khóa.");
+              } catch (reason) { setError(reason instanceof Error ? reason.message : "Không thể đánh giá gate milestone."); }
+              finally { setMilestonesSaving(false); }
+            }} /> : null}
           </div>
         </div>
       </main>
@@ -296,6 +351,73 @@ function AlertsPanel({ rows, loading, onRefresh }: { rows: AdminAlertDetailRow[]
     <section className="rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5"><div className="flex flex-col gap-3 lg:flex-row lg:items-center"><div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm theo project, mã project hoặc nguyên nhân…" className="h-10 w-full rounded-xl border border-border bg-white pl-9 pr-3 text-sm outline-none ring-primary/30 focus:ring-2" /></div><label className="inline-flex items-center gap-2 text-sm text-slate-600"><Filter className="h-4 w-4" /><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as typeof typeFilter)} className="h-10 rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700"><option value="all">Tất cả loại cảnh báo</option>{Object.entries(ALERT_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><select aria-label="Mức độ" value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value as typeof severityFilter)} className="h-10 rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700"><option value="all">Tất cả mức độ</option><option value="critical">Critical</option><option value="warning">Warning</option><option value="info">Info</option></select></div><div className="mt-3 flex items-center justify-between text-xs text-slate-500"><span>Hiển thị {filtered.length}/{rows.length} cảnh báo</span><span>{new Date().toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" })}</span></div></section>
     <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm"><div className="flex flex-col gap-1 border-b border-border bg-gradient-to-r from-amber-50 via-white to-sky-50 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6"><div><h3 className="text-base font-bold text-slate-950">Estimate Hour và Actual Hour</h3><p className="mt-1 text-xs text-slate-500">Mỗi dòng là một nguyên nhân cảnh báo độc lập; một project có thể xuất hiện nhiều dòng.</p></div><span className="w-fit rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800">{rows.length} cảnh báo</span></div><div className="overflow-x-auto"><table className="w-full min-w-[1040px] text-left text-sm"><thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500"><tr><th className="px-5 py-3 font-bold">Project</th><th className="px-4 py-3 text-right font-bold">Estimate</th><th className="px-4 py-3 text-right font-bold">Actual</th><th className="px-4 py-3 text-right font-bold">Chênh lệch</th><th className="px-4 py-3 font-bold">Cảnh báo</th><th className="px-5 py-3 font-bold">Chi tiết cần xử lý</th><th className="px-4 py-3" /></tr></thead><tbody className="divide-y divide-border">{filtered.map((row) => <tr key={row.id} className="align-top transition hover:bg-slate-50/80"><td className="px-5 py-4"><a href={row.href} className="group block min-w-[220px]"><span className="block font-bold text-slate-900 group-hover:text-primary">{row.project.name}</span><span className="mt-1 block text-xs font-medium text-slate-500">{row.project.code}</span></a></td><td className="px-4 py-4 text-right font-semibold tabular-nums text-slate-700">{formatAlertHours(row.estimateMinutes)}</td><td className="px-4 py-4 text-right font-semibold tabular-nums text-slate-700">{formatAlertHours(row.actualMinutes)}</td><td className={`px-4 py-4 text-right font-bold tabular-nums ${row.varianceMinutes > 0 ? "text-rose-600" : "text-slate-500"}`}>{row.varianceMinutes > 0 ? "+" : ""}{formatAlertHours(row.varianceMinutes)}</td><td className="px-4 py-4"><span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold ${alertBadgeClass(row)}`}>{ALERT_TYPE_LABELS[row.type]}</span><span className="mt-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">{row.severity}</span></td><td className="max-w-[390px] px-5 py-4 text-xs leading-relaxed text-slate-600">{row.detail}<span className="mt-1 block font-semibold text-slate-400">{row.affectedTaskCount} task liên quan</span></td><td className="px-4 py-4"><a aria-label={`Mở project ${row.project.name}`} href={row.href} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border text-slate-500 hover:bg-slate-100 hover:text-slate-900"><ExternalLink className="h-3.5 w-3.5" /></a></td></tr>)}{loading && !rows.length ? <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-500">Đang tổng hợp cảnh báo từ task và time entry…</td></tr> : null}{!loading && !filtered.length ? <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-500">Không có cảnh báo phù hợp bộ lọc hiện tại.</td></tr> : null}</tbody></table></div></section>
     <div className="flex items-start gap-2 rounded-2xl border border-sky-100 bg-sky-50/70 px-4 py-3 text-xs leading-relaxed text-sky-800"><Info className="mt-0.5 h-4 w-4 shrink-0" /> “Thiếu dữ liệu” chỉ là tín hiệu cần bổ sung record; hệ thống không tự kết luận hiệu suất khi chưa đủ estimate, actual hoặc deadline.</div>
+  </section>;
+}
+
+type MilestoneGatePatch = {
+  requiredDocumentCount: number;
+  requiredDocumentTypes: string[];
+  unlockCriteria: string;
+  customerConfirmationRequired: boolean;
+  reviewerRole: string;
+  gateStatus: string;
+};
+
+function MilestoneGatePanel({
+  projects,
+  projectId,
+  gates,
+  loading,
+  saving,
+  onProjectChange,
+  onSave,
+  onEvaluate
+}: {
+  projects: ProjectSummary[];
+  projectId: string;
+  gates: ProjectMilestoneSummary[];
+  loading: boolean;
+  saving: boolean;
+  onProjectChange: (projectId: string) => void;
+  onSave: (milestoneId: string, input: MilestoneGatePatch) => Promise<void>;
+  onEvaluate: (milestoneId: string) => Promise<void>;
+}) {
+  const [drafts, setDrafts] = useState<Record<string, MilestoneGatePatch>>({});
+  useEffect(() => {
+    setDrafts(Object.fromEntries(gates.map((gate) => [gate.id, {
+      requiredDocumentCount: gate.requiredDocumentCount ?? 0,
+      requiredDocumentTypes: gate.requiredDocumentTypes ?? [],
+      unlockCriteria: gate.unlockCriteria ?? "",
+      customerConfirmationRequired: Boolean(gate.customerConfirmationRequired),
+      reviewerRole: gate.reviewerRole ?? "PM",
+      gateStatus: gate.gateStatus ?? "locked"
+    }])));
+  }, [gates]);
+
+  const updateDraft = (id: string, patch: Partial<MilestoneGatePatch>) => setDrafts((current) => ({ ...current, [id]: { ...current[id], ...patch } }));
+  const selectedProject = projects.find((project) => project.id === projectId);
+  const statusLabel: Record<string, string> = { open: "Đang mở", locked: "Đang khóa", pending_review: "Chờ duyệt", approved: "Đã duyệt", rejected: "Cần làm lại", conditional: "Duyệt có điều kiện" };
+  const statusClass: Record<string, string> = { open: "bg-sky-100 text-sky-800", locked: "bg-slate-100 text-slate-600", pending_review: "bg-amber-100 text-amber-800", approved: "bg-emerald-100 text-emerald-800", rejected: "bg-rose-100 text-rose-800", conditional: "bg-violet-100 text-violet-800" };
+
+  return <section aria-labelledby="milestone-gate-title" className="grid gap-5">
+    <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div><p className="text-xs font-bold uppercase tracking-[0.16em] text-indigo-700">PROJECT GOVERNANCE · MILESTONE GATES</p><h2 id="milestone-gate-title" className="mt-1 text-2xl font-bold tracking-tight text-slate-950">Cấu hình milestone</h2><p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-600">Admin quản lý hồ sơ chuyển tiếp, điều kiện mở khóa và trạng thái duyệt cho từng Project. Thay đổi tại đây áp dụng trực tiếp vào Project đã chọn.</p></div>
+      <label className="min-w-[280px]"><span className="mb-1.5 block text-xs font-semibold text-slate-600">Project cần cấu hình</span><select value={projectId} onChange={(event) => onProjectChange(event.target.value)} className="h-11 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700"><option value="">Chọn Project…</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.code} · {project.name}</option>)}</select></label>
+    </div>
+    {selectedProject ? <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-xs text-indigo-900"><span className="font-bold">{selectedProject.name}</span><span>·</span><span>Mode: {selectedProject.milestoneMode === "manual" ? "Tự chọn" : "Theo mẫu pilot"}</span><span>·</span><span>{gates.length} milestone</span></div> : null}
+    {loading ? <div className="rounded-2xl border border-border bg-card p-8 text-center text-sm text-slate-500">Đang tải cấu hình milestone…</div> : null}
+    {!loading && !projectId ? <div className="rounded-2xl border border-dashed border-border bg-card p-10 text-center text-sm text-slate-500">Chọn một Project để bắt đầu cấu hình.</div> : null}
+    {!loading && projectId && gates.length === 0 ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">Project này chưa có milestone. Hãy tạo lại Project với template tự động hoặc thêm milestone trong Project Sheet.</div> : null}
+    <div className="grid gap-3">{gates.map((gate, index) => {
+      const draft = drafts[gate.id];
+      if (!draft) return null;
+      return <article key={gate.id} className="rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5">
+        <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between"><div className="flex items-start gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-xs font-black text-indigo-700">M{index + 1}</span><div><h3 className="text-base font-bold text-slate-950">{gate.name}</h3><p className="mt-1 text-xs text-slate-500">{gate.submittedDocumentCount ?? 0}/{draft.requiredDocumentCount} hồ sơ đã ghi nhận · {gate.customerConfirmationRequired ? "cần khách hàng xác nhận" : "không cần khách hàng xác nhận"}</p></div></div><span className={`w-fit rounded-full px-2.5 py-1 text-xs font-bold ${statusClass[draft.gateStatus] ?? statusClass.locked}`}>{statusLabel[draft.gateStatus] ?? draft.gateStatus}</span></div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4"><label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Số hồ sơ bắt buộc</span><input type="number" min="0" value={draft.requiredDocumentCount} onChange={(event) => updateDraft(gate.id, { requiredDocumentCount: Math.max(0, Number(event.target.value) || 0) })} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold" /></label><label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Loại hồ sơ</span><input value={draft.requiredDocumentTypes.join(", ")} onChange={(event) => updateDraft(gate.id, { requiredDocumentTypes: event.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} placeholder="BRD, FRD, SRS" className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm" /></label><label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Vai trò duyệt</span><input value={draft.reviewerRole} onChange={(event) => updateDraft(gate.id, { reviewerRole: event.target.value })} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm" /></label><label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Trạng thái gate</span><select value={draft.gateStatus} onChange={(event) => updateDraft(gate.id, { gateStatus: event.target.value })} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold"><option value="open">Đang mở</option><option value="locked">Đang khóa</option><option value="pending_review">Chờ duyệt</option><option value="approved">Đã duyệt</option><option value="rejected">Cần làm lại</option><option value="conditional">Duyệt có điều kiện</option></select></label></div>
+        <label className="mt-3 block"><span className="mb-1.5 block text-xs font-semibold text-slate-600">Điều kiện mở milestone tiếp theo</span><textarea rows={2} value={draft.unlockCriteria} onChange={(event) => updateDraft(gate.id, { unlockCriteria: event.target.value })} className="w-full resize-none rounded-xl border border-border bg-white px-3 py-2.5 text-sm" placeholder="Ví dụ: đủ hồ sơ, PM duyệt, khách hàng xác nhận…" /></label>
+        <div className="mt-3 flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between"><label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600"><input type="checkbox" checked={draft.customerConfirmationRequired} onChange={(event) => updateDraft(gate.id, { customerConfirmationRequired: event.target.checked })} className="h-4 w-4 rounded border-border text-primary" /> Bắt buộc khách hàng xác nhận</label><div className="flex flex-wrap gap-2"><button type="button" disabled={saving} onClick={() => void onEvaluate(gate.id)} className="inline-flex min-h-9 items-center gap-2 rounded-xl border border-border bg-white px-3 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50"><RefreshCw className="h-3.5 w-3.5" /> Đánh giá hồ sơ</button><button type="button" disabled={saving} onClick={() => void onSave(gate.id, draft)} className="inline-flex min-h-9 items-center gap-2 rounded-xl bg-primary px-3 text-xs font-bold text-primary-foreground hover:opacity-90 disabled:opacity-50"><Save className="h-3.5 w-3.5" /> Lưu điều kiện</button></div></div>
+      </article>;
+    })}</div>
   </section>;
 }
 
