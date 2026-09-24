@@ -131,6 +131,14 @@ async function resolveSessionToken(getSessionToken?: CrmBffProxyOptions["getSess
 
   const { cookies } = await import("next/headers");
   const cookieStore = await cookies();
+
+  // Render's staging bypass is an isolated demo sandbox. Do not let a stale
+  // Lark cookie from another identity override the configured founder snapshot.
+  // Real sessions remain fully enabled when the bypass flag is disabled.
+  if (isStagingBypassAuthEnabled()) {
+    return undefined;
+  }
+
   const token = cookieStore.get(CRM_SESSION_COOKIE_NAME)?.value;
 
   // Strip the synthetic local dev token — it must not be sent to the upstream API.

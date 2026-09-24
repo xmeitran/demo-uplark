@@ -283,9 +283,12 @@ export class LarkAuthService {
       return undefined;
     }
 
+    const adminUserId = process.env.FOUNDATION_ADMIN_USER_ID?.trim();
     const adminEmail = normalizeEmail(process.env.FOUNDATION_ADMIN_EMAIL);
     return this.prisma.user.findFirst({
-      where: adminEmail
+      where: adminUserId
+        ? { id: adminUserId, status: "ACTIVE" }
+        : adminEmail
         ? { email: adminEmail, status: "ACTIVE" }
         : {
             status: "ACTIVE",

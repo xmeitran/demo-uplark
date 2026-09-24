@@ -13,7 +13,7 @@ function localAutoAuthEnabled() {
 
 export async function GET() {
   const cookieStore = await cookies();
-  const sessionToken = cookieStore.get(CRM_SESSION_COOKIE_NAME)?.value;
+  const sessionToken = isStagingBypassAuthEnabled() ? undefined : cookieStore.get(CRM_SESSION_COOKIE_NAME)?.value;
 
   if (!sessionToken && !localAutoAuthEnabled()) {
     return NextResponse.json({ message: "Bearer session is required" }, { status: 401 });

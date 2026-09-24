@@ -222,9 +222,15 @@ export class PrincipalService {
     const workspace = await this.workspaces.resolveWorkspace();
     const normalized = fallback.trim();
     const founderRoleCode = process.env.FOUNDATION_ADMIN_ROLE ?? "FOUNDER_GM";
+    // The staging sandbox may contain several historical Founder records. The
+    // configured foundation user is the canonical demo principal; selecting by
+    // role alone can otherwise resolve an older Lark identity with no data.
+    const configuredFounderId = process.env.FOUNDATION_ADMIN_USER_ID?.trim();
     const where =
       normalized === "founder"
-        ? {
+        ? configuredFounderId
+          ? { id: configuredFounderId }
+          : {
             roleBindings: {
               some: {
                 ...activeMembershipWhere(),

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   resolveWorkspaceSessionToken,
   shouldFailClosedOnProtectedFallback,
@@ -6,6 +6,10 @@ import {
 } from "./crm-public-session-policy";
 
 describe("crm public session policy", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("ignores URL session tokens in production", () => {
     expect(
       resolveWorkspaceSessionToken({
@@ -31,6 +35,13 @@ describe("crm public session policy", () => {
         querySessionToken: "url-token"
       })
     ).toBe("cookie-token");
+  });
+
+  it("ignores stale browser sessions in the isolated staging bypass", () => {
+    vi.stubEnv("CRM_ENV", "staging");
+    vi.stubEnv("CRM_STAGING_BYPASS_AUTH", "true");
+
+    expect(resolveWorkspaceSessionToken({ cookieSessionToken: "stale-lark-session" })).toBeUndefined();
   });
 
   it("requires a public session in production or when explicitly enabled", () => {

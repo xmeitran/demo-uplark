@@ -7,6 +7,12 @@ export function resolveWorkspaceSessionToken({
   nodeEnv?: string;
   querySessionToken?: string;
 }) {
+  // Staging is intentionally a read/write sandbox backed by the configured
+  // foundation principal. Ignore browser cookies minted for another account so
+  // every route renders the same production snapshot.
+  if (isStagingBypassAuthEnabled()) {
+    return undefined;
+  }
   return cookieSessionToken;
 }
 

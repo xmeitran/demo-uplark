@@ -13,7 +13,7 @@ export function setMfaChallengeCookie(response: NextResponse, token: string) {
 export async function proxyNativeAuth(request: Request, path: string) {
   if (request.method !== "GET" && !isSameOriginAuthRequest(request)) return NextResponse.json({ message: "Same-origin request required" }, { status: 403 });
   const store = await cookies();
-  const session = store.get(CRM_SESSION_COOKIE_NAME)?.value;
+  const session = isStagingBypassAuthEnabled() ? undefined : store.get(CRM_SESSION_COOKIE_NAME)?.value;
   let payload: Record<string, unknown> | undefined;
   if (request.method !== "GET") {
     try { payload = await request.json(); } catch { return NextResponse.json({ message: "Invalid JSON" }, { status: 400 }); }
