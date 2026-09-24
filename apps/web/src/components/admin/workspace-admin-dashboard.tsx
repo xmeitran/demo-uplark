@@ -284,12 +284,14 @@ export function WorkspaceAdminDashboard() {
             {section === "day-offs" ? <section aria-label="Quản lý ngày nghỉ"><WorkspaceDayOffSettings /></section> : null}
             {section === "reminders" ? <ReminderPolicyPanel policy={policy} saving={saving} sending={sending} recipients={reminderRecipients} onSave={() => void savePolicy()} onSendManual={(input) => void sendManualReminder(input)} onUpdateSlot={updateSlot} onSetPolicy={setPolicy} /> : null}
             {section === "milestones" ? <>
-              <div role="tablist" aria-label="Quản lý milestone" className="flex flex-wrap items-center gap-1 rounded-xl border border-border bg-card p-1">
-                <button type="button" role="tab" aria-selected={milestoneView === "templates"} onClick={() => setMilestoneView("templates")} className={`rounded-lg px-3 py-1.5 text-[13px] font-semibold transition-colors ${milestoneView === "templates" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
+              <div role="tablist" aria-label="Quản lý milestone" className="flex min-w-max items-center overflow-x-auto border-b border-border">
+                <button type="button" role="tab" aria-selected={milestoneView === "templates"} onClick={() => setMilestoneView("templates")} className={`relative px-4 py-2.5 text-sm font-medium transition-colors ${milestoneView === "templates" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
                   Thư viện template
+                  {milestoneView === "templates" ? <span aria-hidden="true" className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-primary" /> : null}
                 </button>
-                <button type="button" role="tab" aria-selected={milestoneView === "project-gates"} onClick={() => setMilestoneView("project-gates")} className={`rounded-lg px-3 py-1.5 text-[13px] font-semibold transition-colors ${milestoneView === "project-gates" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
+                <button type="button" role="tab" aria-selected={milestoneView === "project-gates"} onClick={() => setMilestoneView("project-gates")} className={`relative px-4 py-2.5 text-sm font-medium transition-colors ${milestoneView === "project-gates" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
                   Cấu hình theo Project
+                  {milestoneView === "project-gates" ? <span aria-hidden="true" className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-primary" /> : null}
                 </button>
               </div>
               {milestoneView === "templates" ? <MilestoneTemplateManager templates={milestoneTemplates} loading={milestoneTemplatesLoading} saving={milestoneTemplatesSaving} onCreate={async (input) => {
