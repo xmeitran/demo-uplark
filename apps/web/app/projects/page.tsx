@@ -916,6 +916,13 @@ const COLOR_OPTIONS = [
   "#64748b", // slate
 ];
 
+const PILOT_PROJECT_MILESTONES = [
+  "Nhận brief & kick-off dự án",
+  "Xây dựng hệ thống",
+  "Pilot, Onboarding, Nghiệm thu hệ thống",
+  "Bảo trì"
+];
+
 function parseProjectTimelineDate(value: string) {
   if (!value || value === "TBD") return null;
   const parsed = new Date(value);
@@ -1109,6 +1116,8 @@ export default function ProjectsPage() {
   const [color, setColor] = useState("#2563eb");
   const [tags, setTags] = useState("");
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+  const [milestoneMode, setMilestoneMode] = useState<"auto" | "manual">("auto");
+  const [projectMilestones, setProjectMilestones] = useState<string[]>(PILOT_PROJECT_MILESTONES);
 
   const handleSort = (k: SortKey, direction?: SortDir) => {
     if (direction) {
@@ -1210,7 +1219,15 @@ export default function ProjectsPage() {
           priority: priority.toLowerCase(),
           tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean),
           color,
-          createStageTemplate: true
+          createStageTemplate: true,
+          milestoneMode,
+          milestoneTemplateKey: milestoneMode === "auto" ? "pilot-v1" : undefined,
+          manualMilestones: projectMilestones.map((milestone, index) => ({
+            name: milestone.trim(),
+            sortOrder: (index + 1) * 10,
+            requiredDocumentCount: 0,
+            stages: [{ activity: `${milestone.trim()} - Stage 1`, phase: milestone.trim() }]
+          }))
       });
 
       if (!response.ok) {
@@ -1246,6 +1263,8 @@ export default function ProjectsPage() {
       setColor("#2563eb");
       setTags("");
       setSelectedMembers([]);
+      setMilestoneMode("auto");
+      setProjectMilestones(PILOT_PROJECT_MILESTONES);
     } catch (error) {
       setProjectsError(error instanceof Error ? error.message : "Could not create project");
     } finally {
@@ -1776,6 +1795,33 @@ export default function ProjectsPage() {
                       className="w-full px-3.5 py-2.5 bg-background border border-input rounded-xl text-sm text-foreground focus:outline-none focus:border-primary transition-colors resize-none"
                     />
                   </div>
+
+                  <section className="rounded-2xl border border-border bg-muted/15 p-4 space-y-3" aria-labelledby="create-project-milestone-title">
+                    <div>
+                      <h4 id="create-project-milestone-title" className="text-sm font-bold text-foreground">Milestone format & điều kiện chuyển tiếp</h4>
+                      <p className="mt-1 text-xs text-muted-foreground">Chọn mẫu pilot chuẩn hoặc tự đặt milestone. Admin có thể bổ sung số hồ sơ và điều kiện duyệt trong Project Sheet.</p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <label className={`flex gap-2 rounded-xl border p-3 cursor-pointer ${milestoneMode === "auto" ? "border-primary bg-primary/5" : "border-border bg-background"}`}>
+                        <input type="radio" name="projects-milestone-mode" checked={milestoneMode === "auto"} onChange={() => { setMilestoneMode("auto"); setProjectMilestones(PILOT_PROJECT_MILESTONES); }} />
+                        <span><strong className="block text-xs">Theo dự án</strong><small className="text-[11px] text-muted-foreground">4 milestone / 9 stage pilot UpLark</small></span>
+                      </label>
+                      <label className={`flex gap-2 rounded-xl border p-3 cursor-pointer ${milestoneMode === "manual" ? "border-primary bg-primary/5" : "border-border bg-background"}`}>
+                        <input type="radio" name="projects-milestone-mode" checked={milestoneMode === "manual"} onChange={() => setMilestoneMode("manual")} />
+                        <span><strong className="block text-xs">Tự chọn milestone</strong><small className="text-[11px] text-muted-foreground">Tự thêm, đổi tên và sắp thứ tự</small></span>
+                      </label>
+                    </div>
+                    <div className="space-y-2">
+                      {projectMilestones.map((milestone, index) => (
+                        <div className="flex items-center gap-2" key={`${index}-${milestone}`}>
+                          <span className="w-7 h-7 rounded-lg bg-primary/10 text-primary text-[11px] font-bold inline-flex items-center justify-center">M{index + 1}</span>
+                          <input aria-label={`Milestone ${index + 1}`} disabled={milestoneMode === "auto"} value={milestone} onChange={(event) => setProjectMilestones((current) => current.map((value, itemIndex) => itemIndex === index ? event.target.value : value))} className="flex-1 px-3 py-2 bg-background border border-input rounded-xl text-xs" />
+                          {milestoneMode === "manual" && projectMilestones.length > 1 ? <button type="button" onClick={() => setProjectMilestones((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="text-xs text-destructive">Xóa</button> : null}
+                        </div>
+                      ))}
+                    </div>
+                    {milestoneMode === "manual" ? <button type="button" onClick={() => setProjectMilestones((current) => [...current, "Milestone mới"])} className="text-xs font-semibold text-primary hover:underline">+ Thêm milestone</button> : null}
+                  </section>
 
                   {/* Highlight Color & Tags */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
