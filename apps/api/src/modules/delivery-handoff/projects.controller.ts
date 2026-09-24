@@ -68,6 +68,35 @@ export class ProjectsController {
     return this.projects.getProjectHierarchy(projectId, principal);
   }
 
+  @Get("projects/:projectId/milestones")
+  async listMilestoneGates(@Headers("authorization") authorization: string | undefined, @Param("projectId") projectId: string, @Query() query: any) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, query.principal);
+    return this.projects.listProjectMilestoneGates(projectId, principal);
+  }
+
+  @Patch("projects/:projectId/milestones/:milestoneId/gate")
+  async updateMilestoneGate(
+    @Headers("authorization") authorization: string | undefined,
+    @Query("principal") principalFallback: string | undefined,
+    @Param("projectId") projectId: string,
+    @Param("milestoneId") milestoneId: string,
+    @Body() body: Record<string, unknown>
+  ) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.updateProjectMilestoneGate(projectId, milestoneId, body, principal);
+  }
+
+  @Post("projects/:projectId/milestones/:milestoneId/evaluate")
+  async evaluateMilestoneGate(
+    @Headers("authorization") authorization: string | undefined,
+    @Query("principal") principalFallback: string | undefined,
+    @Param("projectId") projectId: string,
+    @Param("milestoneId") milestoneId: string
+  ) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.evaluateProjectMilestoneGate(projectId, milestoneId, principal);
+  }
+
   @Put("projects/:projectId/hierarchy/order")
   async reorderProjectHierarchy(
     @Headers("authorization") authorization: string | undefined,

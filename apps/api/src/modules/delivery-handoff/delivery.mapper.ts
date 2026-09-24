@@ -88,7 +88,9 @@ export function mapProjectSummary(project: any): ProjectSummary {
     activeStageCount,
     plannedStartAt: minDateIso(startCandidates),
     plannedEndAt: maxDateIso(endCandidates),
-    hierarchyOrderVersion: project.hierarchyOrderVersion ?? 0
+    hierarchyOrderVersion: project.hierarchyOrderVersion ?? 0,
+    milestoneMode: project.milestoneMode ?? "auto",
+    milestoneTemplateKey: project.milestoneTemplateKey ?? undefined
   };
 }
 

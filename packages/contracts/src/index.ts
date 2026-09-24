@@ -490,6 +490,8 @@ export interface ProjectSummary {
   plannedStartAt?: string;
   plannedEndAt?: string;
   hierarchyOrderVersion: number;
+  milestoneMode?: ProjectMilestoneMode;
+  milestoneTemplateKey?: string;
 }
 
 export type ProjectPriority = "critical" | "high" | "medium" | "low";
@@ -524,6 +526,36 @@ export interface CreateProjectInput {
   scopeSummary?: string;
   acceptanceCriteria?: string;
   createStageTemplate?: boolean;
+  /** How the delivery hierarchy is provisioned for a new project. */
+  milestoneMode?: ProjectMilestoneMode;
+  /** Standard template key used when milestoneMode is auto. */
+  milestoneTemplateKey?: string;
+  /** Custom milestone/stage structure used when milestoneMode is manual. */
+  manualMilestones?: CreateProjectMilestoneInput[];
+}
+
+export type ProjectMilestoneMode = "manual" | "auto";
+
+export interface ProjectMilestoneConditionInput {
+  requiredDocumentCount?: number;
+  requiredDocumentTypes?: string[];
+  unlockCriteria?: string;
+  customerConfirmationRequired?: boolean;
+  reviewerRole?: string;
+}
+
+export interface CreateProjectMilestoneInput extends ProjectMilestoneConditionInput {
+  name: string;
+  sortOrder?: number;
+  stages: Array<{
+    stageKey?: string;
+    phase?: string;
+    activity: string;
+    criteria?: string;
+    slaDays?: number;
+    upbaseRole?: string;
+    customerRole?: string;
+  }>;
 }
 
 export interface UpdateProjectInput {
@@ -951,6 +983,13 @@ export interface ProjectMilestoneSummary {
   name: string;
   normalizedKey: string;
   sortOrder: number;
+  gateStatus?: "open" | "locked" | "pending_review" | "approved" | "rejected" | "conditional";
+  requiredDocumentCount?: number;
+  requiredDocumentTypes?: string[];
+  submittedDocumentCount?: number;
+  unlockCriteria?: string;
+  customerConfirmationRequired?: boolean;
+  reviewerRole?: string;
 }
 
 export interface ProjectHierarchyOrderInput {

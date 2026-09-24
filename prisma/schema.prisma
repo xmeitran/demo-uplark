@@ -1270,6 +1270,8 @@ model Project {
   name                   String
   status                 String
   projectType            String                      @default("delivery")
+  milestoneMode          String                      @default("auto")
+  milestoneTemplateKey   String?
   scopeSummary           String?
   marginPercent          Decimal?
   priority               String?
@@ -1330,6 +1332,12 @@ model ProjectMilestone {
   name          String
   normalizedKey String
   sortOrder     Int
+  requiredDocumentCount Int             @default(0)
+  requiredDocumentTypes String[]        @default([])
+  unlockCriteria Json?
+  gateStatus     String                  @default("open")
+  customerConfirmationRequired Boolean   @default(false)
+  reviewerRole   String?
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
   workspace     TenantWorkspace @relation(fields: [workspaceId], references: [id])

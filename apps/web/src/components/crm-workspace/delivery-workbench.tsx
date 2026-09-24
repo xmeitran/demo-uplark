@@ -660,7 +660,10 @@ function DeliveryWorkbench({ config, projectId }: Readonly<{ config: BusinessFun
       plannedStartAt: projectInput.plannedStartAt,
       scopeSummary: projectInput.scopeSummary,
       acceptanceCriteria: projectInput.acceptanceCriteria,
-      status: projectInput.status
+      status: projectInput.status,
+      milestoneMode: projectInput.milestoneMode,
+      milestoneTemplateKey: projectInput.milestoneTemplateKey,
+      manualMilestones: projectInput.manualMilestones
     };
 
     try {

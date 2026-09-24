@@ -51,7 +51,7 @@ import {
   mapTaskSummary,
   mapTaskTimeEntrySummary
 } from "./delivery.mapper";
-import { DEFAULT_PROJECT_STAGE_TEMPLATE } from "./stage-template";
+import { DEFAULT_PROJECT_STAGE_TEMPLATE, PILOT_PROJECT_MILESTONE_TEMPLATE } from "./stage-template";
 import {
   buildDailyActualLogStatus,
   getDailyActualLogWindow
@@ -430,6 +430,75 @@ function normalizeMilestoneName(value: string) {
 
 function normalizeMilestoneKey(value: string) {
   return normalizeMilestoneName(value).toLocaleLowerCase("en-US");
+}
+
+function buildLegacyMilestoneTemplate() {
+  const grouped = new Map<string, { name: string; sortOrder: number; stages: any[] }>();
+  for (const stage of DEFAULT_PROJECT_STAGE_TEMPLATE) {
+    const name = normalizeMilestoneName(stage.phase);
+    const key = normalizeMilestoneKey(name);
+    const current = grouped.get(key) ?? { name, sortOrder: (grouped.size + 1) * 10, stages: [] };
+    current.stages.push(stage);
+    grouped.set(key, current);
+  }
+  return Array.from(grouped.values()).map((milestone) => ({
+    ...milestone,
+    requiredDocumentCount: 0,
+    requiredDocumentTypes: [],
+    customerConfirmationRequired: false,
+    stages: milestone.stages.map((stage) => ({ ...stage }))
+  }));
+}
+
+function normalizeManualMilestones(input: unknown) {
+  if (!Array.isArray(input)) {
+    throw new BadRequestException("manualMilestones must be an array");
+  }
+  return input.map((raw, milestoneIndex) => {
+    if (!raw || typeof raw !== "object") {
+      throw new BadRequestException(`manualMilestones[${milestoneIndex}] is invalid`);
+    }
+    const milestone = raw as Record<string, unknown>;
+    const name = normalizeMilestoneName(String(milestone.name ?? ""));
+    const stages = milestone.stages;
+    if (!Array.isArray(stages) || stages.length === 0) {
+      throw new BadRequestException(`Milestone "${name}" must contain at least one stage`);
+    }
+    const requiredDocumentCount = optionalInteger(milestone.requiredDocumentCount, `manualMilestones[${milestoneIndex}].requiredDocumentCount`) ?? 0;
+    if (requiredDocumentCount < 0) {
+      throw new BadRequestException("requiredDocumentCount must be non-negative");
+    }
+    const requiredDocumentTypes = Array.isArray(milestone.requiredDocumentTypes)
+      ? milestone.requiredDocumentTypes.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((value) => value.trim())
+      : [];
+    return {
+      name,
+      sortOrder: optionalInteger(milestone.sortOrder, `manualMilestones[${milestoneIndex}].sortOrder`) ?? (milestoneIndex + 1) * 10,
+      requiredDocumentCount,
+      requiredDocumentTypes,
+      unlockCriteria: optionalString(milestone.unlockCriteria, `manualMilestones[${milestoneIndex}].unlockCriteria`) ?? undefined,
+      customerConfirmationRequired: Boolean(milestone.customerConfirmationRequired),
+      reviewerRole: optionalString(milestone.reviewerRole, `manualMilestones[${milestoneIndex}].reviewerRole`) ?? undefined,
+      stages: stages.map((stageRaw, stageIndex) => {
+        if (!stageRaw || typeof stageRaw !== "object") {
+          throw new BadRequestException(`Milestone "${name}" stage ${stageIndex + 1} is invalid`);
+        }
+        const stage = stageRaw as Record<string, unknown>;
+        const activity = nonEmptyString(String(stage.activity ?? ""), `manualMilestones[${milestoneIndex}].stages[${stageIndex}].activity`);
+        return {
+          stageKey: optionalString(stage.stageKey, "stageKey") ?? `${normalizeMilestoneKey(name)}-${stageIndex + 1}`,
+          phase: optionalString(stage.phase, "phase") ?? activity,
+          activity,
+          sortOrder: optionalInteger(stage.sortOrder, "sortOrder") ?? (stageIndex + 1) * 10,
+          cumulativePercent: optionalInteger(stage.cumulativePercent, "cumulativePercent") ?? 0,
+          activityPercent: optionalInteger(stage.activityPercent, "activityPercent") ?? 0,
+          criteria: optionalString(stage.criteria, "criteria") ?? "Stage completion criteria",
+          upbaseRole: optionalString(stage.upbaseRole, "upbaseRole") ?? undefined,
+          customerRole: optionalString(stage.customerRole, "customerRole") ?? undefined
+        };
+      })
+    };
+  });
 }
 
 export function isLegacyMilestonePlaceholder(input: {
@@ -887,50 +956,66 @@ export class ProjectsService {
           marginPercent: optionalNumber(input.marginPercent, "marginPercent") ?? undefined,
           priority,
           tags,
-          color
+          color,
+          milestoneMode: input.milestoneMode === "manual" ? "manual" : "auto",
+          milestoneTemplateKey: input.milestoneMode === "manual" ? undefined : (input.milestoneTemplateKey?.trim() || "pilot-v1")
         },
         include: projectIncludeForPrincipal(principal)
       });
 
-      if (input.createStageTemplate ?? true) {
-        const milestoneByKey = new Map<string, { id: string; nextStageSortOrder: number }>();
-        for (const templateStage of DEFAULT_PROJECT_STAGE_TEMPLATE) {
-          const name = normalizeMilestoneName(templateStage.phase);
-          const normalizedKey = normalizeMilestoneKey(name);
-          if (!milestoneByKey.has(normalizedKey)) {
-            const milestone = await tx.projectMilestone.create({
-              data: {
-                workspaceId: principal.workspaceId,
-                accountId: account.id,
-                projectId: createdProject.id,
-                name,
-                normalizedKey,
-                sortOrder: (milestoneByKey.size + 1) * 10
-              }
-            });
-            milestoneByKey.set(normalizedKey, { id: milestone.id, nextStageSortOrder: 10 });
-          }
+      const shouldSeedHierarchy = input.createStageTemplate ?? true;
+      if (shouldSeedHierarchy) {
+        const usePilotTemplate = input.milestoneMode === "auto";
+        const manualMilestones = input.milestoneMode === "manual" ? normalizeManualMilestones(input.manualMilestones) : undefined;
+        if (input.milestoneMode === "manual" && (!manualMilestones || manualMilestones.length === 0)) {
+          throw new BadRequestException("At least one manual milestone with one stage is required");
         }
-        const stageRows = DEFAULT_PROJECT_STAGE_TEMPLATE.map((stage, index) => {
-          const milestone = milestoneByKey.get(normalizeMilestoneKey(stage.phase))!;
-          const sortOrder = milestone.nextStageSortOrder;
-          milestone.nextStageSortOrder += 10;
-          return {
+        const milestoneTemplates: readonly any[] = usePilotTemplate
+          ? PILOT_PROJECT_MILESTONE_TEMPLATE
+          : manualMilestones ?? buildLegacyMilestoneTemplate();
+        for (let milestoneIndex = 0; milestoneIndex < milestoneTemplates.length; milestoneIndex += 1) {
+          const milestoneTemplate = milestoneTemplates[milestoneIndex];
+          const configuredGate = usePilotTemplate && Array.isArray(input.manualMilestones) ? (input.manualMilestones[milestoneIndex] as any) : undefined;
+          const milestone = await tx.projectMilestone.create({
+            data: {
+              workspaceId: principal.workspaceId,
+              accountId: account.id,
+              projectId: createdProject.id,
+              name: milestoneTemplate.name,
+              normalizedKey: normalizeMilestoneKey(milestoneTemplate.name),
+              sortOrder: milestoneTemplate.sortOrder ?? (milestoneIndex + 1) * 10,
+              requiredDocumentCount: configuredGate?.requiredDocumentCount ?? milestoneTemplate.requiredDocumentCount ?? 0,
+              requiredDocumentTypes: configuredGate?.requiredDocumentTypes ?? milestoneTemplate.requiredDocumentTypes ?? [],
+              unlockCriteria: (configuredGate?.unlockCriteria ?? milestoneTemplate.unlockCriteria) ? { text: configuredGate?.unlockCriteria ?? milestoneTemplate.unlockCriteria } : undefined,
+              gateStatus: milestoneIndex === 0 ? "open" : "locked",
+              customerConfirmationRequired: configuredGate?.customerConfirmationRequired ?? milestoneTemplate.customerConfirmationRequired ?? false,
+              reviewerRole: configuredGate?.reviewerRole ?? milestoneTemplate.reviewerRole
+            }
+          });
+          const stageRows = milestoneTemplate.stages.map((stage: any, stageIndex: number) => ({
             milestoneId: milestone.id,
             accountId: account.id,
             workspaceId: principal.workspaceId,
             projectId: createdProject.id,
-            ...stage,
-            sortOrder,
-            ownerUserId: index === 0 ? ownerUserId : undefined,
-            plannedStartAt: index === 0 ? plannedStartAt : undefined,
-            plannedEndAt: index === DEFAULT_PROJECT_STAGE_TEMPLATE.length - 1 ? plannedEndAt : undefined,
-            scopeSummary: index === 0 ? scopeSummary : undefined,
-            acceptanceCriteria:
-              index === DEFAULT_PROJECT_STAGE_TEMPLATE.length - 1 ? optionalString(input.acceptanceCriteria, "acceptanceCriteria") ?? undefined : undefined
-          };
-        });
-        await tx.projectStage.createMany({ data: stageRows });
+            stageKey: stage.stageKey || `${normalizeMilestoneKey(milestoneTemplate.name)}-${stageIndex + 1}`,
+            phase: stage.phase || stage.activity,
+            activity: stage.activity,
+            sortOrder: stage.sortOrder ?? (stageIndex + 1) * 10,
+            cumulativePercent: stage.cumulativePercent ?? Math.round(((stageIndex + 1) / milestoneTemplate.stages.length) * 100),
+            activityPercent: stage.activityPercent ?? 0,
+            criteria: stage.criteria || "Stage completion criteria",
+            upbaseRole: stage.upbaseRole,
+            customerRole: stage.customerRole,
+            ownerUserId: milestoneIndex === 0 && stageIndex === 0 ? ownerUserId : undefined,
+            plannedStartAt: milestoneIndex === 0 && stageIndex === 0 ? plannedStartAt : undefined,
+            plannedEndAt: milestoneIndex === milestoneTemplates.length - 1 && stageIndex === milestoneTemplate.stages.length - 1 ? plannedEndAt : undefined,
+            scopeSummary: milestoneIndex === 0 && stageIndex === 0 ? scopeSummary : undefined,
+            acceptanceCriteria: milestoneIndex === milestoneTemplates.length - 1 && stageIndex === milestoneTemplate.stages.length - 1
+              ? optionalString(input.acceptanceCriteria, "acceptanceCriteria") ?? undefined
+              : undefined
+          }));
+          await tx.projectStage.createMany({ data: stageRows });
+        }
       }
 
       await this.syncProjectMembers(tx, {
@@ -1152,9 +1237,106 @@ export class ProjectsService {
         projectId: milestone.projectId,
         name: milestone.name,
         normalizedKey: milestone.normalizedKey,
-        sortOrder: milestone.sortOrder
+        sortOrder: milestone.sortOrder,
+        gateStatus: milestone.gateStatus,
+        requiredDocumentCount: milestone.requiredDocumentCount,
+        requiredDocumentTypes: milestone.requiredDocumentTypes,
+        unlockCriteria: typeof milestone.unlockCriteria === "object" && milestone.unlockCriteria && "text" in milestone.unlockCriteria
+          ? String((milestone.unlockCriteria as { text?: unknown }).text ?? "")
+          : undefined,
+        customerConfirmationRequired: milestone.customerConfirmationRequired,
+        reviewerRole: milestone.reviewerRole
       }))
     };
+  }
+
+  async listProjectMilestoneGates(projectId: string, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project milestone gates are internal");
+    const project = await this.ensureProject(projectId, principal.workspaceId);
+    const [milestones, submittedDocumentCount] = await this.prisma.$transaction([
+      this.prisma.projectMilestone.findMany({
+        where: { projectId: project.id, workspaceId: principal.workspaceId },
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
+      }),
+      this.prisma.projectDocumentVersion.count({ where: { projectId: project.id, workspaceId: principal.workspaceId } })
+    ]);
+    return {
+      projectId: project.id,
+      milestoneMode: project.milestoneMode,
+      milestoneTemplateKey: project.milestoneTemplateKey,
+      data: milestones.map((milestone) => ({
+        id: milestone.id,
+        projectId: milestone.projectId,
+        name: milestone.name,
+        normalizedKey: milestone.normalizedKey,
+        sortOrder: milestone.sortOrder,
+        gateStatus: milestone.gateStatus,
+        requiredDocumentCount: milestone.requiredDocumentCount,
+        requiredDocumentTypes: milestone.requiredDocumentTypes,
+        submittedDocumentCount,
+        unlockCriteria: typeof milestone.unlockCriteria === "object" && milestone.unlockCriteria && "text" in milestone.unlockCriteria
+          ? String((milestone.unlockCriteria as { text?: unknown }).text ?? "")
+          : "",
+        customerConfirmationRequired: milestone.customerConfirmationRequired,
+        reviewerRole: milestone.reviewerRole
+      }))
+    };
+  }
+
+  async updateProjectMilestoneGate(projectId: string, milestoneId: string, input: Record<string, unknown>, principal: PrincipalContext) {
+    this.assertCanEditProjectHierarchy(principal);
+    const project = await this.ensureProject(projectId, principal.workspaceId);
+    const existing = await this.prisma.projectMilestone.findFirst({ where: { id: milestoneId, projectId: project.id, workspaceId: principal.workspaceId } });
+    if (!existing) throw new NotFoundException("Project milestone not found");
+    const requiredDocumentCount = input.requiredDocumentCount === undefined
+      ? existing.requiredDocumentCount
+      : optionalInteger(input.requiredDocumentCount, "requiredDocumentCount") ?? existing.requiredDocumentCount;
+    if (requiredDocumentCount < 0) throw new BadRequestException("requiredDocumentCount must be non-negative");
+    const requiredDocumentTypes = input.requiredDocumentTypes === undefined
+      ? existing.requiredDocumentTypes
+      : Array.isArray(input.requiredDocumentTypes)
+        ? input.requiredDocumentTypes.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((value) => value.trim())
+        : (() => { throw new BadRequestException("requiredDocumentTypes must be an array"); })();
+    const unlockCriteria = input.unlockCriteria === undefined ? existing.unlockCriteria : { text: optionalString(input.unlockCriteria, "unlockCriteria") ?? "" };
+    const gateStatus = input.gateStatus === undefined ? existing.gateStatus : optionalString(input.gateStatus, "gateStatus");
+    if (gateStatus && !["open", "locked", "pending_review", "approved", "rejected", "conditional"].includes(gateStatus)) {
+      throw new BadRequestException("Invalid milestone gate status");
+    }
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.projectMilestone.update({
+        where: { id: existing.id },
+        data: {
+          requiredDocumentCount,
+          requiredDocumentTypes,
+          unlockCriteria: unlockCriteria === null ? undefined : unlockCriteria as Prisma.InputJsonValue,
+          gateStatus: gateStatus ?? existing.gateStatus,
+          customerConfirmationRequired: input.customerConfirmationRequired === undefined ? existing.customerConfirmationRequired : Boolean(input.customerConfirmationRequired),
+          reviewerRole: input.reviewerRole === undefined ? existing.reviewerRole : optionalString(input.reviewerRole, "reviewerRole") ?? null
+        }
+      });
+      await this.auditMutation(tx, principal, "project.milestone_gate_updated", "project_milestone", result.id, JSON.parse(JSON.stringify(existing)), JSON.parse(JSON.stringify(result)));
+      return result;
+    });
+    return updated;
+  }
+
+  async evaluateProjectMilestoneGate(projectId: string, milestoneId: string, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project milestone gates are internal");
+    const project = await this.ensureProject(projectId, principal.workspaceId);
+    const milestone = await this.prisma.projectMilestone.findFirst({ where: { id: milestoneId, projectId: project.id, workspaceId: principal.workspaceId } });
+    if (!milestone) throw new NotFoundException("Project milestone not found");
+    const submittedDocumentCount = await this.prisma.projectDocumentVersion.count({ where: { projectId: project.id, workspaceId: principal.workspaceId } });
+    const documentsSatisfied = submittedDocumentCount >= milestone.requiredDocumentCount;
+    const nextStatus = documentsSatisfied && milestone.requiredDocumentCount > 0 ? "pending_review" : documentsSatisfied ? "approved" : milestone.gateStatus;
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.projectMilestone.update({ where: { id: milestone.id }, data: { gateStatus: nextStatus } });
+      if (nextStatus === "approved") {
+        const next = await tx.projectMilestone.findFirst({ where: { projectId: project.id, workspaceId: principal.workspaceId, sortOrder: { gt: milestone.sortOrder } }, orderBy: { sortOrder: "asc" } });
+        if (next && next.gateStatus === "locked") await tx.projectMilestone.update({ where: { id: next.id }, data: { gateStatus: "open" } });
+      }
+      return result;
+    });
+    return { ...updated, submittedDocumentCount, documentsSatisfied };
   }
 
   async reorderProjectHierarchy(

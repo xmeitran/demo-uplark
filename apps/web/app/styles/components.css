@@ -1732,6 +1732,67 @@ s-app-nav {
   cursor: not-allowed;
 }
 
+.delivery-create-project-section-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.delivery-create-project-section-heading small {
+  color: var(--text-muted, #64748b);
+  font-size: 12px;
+}
+
+.delivery-milestone-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.delivery-milestone-mode-grid label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle, #dbe4f0);
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+}
+
+.delivery-milestone-mode-grid label.selected {
+  border-color: #2563eb;
+  background: #eff6ff;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, .1);
+}
+
+.delivery-milestone-mode-grid input { margin-top: 3px; accent-color: #2563eb; }
+.delivery-milestone-mode-grid span { display: flex; flex-direction: column; gap: 3px; }
+.delivery-milestone-mode-grid strong { color: #17233d; font-size: 13px; }
+.delivery-milestone-mode-grid small { color: #64748b; font-size: 11px; }
+
+.delivery-milestone-list { display: flex; flex-direction: column; gap: 10px; }
+.delivery-milestone-card { border: 1px solid #dbe4f0; border-radius: 12px; padding: 12px; background: #fbfdff; }
+.delivery-milestone-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.delivery-milestone-card-header input { flex: 1; min-width: 0; border: 0; background: transparent; color: #17233d; font-size: 14px; font-weight: 700; outline: none; }
+.delivery-milestone-card-header input:disabled { opacity: 1; }
+.delivery-milestone-index { width: 28px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; background: #e0ecff; color: #2563eb; font-size: 11px; font-weight: 700; }
+.delivery-inline-remove { border: 0; background: transparent; color: #dc2626; font-size: 12px; cursor: pointer; }
+.delivery-milestone-stage-preview { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.delivery-milestone-stage-preview span, .delivery-milestone-stage-preview button { border: 1px solid #dbe4f0; border-radius: 999px; padding: 4px 8px; background: #fff; color: #64748b; font-size: 11px; }
+.delivery-milestone-stage-preview button { color: #2563eb; cursor: pointer; }
+.delivery-milestone-gate-grid { display: grid; grid-template-columns: .7fr 1.8fr .8fr; gap: 8px; }
+.delivery-gate-check { display: flex; gap: 7px; align-items: center; margin-top: 8px; color: #52627c; font-size: 12px; }
+.delivery-gate-check input { accent-color: #2563eb; }
+.delivery-add-milestone { margin-top: 10px; }
+
+@media (max-width: 720px) {
+  .delivery-milestone-mode-grid, .delivery-milestone-gate-grid { grid-template-columns: 1fr; }
+}
+
 .delivery-project-row-actions {
   display: inline-flex;
   align-items: center;
