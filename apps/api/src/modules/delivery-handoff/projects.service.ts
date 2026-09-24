@@ -1318,6 +1318,15 @@ export class ProjectsService {
           reviewerRole: input.reviewerRole === undefined ? existing.reviewerRole : optionalString(input.reviewerRole, "reviewerRole") ?? null
         }
       });
+      if (result.gateStatus === "approved") {
+        const next = await tx.projectMilestone.findFirst({
+          where: { projectId: project.id, workspaceId: principal.workspaceId, sortOrder: { gt: existing.sortOrder } },
+          orderBy: { sortOrder: "asc" }
+        });
+        if (next && next.gateStatus === "locked") {
+          await tx.projectMilestone.update({ where: { id: next.id }, data: { gateStatus: "open" } });
+        }
+      }
       await this.auditMutation(tx, principal, "project.milestone_gate_updated", "project_milestone", result.id, JSON.parse(JSON.stringify(existing)), JSON.parse(JSON.stringify(result)));
       return result;
     });
