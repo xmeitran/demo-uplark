@@ -1288,7 +1288,7 @@ export class ProjectsService {
   }
 
   async updateProjectMilestoneGate(projectId: string, milestoneId: string, input: Record<string, unknown>, principal: PrincipalContext) {
-    this.assertCanEditProjectHierarchy(principal);
+    this.assertCanEditMilestoneGate(principal);
     const project = await this.ensureProject(projectId, principal.workspaceId);
     const existing = await this.prisma.projectMilestone.findFirst({ where: { id: milestoneId, projectId: project.id, workspaceId: principal.workspaceId } });
     if (!existing) throw new NotFoundException("Project milestone not found");
@@ -4159,6 +4159,13 @@ export class ProjectsService {
     this.assertInternalTaskPrincipal(principal, "Project hierarchy is internal");
     if (!principal.roleCodes.some((roleCode) => PROJECT_HIERARCHY_EDIT_ROLE_CODES.has(roleCode))) {
       throw new ForbiddenException("Founder/GM or Delivery Lead role is required to reorder project hierarchy");
+    }
+  }
+
+  private assertCanEditMilestoneGate(principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project milestone gates are internal");
+    if (!principal.roleCodes.some((roleCode) => PROJECT_HIERARCHY_EDIT_ROLE_CODES.has(roleCode) || roleCode === "WORKSPACE_ADMIN")) {
+      throw new ForbiddenException("Workspace admin, Founder/GM or Delivery Lead role is required to configure milestone gates");
     }
   }
 
