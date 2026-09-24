@@ -965,7 +965,11 @@ export class ProjectsService {
 
       const shouldSeedHierarchy = input.createStageTemplate ?? true;
       if (shouldSeedHierarchy) {
-        const usePilotTemplate = input.milestoneMode === "auto";
+        // New project creation defaults to the pilot-standard hierarchy unless
+        // the caller explicitly chooses manual milestones. The old template is
+        // retained only as an internal compatibility helper for callers that
+        // opt out of the new structure.
+        const usePilotTemplate = input.milestoneMode !== "manual";
         const manualMilestones = input.milestoneMode === "manual" ? normalizeManualMilestones(input.manualMilestones) : undefined;
         if (input.milestoneMode === "manual" && (!manualMilestones || manualMilestones.length === 0)) {
           throw new BadRequestException("At least one manual milestone with one stage is required");
