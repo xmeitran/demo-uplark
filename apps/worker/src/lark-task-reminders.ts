@@ -178,11 +178,11 @@ function actualCard(config: TaskReminderConfig, issue: ActualReminderIssue, loca
     msg_type: "interactive",
     card: {
       config: { wide_screen_mode: true },
-      header: { template: "red", title: { tag: "plain_text", content: "Actual Hour cần cập nhật · 17:30" } },
+      header: { template: "red", title: { tag: "plain_text", content: "Actual Hour cần cập nhật · 17:00" } },
       elements: [
         { tag: "div", text: { tag: "lark_md", content: lines.join("\n") } },
         divider(),
-        note("Mốc 17:30 · Ghi Actual Hour cho từng Task và đủ tối thiểu 8 giờ/ngày."),
+        note("Mốc 17:00 · Ghi Actual Hour cho từng Task và đủ tối thiểu 8 giờ/ngày."),
         { tag: "action", actions: [{
           tag: "button",
           type: "primary",

@@ -25,7 +25,7 @@ const SLOT_LABELS: Record<WorkspaceReminderSlot["slot"], string> = {
 const DEFAULT_SLOTS: WorkspaceReminderSlot[] = [
   { slot: "morning_plan", time: "08:30", label: SLOT_LABELS.morning_plan, enabled: true },
   { slot: "pm_follow_up", time: "14:00", label: SLOT_LABELS.pm_follow_up, enabled: true },
-  { slot: "evening_actual", time: "17:30", label: SLOT_LABELS.evening_actual, enabled: true }
+  { slot: "evening_actual", time: "17:00", label: SLOT_LABELS.evening_actual, enabled: true }
 ];
 const TERMINAL_TASK_STATUSES = ["completed", "done", "cancelled", "closed"];
 const WAITING_TASK_STATUSES = new Set(["blocked", "waiting", "on_hold", "on-hold"]);

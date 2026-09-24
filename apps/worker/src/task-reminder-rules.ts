@@ -75,7 +75,7 @@ export type VietnamWorkdayWindow = {
 export const TASK_REMINDER_SCHEDULE: ReadonlyArray<{ slot: TaskReminderSlot; minute: number }> = [
   { slot: "morning_plan", minute: 8 * 60 + 30 },
   { slot: "pm_follow_up", minute: 14 * 60 },
-  { slot: "evening_actual", minute: 17 * 60 + 30 }
+  { slot: "evening_actual", minute: 17 * 60 }
 ];
 
 export function normalizeReminderSchedule(value: unknown): ReadonlyArray<{ slot: TaskReminderSlot; minute: number }> {
