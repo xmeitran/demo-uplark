@@ -122,9 +122,14 @@ export function projectStatusTone(status: string): "success" | "warning" | "dang
     case "in_progress":
     case "onboarding":
       return "info";
+    case "in_review":
+      return "warning";
+    case "planning":
+      return "neutral";
     case "acceptance":
       return "warning";
     case "paused":
+    case "at_risk":
       return "danger";
     default:
       return "neutral";

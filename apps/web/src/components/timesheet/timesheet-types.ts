@@ -36,27 +36,41 @@ export const WORK_GROUP_LABELS: Record<WorkGroup, string> = {
 export type ProjectStatus =
   | "discovery"
   | "onboarding"
+  | "in_review"
+  | "planning"
   | "in_progress"
   | "acceptance"
   | "paused"
+  | "at_risk"
   | "completed";
 
 export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
-  discovery: "Khảo sát",
+  discovery: "Discovery",
   onboarding: "Onboarding",
-  in_progress: "Đang chạy",
-  acceptance: "Nghiệm thu",
-  paused: "Tạm dừng",
-  completed: "Hoàn thành"
+  in_review: "In Review",
+  planning: "Planning",
+  in_progress: "Active",
+  acceptance: "Acceptance",
+  paused: "On Hold",
+  at_risk: "At Risk",
+  completed: "Completed"
 };
 
 export type NodeStatus = "not_started" | "in_progress" | "blocked" | "completed";
 
 export const NODE_STATUS_LABELS: Record<NodeStatus, string> = {
-  not_started: "Chưa bắt đầu",
-  in_progress: "Đang làm",
-  blocked: "Đang chặn",
-  completed: "Hoàn thành"
+  not_started: "To Do",
+  in_progress: "In Progress",
+  blocked: "At Risk",
+  completed: "Done"
+};
+
+/** Status labels used by the Project page for milestones and stages. */
+export const WORKFLOW_STATUS_LABELS: Record<NodeStatus, string> = {
+  not_started: "Upcoming",
+  in_progress: "In Progress",
+  blocked: "At Risk",
+  completed: "Completed"
 };
 
 /** Member participation state inside a project (PTS-03). */

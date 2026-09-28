@@ -26,6 +26,7 @@ import {
 } from "./timesheet-format";
 import {
   NODE_STATUS_LABELS,
+  WORKFLOW_STATUS_LABELS,
   PROJECT_STATUS_LABELS,
   WORK_GROUP_LABELS,
   type NodeStatus,
@@ -590,7 +591,7 @@ function PersonProjectDetail({
                         ) : "—"}
                       </Td>
                       <Td align="center">
-                        <Pill tone={nodeStatusTone(milestoneRow.milestone.status)}>{NODE_STATUS_LABELS[milestoneRow.milestone.status as NodeStatus]}</Pill>
+                        <Pill tone={nodeStatusTone(milestoneRow.milestone.status)}>{WORKFLOW_STATUS_LABELS[milestoneRow.milestone.status as NodeStatus]}</Pill>
                       </Td>
                       <Td align="right" className="font-mono text-muted-foreground">
                         {formatHours(sum(milestoneRow.stages.flatMap((s) => s.tasks.map((t) => t.task.estimateMinutes))))}
@@ -609,7 +610,7 @@ function PersonProjectDetail({
                             ) : <span className="text-warning">Chưa có owner</span>}
                           </Td>
                           <Td align="center">
-                            <Pill tone={nodeStatusTone(stageRow.stage.status)}>{NODE_STATUS_LABELS[stageRow.stage.status as NodeStatus]}</Pill>
+                            <Pill tone={nodeStatusTone(stageRow.stage.status)}>{WORKFLOW_STATUS_LABELS[stageRow.stage.status as NodeStatus]}</Pill>
                           </Td>
                           <Td align="right" className="font-mono text-muted-foreground">
                             {formatHours(sum(stageRow.tasks.map((t) => t.task.estimateMinutes)))}

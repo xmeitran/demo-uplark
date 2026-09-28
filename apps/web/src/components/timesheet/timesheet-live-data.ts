@@ -5,6 +5,7 @@ import type {
   Person,
   ProjectMember,
   ProjectNode,
+  ProjectStatus,
   StageNode,
   TaskNode,
   TaskStatusEvent,
@@ -102,6 +103,19 @@ function workGroup(value?: string, projectName?: string): WorkGroup {
 
 function statusEventStatus(value?: string): NodeStatus {
   return nodeStatus(value);
+}
+
+function projectStatus(value?: string): ProjectStatus {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (["completed", "done", "closed"].includes(normalized)) return "completed";
+  if (["in_review", "review"].includes(normalized)) return "in_review";
+  if (["planning", "not_started", "todo"].includes(normalized)) return "planning";
+  if (["on_hold", "paused", "pause"].includes(normalized)) return "paused";
+  if (["at_risk", "blocked", "cancelled"].includes(normalized)) return "at_risk";
+  if (normalized === "onboarding") return "onboarding";
+  if (normalized === "discovery") return "discovery";
+  if (normalized === "acceptance") return "acceptance";
+  return "in_progress";
 }
 
 async function readJson<T>(url: string, signal?: AbortSignal): Promise<T> {
@@ -279,11 +293,7 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
       code: project.code || project.id,
       name: project.name,
       accountName: project.accountName || "—",
-      status: ["completed", "done", "closed"].includes(String(project.status ?? "").toLowerCase())
-        ? "completed"
-        : ["paused", "cancelled"].includes(String(project.status ?? "").toLowerCase())
-          ? "paused"
-          : "in_progress",
+      status: projectStatus(project.status),
       workGroup: workGroup(project.projectType, project.name),
       picId: project.ownerUserId || "",
       deadline: null,
