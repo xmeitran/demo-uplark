@@ -58,11 +58,13 @@ const WEEK_MATRIX_PAGE_SIZE = 8;
 export function DailyWeeklyTimesheet({
   dataset,
   filters,
-  logs
+  logs,
+  currentUserId
 }: {
   dataset: TimesheetDataset;
   filters: TimesheetFilters;
   logs: TimeLog[];
+  currentUserId?: string;
 }) {
   const [drawerRequest, setDrawerRequest] = useState<LogDrawerRequest | null>(null);
 
@@ -356,7 +358,7 @@ export function DailyWeeklyTimesheet({
                       <span className="flex items-center gap-2">
                         <Avatar initials={row.person.initials} name={row.person.name} />
                         <span className="min-w-0">
-                          <span className="block truncate font-semibold">{row.person.name}</span>
+                          <span className={`block truncate ${row.person.id === currentUserId ? "font-bold text-primary" : "font-semibold"}`}>{row.person.name}</span>
                           <span className="block truncate text-[10.5px] text-muted-foreground">{row.person.teamName}</span>
                         </span>
                       </span>

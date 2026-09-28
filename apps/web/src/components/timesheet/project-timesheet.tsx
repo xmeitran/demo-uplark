@@ -79,11 +79,13 @@ const READINESS_PAGE_SIZE = 3;
 export function ProjectTimesheet({
   dataset,
   filters,
-  logs
+  logs,
+  currentUserId
 }: {
   dataset: TimesheetDataset;
   filters: TimesheetFilters;
   logs: TimeLog[];
+  currentUserId?: string;
 }) {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [drawerRequest, setDrawerRequest] = useState<LogDrawerRequest | null>(null);
@@ -359,7 +361,7 @@ export function ProjectTimesheet({
             title={`Nhân sự tham gia — ${selected.project.code}`}
             description="Trạng thái tham gia, công việc đang mở và giờ ghi nhận trong kỳ."
           >
-            <ProjectMemberTable dataset={dataset} projectId={selected.project.id} logs={logs} onOpenLogs={setDrawerRequest} />
+            <ProjectMemberTable dataset={dataset} projectId={selected.project.id} logs={logs} onOpenLogs={setDrawerRequest} currentUserId={currentUserId} />
           </SectionCard>
         </>
       ) : null}
@@ -656,12 +658,14 @@ function ProjectMemberTable({
   dataset,
   projectId,
   logs,
-  onOpenLogs
+  onOpenLogs,
+  currentUserId
 }: {
   dataset: TimesheetDataset;
   projectId: string;
   logs: TimeLog[];
   onOpenLogs: (request: LogDrawerRequest) => void;
+  currentUserId?: string;
 }) {
   const project = dataset.projects.find((item) => item.id === projectId);
   const rows = useMemo(
@@ -707,7 +711,7 @@ function ProjectMemberTable({
               <Td>
                 <span className="flex items-center gap-2">
                   <Avatar initials={row.person.initials} name={row.person.name} />
-                  <span className="font-semibold">{row.person.name}</span>
+                  <span className={row.person.id === currentUserId ? "font-bold text-primary" : "font-semibold"}>{row.person.name}</span>
                 </span>
               </Td>
               <Td className="text-muted-foreground">{row.role}</Td>

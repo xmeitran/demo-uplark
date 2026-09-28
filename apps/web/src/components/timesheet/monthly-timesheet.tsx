@@ -70,11 +70,13 @@ const MISSING_DAYS_PAGE_SIZE = 6;
 export function MonthlyTimesheet({
   dataset,
   filters,
-  logs
+  logs,
+  currentUserId
 }: {
   dataset: TimesheetDataset;
   filters: TimesheetFilters;
   logs: TimeLog[];
+  currentUserId?: string;
 }) {
   const [expandedPersonId, setExpandedPersonId] = useState<string | null>(null);
   const [dayDetailPersonId, setDayDetailPersonId] = useState<string | null>(null);
@@ -225,7 +227,9 @@ export function MonthlyTimesheet({
                             {expanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />}
                             <Avatar initials={row.person.initials} name={row.person.name} />
                             <span className="min-w-0">
-                              <span className="block truncate font-semibold" title={row.person.name}>{row.person.name}</span>
+                              <span className={`block truncate ${row.person.id === currentUserId ? "font-bold text-primary" : "font-semibold"}`} title={row.person.name}>
+                                {row.person.name}
+                              </span>
                               <span className="block truncate text-[11px] text-muted-foreground">
                                 {row.person.role} · {row.person.teamName}
                                 {row.person.contractRatio < 1 ? ` · ${Math.round(row.person.contractRatio * 100)}% hợp đồng` : ""}
@@ -275,6 +279,7 @@ export function MonthlyTimesheet({
                               missingDays={row.missingDays}
                               onOpenLogs={setDrawerRequest}
                               personName={row.person.name}
+                              currentUserId={currentUserId}
                             />
                           </td>
                         </tr>
@@ -357,7 +362,9 @@ export function MonthlyTimesheet({
                   <div className="flex items-center justify-between gap-2">
                     <span className="flex min-w-0 items-center gap-2">
                       <Avatar initials={row.person.initials} name={row.person.name} />
-                      <span className="truncate text-[12.5px] font-semibold text-foreground">{row.person.name}</span>
+                      <span className={`truncate text-[12.5px] ${row.person.id === currentUserId ? "font-bold text-primary" : "font-semibold text-foreground"}`}>
+                        {row.person.name}
+                      </span>
                     </span>
                     <Pill tone={row.missingDays.length > 5 ? "danger" : "warning"}>{row.missingDays.length} ngày</Pill>
                   </div>
@@ -506,13 +513,15 @@ function PersonProjectDetail({
   logs,
   missingDays,
   onOpenLogs,
-  personName
+  personName,
+  currentUserId
 }: {
   dataset: TimesheetDataset;
   logs: TimeLog[];
   missingDays: string[];
   onOpenLogs: (request: LogDrawerRequest) => void;
   personName: string;
+  currentUserId?: string;
 }) {
   const rows = useMemo(() => buildPersonProjectRows(dataset, logs), [dataset, logs]);
   const peopleById = useMemo(() => new Map(dataset.people.map((person) => [person.id, person])), [dataset.people]);
@@ -574,7 +583,11 @@ function PersonProjectDetail({
                     <tr className="border-b border-border bg-muted/30">
                       <Td className="font-bold">◆ {milestoneRow.milestone.name}</Td>
                       <Td className="text-muted-foreground">
-                        {milestoneRow.milestone.picId ? peopleById.get(milestoneRow.milestone.picId)?.name ?? "—" : "—"}
+                        {milestoneRow.milestone.picId ? (
+                          <span className={milestoneRow.milestone.picId === currentUserId ? "font-bold text-primary" : undefined}>
+                            {peopleById.get(milestoneRow.milestone.picId)?.name ?? "—"}
+                          </span>
+                        ) : "—"}
                       </Td>
                       <Td align="center">
                         <Pill tone={nodeStatusTone(milestoneRow.milestone.status)}>{NODE_STATUS_LABELS[milestoneRow.milestone.status as NodeStatus]}</Pill>
@@ -589,7 +602,11 @@ function PersonProjectDetail({
                         <tr className="border-b border-border">
                           <Td className="pl-6 font-semibold text-muted-foreground">▸ {stageRow.stage.name}</Td>
                           <Td className="text-muted-foreground">
-                            {stageRow.stage.ownerId ? peopleById.get(stageRow.stage.ownerId)?.name ?? "—" : <span className="text-warning">Chưa có owner</span>}
+                            {stageRow.stage.ownerId ? (
+                              <span className={stageRow.stage.ownerId === currentUserId ? "font-bold text-primary" : undefined}>
+                                {peopleById.get(stageRow.stage.ownerId)?.name ?? "—"}
+                              </span>
+                            ) : <span className="text-warning">Chưa có owner</span>}
                           </Td>
                           <Td align="center">
                             <Pill tone={nodeStatusTone(stageRow.stage.status)}>{NODE_STATUS_LABELS[stageRow.stage.status as NodeStatus]}</Pill>
@@ -608,7 +625,11 @@ function PersonProjectDetail({
                               </span>
                             </Td>
                             <Td className="text-muted-foreground">
-                              {taskRow.task.assigneeId ? peopleById.get(taskRow.task.assigneeId)?.name ?? "—" : <span className="text-warning">Chưa gán</span>}
+                              {taskRow.task.assigneeId ? (
+                                <span className={taskRow.task.assigneeId === currentUserId ? "font-bold text-primary" : undefined}>
+                                  {peopleById.get(taskRow.task.assigneeId)?.name ?? "—"}
+                                </span>
+                              ) : <span className="text-warning">Chưa gán</span>}
                             </Td>
                             <Td align="center">
                               <Pill tone={nodeStatusTone(taskRow.task.status)}>{NODE_STATUS_LABELS[taskRow.task.status]}</Pill>

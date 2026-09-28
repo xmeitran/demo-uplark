@@ -394,11 +394,11 @@ export function TimesheetWorkbench() {
 
       {/* ── Active view ────────────────────────────────────────────────── */}
       {!loading && (view === "monthly" ? (
-        <MonthlyTimesheet dataset={scopedDataset} filters={filters} logs={logs} />
+        <MonthlyTimesheet dataset={scopedDataset} filters={filters} logs={logs} currentUserId={user?.id} />
       ) : view === "project" ? (
-        <ProjectTimesheet dataset={scopedDataset} filters={filters} logs={logs} />
+        <ProjectTimesheet dataset={scopedDataset} filters={filters} logs={logs} currentUserId={user?.id} />
       ) : (
-        <DailyWeeklyTimesheet dataset={scopedDataset} filters={filters} logs={logs} />
+        <DailyWeeklyTimesheet dataset={scopedDataset} filters={filters} logs={logs} currentUserId={user?.id} />
       ))}
 
       <FilterOptionDetailDrawer detail={filterDetail} onClose={() => setFilterDetail(null)} />
