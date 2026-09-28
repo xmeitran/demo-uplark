@@ -1,6 +1,6 @@
 "use client";
 import { useTaskPeople } from "@/hooks/use-task-people";
-import { AssignmentHistory } from "./assignment-history";
+import { TaskChangeHistory } from "./task-change-history";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { AppShell } from "@/components/constructor-x/app-shell";
 
@@ -1908,7 +1908,6 @@ export function TaskDetailWorkbench({
 
             {projectPeople.loading && <p role="status">Loading project members…</p>}
             {projectPeople.error && <div role="alert">{projectPeople.error} <button onClick={projectPeople.refresh}>Retry loading project members</button></div>}
-            <AssignmentHistory taskId={currentTask.id} revision={`${currentTask.assigneeUserId}:${currentTask.ownerUserId}`} people={projectPeople.members} />
             {taskDetailSyncError ? (
               <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800">
                 {taskDetailSyncError}
@@ -2956,6 +2955,13 @@ export function TaskDetailWorkbench({
                     </button>
                   </div>
                 </div>
+
+                <TaskChangeHistory
+                  taskId={currentTask.id}
+                  principal={principal}
+                  people={projectPeople.members}
+                  revision={`${currentTask.updatedAt ?? ""}:${currentTask.statusHistory?.length ?? 0}:${currentTask.ownerUserId ?? ""}:${currentTask.assigneeUserId ?? ""}`}
+                />
 
               </aside>
             </div>

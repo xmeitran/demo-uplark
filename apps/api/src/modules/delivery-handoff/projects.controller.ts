@@ -371,6 +371,12 @@ export class ProjectsController {
     return this.projects.listTaskAssignmentHistory(taskId, query, principal);
   }
 
+  @Get("tasks/:taskId/history")
+  async taskHistory(@Headers("authorization") authorization: string | undefined, @Param("taskId") taskId: string, @Query() query: any) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, query.principal);
+    return this.projects.listTaskHistory(taskId, query, principal);
+  }
+
   @Get("tasks/:taskId")
   async getTask(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("taskId") taskId: string) {
     const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);

@@ -3872,6 +3872,69 @@ export class ProjectsService {
     return { data: events.map((event) => ({ id: event.id, changedByUserId: event.actorUserId, changedAt: event.createdAt.toISOString(), before: event.before, after: event.after })), meta: { pagination: buildPaginationMeta({ ...pagination, total, returned: events.length }) } };
   }
 
+  async listTaskHistory(taskId: string, query: any, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Task history is internal");
+    const task = await this.ensureTaskForPrincipal(taskId, principal);
+    const pagination = normalizePagination({ limit: query.limit ?? 30, offset: query.offset });
+    const auditWhere = {
+      workspaceId: principal.workspaceId,
+      resource: "task",
+      resourceId: taskId,
+      action: { in: ["task.created", "task.updated", "task.assignee_transferred", "task.project_changed"] }
+    };
+    const statusWhere = { workspaceId: principal.workspaceId, taskId };
+    const [auditEvents, auditTotal, statusHistory, statusTotal] = await this.prisma.$transaction([
+      this.prisma.auditEvent.findMany({
+        where: auditWhere,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: pagination.offset + pagination.limit
+      }),
+      this.prisma.auditEvent.count({ where: auditWhere }),
+      this.prisma.taskStatusHistory.findMany({
+        where: statusWhere,
+        orderBy: [{ changedAt: "desc" }, { id: "desc" }],
+        take: pagination.offset + pagination.limit
+      }),
+      this.prisma.taskStatusHistory.count({ where: statusWhere })
+    ]);
+
+    const history = [
+      ...auditEvents.map((event) => ({
+        id: event.id,
+        action: event.action,
+        changedByUserId: event.actorUserId,
+        changedAt: event.createdAt.toISOString(),
+        before: event.before,
+        after: event.after,
+        reason: undefined
+      })),
+      ...statusHistory.map((event) => ({
+        id: `status:${event.id}`,
+        action: "task.status_changed",
+        changedByUserId: event.changedByUserId,
+        changedAt: event.changedAt.toISOString(),
+        before: { status: event.fromStatus },
+        after: { status: event.toStatus },
+        reason: event.reason
+      }))
+    ].sort((left, right) => {
+      const timeDelta = new Date(right.changedAt).getTime() - new Date(left.changedAt).getTime();
+      return timeDelta || right.id.localeCompare(left.id);
+    });
+
+    return {
+      data: history.slice(pagination.offset, pagination.offset + pagination.limit),
+      meta: {
+        pagination: buildPaginationMeta({
+          ...pagination,
+          total: auditTotal + statusTotal,
+          returned: Math.min(pagination.limit, Math.max(0, history.length - pagination.offset))
+        }),
+        taskId: task.id
+      }
+    };
+  }
+
   private async ensureActiveWorkspaceUsers(
     tx: ActiveUserLookupClient,
     workspaceId: string,
