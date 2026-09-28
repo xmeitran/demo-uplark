@@ -1119,6 +1119,10 @@ export function CreateTaskModal({
       alert("Cần nhập tiêu đề, chọn khách hàng và chọn người phụ trách thật trước khi tạo công việc.");
       return;
     }
+    if (!taskTypeLayer1 || !taskTypeLayer2) {
+      alert("Cần chọn đủ 2 lớp Task Type trước khi tạo công việc.");
+      return;
+    }
 
     const accountObj = accounts.find(a => a.id === accountId);
     const projectObj = projects.find(p => p.id === projectId);
@@ -1348,6 +1352,10 @@ export function EditTaskModal({
     e.preventDefault();
     if (!title || !accountId) {
       alert("Cần nhập tiêu đề và chọn khách hàng trước khi lưu công việc.");
+      return;
+    }
+    if (!taskTypeLayer1 || !taskTypeLayer2) {
+      alert("Cần chọn đủ 2 lớp Task Type trước khi lưu công việc.");
       return;
     }
 
@@ -2058,6 +2066,8 @@ export function TasksWorkbench({
       title: taskInput.title,
       description: taskInput.description,
       taskType: taskInput.taskType,
+      taskTypeLayer1: taskInput.taskTypeLayer1,
+      taskTypeLayer2: taskInput.taskTypeLayer2,
       priority: taskInput.priority,
       ownerUserId: taskInput.assigneeUserId,
       assigneeUserId: taskInput.assigneeUserId,
@@ -2145,6 +2155,8 @@ export function TasksWorkbench({
       title: taskInput.title,
       description: taskInput.description,
       taskType: taskInput.taskType,
+      taskTypeLayer1: taskInput.taskTypeLayer1,
+      taskTypeLayer2: taskInput.taskTypeLayer2,
       status: "todo",
       priority: taskInput.priority,
       ownerUserId: taskInput.assigneeUserId,
@@ -2178,6 +2190,8 @@ export function TasksWorkbench({
         title: taskInput.title,
         description: taskInput.description,
         taskType: taskInput.taskType,
+        taskTypeLayer1: taskInput.taskTypeLayer1,
+        taskTypeLayer2: taskInput.taskTypeLayer2,
         status: "todo",
         priority: taskInput.priority,
         ownerUserId: taskInput.assigneeUserId,
@@ -2230,6 +2244,8 @@ export function TasksWorkbench({
         title: taskInput.title,
         description: taskInput.description,
         taskType: taskInput.taskType,
+        taskTypeLayer1: taskInput.taskTypeLayer1,
+        taskTypeLayer2: taskInput.taskTypeLayer2,
         status: "todo",
         priority: taskInput.priority,
         ownerUserId: taskInput.assigneeUserId,
