@@ -61,6 +61,7 @@ type ApiTimeEntry = {
   projectId: string;
   projectName?: string;
   taskTitle?: string;
+  taskStatus?: string;
   userId: string;
   userDisplayName?: string;
   workDate?: string;
@@ -83,7 +84,7 @@ function dateOnly(value?: string) {
 
 function nodeStatus(value?: string): NodeStatus {
   const normalized = String(value ?? "").toLowerCase();
-  if (["done", "completed", "complete"].includes(normalized)) return "completed";
+  if (["done", "completed", "complete", "closed"].includes(normalized)) return "completed";
   if (["in_progress", "in-progress", "in progress", "doing"].includes(normalized)) return "in_progress";
   if (["blocked", "blocking"].includes(normalized)) return "blocked";
   return "not_started";
@@ -138,10 +139,9 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
     readJson<ApiResponse<{ date?: string; isActive?: boolean }>>(`/api/workspace/day-offs?year=${year}&principal=founder`, signal)
   ]);
 
-  // The time-entry contract already carries the task title and ID. Building
-  // the sheet from that live slice avoids a 1,500-row task crawl and keeps the
-  // first render responsive. Task estimates/status are intentionally shown as
-  // unavailable until a dedicated timesheet aggregate endpoint is available.
+  // The time-entry contract carries the task title, ID and canonical task
+  // status. Building the sheet from that live slice avoids a 1,500-row task
+  // crawl while still keeping status truthfully aligned with the task page.
   // A task can have several time entries (and several contributors). Keep one
   // hierarchy node per task while preserving every entry in `logs`; otherwise
   // React renders duplicate task keys and the same task appears multiple times
@@ -157,7 +157,7 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
         stageActivity: "Time log",
         assigneeUserId: entry.userId,
         estimateMinutes: 0,
-        status: "in_progress"
+        status: entry.taskStatus || "in_progress"
       });
     }
   }
@@ -219,43 +219,69 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
       stages.set(stageKey, [...(stages.get(stageKey) ?? []), task]);
       groupedMilestones.set(milestoneKey, stages);
     }
-    const milestones: MilestoneNode[] = [...groupedMilestones.entries()].map(([milestoneName, stages], milestoneIndex) => ({
-      id: `ms-${project.id}-${milestoneIndex}`,
-      name: milestoneName === "unassigned" ? "Chưa phân loại" : milestoneName,
-      projectId: project.id,
-      picId: stages.values().next().value?.[0]?.assigneeUserId ?? null,
-      startDate: null,
-      dueDate: null,
-      status: "in_progress",
-      stages: [...stages.entries()].map(([stageId, stageTasks]): StageNode => ({
-        id: stageId,
-        name: stageTasks[0]?.stageActivity || "Giai đoạn",
-        milestoneId: `ms-${project.id}-${milestoneIndex}`,
-        ownerId: stageTasks[0]?.ownerUserId ?? stageTasks[0]?.assigneeUserId ?? null,
-        startDate: dateOnly(stageTasks.map((task) => task.plannedStartAt).find(Boolean)),
-        dueDate: dateOnly(stageTasks.map((task) => task.dueAt).find(Boolean)),
-        status: stageTasks.some((task) => nodeStatus(task.status) === "in_progress") ? "in_progress" : stageTasks.every((task) => nodeStatus(task.status) === "completed") ? "completed" : "not_started",
-        tasks: stageTasks.map((task): TaskNode => ({
-          id: task.id,
-          code: task.id,
-          name: task.title,
-          stageId,
-          assigneeId: task.assigneeUserId || task.ownerUserId || null,
-          estimateMinutes: task.estimateMinutes ?? 0,
-          status: nodeStatus(task.status),
-          startDate: dateOnly(task.plannedStartAt),
-          dueDate: dateOnly(task.dueAt),
-          completedDate: dateOnly(task.completedAt)
-        }))
-      }))
-    }));
+    const milestones: MilestoneNode[] = [...groupedMilestones.entries()].map(([milestoneName, stages], milestoneIndex) => {
+      const milestoneId = `ms-${project.id}-${milestoneIndex}`;
+      const stageNodes: StageNode[] = [...stages.entries()].map(([stageId, stageTasks]) => {
+        const taskStatuses = stageTasks.map((task) => nodeStatus(task.status));
+        const status: NodeStatus = taskStatuses.some((value) => value === "blocked")
+          ? "blocked"
+          : taskStatuses.length > 0 && taskStatuses.every((value) => value === "completed")
+            ? "completed"
+            : taskStatuses.some((value) => value === "in_progress")
+              ? "in_progress"
+              : "not_started";
+        return {
+          id: stageId,
+          name: stageTasks[0]?.stageActivity || "Giai đoạn",
+          milestoneId,
+          ownerId: stageTasks[0]?.ownerUserId ?? stageTasks[0]?.assigneeUserId ?? null,
+          startDate: dateOnly(stageTasks.map((task) => task.plannedStartAt).find(Boolean)),
+          dueDate: dateOnly(stageTasks.map((task) => task.dueAt).find(Boolean)),
+          status,
+          tasks: stageTasks.map((task): TaskNode => ({
+            id: task.id,
+            code: task.id,
+            name: task.title,
+            stageId,
+            assigneeId: task.assigneeUserId || task.ownerUserId || null,
+            estimateMinutes: task.estimateMinutes ?? 0,
+            status: nodeStatus(task.status),
+            startDate: dateOnly(task.plannedStartAt),
+            dueDate: dateOnly(task.dueAt),
+            completedDate: dateOnly(task.completedAt)
+          }))
+        };
+      });
+      const stageStatuses = stageNodes.map((stage) => stage.status);
+      const status: NodeStatus = stageStatuses.some((value) => value === "blocked")
+        ? "blocked"
+        : stageStatuses.length > 0 && stageStatuses.every((value) => value === "completed")
+          ? "completed"
+          : stageStatuses.some((value) => value === "in_progress")
+            ? "in_progress"
+            : "not_started";
+      return {
+        id: milestoneId,
+        name: milestoneName === "unassigned" ? "Chưa phân loại" : milestoneName,
+        projectId: project.id,
+        picId: stages.values().next().value?.[0]?.assigneeUserId ?? null,
+        startDate: null,
+        dueDate: null,
+        status,
+        stages: stageNodes
+      };
+    });
     const members: ProjectMember[] = [...(projectMembers.get(project.id) ?? [])].map((personId) => ({ personId, role: "Project member", state: "active", joinedAt: "" }));
     return {
       id: project.id,
       code: project.code || project.id,
       name: project.name,
       accountName: project.accountName || "—",
-      status: project.status === "completed" ? "completed" : project.status === "paused" ? "paused" : "in_progress",
+      status: ["completed", "done", "closed"].includes(String(project.status ?? "").toLowerCase())
+        ? "completed"
+        : ["paused", "cancelled"].includes(String(project.status ?? "").toLowerCase())
+          ? "paused"
+          : "in_progress",
       workGroup: workGroup(project.projectType, project.name),
       picId: project.ownerUserId || "",
       deadline: null,

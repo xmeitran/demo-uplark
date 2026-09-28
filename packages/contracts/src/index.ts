@@ -849,6 +849,8 @@ export interface TaskTimeEntrySummary {
   projectId?: string;
   projectName?: string;
   taskTitle?: string;
+  /** Canonical status of the task that owns this time entry. */
+  taskStatus?: string;
   userId: string;
   userDisplayName?: string;
   userEmail?: string;
