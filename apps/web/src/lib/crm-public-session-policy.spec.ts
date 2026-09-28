@@ -37,11 +37,12 @@ describe("crm public session policy", () => {
     ).toBe("cookie-token");
   });
 
-  it("ignores stale browser sessions in the isolated staging bypass", () => {
+  it("keeps a real browser session in the staging sandbox", () => {
     vi.stubEnv("CRM_ENV", "staging");
     vi.stubEnv("CRM_STAGING_BYPASS_AUTH", "true");
 
-    expect(resolveWorkspaceSessionToken({ cookieSessionToken: "stale-lark-session" })).toBeUndefined();
+    expect(resolveWorkspaceSessionToken({ cookieSessionToken: "lark-session" })).toBe("lark-session");
+    expect(resolveWorkspaceSessionToken({})).toBeUndefined();
   });
 
   it("requires a public session in production or when explicitly enabled", () => {

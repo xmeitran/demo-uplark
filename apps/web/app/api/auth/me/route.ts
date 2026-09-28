@@ -7,20 +7,23 @@ import { isStagingBypassAuthEnabled } from "../../../../src/lib/crm-public-sessi
 
 export const dynamic = "force-dynamic";
 
+const LOCAL_DEV_SESSION_TOKEN = "local-founder-dev-session";
+
 function localAutoAuthEnabled() {
   return (process.env.NODE_ENV !== "production" && process.env.CRM_LOCAL_AUTO_AUTH === "true") || isStagingBypassAuthEnabled();
 }
 
 export async function GET() {
   const cookieStore = await cookies();
-  const sessionToken = isStagingBypassAuthEnabled() ? undefined : cookieStore.get(CRM_SESSION_COOKIE_NAME)?.value;
+  const cookieToken = cookieStore.get(CRM_SESSION_COOKIE_NAME)?.value;
+  const sessionToken = cookieToken === LOCAL_DEV_SESSION_TOKEN ? undefined : cookieToken;
 
   if (!sessionToken && !localAutoAuthEnabled()) {
     return NextResponse.json({ message: "Bearer session is required" }, { status: 401 });
   }
 
   const endpoint = new URL(buildCrmApiEndpoint("/auth/me"));
-  if (localAutoAuthEnabled()) endpoint.searchParams.set("principal", "founder");
+  if (localAutoAuthEnabled() && !sessionToken) endpoint.searchParams.set("principal", "founder");
   const response = await fetch(endpoint, {
     cache: "no-store",
     headers: {

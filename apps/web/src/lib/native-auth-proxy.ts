@@ -13,7 +13,9 @@ export function setMfaChallengeCookie(response: NextResponse, token: string) {
 export async function proxyNativeAuth(request: Request, path: string) {
   if (request.method !== "GET" && !isSameOriginAuthRequest(request)) return NextResponse.json({ message: "Same-origin request required" }, { status: 403 });
   const store = await cookies();
-  const session = isStagingBypassAuthEnabled() ? undefined : store.get(CRM_SESSION_COOKIE_NAME)?.value;
+  // Staging keeps the founder fallback for unauthenticated demo access, but a
+  // real Lark/password session must remain authoritative for the current user.
+  const session = store.get(CRM_SESSION_COOKIE_NAME)?.value;
   let payload: Record<string, unknown> | undefined;
   if (request.method !== "GET") {
     try { payload = await request.json(); } catch { return NextResponse.json({ message: "Invalid JSON" }, { status: 400 }); }

@@ -7,12 +7,11 @@ export function resolveWorkspaceSessionToken({
   nodeEnv?: string;
   querySessionToken?: string;
 }) {
-  // Staging is intentionally a read/write sandbox backed by the configured
-  // foundation principal. Ignore browser cookies minted for another account so
-  // every route renders the same production snapshot.
-  if (isStagingBypassAuthEnabled()) {
-    return undefined;
-  }
+  // A query-string session is never trusted. When a real browser session is
+  // present, however, keep it even in the staging sandbox so each Lark user
+  // gets their own identity and permissions against the isolated data copy.
+  void nodeEnv;
+  void querySessionToken;
   return cookieSessionToken;
 }
 
