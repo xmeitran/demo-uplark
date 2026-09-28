@@ -913,7 +913,7 @@ export function CreateTaskModal({
 }: {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (data: any) => void;
+  onSave: (data: any) => void | Promise<void>;
   accounts: any[];
   projects: any[];
   stages?: CreateTaskStageOption[];
@@ -939,6 +939,7 @@ export function CreateTaskModal({
   const [dueAt, setDueAt] = useState("");
   const [estimateMinutes, setEstimateMinutes] = useState("");
   const [customerVisible, setCustomerVisible] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const filteredProjects = projects.filter(p => p.accountId === accountId);
   const filteredStages = stages.filter((stage) => !stage.projectId || stage.projectId === projectId);
@@ -1016,8 +1017,9 @@ export function CreateTaskModal({
     }
   };
 
-  const handleSubmit = (e: any) => {
+  const handleSubmit = async (e: any) => {
     e.preventDefault();
+    if (saving) return;
     if (!title || !accountId || assigneeUserId === "none") {
       alert("Cần nhập tiêu đề, chọn khách hàng và chọn người phụ trách thật trước khi tạo công việc.");
       return;
@@ -1027,33 +1029,38 @@ export function CreateTaskModal({
     const projectObj = projects.find(p => p.id === projectId);
     const assigneeObj = assigneeSelectOptions.find((option) => option.value === assigneeUserId);
 
-    onSave({
-      title,
-      description,
-      accountId,
-      accountName: accountObj?.name || "Khách hàng chưa rõ",
-      projectId: projectId === "none" ? undefined : projectId,
-      projectName: projectId === "none" ? undefined : projectObj?.name,
-      stageId: selectedStageCanPersist ? stageId : undefined,
-      priority,
-      taskType,
-      taskTypeLayer1,
-      taskTypeLayer2,
-      assigneeUserId,
-      assigneeDisplayName: assigneeObj?.label || "Chưa giao",
-      plannedStartAt: plannedStartAt || undefined,
-      dueAt: dueAt || undefined,
-      estimateMinutes: estimateMinutes ? Number(estimateMinutes) : 0,
-      customerVisible
-    });
+    setSaving(true);
+    try {
+      await onSave({
+        title,
+        description,
+        accountId,
+        accountName: accountObj?.name || "Khách hàng chưa rõ",
+        projectId: projectId === "none" ? undefined : projectId,
+        projectName: projectId === "none" ? undefined : projectObj?.name,
+        stageId: selectedStageCanPersist ? stageId : undefined,
+        priority,
+        taskType,
+        taskTypeLayer1,
+        taskTypeLayer2,
+        assigneeUserId,
+        assigneeDisplayName: assigneeObj?.label || "Chưa giao",
+        plannedStartAt: plannedStartAt || undefined,
+        dueAt: dueAt || undefined,
+        estimateMinutes: estimateMinutes ? Number(estimateMinutes) : 0,
+        customerVisible
+      });
 
-    setTitle("");
-    setDescription("");
-    setStageId("none");
-    setPlannedStartAt("");
-    setDueAt("");
-    setEstimateMinutes("");
-    setCustomerVisible(false);
+      setTitle("");
+      setDescription("");
+      setStageId("none");
+      setPlannedStartAt("");
+      setDueAt("");
+      setEstimateMinutes("");
+      setCustomerVisible(false);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -1176,7 +1183,9 @@ export function CreateTaskModal({
 
         <div className="task-form-actions">
           <button className="task-button secondary" type="button" onClick={onClose}>Hủy</button>
-          <button className="task-button primary" type="submit">Tạo công việc</button>
+          <button className="task-button primary" type="submit" disabled={saving} aria-busy={saving}>
+            {saving ? "Đang tạo..." : "Tạo công việc"}
+          </button>
         </div>
       </form>
     </Modal>
