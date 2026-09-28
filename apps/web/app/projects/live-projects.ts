@@ -4,6 +4,7 @@ import type { Project } from "./data";
 export const PROJECT_PAGE_SIZE = 10;
 export const LIVE_PROJECT_SNAPSHOT_TTL_MS = 5_000;
 const LIVE_COLORS = ["#2563eb", "#059669", "#7c3aed", "#db2777", "#d97706", "#dc2626", "#64748b", "#0891b2"];
+const LIVE_REQUEST_RETRY_DELAYS_MS = [350, 900, 1800];
 
 type LiveProjectSnapshot = {
   expiresAt: number;
@@ -79,7 +80,7 @@ export async function fetchLiveProjects(options: FetchLiveProjectsOptions = {}):
   if (category && category !== "all") {
     params.set("category", category);
   }
-  const response = await fetch(`/api/projects?${params.toString()}`, {
+  const response = await fetchWithTransientRetry(`/api/projects?${params.toString()}`, {
     cache: "no-store",
     credentials: "same-origin",
     signal: options.signal
@@ -105,7 +106,7 @@ export async function fetchAccountOptions(signal?: AbortSignal): Promise<LivePro
   const accounts: AccountSummary[] = [];
   let offset = 0;
   while (true) {
-    const response = await fetch(`/api/accounts?limit=100${offset ? `&offset=${offset}` : ""}`, { cache: "no-store", credentials: "same-origin", signal });
+    const response = await fetchWithTransientRetry(`/api/accounts?limit=100${offset ? `&offset=${offset}` : ""}`, { cache: "no-store", credentials: "same-origin", signal });
     if (!response.ok) throw new LiveProjectsError(`Could not load CRM accounts: ${response.status}`, response.status);
     const payload = await response.json() as AccountsResponse;
     accounts.push(...payload.data);
@@ -170,7 +171,7 @@ function primeLiveProjectSnapshots(projects: Project[], cacheScope?: string) {
 }
 
 async function requestLiveProject(projectId: string): Promise<Project | null> {
-  const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, {
+  const response = await fetchWithTransientRetry(`/api/projects/${encodeURIComponent(projectId)}`, {
     cache: "no-store",
     credentials: "same-origin"
   });
@@ -184,6 +185,56 @@ async function requestLiveProject(projectId: string): Promise<Project | null> {
   }
 
   return mapProjectSummaryToUiProject((await response.json()) as ProjectSummary);
+}
+
+async function fetchWithTransientRetry(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= LIVE_REQUEST_RETRY_DELAYS_MS.length; attempt += 1) {
+    throwIfAborted(init.signal ?? undefined);
+
+    try {
+      const response = await fetch(input, init);
+      if (response.ok || !isTransientResponse(response.status) || attempt === LIVE_REQUEST_RETRY_DELAYS_MS.length) {
+        return response;
+      }
+    } catch (error) {
+      if (isAbortError(error) || init.signal?.aborted) throw error;
+      lastError = error;
+      if (attempt === LIVE_REQUEST_RETRY_DELAYS_MS.length) throw error;
+    }
+
+    await waitForRetry(LIVE_REQUEST_RETRY_DELAYS_MS[attempt], init.signal ?? undefined);
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Live CRM request failed");
+}
+
+function isTransientResponse(status: number) {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function waitForRetry(delayMs: number, signal?: AbortSignal) {
+  if (!signal) return new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+  if (signal.aborted) return Promise.reject(createAbortError());
+
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, delayMs);
+    const handleAbort = () => {
+      clearTimeout(timer);
+      cleanup();
+      reject(createAbortError());
+    };
+    const cleanup = () => signal.removeEventListener("abort", handleAbort);
+    signal.addEventListener("abort", handleAbort, { once: true });
+  });
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function writeLiveProjectSnapshot(cacheKey: string, project: Project | null) {
