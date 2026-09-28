@@ -851,6 +851,8 @@ export interface TaskTimeEntrySummary {
   taskTitle?: string;
   /** Canonical status of the task that owns this time entry. */
   taskStatus?: string;
+  /** Planned estimate configured on the task, in minutes. */
+  taskEstimateMinutes?: number;
   userId: string;
   userDisplayName?: string;
   userEmail?: string;

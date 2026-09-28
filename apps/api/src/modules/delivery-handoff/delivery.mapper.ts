@@ -438,6 +438,7 @@ export function mapTaskTimeEntrySummary(entry: any): TaskTimeEntrySummary {
     projectName: entry.project?.name ?? entry.task?.project?.name ?? undefined,
     taskTitle: entry.task?.title ?? undefined,
     taskStatus: entry.task?.status ?? undefined,
+    taskEstimateMinutes: entry.task?.estimateMinutes ?? undefined,
     userId: entry.userId,
     userDisplayName: entry.user?.displayName ?? undefined,
     userEmail: entry.user?.email ?? undefined,

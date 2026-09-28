@@ -62,6 +62,7 @@ type ApiTimeEntry = {
   projectName?: string;
   taskTitle?: string;
   taskStatus?: string;
+  taskEstimateMinutes?: number;
   userId: string;
   userDisplayName?: string;
   workDate?: string;
@@ -139,9 +140,10 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
     readJson<ApiResponse<{ date?: string; isActive?: boolean }>>(`/api/workspace/day-offs?year=${year}&principal=founder`, signal)
   ]);
 
-  // The time-entry contract carries the task title, ID and canonical task
-  // status. Building the sheet from that live slice avoids a 1,500-row task
-  // crawl while still keeping status truthfully aligned with the task page.
+  // The time-entry contract carries the task title, ID, canonical task status
+  // and the task's planned estimate. Building the sheet from that live slice
+  // avoids a 1,500-row task crawl while keeping plan/actual data aligned with
+  // the task page.
   // A task can have several time entries (and several contributors). Keep one
   // hierarchy node per task while preserving every entry in `logs`; otherwise
   // React renders duplicate task keys and the same task appears multiple times
@@ -156,7 +158,7 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
         title: entry.taskTitle || entry.taskId,
         stageActivity: "Time log",
         assigneeUserId: entry.userId,
-        estimateMinutes: 0,
+        estimateMinutes: entry.taskEstimateMinutes ?? 0,
         status: entry.taskStatus || "in_progress"
       });
     }
