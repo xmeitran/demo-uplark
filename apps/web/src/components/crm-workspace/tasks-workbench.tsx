@@ -46,6 +46,7 @@ import {
 } from "./task-display-helpers";
 import { ConfirmActionDialog } from "./confirm-action-dialog";
 import { fetchWorkspaceUserOptions, type WorkspaceUserOption } from "@/lib/workspace-users";
+import { useAuth } from "@/lib/auth";
 import { toVietnamDateInputValue, toVietnamDateKey, vietnamDateTimeToIso, VIETNAM_TIME_ZONE } from "@/lib/vietnam-time";
 export {
   deploymentStagePlan,
@@ -920,7 +921,10 @@ export function CreateTaskModal({
   assigneeOptions?: TaskSelectOption[];
 }) {
   const assigneeSelectOptions = assigneeOptions?.length ? assigneeOptions : emptyAssigneeOptions;
-  const defaultAssigneeUserId = assigneeSelectOptions[0]?.value || "none";
+  const { user: authUser } = useAuth();
+  const defaultAssigneeUserId = assigneeSelectOptions.find((option) => option.value === authUser?.id)?.value
+    || assigneeSelectOptions[0]?.value
+    || "none";
   const [title, setTitle] = useState(defaults?.title || "");
   const [description, setDescription] = useState(defaults?.description || "");
   const [accountId, setAccountId] = useState(defaults?.accountId || accounts[0]?.id || "");
@@ -972,12 +976,9 @@ export function CreateTaskModal({
     setTaskType(defaults?.taskType || "implementation");
     setTaskTypeLayer1(defaults?.taskTypeLayer1 || "DELIVERY");
     setTaskTypeLayer2(defaults?.taskTypeLayer2 || "CUSTOMER_PROJECT");
-    setAssigneeUserId((current) => {
-      if (assigneeSelectOptions.some((option) => option.value === current)) {
-        return current;
-      }
-      return defaultAssigneeUserId;
-    });
+    // New tasks start with the account that is actually signed in. Users with
+    // permission to assign others can still change this explicitly.
+    setAssigneeUserId(defaultAssigneeUserId);
     setPlannedStartAt("");
     setDueAt("");
     setEstimateMinutes("");
@@ -1148,6 +1149,9 @@ export function CreateTaskModal({
             options={assigneeSelectOptions}
             onChange={setAssigneeUserId}
           />
+          {authUser?.id && assigneeUserId === authUser.id ? (
+            <p className="col-span-full -mt-2 text-[11px] text-slate-500">Mặc định theo tài khoản đang đăng nhập: {authUser.name}. Bạn vẫn có thể đổi người phụ trách nếu có quyền.</p>
+          ) : null}
         </div>
 
         <div className="task-form-grid task-create-date-grid">
@@ -1579,7 +1583,11 @@ export function LogWorkModal({
 
   useEffect(() => {
     if (!isOpen || people.loading || people.error) return;
-    setUserId(current => performerOptions.some(option => option.value === current) ? current : (performerOptions.find(option => option.value === people.principalUserId)?.value ?? "none"));
+    setUserId(current => {
+      const signedInUser = performerOptions.find((option) => option.value === people.principalUserId);
+      if (signedInUser) return signedInUser.value;
+      return performerOptions.some(option => option.value === current) ? current : "none";
+    });
   }, [isOpen, people.members, people.loading, people.error, people.principalUserId]);
 
   // Dynamic slot duration calculating logic
@@ -1779,6 +1787,9 @@ export function LogWorkModal({
               onChange={setWorkType}
             />
           </div>
+          {people.principalUserId && userId === people.principalUserId ? (
+            <p className="-mt-2 mb-3 text-[11px] text-slate-500">Mặc định là tài khoản đang đăng nhập. Bạn có thể đổi người thực hiện nếu có quyền.</p>
+          ) : null}
 
           <div className="flex flex-col gap-2.5 my-1 bg-slate-50 p-3.5 rounded-xl border border-slate-100">
             <div className="task-checkbox-row task-checkbox-row-soft">
@@ -1844,6 +1855,7 @@ export function TasksWorkbench({
   principal: string;
 }) {
   const router = useRouter();
+  const { user: authUser } = useAuth();
   const [localTasks, setLocalTasks] = useState<ProjectTaskSummary[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: ToastTone } | null>(null);
@@ -2026,6 +2038,7 @@ export function TasksWorkbench({
       taskType: taskInput.taskType,
       status: "todo",
       priority: taskInput.priority,
+      ownerUserId: taskInput.assigneeUserId,
       assigneeUserId: taskInput.assigneeUserId,
       estimateMinutes: taskInput.estimateMinutes,
       customerVisible: taskInput.customerVisible
@@ -2223,10 +2236,10 @@ export function TasksWorkbench({
     if (!selectedTaskId || !selectedTask) return;
     setDailyCapacityFeedback(null);
 
-    const selectedUserId = resolveTaskTimeEntryUserId(logInput, principal);
+    const selectedUserId = resolveTaskTimeEntryUserId(logInput, principal, authUser?.id);
     const selectedUserOption = workspaceAssigneeOptions.find((option) => option.value === selectedUserId);
 
-    const body: CreateTaskTimeEntryInput = buildCreateTaskTimeEntryInput(logInput, principal);
+    const body: CreateTaskTimeEntryInput = buildCreateTaskTimeEntryInput(logInput, principal, authUser?.id);
 
     try {
       const response = await fetch(`/api/tasks/${selectedTaskId}/time-entries?principal=${encodeURIComponent(principal)}`, {

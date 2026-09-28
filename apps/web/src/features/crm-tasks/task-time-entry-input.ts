@@ -16,16 +16,21 @@ export function getDefaultTaskTimeEntryUserId(principal: string) {
   return principal === "founder" ? "usr-kha-founder" : "usr-deliverer";
 }
 
-export function resolveTaskTimeEntryUserId(logInput: Pick<TaskTimeEntryFormInput, "userId">, principal: string) {
-  return logInput.userId || getDefaultTaskTimeEntryUserId(principal);
+export function resolveTaskTimeEntryUserId(
+  logInput: Pick<TaskTimeEntryFormInput, "userId">,
+  principal: string,
+  currentUserId?: string
+) {
+  return logInput.userId || currentUserId || getDefaultTaskTimeEntryUserId(principal);
 }
 
 export function buildCreateTaskTimeEntryInput(
   logInput: TaskTimeEntryFormInput,
-  principal: string
+  principal: string,
+  currentUserId?: string
 ): CreateTaskTimeEntryInput {
   return {
-    userId: resolveTaskTimeEntryUserId(logInput, principal),
+    userId: resolveTaskTimeEntryUserId(logInput, principal, currentUserId),
     workDate: logInput.workDate,
     startAt: logInput.startAt,
     endAt: logInput.endAt,

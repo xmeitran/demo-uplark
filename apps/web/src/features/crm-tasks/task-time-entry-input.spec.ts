@@ -29,4 +29,13 @@ describe("task time entry input", () => {
     expect(resolveTaskTimeEntryUserId({}, "founder")).toBe("usr-kha-founder");
     expect(resolveTaskTimeEntryUserId({}, "delivery")).toBe("usr-deliverer");
   });
+
+  it("uses the authenticated workspace user before the legacy principal fallback", () => {
+    expect(resolveTaskTimeEntryUserId({}, "founder", "usr-current-user")).toBe("usr-current-user");
+    expect(buildCreateTaskTimeEntryInput({
+      userId: undefined,
+      workDate: "2026-07-06",
+      minutes: 30
+    }, "founder", "usr-current-user").userId).toBe("usr-current-user");
+  });
 });

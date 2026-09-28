@@ -1865,15 +1865,16 @@ function resolveMilestoneAssigneeIds(milestone: Milestone, members: ProjectTeamM
 }
 
 // Add Stage Modal
-function AddStageModal({ milestoneName, color, onClose, onSave, members = EMPTY_TEAM_MEMBERS }: {
+function AddStageModal({ milestoneName, color, onClose, onSave, members = EMPTY_TEAM_MEMBERS, currentUserId }: {
   milestoneName: string; color: string; onClose: () => void;
   onSave: (stage: StageItem) => Promise<void>;
   members?: ProjectTeamMember[];
+  currentUserId?: string;
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<StageItem["status"]>("in-progress");
-  const [pic, setPic] = useState<ProjectTeamMember | undefined>(members[0]);
+  const [pic, setPic] = useState<ProjectTeamMember | undefined>(() => members.find((member) => member.id === currentUserId) ?? members[0]);
   const [startDate, setStartDate] = useState("");
   const [dueDate, setDueDate] = useState("");
   const stageName = name.trim();
@@ -1882,8 +1883,12 @@ function AddStageModal({ milestoneName, color, onClose, onSave, members = EMPTY_
   const { submit, submitting, submitError } = useModalMutation(onClose);
 
   useEffect(() => {
-    setPic((current) => current && members.some((member) => member.id === current.id) ? current : members[0]);
-  }, [members]);
+    setPic((current) => {
+      const signedInUser = members.find((member) => member.id === currentUserId);
+      if (signedInUser) return signedInUser;
+      return current && members.some((member) => member.id === current.id) ? current : members[0];
+    });
+  }, [members, currentUserId]);
 
   const STAGE_STATUS_CFG = {
     "upcoming": { label: "Upcoming", color: "#facc15", bg: "#fef9c31b" },
@@ -1955,7 +1960,7 @@ function AddStageModal({ milestoneName, color, onClose, onSave, members = EMPTY_
               onChange={setPic}
               placeholder="Select stage PIC"
             />
-            {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected PIC: {pic.name}</p>}
+            {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected PIC: {pic.name}{pic.id === currentUserId ? " · tài khoản đang đăng nhập" : ""}</p>}
           </Field>
 
           <div className="space-y-2">
@@ -1980,10 +1985,11 @@ function AddStageModal({ milestoneName, color, onClose, onSave, members = EMPTY_
 }
 
 // Add Task Modal
-function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_MEMBERS }: {
+function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_MEMBERS, currentUserId }: {
   stageName: string; color: string; onClose: () => void;
   onSave: (t: TaskItem) => Promise<void>;
   members?: ProjectTeamMember[];
+  currentUserId?: string;
 }) {
   const [title,    setTitle]    = useState("");
   const [priority, setPriority] = useState<TaskItem["priority"]>("medium");
@@ -1991,14 +1997,18 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
   const [startDate, setStartDate] = useState("");
   const [due,      setDue]      = useState("");
   const [description, setDescription] = useState("");
-  const [pic,      setPic]      = useState<ProjectTeamMember | undefined>(members[0]);
+  const [pic,      setPic]      = useState<ProjectTeamMember | undefined>(() => members.find((member) => member.id === currentUserId) ?? members[0]);
   const [plannedHours, setPlannedHours] = useState<number>(8);
   const [actualHours, setActualHours]   = useState<number>(0);
   const { submit, submitting, submitError } = useModalMutation(onClose);
 
   useEffect(() => {
-    setPic((current) => current && members.some((member) => member.id === current.id) ? current : members[0]);
-  }, [members]);
+    setPic((current) => {
+      const signedInUser = members.find((member) => member.id === currentUserId);
+      if (signedInUser) return signedInUser;
+      return current && members.some((member) => member.id === current.id) ? current : members[0];
+    });
+  }, [members, currentUserId]);
 
   return (
     <AnimatePresence>
@@ -2075,7 +2085,7 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
             onChange={setPic}
             placeholder="Select task assignee"
           />
-          {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected assignee: {pic.name}</p>}
+          {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected assignee: {pic.name}{pic.id === currentUserId ? " · tài khoản đang đăng nhập" : ""}</p>}
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Start Date (optional)">
@@ -2118,16 +2128,20 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
 }
 
 // Milestone Modal (unchanged from before)
-function MilestoneModal({ projectColor, onClose, onSave, members = EMPTY_TEAM_MEMBERS }: {
+function MilestoneModal({ projectColor, onClose, onSave, members = EMPTY_TEAM_MEMBERS, currentUserId }: {
   projectColor:string; onClose:()=>void; onSave:(m:Milestone)=>Promise<void>;
   members?: ProjectTeamMember[];
+  currentUserId?: string;
 }) {
   const [name, setName]        = useState("");
   const [desc, setDesc]        = useState("");
   const [start,setStart]       = useState("");
   const [due,  setDue]         = useState("");
   const [status,setStatus]     = useState<Milestone["status"]>("upcoming");
-  const [selectedAssigneeIds, setSelectedAssigneeIds] = useState<string[]>(members[0] ? [members[0].id] : []);
+  const [selectedAssigneeIds, setSelectedAssigneeIds] = useState<string[]>(() => {
+    const defaultMember = members.find((member) => member.id === currentUserId) ?? members[0];
+    return defaultMember ? [defaultMember.id] : [];
+  });
   const selectedAssignees = selectedAssigneeIds
     .map((id) => members.find((member) => member.id === id))
     .filter((member): member is ProjectTeamMember => Boolean(member));
@@ -2135,10 +2149,11 @@ function MilestoneModal({ projectColor, onClose, onSave, members = EMPTY_TEAM_ME
   const { submit, submitting, submitError } = useModalMutation(onClose);
 
   useEffect(() => {
-    if (selectedAssigneeIds.length === 0 && members[0]) {
-      setSelectedAssigneeIds([members[0].id]);
+    if (selectedAssigneeIds.length === 0) {
+      const defaultMember = members.find((member) => member.id === currentUserId) ?? members[0];
+      if (defaultMember) setSelectedAssigneeIds([defaultMember.id]);
     }
-  }, [members, selectedAssigneeIds.length]);
+  }, [members, currentUserId, selectedAssigneeIds.length]);
 
   return (
     <AnimatePresence>
@@ -6451,7 +6466,7 @@ export default function ProjectDetailPage() {
         />
       )}
       {showMilestoneModal && (
-        <MilestoneModal projectColor={project.color} onClose={() => setShowMilestoneModal(false)} onSave={handleAddMilestone} members={assignmentTeamMembers} />
+        <MilestoneModal projectColor={project.color} onClose={() => setShowMilestoneModal(false)} onSave={handleAddMilestone} members={assignmentTeamMembers} currentUserId={user?.id} />
       )}
       {showInviteModal && (
         <InviteMemberModal
@@ -6470,6 +6485,7 @@ export default function ProjectDetailPage() {
           onClose={() => setAddStageFor(null)}
           onSave={newStage => handleAddStage(addStageFor.id, newStage)}
           members={assignmentTeamMembers}
+          currentUserId={user?.id}
         />
       )}
       {addTaskFor && (
@@ -6479,6 +6495,7 @@ export default function ProjectDetailPage() {
           onClose={() => setAddTaskFor(null)}
           onSave={task => handleAddTask(addTaskFor.milestoneId, addTaskFor.stageId, task)}
           members={assignmentTeamMembers}
+          currentUserId={user?.id}
         />
       )}
       {editTaskFor && (
