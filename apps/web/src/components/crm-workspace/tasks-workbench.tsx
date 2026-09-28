@@ -377,6 +377,101 @@ export function CustomDropdown({
   );
 }
 
+export function MultiPersonDropdown({
+  id,
+  label,
+  values,
+  options,
+  onChange,
+  openDirection = "down"
+}: {
+  id?: string;
+  label: React.ReactNode;
+  values: string[];
+  options: TaskSelectOption[];
+  onChange: (values: string[]) => void;
+  openDirection?: "up" | "down";
+}) {
+  const generatedId = useId();
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const controlId = id ?? `task-multi-select-${generatedId.replace(/:/g, "")}`;
+  const listboxId = `${controlId}-listbox`;
+  const selectedOptions = options.filter((option) => values.includes(option.value));
+  const summary = selectedOptions.length === 0
+    ? "Chưa chọn người phụ trách"
+    : selectedOptions.length === 1
+      ? selectedOptions[0].label
+      : `${selectedOptions[0].label} + ${selectedOptions.length - 1} người`;
+  const handleBlur = (event: React.FocusEvent<HTMLDivElement>) => {
+    const nextFocus = event.relatedTarget as Node | null;
+    if (!nextFocus || !event.currentTarget.contains(nextFocus)) setOpen(false);
+  };
+
+  return (
+    <div className="task-select-control relative" onBlur={handleBlur}>
+      {label && <span className="task-field-label text-slate-400 text-[10px] font-bold block mb-1" id={`${controlId}-label`}>{label}</span>}
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-expanded={open}
+        aria-controls={listboxId}
+        aria-haspopup="listbox"
+        className={`w-full min-h-11 flex items-center justify-between gap-2.5 px-3 py-2 border rounded-xl bg-slate-50 hover:bg-white transition text-left cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-blue-500/25 ${open ? "border-blue-500 ring-2 ring-blue-500/15 bg-white" : "border-slate-200"}`}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="flex items-center gap-2 min-w-0">
+          <span className="flex -space-x-1.5 shrink-0">
+            {selectedOptions.slice(0, 3).map((option) => option.avatarUrl ? (
+              <img key={option.value} src={option.avatarUrl} alt="" className="h-5 w-5 rounded-full object-cover ring-2 ring-white" />
+            ) : (
+              <span key={option.value} className="h-5 w-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white ring-2 ring-white" style={{ backgroundColor: option.color ?? "#64748b" }}>{option.initials ?? option.label.slice(0, 2).toUpperCase()}</span>
+            ))}
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-xs font-semibold text-slate-800">{summary}</span>
+            <span className="block truncate text-[10px] font-normal text-slate-400">{selectedOptions.length} người · không giới hạn</span>
+          </span>
+        </span>
+        <ShopifyIcon className={`text-slate-400 transition-transform duration-200 ${open ? "rotate-180" : ""}`} name="chevron-down" size={14} />
+      </button>
+      {open && (
+        <div
+          id={listboxId}
+          role="listbox"
+          aria-multiselectable="true"
+          className={`absolute left-0 w-full z-[1200] bg-white border border-slate-100 rounded-2xl p-1.5 shadow-lg max-h-72 overflow-y-auto ${openDirection === "up" ? "bottom-[calc(100%+6px)]" : "top-[calc(100%+6px)]"}`}
+        >
+          <div className="flex items-center justify-between border-b border-slate-100 px-2.5 py-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">PROJECT MEMBERS</span>
+            {values.length > 0 && <button type="button" className="text-[10px] font-semibold text-blue-600" onClick={() => onChange([])}>Bỏ chọn tất cả</button>}
+          </div>
+          {options.map((option) => {
+            const selected = values.includes(option.value);
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                className={`w-full min-h-11 flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/25 ${selected ? "bg-blue-50/60 text-blue-600" : "hover:bg-slate-50 text-slate-700"}`}
+                onClick={() => onChange(selected ? values.filter((value) => value !== option.value) : [...values, option.value])}
+              >
+                {option.avatarUrl ? <img src={option.avatarUrl} alt="" className="h-7 w-7 rounded-full object-cover shrink-0" /> : <span className="h-7 w-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0" style={{ backgroundColor: option.color ?? "#64748b" }}>{option.initials ?? option.label.slice(0, 2).toUpperCase()}</span>}
+                <span className="flex-1 min-w-0">
+                  <span className="block text-xs text-slate-800 font-semibold truncate">{option.label}</span>
+                  {option.subtext && <span className="block text-[10px] text-slate-400 font-normal truncate mt-0.5">{option.subtext}</span>}
+                </span>
+                {selected && <ShopifyIcon className="text-blue-600 shrink-0" name="check" size={14} />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const weekdayLabels = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
 
 function parseIsoDate(value: string) {
@@ -934,7 +1029,7 @@ export function CreateTaskModal({
   const [taskType, setTaskType] = useState(defaults?.taskType || "implementation");
   const [taskTypeLayer1, setTaskTypeLayer1] = useState<CreateTaskModalDefaults["taskTypeLayer1"]>(defaults?.taskTypeLayer1 || "DELIVERY");
   const [taskTypeLayer2, setTaskTypeLayer2] = useState<CreateTaskModalDefaults["taskTypeLayer2"]>(defaults?.taskTypeLayer2 || "CUSTOMER_PROJECT");
-  const [assigneeUserId, setAssigneeUserId] = useState(defaultAssigneeUserId);
+  const [assigneeUserIds, setAssigneeUserIds] = useState<string[]>([defaultAssigneeUserId]);
   const [plannedStartAt, setPlannedStartAt] = useState("");
   const [dueAt, setDueAt] = useState("");
   const [estimateMinutes, setEstimateMinutes] = useState("");
@@ -979,7 +1074,7 @@ export function CreateTaskModal({
     setTaskTypeLayer2(defaults?.taskTypeLayer2 || "CUSTOMER_PROJECT");
     // New tasks start with the account that is actually signed in. Users with
     // permission to assign others can still change this explicitly.
-    setAssigneeUserId(defaultAssigneeUserId);
+    setAssigneeUserIds([defaultAssigneeUserId]);
     setPlannedStartAt("");
     setDueAt("");
     setEstimateMinutes("");
@@ -1020,13 +1115,14 @@ export function CreateTaskModal({
   const handleSubmit = async (e: any) => {
     e.preventDefault();
     if (saving) return;
-    if (!title || !accountId || assigneeUserId === "none") {
+    if (!title || !accountId || assigneeUserIds.length === 0 || assigneeUserIds.includes("none")) {
       alert("Cần nhập tiêu đề, chọn khách hàng và chọn người phụ trách thật trước khi tạo công việc.");
       return;
     }
 
     const accountObj = accounts.find(a => a.id === accountId);
     const projectObj = projects.find(p => p.id === projectId);
+    const assigneeUserId = assigneeUserIds[0];
     const assigneeObj = assigneeSelectOptions.find((option) => option.value === assigneeUserId);
 
     setSaving(true);
@@ -1044,6 +1140,8 @@ export function CreateTaskModal({
         taskTypeLayer1,
         taskTypeLayer2,
         assigneeUserId,
+        assigneeUserIds,
+        assignees: assigneeUserIds.map((userId) => assigneeSelectOptions.find((option) => option.value === userId)).filter(Boolean).map((option) => ({ userId: option!.value, displayName: option!.label, avatarUrl: option!.avatarUrl })),
         assigneeDisplayName: assigneeObj?.label || "Chưa giao",
         plannedStartAt: plannedStartAt || undefined,
         dueAt: dueAt || undefined,
@@ -1149,15 +1247,15 @@ export function CreateTaskModal({
             ]}
             onChange={setPriority}
           />
-          <CustomDropdown
-            label="Người phụ trách"
-            value={assigneeUserId}
+          <MultiPersonDropdown
+            label="Người phụ trách (không giới hạn)"
+            values={assigneeUserIds}
             openDirection="down"
             options={assigneeSelectOptions}
-            onChange={setAssigneeUserId}
+            onChange={setAssigneeUserIds}
           />
-          {authUser?.id && assigneeUserId === authUser.id ? (
-            <p className="col-span-full -mt-2 text-[11px] text-slate-500">Mặc định theo tài khoản đang đăng nhập: {authUser.name}. Bạn vẫn có thể đổi người phụ trách nếu có quyền.</p>
+          {authUser?.id && assigneeUserIds.length === 1 && assigneeUserIds[0] === authUser.id ? (
+            <p className="col-span-full -mt-2 text-[11px] text-slate-500">Mặc định theo tài khoản đang đăng nhập: {authUser.name}. Bạn có thể thêm nhiều người phối hợp nếu có quyền.</p>
           ) : null}
         </div>
 
@@ -1218,7 +1316,7 @@ export function EditTaskModal({
   const [taskType, setTaskType] = useState(task?.taskType || "implementation");
   const [taskTypeLayer1, setTaskTypeLayer1] = useState(task?.taskTypeLayer1 || "DELIVERY");
   const [taskTypeLayer2, setTaskTypeLayer2] = useState(task?.taskTypeLayer2 || "CUSTOMER_PROJECT");
-  const [assigneeUserId, setAssigneeUserId] = useState(task?.assigneeUserId || "none");
+  const [assigneeUserIds, setAssigneeUserIds] = useState<string[]>(task?.assigneeUserIds?.length ? task.assigneeUserIds : (task?.assigneeUserId ? [task.assigneeUserId] : []));
   const [plannedStartAt, setPlannedStartAt] = useState(toVietnamDateInputValue(task?.plannedStartAt));
   const [dueAt, setDueAt] = useState(toVietnamDateInputValue(task?.dueAt));
   const [estimateMinutes, setEstimateMinutes] = useState(task?.estimateMinutes?.toString() || "");
@@ -1236,11 +1334,9 @@ export function EditTaskModal({
       setTaskType(task.taskType || "implementation");
       setTaskTypeLayer1(task.taskTypeLayer1 || "DELIVERY");
       setTaskTypeLayer2(task.taskTypeLayer2 || "CUSTOMER_PROJECT");
-      setAssigneeUserId(
-        task.assigneeUserId && assigneeSelectOptions.some((option) => option.value === task.assigneeUserId)
-          ? task.assigneeUserId
-          : assigneeSelectOptions[0]?.value || "none"
-      );
+      const nextAssigneeUserIds = task.assigneeUserIds?.filter((userId) => assigneeSelectOptions.some((option) => option.value === userId))
+        ?? (task.assigneeUserId && assigneeSelectOptions.some((option) => option.value === task.assigneeUserId) ? [task.assigneeUserId] : []);
+      setAssigneeUserIds(nextAssigneeUserIds.length > 0 ? nextAssigneeUserIds : (assigneeSelectOptions[0]?.value ? [assigneeSelectOptions[0].value] : []));
       setPlannedStartAt(toVietnamDateInputValue(task.plannedStartAt));
       setDueAt(toVietnamDateInputValue(task.dueAt));
       setEstimateMinutes(task.estimateMinutes?.toString() || "");
@@ -1257,6 +1353,7 @@ export function EditTaskModal({
 
     const accountObj = accounts.find(a => a.id === accountId);
     const projectObj = projects.find(p => p.id === projectId);
+    const assigneeUserId = assigneeUserIds[0];
     const assigneeObj = assigneeSelectOptions.find((option) => option.value === assigneeUserId);
 
     onSave({
@@ -1271,6 +1368,8 @@ export function EditTaskModal({
       taskTypeLayer1,
       taskTypeLayer2,
       assigneeUserId,
+      assigneeUserIds,
+      assignees: assigneeUserIds.map((userId) => assigneeSelectOptions.find((option) => option.value === userId)).filter(Boolean).map((option) => ({ userId: option!.value, displayName: option!.label, avatarUrl: option!.avatarUrl })),
       assigneeDisplayName: assigneeObj?.label || "Chưa giao",
       plannedStartAt: plannedStartAt || undefined,
       dueAt: dueAt || undefined,
@@ -1359,12 +1458,12 @@ export function EditTaskModal({
         </div>
 
         <div className="task-form-grid" style={{ zIndex: 1002 }}>
-          <CustomDropdown
-            label="Người phụ trách"
-            value={assigneeUserId}
+          <MultiPersonDropdown
+            label="Người phụ trách (không giới hạn)"
+            values={assigneeUserIds}
             openDirection="up"
             options={assigneeSelectOptions}
-            onChange={setAssigneeUserId}
+            onChange={setAssigneeUserIds}
           />
           <FormField label="Ước tính phút" value={estimateMinutes} onChange={e => setEstimateMinutes(e.target.value)} type="number" placeholder="VD: 120" />
         </div>
@@ -1962,6 +2061,7 @@ export function TasksWorkbench({
       priority: taskInput.priority,
       ownerUserId: taskInput.assigneeUserId,
       assigneeUserId: taskInput.assigneeUserId,
+      assigneeUserIds: taskInput.assigneeUserIds,
       plannedStartAt: taskInput.plannedStartAt,
       dueAt: taskInput.dueAt,
       estimateMinutes: taskInput.estimateMinutes,
@@ -2049,6 +2149,7 @@ export function TasksWorkbench({
       priority: taskInput.priority,
       ownerUserId: taskInput.assigneeUserId,
       assigneeUserId: taskInput.assigneeUserId,
+      assigneeUserIds: taskInput.assigneeUserIds,
       estimateMinutes: taskInput.estimateMinutes,
       customerVisible: taskInput.customerVisible
     };
@@ -2083,6 +2184,8 @@ export function TasksWorkbench({
         ownerDisplayName: taskInput.assigneeDisplayName,
         assigneeUserId: taskInput.assigneeUserId,
         assigneeDisplayName: taskInput.assigneeDisplayName,
+        assigneeUserIds: taskInput.assigneeUserIds ?? [taskInput.assigneeUserId],
+        assignees: taskInput.assignees,
         plannedStartAt: taskInput.plannedStartAt,
         dueAt: taskInput.dueAt,
         estimateMinutes: taskInput.estimateMinutes,
@@ -2133,6 +2236,8 @@ export function TasksWorkbench({
         ownerDisplayName: taskInput.assigneeDisplayName,
         assigneeUserId: taskInput.assigneeUserId,
         assigneeDisplayName: taskInput.assigneeDisplayName,
+        assigneeUserIds: taskInput.assigneeUserIds ?? [taskInput.assigneeUserId],
+        assignees: taskInput.assignees,
         plannedStartAt: taskInput.plannedStartAt,
         dueAt: taskInput.dueAt,
         estimateMinutes: taskInput.estimateMinutes,

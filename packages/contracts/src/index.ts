@@ -979,6 +979,8 @@ export interface ProjectTaskSummary {
   assigneeUserId?: string;
   assigneeDisplayName?: string;
   assigneeAvatarUrl?: string;
+  assigneeUserIds?: string[];
+  assignees?: Array<{ userId: string; displayName?: string; avatarUrl?: string }>;
   ownerTeamId?: string;
   ownerTeamName?: string;
   plannedStartAt?: string;
@@ -1057,6 +1059,8 @@ export interface CreateProjectTaskInput {
   priority?: string;
   ownerUserId?: string;
   assigneeUserId?: string;
+  /** Unlimited co-assignees; assigneeUserId remains the primary/backward-compatible value. */
+  assigneeUserIds?: string[];
   ownerTeamId?: string;
   plannedStartAt?: string;
   dueAt?: string;
@@ -1080,6 +1084,8 @@ export interface UpdateProjectTaskInput {
   priority?: string;
   ownerUserId?: string | null;
   assigneeUserId?: string | null;
+  /** Replaces the complete co-assignee set when provided. */
+  assigneeUserIds?: string[];
   ownerTeamId?: string | null;
   plannedStartAt?: string | null;
   dueAt?: string | null;

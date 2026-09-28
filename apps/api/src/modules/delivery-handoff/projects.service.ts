@@ -113,6 +113,7 @@ const projectInclude = {
     select: {
       assigneeUserId: true,
       ownerUserId: true,
+      taskAssignees: { select: { userId: true } },
       status: true,
       estimateMinutes: true,
       timeEntries: {
@@ -182,6 +183,7 @@ type UpdateStageOptions = {
 
 type ActiveUserLookupClient = Pick<Prisma.TransactionClient, "user">;
 type ProjectAssignmentLookupClient = Pick<Prisma.TransactionClient, "projectMember" | "user">;
+type TaskAssigneeClient = Pick<Prisma.TransactionClient, "projectTaskAssignee">;
 
 type ProjectActivityFeedItem = {
   id: string;
@@ -252,6 +254,10 @@ const taskInclude = {
   stage: true,
   owner: true,
   assignee: true,
+  taskAssignees: {
+    include: { user: true },
+    orderBy: [{ isPrimary: "desc" as const }, { createdAt: "asc" as const }]
+  },
   ownerTeam: true,
   archivedBy: true,
   statusHistory: { orderBy: { changedAt: "desc" as const }, take: 20 },
@@ -264,6 +270,10 @@ const portalTaskInclude = {
   stage: true,
   owner: true,
   assignee: true,
+  taskAssignees: {
+    include: { user: true },
+    orderBy: [{ isPrimary: "desc" as const }, { createdAt: "asc" as const }]
+  },
   ownerTeam: true,
   archivedBy: true,
   statusHistory: { orderBy: { changedAt: "desc" as const }, take: 20 }
@@ -2423,7 +2433,12 @@ export class ProjectsService {
       ...(query.projectId ? { projectId: query.projectId } : {}),
       ...(query.stageId ? { stageId: query.stageId } : {}),
       ...(status ? { status } : {}),
-      ...(query.assigneeUserId ? { assigneeUserId: query.assigneeUserId } : {}),
+      ...(query.assigneeUserId ? {
+        OR: [
+          { assigneeUserId: query.assigneeUserId },
+          { taskAssignees: { some: { userId: query.assigneeUserId } } }
+        ]
+      } : {}),
       ...(!includeArchived && status !== TASK_ARCHIVE_STATUS ? { archivedAt: null } : {})
     };
     Object.assign(where, this.taskAccessWhere(principal));
@@ -2481,7 +2496,13 @@ export class ProjectsService {
     const normalized = await this.normalizeTaskScope(input, principal.workspaceId);
     const ownerUserId = optionalString(input.ownerUserId, "ownerUserId") ?? undefined;
     const assigneeUserId = optionalString(input.assigneeUserId, "assigneeUserId") ?? undefined;
-    const assignmentUserIds = [ownerUserId, assigneeUserId].filter((id): id is string => Boolean(id));
+    const requestedAssigneeUserIds = optionalStringArray(input.assigneeUserIds, "assigneeUserIds") ?? [];
+    const assigneeUserIds = Array.from(new Set([
+      ...(assigneeUserId ? [assigneeUserId] : []),
+      ...requestedAssigneeUserIds
+    ]));
+    const primaryAssigneeUserId = assigneeUserId ?? assigneeUserIds[0];
+    const assignmentUserIds = [ownerUserId, ...assigneeUserIds].filter((id): id is string => Boolean(id));
     if (normalized.projectId) {
       await this.ensureProjectAssignmentUsers(this.prisma, principal.workspaceId, principal.tenantKey, normalized.projectId, assignmentUserIds);
     } else {
@@ -2508,7 +2529,7 @@ export class ProjectsService {
       status: input.status?.trim() || "todo",
       priority: input.priority?.trim() || "medium",
       ownerUserId,
-      assigneeUserId,
+      assigneeUserId: primaryAssigneeUserId,
       ownerTeamId: optionalString(input.ownerTeamId, "ownerTeamId") ?? undefined,
       plannedStartAt: plannedStartAt ?? undefined,
       dueAt: dueAt ?? undefined,
@@ -2538,6 +2559,7 @@ export class ProjectsService {
             },
             include: taskInclude
           });
+          await this.syncTaskAssignees(tx, principal.workspaceId, created.id, assigneeUserIds, primaryAssigneeUserId);
           await tx.project.update({
             where: { id: normalized.projectId! },
             data: { hierarchyOrderVersion: { increment: 1 } }
@@ -2549,6 +2571,14 @@ export class ProjectsService {
           include: taskInclude
         });
 
+    if (assigneeUserIds.length > 0) {
+      await this.syncTaskAssignees(this.prisma, principal.workspaceId, task.id, assigneeUserIds, primaryAssigneeUserId);
+    }
+    const hydratedTask = typeof this.prisma.projectTask.findUnique === "function"
+      ? await this.prisma.projectTask.findUnique({ where: { id: task.id }, include: taskInclude })
+      : null;
+    const taskResult = hydratedTask ?? task;
+
     await this.prisma.auditEvent.create({
       data: {
         workspaceId: principal.workspaceId,
@@ -2558,36 +2588,37 @@ export class ProjectsService {
         resourceId: task.id,
         requestId: randomUUID(),
         after: {
-          title: task.title,
-          projectId: task.projectId,
-          status: task.status,
-          taskType: task.taskType,
-          taskTypeLayer1: task.taskTypeLayer1,
-          taskTypeLayer2: task.taskTypeLayer2,
-          estimateMinutes: task.estimateMinutes
+          title: taskResult.title,
+          projectId: taskResult.projectId,
+          status: taskResult.status,
+          taskType: taskResult.taskType,
+          taskTypeLayer1: taskResult.taskTypeLayer1,
+          taskTypeLayer2: taskResult.taskTypeLayer2,
+          estimateMinutes: taskResult.estimateMinutes,
+          assigneeUserIds
         }
       }
     });
-    if (task.projectId && typeof this.prisma.projectActivity?.create === "function") {
+    if (taskResult.projectId && typeof this.prisma.projectActivity?.create === "function") {
       await this.prisma.projectActivity.create({
         data: {
           workspaceId: principal.workspaceId,
-          projectId: task.projectId,
-          accountId: task.accountId,
+          projectId: taskResult.projectId,
+          accountId: taskResult.accountId,
           activityType: "task_created",
-          subject: `Đã tạo task: ${task.title}`,
+          subject: `Đã tạo task: ${taskResult.title}`,
           note: [
-            task.taskTypeLayer1 && task.taskTypeLayer2 ? `Task Type: ${task.taskTypeLayer1} / ${task.taskTypeLayer2}` : undefined,
-            task.estimateMinutes ? `Estimate: ${task.estimateMinutes} phút` : undefined
+            taskResult.taskTypeLayer1 && taskResult.taskTypeLayer2 ? `Task Type: ${taskResult.taskTypeLayer1} / ${taskResult.taskTypeLayer2}` : undefined,
+            taskResult.estimateMinutes ? `Estimate: ${taskResult.estimateMinutes} phút` : undefined
           ].filter(Boolean).join(" · "),
-          target: task.title,
+          target: taskResult.title,
           occurredAt: new Date(),
           status: "active",
           createdByUserId: createdByUserId ?? principal.subjectId
         }
       });
     }
-    return mapTaskSummary(task);
+    return mapTaskSummary(taskResult);
   }
 
   async updateTask(taskId: string, input: UpdateProjectTaskInput, principal: PrincipalContext, changedByUserId?: string) {
@@ -2604,7 +2635,12 @@ export class ProjectsService {
     const requestedStatus = optionalString(input.status, "status");
     const ownerUserId = optionalString(input.ownerUserId, "ownerUserId");
     const assigneeUserId = optionalString(input.assigneeUserId, "assigneeUserId");
-    const assignmentUserIds = [ownerUserId, assigneeUserId].filter((id): id is string => typeof id === "string");
+    const hasAssigneeList = hasInputKey(input, "assigneeUserIds");
+    const requestedAssigneeUserIds = hasAssigneeList ? (optionalStringArray(input.assigneeUserIds, "assigneeUserIds") ?? []) : undefined;
+    const assignmentUserIds = [
+      ownerUserId,
+      ...(hasAssigneeList ? requestedAssigneeUserIds ?? [] : [assigneeUserId])
+    ].filter((id): id is string => typeof id === "string");
     const assignmentProjectId = scope.projectId === null ? null : scope.projectId ?? existing.projectId;
     if (assignmentProjectId) {
       await this.ensureProjectAssignmentUsers(this.prisma, principal.workspaceId, principal.tenantKey, assignmentProjectId, assignmentUserIds);
@@ -2622,7 +2658,7 @@ export class ProjectsService {
         status: requestedStatus ?? undefined,
         priority: optionalString(input.priority, "priority") ?? undefined,
         ownerUserId,
-        assigneeUserId,
+        assigneeUserId: hasAssigneeList ? (assigneeUserId ?? requestedAssigneeUserIds?.[0] ?? null) : assigneeUserId,
         ownerTeamId: optionalString(input.ownerTeamId, "ownerTeamId"),
         plannedStartAt: optionalDate(input.plannedStartAt, "plannedStartAt"),
         dueAt: optionalDate(input.dueAt, "dueAt"),
@@ -2633,7 +2669,10 @@ export class ProjectsService {
     const task = await this.prisma.$transaction(async (tx) => {
       const projectLocks = Array.from(new Set([existing.projectId, assignmentProjectId].filter((id): id is string => Boolean(id)))).sort();
       for (const projectId of projectLocks) await this.lockProjectMembers(tx, principal.workspaceId, projectId);
-      const current = await tx.projectTask.findFirst({ where: { id: taskId, workspaceId: principal.workspaceId } });
+      const current = await tx.projectTask.findFirst({
+        where: { id: taskId, workspaceId: principal.workspaceId },
+        include: { taskAssignees: { select: { userId: true, isPrimary: true } } }
+      });
       if (!current) throw new NotFoundException("Task not found");
       if (!canOverrideWorkspaceDayOff(principal) && typeof tx.workspaceDayOff?.findFirst === "function") {
         const nextPlannedStartAt = hasInputKey(input, "plannedStartAt") ? optionalDate(input.plannedStartAt, "plannedStartAt") : current.plannedStartAt;
@@ -2651,27 +2690,47 @@ export class ProjectsService {
           if (blockedDay) throw new ConflictException(workspaceDayOffMessage(blockedDay));
         }
       }
-      const assignmentChanged = (hasInputKey(input, "assigneeUserId") && assigneeUserId !== current.assigneeUserId) || (hasInputKey(input, "ownerUserId") && ownerUserId !== current.ownerUserId);
+      const currentAssigneeUserIds = Array.from(new Set([
+        ...(current.taskAssignees ?? []).map((row) => row.userId),
+        ...(current.assigneeUserId ? [current.assigneeUserId] : [])
+      ]));
+      const nextAssigneeUserIds = hasAssigneeList
+        ? Array.from(new Set(requestedAssigneeUserIds ?? []))
+        : hasInputKey(input, "assigneeUserId")
+          ? (assigneeUserId ? [assigneeUserId] : [])
+          : currentAssigneeUserIds;
+      const nextPrimaryAssigneeUserId = hasAssigneeList
+        ? (assigneeUserId ?? nextAssigneeUserIds[0] ?? null)
+        : assigneeUserId;
+      const assignmentChanged = hasAssigneeList
+        ? nextAssigneeUserIds.join("|") !== currentAssigneeUserIds.join("|") || nextPrimaryAssigneeUserId !== current.assigneeUserId
+        : (hasInputKey(input, "assigneeUserId") && assigneeUserId !== current.assigneeUserId) || (hasInputKey(input, "ownerUserId") && ownerUserId !== current.ownerUserId);
       const destinationProjectId = scope.projectId === undefined ? current.projectId : scope.projectId;
       const projectChanged = destinationProjectId !== current.projectId;
       if (projectChanged) {
         if (current.projectId) await this.assertProjectManager(tx, current.projectId, principal);
         else if (!principal.roleCodes.includes("FOUNDER_GM")) throw new ForbiddenException("Only Founder/GM can relocate a task without a project");
         if (destinationProjectId) await this.assertProjectManager(tx, destinationProjectId, principal);
-        const retainedUsers = [ownerUserId === undefined ? current.ownerUserId : ownerUserId, assigneeUserId === undefined ? current.assigneeUserId : assigneeUserId].filter((id): id is string => Boolean(id));
+        const retainedUsers = Array.from(new Set([
+          ownerUserId === undefined ? current.ownerUserId : ownerUserId,
+          ...nextAssigneeUserIds
+        ].filter((id): id is string => Boolean(id))));
         if (destinationProjectId) await this.ensureProjectAssignmentUsers(tx, principal.workspaceId, principal.tenantKey, destinationProjectId, retainedUsers);
         else await this.ensureActiveWorkspaceUsers(tx, principal.workspaceId, principal.tenantKey, retainedUsers);
         await this.auditMutation(tx, principal, "task.project_changed", "task", taskId, { projectId: current.projectId }, { projectId: destinationProjectId });
       }
       if (assignmentChanged) {
         const permissions = current.projectId ? await this.projectPermissions(tx, current.projectId, principal) : { canManage: principal.roleCodes.includes("FOUNDER_GM"), isMember: true };
-        const ownsTask = current.ownerUserId === principal.subjectId || current.assigneeUserId === principal.subjectId;
+        const ownsTask = current.ownerUserId === principal.subjectId
+          || current.assigneeUserId === principal.subjectId
+          || currentAssigneeUserIds.includes(principal.subjectId);
         if (!permissions.canManage && !(permissions.isMember && ownsTask)) throw new ForbiddenException("Only project managers or the current assigned task member can transfer this task");
         if (assignmentProjectId) await this.ensureProjectAssignmentUsers(tx, principal.workspaceId, principal.tenantKey, assignmentProjectId, assignmentUserIds);
         else await this.ensureActiveWorkspaceUsers(tx, principal.workspaceId, principal.tenantKey, assignmentUserIds);
+        await this.syncTaskAssignees(tx, principal.workspaceId, taskId, nextAssigneeUserIds, nextPrimaryAssigneeUserId ?? undefined);
         await this.auditMutation(tx, principal, "task.assignee_transferred", "task", taskId,
-          { ownerUserId: current.ownerUserId, assigneeUserId: current.assigneeUserId },
-          { ownerUserId: ownerUserId === undefined ? current.ownerUserId : ownerUserId, assigneeUserId: assigneeUserId === undefined ? current.assigneeUserId : assigneeUserId });
+          { ownerUserId: current.ownerUserId, assigneeUserId: current.assigneeUserId, assigneeUserIds: currentAssigneeUserIds },
+          { ownerUserId: ownerUserId === undefined ? current.ownerUserId : ownerUserId, assigneeUserId: nextPrimaryAssigneeUserId ?? (assigneeUserId === undefined ? current.assigneeUserId : assigneeUserId), assigneeUserIds: nextAssigneeUserIds });
       }
       if (requestedStatus !== undefined && requestedStatus !== null && requestedStatus !== current.status) {
         await tx.taskStatusHistory.create({ data: { workspaceId: principal.workspaceId, taskId: current.id, accountId: current.accountId, projectId: current.projectId, fromStatus: current.status, toStatus: requestedStatus, changedByUserId: principal.subjectId, changedAt: new Date(), reason: "Task updated" } });
@@ -2693,6 +2752,7 @@ export class ProjectsService {
           priority: current.priority,
           ownerUserId: current.ownerUserId,
           assigneeUserId: current.assigneeUserId,
+          assigneeUserIds: currentAssigneeUserIds,
           plannedStartAt: current.plannedStartAt?.toISOString() ?? null,
           dueAt: current.dueAt?.toISOString() ?? null,
           estimateMinutes: current.estimateMinutes
@@ -2707,6 +2767,7 @@ export class ProjectsService {
           priority: updated.priority,
           ownerUserId: updated.ownerUserId,
           assigneeUserId: updated.assigneeUserId,
+          assigneeUserIds: nextAssigneeUserIds,
           plannedStartAt: updated.plannedStartAt?.toISOString() ?? null,
           dueAt: updated.dueAt?.toISOString() ?? null,
           estimateMinutes: updated.estimateMinutes
@@ -2723,6 +2784,7 @@ export class ProjectsService {
           ["priority", current.priority, updated.priority],
           ["ownerUserId", current.ownerUserId, updated.ownerUserId],
           ["assigneeUserId", current.assigneeUserId, updated.assigneeUserId],
+          ["assigneeUserIds", currentAssigneeUserIds.join("|"), nextAssigneeUserIds.join("|")],
           ["plannedStartAt", current.plannedStartAt?.toISOString() ?? null, updated.plannedStartAt?.toISOString() ?? null],
           ["dueAt", current.dueAt?.toISOString() ?? null, updated.dueAt?.toISOString() ?? null],
           ["estimateMinutes", current.estimateMinutes, updated.estimateMinutes]
@@ -2731,6 +2793,7 @@ export class ProjectsService {
           title: "tên", description: "mô tả", taskType: "loại công việc", taskTypeLayer1: "nhóm Task Type",
           taskTypeLayer2: "bối cảnh Task Type", status: "trạng thái", priority: "ưu tiên", ownerUserId: "owner",
           assigneeUserId: "người phụ trách", plannedStartAt: "ngày bắt đầu", dueAt: "deadline", estimateMinutes: "estimate"
+          ,assigneeUserIds: "người đồng phụ trách"
         };
         await tx.projectActivity.create({
           data: {
@@ -3984,6 +4047,30 @@ export class ProjectsService {
     if (missing.length > 0) {
       throw new BadRequestException(`User(s) are not project members: ${missing.join(", ")}`);
     }
+  }
+
+  private async syncTaskAssignees(
+    tx: TaskAssigneeClient,
+    workspaceId: string,
+    taskId: string,
+    userIds: string[],
+    primaryUserId?: string
+  ) {
+    const assigneeModel = (tx as any).projectTaskAssignee;
+    if (!assigneeModel || typeof assigneeModel.deleteMany !== "function" || typeof assigneeModel.createMany !== "function") return;
+    const uniqueIds = Array.from(new Set(userIds.filter(Boolean)));
+    await assigneeModel.deleteMany({ where: { workspaceId, taskId } });
+    if (uniqueIds.length === 0) return;
+
+    await assigneeModel.createMany({
+      data: uniqueIds.map((userId, index) => ({
+        workspaceId,
+        taskId,
+        userId,
+        isPrimary: userId === primaryUserId || (!primaryUserId && index === 0)
+      })),
+      skipDuplicates: true
+    });
   }
 
   private async syncProjectMembers(

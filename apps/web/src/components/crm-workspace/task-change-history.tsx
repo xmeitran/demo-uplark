@@ -29,6 +29,9 @@ function formatValue(key: string, value: unknown, people: WorkspaceUserOption[])
   if (key === "status") return getStatusLabel(String(value));
   if (key === "priority") return getPriorityLabel(String(value));
   if (key === "taskType") return getTaskTypeLabel(String(value));
+  if (key === "assigneeUserIds" && Array.isArray(value)) {
+    return value.map((id) => people.find((person) => person.id === String(id))?.name || String(id)).join(", ") || "Trống";
+  }
   if (["ownerUserId", "assigneeUserId", "changedByUserId"].includes(key)) {
     return people.find((person) => person.id === String(value))?.name || String(value);
   }
@@ -51,6 +54,7 @@ function fieldLabel(key: string) {
     priority: "Ưu tiên",
     ownerUserId: "Owner",
     assigneeUserId: "Người phụ trách",
+    assigneeUserIds: "Người đồng phụ trách",
     plannedStartAt: "Ngày bắt đầu",
     dueAt: "Hạn chót",
     estimateMinutes: "Estimate"

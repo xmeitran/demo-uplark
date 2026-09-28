@@ -365,6 +365,7 @@ model User {
   ownedProjectStages             ProjectStage[]
   ownedTasks                     ProjectTask[]               @relation("ProjectTaskOwner")
   assignedTasks                  ProjectTask[]               @relation("ProjectTaskAssignee")
+  taskAssignments                ProjectTaskAssignee[]
   createdTasks                   ProjectTask[]               @relation("ProjectTaskCreatedBy")
   archivedTasks                  ProjectTask[]               @relation("ProjectTaskArchivedBy")
   taskStatusChanges              TaskStatusHistory[]
@@ -493,6 +494,7 @@ model TenantWorkspace {
   pnlAllocations             PnlTimeEntryAllocation[]
   reminderDeliveryLogs       ReminderDeliveryLog[]
   reminderPolicy             WorkspaceReminderPolicy?
+  projectTaskAssignees       ProjectTaskAssignee[]
 
   @@unique([tenantKey, workspaceKey])
   @@index([status])
@@ -1326,25 +1328,25 @@ model Project {
 }
 
 model ProjectMilestone {
-  id            String          @id @default(cuid())
-  workspaceId   String          @default("twk-foundation")
-  accountId     String
-  projectId     String
-  name          String
-  normalizedKey String
-  sortOrder     Int
-  requiredDocumentCount Int             @default(0)
-  requiredDocumentTypes String[]        @default([])
-  unlockCriteria Json?
-  gateStatus     String                  @default("open")
-  customerConfirmationRequired Boolean   @default(false)
-  reviewerRole   String?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  workspace     TenantWorkspace @relation(fields: [workspaceId], references: [id])
-  account       Account         @relation(fields: [accountId], references: [id])
-  project       Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  stages        ProjectStage[]
+  id                           String          @id @default(cuid())
+  workspaceId                  String          @default("twk-foundation")
+  accountId                    String
+  projectId                    String
+  name                         String
+  normalizedKey                String
+  sortOrder                    Int
+  requiredDocumentCount        Int             @default(0)
+  requiredDocumentTypes        String[]        @default([])
+  unlockCriteria               Json?
+  gateStatus                   String          @default("open")
+  customerConfirmationRequired Boolean         @default(false)
+  reviewerRole                 String?
+  createdAt                    DateTime        @default(now())
+  updatedAt                    DateTime        @updatedAt
+  workspace                    TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  account                      Account         @relation(fields: [accountId], references: [id])
+  project                      Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stages                       ProjectStage[]
 
   @@unique([projectId, normalizedKey])
   @@index([workspaceId, projectId, sortOrder])
@@ -1352,17 +1354,17 @@ model ProjectMilestone {
 }
 
 model ProjectMilestoneTemplate {
-  id            String          @id @default(cuid())
-  workspaceId   String          @default("twk-foundation")
-  key           String
-  name          String
-  description   String?
-  status        String          @default("active")
-  milestones    Json
+  id              String          @id @default(cuid())
+  workspaceId     String          @default("twk-foundation")
+  key             String
+  name            String
+  description     String?
+  status          String          @default("active")
+  milestones      Json
   createdByUserId String?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  workspace     TenantWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  workspace       TenantWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, key])
   @@index([workspaceId, status])
@@ -1849,6 +1851,7 @@ model ProjectTask {
   subtasks                ProjectTask[]               @relation("TaskHierarchy")
   owner                   User?                       @relation("ProjectTaskOwner", fields: [ownerUserId], references: [id])
   assignee                User?                       @relation("ProjectTaskAssignee", fields: [assigneeUserId], references: [id])
+  taskAssignees           ProjectTaskAssignee[]
   ownerTeam               Team?                       @relation(fields: [ownerTeamId], references: [id])
   createdBy               User?                       @relation("ProjectTaskCreatedBy", fields: [createdByUserId], references: [id])
   archivedBy              User?                       @relation("ProjectTaskArchivedBy", fields: [archivedByUserId], references: [id])
@@ -1879,6 +1882,23 @@ model ProjectTask {
   @@index([projectId, taskTypeLayer1, taskTypeLayer2])
   @@index([dueAt])
   @@index([archivedByUserId])
+}
+
+model ProjectTaskAssignee {
+  id          String          @id @default(cuid())
+  workspaceId String          @default("twk-foundation")
+  taskId      String
+  userId      String
+  isPrimary   Boolean         @default(false)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  workspace   TenantWorkspace @relation(fields: [workspaceId], references: [id])
+  task        ProjectTask     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user        User            @relation(fields: [userId], references: [id])
+
+  @@unique([workspaceId, taskId, userId])
+  @@index([workspaceId, userId])
+  @@index([taskId, isPrimary])
 }
 
 model TaskComment {

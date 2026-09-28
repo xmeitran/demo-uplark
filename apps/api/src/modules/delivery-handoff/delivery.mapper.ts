@@ -98,17 +98,19 @@ function buildProjectMemberTaskStats(tasks: any[]) {
   const stats = new Map<string, { assignedTaskCount: number; doneTaskCount: number }>();
 
   for (const task of tasks) {
-    const userId = task.assigneeUserId || task.ownerUserId;
-    if (!userId) {
-      continue;
+    const assignedIds = Array.from(new Set([
+      ...(Array.isArray(task.taskAssignees) ? task.taskAssignees.map((row: any) => row.userId).filter(Boolean) : []),
+      task.assigneeUserId,
+      task.ownerUserId
+    ]));
+    for (const userId of assignedIds) {
+      const current = stats.get(userId) ?? { assignedTaskCount: 0, doneTaskCount: 0 };
+      current.assignedTaskCount += 1;
+      if (isCompletedTaskStatus(task.status)) {
+        current.doneTaskCount += 1;
+      }
+      stats.set(userId, current);
     }
-
-    const current = stats.get(userId) ?? { assignedTaskCount: 0, doneTaskCount: 0 };
-    current.assignedTaskCount += 1;
-    if (isCompletedTaskStatus(task.status)) {
-      current.doneTaskCount += 1;
-    }
-    stats.set(userId, current);
   }
 
   return stats;
@@ -317,6 +319,21 @@ export function mapProjectRiskSummary(risk: any): ProjectRiskSummary {
 export function mapTaskSummary(task: any): ProjectTaskSummary {
   const loggedMinutes = sumMinutes(task.timeEntries);
   const approvedMinutes = sumMinutes((task.timeEntries ?? []).filter((entry: any) => normalizeTaskTimeEntryApprovalStatus(entry.approvalStatus) === "approved"));
+  const assignees: Array<{ userId: string; displayName?: string; avatarUrl?: string }> = Array.from(new Map<string, { userId: string; displayName?: string; avatarUrl?: string }>([
+    ...(Array.isArray(task.taskAssignees) ? task.taskAssignees
+      .filter((row: any) => row?.userId)
+      .sort((a: any, b: any) => Number(b?.isPrimary ?? false) - Number(a?.isPrimary ?? false))
+      .map((row: any) => [row.userId, {
+        userId: row.userId,
+        displayName: row.user?.displayName ?? undefined,
+        avatarUrl: row.user?.avatarUrl ?? undefined
+      }] as const) : []),
+    ...(task.assigneeUserId ? [[task.assigneeUserId, {
+      userId: task.assigneeUserId,
+      displayName: task.assignee?.displayName ?? undefined,
+      avatarUrl: task.assignee?.avatarUrl ?? undefined
+    }] as const] : [])
+  ]).values());
 
   return {
     id: task.id,
@@ -344,6 +361,8 @@ export function mapTaskSummary(task: any): ProjectTaskSummary {
     assigneeUserId: task.assigneeUserId ?? undefined,
     assigneeDisplayName: task.assignee?.displayName ?? undefined,
     assigneeAvatarUrl: task.assignee?.avatarUrl ?? undefined,
+    assigneeUserIds: assignees.map((assignee: any) => assignee.userId),
+    assignees,
     ownerTeamId: task.ownerTeamId ?? undefined,
     ownerTeamName: task.ownerTeam?.name ?? undefined,
     plannedStartAt: toIso(task.plannedStartAt),

@@ -499,6 +499,7 @@ interface TaskItem {
   assignee: string; aColor: string; due: string;
   startDate?: string;
   assigneeUserId?: string;
+  assigneeUserIds?: string[];
   assigneeAvatarUrl?: string;
   plannedHours?: number;
   actualHours?: number;
@@ -832,6 +833,7 @@ function mapProjectTaskToTaskItem(task: ProjectTaskSummary): TaskItem {
     assignee: initialsForDisplayName(assigneeName),
     aColor: colorForIdentity(assigneeName),
     assigneeUserId: task.assigneeUserId || task.ownerUserId,
+    assigneeUserIds: task.assigneeUserIds?.length ? task.assigneeUserIds : (task.assigneeUserId ? [task.assigneeUserId] : []),
     assigneeAvatarUrl: task.assigneeAvatarUrl || task.ownerAvatarUrl,
     startDate: formatApiDate(task.plannedStartAt) || undefined,
     due: formatApiDate(task.dueAt) || "Not set",
@@ -1997,16 +1999,21 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
   const [startDate, setStartDate] = useState("");
   const [due,      setDue]      = useState("");
   const [description, setDescription] = useState("");
-  const [pic,      setPic]      = useState<ProjectTeamMember | undefined>(() => members.find((member) => member.id === currentUserId) ?? members[0]);
+  const [selectedAssigneeIds, setSelectedAssigneeIds] = useState<string[]>(() => {
+    const defaultMember = members.find((member) => member.id === currentUserId) ?? members[0];
+    return defaultMember ? [defaultMember.id] : [];
+  });
+  const pic = members.find((member) => member.id === selectedAssigneeIds[0]);
   const [plannedHours, setPlannedHours] = useState<number>(8);
   const [actualHours, setActualHours]   = useState<number>(0);
   const { submit, submitting, submitError } = useModalMutation(onClose);
 
   useEffect(() => {
-    setPic((current) => {
-      const signedInUser = members.find((member) => member.id === currentUserId);
-      if (signedInUser) return signedInUser;
-      return current && members.some((member) => member.id === current.id) ? current : members[0];
+    setSelectedAssigneeIds((current) => {
+      const valid = current.filter((id) => members.some((member) => member.id === id));
+      if (valid.length > 0) return valid;
+      const signedInUser = members.find((member) => member.id === currentUserId) ?? members[0];
+      return signedInUser ? [signedInUser.id] : [];
     });
   }, [members, currentUserId]);
 
@@ -2018,7 +2025,7 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
             <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted transition-colors">Cancel</button>
             <motion.button whileHover={{ scale:1.02 }} whileTap={{ scale:0.97 }}
               onClick={() => {
-                if (!title.trim() || !pic) return;
+                if (!title.trim() || !pic || selectedAssigneeIds.length === 0) return;
                 void submit(async () => {
                   if (isTaskDateRangeInvalid(startDate, due)) {
                     throw new Error(TASK_DATE_RANGE_ERROR);
@@ -2031,6 +2038,7 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
                     assignee:pic.initials,
                     aColor:pic.color,
                     assigneeUserId: pic.id,
+                    assigneeUserIds: selectedAssigneeIds,
                     startDate: startDate || undefined,
                     due:due||"TBD",
                     plannedHours,
@@ -2039,7 +2047,7 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
                   });
                 });
               }}
-              disabled={!title.trim() || !pic || submitting}
+              disabled={!title.trim() || !pic || selectedAssigneeIds.length === 0 || submitting}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm disabled:opacity-40"
               style={{ backgroundColor:color }}>
               <ListChecks className="w-4 h-4" /> {submitting ? "Adding..." : "Add Task"}
@@ -2079,13 +2087,13 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
           </div>
         </Field>
         <Field label="Assignee">
-          <TeamMemberSingleSelect
+          <TeamMemberMultiSelect
             members={members}
-            value={pic}
-            onChange={setPic}
-            placeholder="Select task assignee"
+            selectedIds={selectedAssigneeIds}
+            onChange={setSelectedAssigneeIds}
+            placeholder="Select task assignees"
           />
-          {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected assignee: {pic.name}{pic.id === currentUserId ? " · tài khoản đang đăng nhập" : ""}</p>}
+          {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected assignees: {selectedAssigneeIds.length} · {pic.name}{pic.id === currentUserId ? " · tài khoản đang đăng nhập" : ""}</p>}
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Start Date (optional)">
@@ -3219,7 +3227,9 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
   const [startDate, setStartDate] = useState(task.startDate ?? "");
   const [due,      setDue]      = useState(task.due === "TBD" ? "" : task.due);
   const initPic = getSelectedTeamMember(members, task.assigneeUserId);
-  const [pic, setPic] = useState<ProjectTeamMember | undefined>(initPic);
+  const initialAssigneeIds = task.assigneeUserIds?.length ? task.assigneeUserIds : (initPic ? [initPic.id] : []);
+  const [selectedAssigneeIds, setSelectedAssigneeIds] = useState<string[]>(initialAssigneeIds);
+  const pic = getSelectedTeamMember(members, selectedAssigneeIds[0]);
   const directoryReady = React.useContext(ProjectPickerFeedback).ready;
   const staleAssigneeError = directoryReady && !initPic && (task.assigneeUserId || (task.assignee && task.assignee !== "Unassigned"))
     ? PROJECT_MEMBER_ASSIGNMENT_ERROR
@@ -3230,13 +3240,13 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
   const { submit, submitting, submitError } = useModalMutation(onClose);
 
   useEffect(() => {
-    setPic((current) => {
-      if (current && members.some((member) => member.id === current.id)) {
-        return current;
-      }
-      return getSelectedTeamMember(members, task.assigneeUserId);
+    setSelectedAssigneeIds((current) => {
+      const valid = current.filter((id) => members.some((member) => member.id === id));
+      if (valid.length > 0) return valid;
+      const fallback = getSelectedTeamMember(members, task.assigneeUserId);
+      return fallback ? [fallback.id] : [];
     });
-  }, [members, task.assignee, task.assigneeUserId]);
+  }, [members, task.assignee, task.assigneeUserId, task.assigneeUserIds]);
 
   return (
     <AnimatePresence>
@@ -3246,7 +3256,7 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
             <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted transition-colors">Cancel</button>
             <motion.button whileHover={{ scale:1.02 }} whileTap={{ scale:0.97 }}
               onClick={() => {
-                if (!title.trim() || !pic) return;
+                if (!title.trim() || !pic || selectedAssigneeIds.length === 0) return;
                 void submit(async () => {
                   if (isTaskDateRangeInvalid(startDate, due)) {
                     throw new Error(TASK_DATE_RANGE_ERROR);
@@ -3259,6 +3269,7 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
                     assignee:pic.initials,
                     aColor:pic.color,
                     assigneeUserId: pic.id,
+                    assigneeUserIds: selectedAssigneeIds,
                     startDate: startDate || undefined,
                     due:due||"TBD",
                     plannedHours,
@@ -3267,7 +3278,7 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
                   });
                 });
               }}
-              disabled={!title.trim() || !pic || submitting}
+              disabled={!title.trim() || !pic || selectedAssigneeIds.length === 0 || submitting}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm disabled:opacity-40"
               style={{ backgroundColor:color }}>
               <Pencil className="w-4 h-4" /> {submitting ? "Saving..." : "Save Changes"}
@@ -3300,14 +3311,14 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
             ))}
           </div>
         </Field>
-        <Field label="Assignee">
-          <TeamMemberSingleSelect
+        <Field label="Assignees (unlimited)">
+          <TeamMemberMultiSelect
             members={members}
-            value={pic}
-            onChange={setPic}
-            placeholder="Select task assignee"
+            selectedIds={selectedAssigneeIds}
+            onChange={setSelectedAssigneeIds}
+            placeholder="Select task assignees"
           />
-          {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected assignee: {pic.name}</p>}
+          {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected assignees: {selectedAssigneeIds.length} · {pic.name}</p>}
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Start Date (optional)">
@@ -6163,6 +6174,7 @@ export default function ProjectDetailPage() {
         status: toApiTaskStatus(task.status),
         priority: task.priority,
         assigneeUserId: assignee?.id,
+        assigneeUserIds: task.assigneeUserIds ?? (assignee?.id ? [assignee.id] : []),
         ownerUserId: assignee?.id,
         plannedStartAt: toApiDateValue(task.startDate),
         dueAt: toApiDateValue(task.due),
@@ -6206,6 +6218,7 @@ export default function ProjectDetailPage() {
         status: toApiTaskStatus(updated.status),
         priority: updated.priority,
         assigneeUserId: assignee?.id ?? null,
+        assigneeUserIds: updated.assigneeUserIds ?? (assignee?.id ? [assignee.id] : []),
         ownerUserId: assignee?.id ?? null,
         plannedStartAt: toApiDateValue(updated.startDate) ?? null,
         dueAt: toApiDateValue(updated.due) ?? null,

@@ -42,6 +42,7 @@ import {
   TransitionStatusModal,
   LogWorkModal,
   CustomDropdown,
+  MultiPersonDropdown,
   DatePickerField
 } from "./tasks-workbench";
 import {
@@ -538,6 +539,7 @@ export function TaskDetailWorkbench({
           status: "todo",
           priority: currentTask.priority,
           assigneeUserId: currentTask.assigneeUserId,
+          assigneeUserIds: currentTask.assigneeUserIds,
           estimateMinutes: 0,
           customerVisible: currentTask.customerVisible
         })
@@ -612,6 +614,7 @@ export function TaskDetailWorkbench({
   const [draftPriority, setDraftPriority] = useState("");
   const [draftTaskType, setDraftTaskType] = useState("");
   const [draftAssigneeUserId, setDraftAssigneeUserId] = useState("");
+  const [draftAssigneeUserIds, setDraftAssigneeUserIds] = useState<string[]>([]);
   const [draftPlannedStartAt, setDraftPlannedStartAt] = useState("");
   const [draftDueAt, setDraftDueAt] = useState("");
   const [draftEstimateMinutes, setDraftEstimateMinutes] = useState("");
@@ -842,7 +845,11 @@ export function TaskDetailWorkbench({
     setDraftProjectId(currentTask.projectId || "none");
     setDraftPriority(currentTask.priority || "medium");
     setDraftTaskType(currentTask.taskType || "implementation");
-    setDraftAssigneeUserId(currentTask.assigneeUserId || "none");
+    const assigneeIds = currentTask.assigneeUserIds?.length
+      ? currentTask.assigneeUserIds
+      : (currentTask.assigneeUserId ? [currentTask.assigneeUserId] : []);
+    setDraftAssigneeUserIds(assigneeIds);
+    setDraftAssigneeUserId(assigneeIds[0] || "none");
     setDraftPlannedStartAt(toVietnamDateInputValue(currentTask.plannedStartAt));
     setDraftDueAt(toVietnamDateInputValue(currentTask.dueAt));
     setDraftEstimateMinutes(currentTask.estimateMinutes?.toString() || "");
@@ -880,8 +887,9 @@ export function TaskDetailWorkbench({
       }
     }
 
-    const selectedAssignee = workspaceAssigneeOptions.find(opt => opt.value === draftAssigneeUserId);
-    const assigneeDisplayName = draftAssigneeUserId === "none" || !draftAssigneeUserId
+    const primaryAssigneeUserId = draftAssigneeUserIds[0] || (draftAssigneeUserId === "none" ? undefined : draftAssigneeUserId);
+    const selectedAssignee = workspaceAssigneeOptions.find(opt => opt.value === primaryAssigneeUserId);
+    const assigneeDisplayName = !primaryAssigneeUserId
       ? "Chưa giao"
       : selectedAssignee
       ? selectedAssignee.label
@@ -896,7 +904,8 @@ export function TaskDetailWorkbench({
       description: draftDescription,
       taskType: draftTaskType,
       priority: draftPriority,
-      assigneeUserId: draftAssigneeUserId === "none" ? undefined : draftAssigneeUserId,
+      assigneeUserId: primaryAssigneeUserId,
+      assigneeUserIds: draftAssigneeUserIds,
       assigneeDisplayName,
       plannedStartAt: draftPlannedStartAt ? new Date(draftPlannedStartAt).toISOString() : undefined,
       dueAt: draftDueAt ? new Date(draftDueAt).toISOString() : undefined,
@@ -912,6 +921,7 @@ export function TaskDetailWorkbench({
       taskType: taskInput.taskType,
       priority: taskInput.priority,
       assigneeUserId: taskInput.assigneeUserId,
+      assigneeUserIds: taskInput.assigneeUserIds,
       plannedStartAt: taskInput.plannedStartAt,
       dueAt: taskInput.dueAt,
       estimateMinutes: taskInput.estimateMinutes,
@@ -1060,6 +1070,7 @@ export function TaskDetailWorkbench({
       taskType: taskInput.taskType,
       priority: taskInput.priority,
       assigneeUserId: taskInput.assigneeUserId,
+      assigneeUserIds: taskInput.assigneeUserIds,
       plannedStartAt: taskInput.plannedStartAt,
       dueAt: taskInput.dueAt,
       estimateMinutes: taskInput.estimateMinutes,
@@ -1878,7 +1889,12 @@ export function TaskDetailWorkbench({
   const displayTaskType = getTaskTypeLabel(currentTask.taskType);
   const displayPriority = getPriorityLabel(currentTask.priority);
   const displayStatus = getStatusLabel(currentTask.status);
-  const displayAssignee = formatAssigneeName(currentTask.assigneeUserId, currentTask.assigneeDisplayName);
+  const assignedPeople = currentTask.assignees?.length
+    ? currentTask.assignees
+    : (currentTask.assigneeUserId ? [{ userId: currentTask.assigneeUserId, displayName: currentTask.assigneeDisplayName, avatarUrl: currentTask.assigneeAvatarUrl }] : []);
+  const displayAssignee = assignedPeople.length > 1
+    ? `${formatAssigneeName(assignedPeople[0].userId, assignedPeople[0].displayName)} + ${assignedPeople.length - 1}`
+    : formatAssigneeName(currentTask.assigneeUserId, currentTask.assigneeDisplayName);
   const assigneeAvatarUrl =
     currentTask.assigneeAvatarUrl ||
     workspaceAssigneeOptions.find((option) => option.value === currentTask.assigneeUserId)?.avatarUrl;
@@ -2791,14 +2807,14 @@ export function TaskDetailWorkbench({
                     <div className="py-3">
                       <p className="text-[10px] font-bold text-slate-400 mb-1.5">Phụ trách</p>
                       {isGlobalEditing ? (
-                        <CustomDropdown
+                        <MultiPersonDropdown
                           label=""
-                          value={draftAssigneeUserId}
-                          options={[
-                            { value: "none", label: "Unassigned" },
-                            ...workspaceAssigneeOptions
-                          ]}
-                          onChange={(val: string) => setDraftAssigneeUserId(val)}
+                          values={draftAssigneeUserIds}
+                          options={workspaceAssigneeOptions}
+                          onChange={(values: string[]) => {
+                            setDraftAssigneeUserIds(values);
+                            setDraftAssigneeUserId(values[0] || "none");
+                          }}
                         />
                       ) : (
                         <div className="flex items-center gap-2">
@@ -2960,7 +2976,7 @@ export function TaskDetailWorkbench({
                   taskId={currentTask.id}
                   principal={principal}
                   people={projectPeople.members}
-                  revision={`${currentTask.updatedAt ?? ""}:${currentTask.statusHistory?.length ?? 0}:${currentTask.ownerUserId ?? ""}:${currentTask.assigneeUserId ?? ""}`}
+                  revision={`${currentTask.updatedAt ?? ""}:${currentTask.statusHistory?.length ?? 0}:${currentTask.ownerUserId ?? ""}:${currentTask.assigneeUserId ?? ""}:${currentTask.assigneeUserIds?.join(",") ?? ""}`}
                 />
 
               </aside>
