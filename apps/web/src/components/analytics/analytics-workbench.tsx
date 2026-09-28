@@ -225,19 +225,7 @@ export function AnalyticsWorkbench() {
 
   const exportCsv = useCallback(() => {
     if (!breakdown) return;
-    const metricKeys: AnalyticsMetricKey[] = [
-      "reviewedApprovedMinutes",
-      "legacyApprovedMinutes",
-      "submittedMinutes",
-      "scheduledMinutes",
-      "allocationMinutes",
-      "estimateMinutes",
-      "capacityMinutes",
-      "actualUtilization",
-      "taskCompletionRate",
-      "onTimeCompletionRate",
-      "overdueTasks"
-    ];
+    const metricKeys = visibleBreakdownColumns(breakdown, state.by).map((column) => column.key);
     const headers = ["Mã", "Tên", "Phân loại", ...metricKeys.map((key) => ANALYTICS_METRIC_LABELS[key])];
     const rows = [
       ...breakdown.rows.map((row) => [
@@ -520,9 +508,16 @@ function KpiStrip({ view, summary, loading, updating, compare }: {
   compare: boolean;
 }) {
   const keys = KPI_KEYS_BY_VIEW[view];
+  const visibleKeys = loading || !summary
+    ? keys
+    : keys.filter((key) => {
+        const metric = summary.totals.find((item) => item.key === key);
+        return metric && !(metric.state === "unavailable" && metric.value === null);
+      });
+  if (!loading && summary && visibleKeys.length === 0) return null;
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-busy={loading || updating}>
-      {keys.map((key) => {
+      {visibleKeys.map((key) => {
         const metric = summary?.totals.find((item) => item.key === key);
         if (loading || !summary) {
           return <div key={key} className="h-[104px] animate-pulse rounded-xl border border-border bg-card" aria-hidden />;
@@ -957,7 +952,7 @@ function ResourcesView({ summary, slot, onRetry }: {
         <ChartCard
           title="Quá tải và dữ liệu còn thiếu"
           description="Nhân sự có kế hoạch phân bổ vượt năng lực khả dụng và những phần dữ liệu cần bổ sung."
-          status={widgetStatus(slot, false)}
+          status={widgetStatus(slot, rows.length === 0)}
           onRetry={onRetry}
           minHeight={200}
         >
@@ -1060,6 +1055,16 @@ const BREAKDOWN_COLUMNS: Array<{ key: AnalyticsMetricKey; label: string; sortabl
   { key: "overdueTasks", label: "Quá hạn", sortable: true }
 ];
 
+function visibleBreakdownColumns(data: WorkforceProjectsBreakdownResponse, by?: AnalyticsBreakdownBy) {
+  return BREAKDOWN_COLUMNS.filter((column) => {
+    // Capacity is a person-level measure. The API totals contain workspace
+    // capacity, but assigning it to each project would be misleading.
+    if (by === "project" && (column.key === "capacityMinutes" || column.key === "actualUtilization")) return false;
+    if (data.totals[column.key] !== null && data.totals[column.key] !== undefined) return true;
+    return data.rows.some((row) => row.metrics[column.key] !== null && row.metrics[column.key] !== undefined);
+  });
+}
+
 function formatCell(key: AnalyticsMetricKey, value: number | null | undefined): string {
   if (value === null || value === undefined) return analyticsUnavailableLabel(key);
   const unit = ANALYTICS_METRIC_DEFINITIONS[key]?.unit;
@@ -1081,6 +1086,7 @@ function BreakdownTable({ state, slot, onChangeBy, onChangeSort, onNextPage, onP
 }) {
   const data = slot.data;
   const rows = data?.rows ?? [];
+  const columns = data ? visibleBreakdownColumns(data, state.by) : BREAKDOWN_COLUMNS;
 
   return (
     <section aria-label="Bảng chi tiết" className="rounded-xl border border-border bg-card">
@@ -1148,7 +1154,7 @@ function BreakdownTable({ state, slot, onChangeBy, onChangeSort, onNextPage, onP
                     Tên {state.sort === "label" ? (state.direction === "asc" ? "↑" : "↓") : ""}
                   </button>
                 </th>
-                {BREAKDOWN_COLUMNS.map((column) => (
+                {columns.map((column) => (
                   <th key={column.key} scope="col" className="px-3 py-2 text-right font-semibold">
                     <button
                       type="button"
@@ -1178,7 +1184,7 @@ function BreakdownTable({ state, slot, onChangeBy, onChangeSort, onNextPage, onP
                     {row.accountLabel ? <span className="ml-2 text-[11px] text-muted-foreground">{row.accountLabel}</span> : null}
                     {row.memberCount !== undefined ? <span className="ml-2 text-[11px] text-muted-foreground">({row.memberCount} người)</span> : null}
                   </td>
-                  {BREAKDOWN_COLUMNS.map((column) => (
+                  {columns.map((column) => (
                     <td key={column.key} className="px-3 py-2 text-right font-mono text-foreground">
                       {formatCell(column.key, row.metrics[column.key] as number | null | undefined)}
                     </td>
@@ -1188,7 +1194,7 @@ function BreakdownTable({ state, slot, onChangeBy, onChangeSort, onNextPage, onP
               {data ? (
                 <tr className="bg-muted/30 font-semibold">
                   <td className="px-3 py-2 text-foreground">Tổng (toàn bộ dữ liệu đã lọc)</td>
-                  {BREAKDOWN_COLUMNS.map((column) => (
+                  {columns.map((column) => (
                     <td key={column.key} className="px-3 py-2 text-right font-mono text-foreground">
                       {column.key in data.totals ? formatCell(column.key, data.totals[column.key]) : "—"}
                     </td>
