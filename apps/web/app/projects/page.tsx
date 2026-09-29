@@ -329,7 +329,7 @@ const STATUS_OPTIONS = [
   { value: "Planning", label: "Lập kế hoạch", color: "#0891b2" },
   { value: "On Hold", label: "Tạm dừng", color: "#64748b" },
   { value: "At Risk", label: "Có rủi ro", color: "#dc2626" },
-  { value: "Completed", label: "Hoàn thành", color: "#16a34a" },
+  { value: "Completed", label: "Đã hoàn thành", color: "#16a34a" },
 ];
 
 const PRIORITY_OPTIONS = [

@@ -430,7 +430,7 @@ export function ProjectHoursChart({ data }: { data: Array<{ code: string; name: 
 /* ── Cumulative flow diagram ────────────────────────────────────────────── */
 
 const FLOW_BANDS = [
-  { key: "completed", name: "Hoàn thành", color: "var(--color-success)" },
+  { key: "completed", name: "Đã hoàn thành", color: "var(--color-success)" },
   { key: "blocked", name: "Đang chặn", color: "var(--color-destructive)" },
   { key: "in_progress", name: "Đang làm", color: "var(--color-chart-1)" },
   { key: "not_started", name: "Chưa bắt đầu", color: "var(--color-gray-300)" }

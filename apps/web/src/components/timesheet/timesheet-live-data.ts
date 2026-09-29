@@ -148,11 +148,15 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
   // sheet within that contract while still covering the current quarter.
   const startAt = new Date(now.getTime() - 89 * 24 * 60 * 60 * 1000).toISOString();
   const endAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
-  const [projects, entries, users, dayOffResponse] = await Promise.all([
+  const [projects, entries, users, dayOffResponse, apiTasks] = await Promise.all([
     loadPaged<ApiProject>("/api/projects", signal),
     loadPaged<ApiTimeEntry>(`/api/tasks/time-entries?startAt=${encodeURIComponent(startAt)}&endAt=${encodeURIComponent(endAt)}`, signal),
     readJson<ApiResponse<ApiUser>>("/api/workspace/users?principal=founder", signal),
-    readJson<ApiResponse<{ date?: string; isActive?: boolean }>>(`/api/workspace/day-offs?year=${year}&principal=founder`, signal)
+    readJson<ApiResponse<{ date?: string; isActive?: boolean }>>(`/api/workspace/day-offs?year=${year}&principal=founder`, signal),
+    // Keep the full task hierarchy separate from the time-entry slice. The
+    // entry endpoint intentionally omits milestone/stage metadata, which made
+    // every live row fall back to the generic "Time log" bucket.
+    loadPaged<ApiTask>("/api/tasks", signal)
   ]);
 
   // The time-entry contract carries the task title, ID, canonical task status
@@ -164,19 +168,28 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
   // React renders duplicate task keys and the same task appears multiple times
   // in the breakdown and charts.
   const taskByKey = new Map<string, ApiTask>();
+  for (const task of apiTasks) {
+    taskByKey.set(`${task.projectId}:${task.id}`, task);
+  }
   for (const entry of entries) {
     const key = `${entry.projectId}:${entry.taskId}`;
-    if (!taskByKey.has(key)) {
-      taskByKey.set(key, {
-        id: entry.taskId,
-        projectId: entry.projectId,
-        title: entry.taskTitle || entry.taskId,
-        stageActivity: "Time log",
-        assigneeUserId: entry.userId,
-        estimateMinutes: entry.taskEstimateMinutes ?? 0,
-        status: entry.taskStatus || "in_progress"
-      });
+    const task = taskByKey.get(key);
+    if (task) {
+      // A time-entry record is the freshest source for the logged task
+      // status/estimate when the task API is eventually consistent.
+      task.status = entry.taskStatus || task.status;
+      if ((task.estimateMinutes ?? 0) <= 0 && (entry.taskEstimateMinutes ?? 0) > 0) task.estimateMinutes = entry.taskEstimateMinutes;
+      continue;
     }
+    taskByKey.set(key, {
+      id: entry.taskId,
+      projectId: entry.projectId,
+      title: entry.taskTitle || entry.taskId,
+      stageActivity: "Chưa phân loại",
+      assigneeUserId: entry.userId,
+      estimateMinutes: entry.taskEstimateMinutes ?? 0,
+      status: entry.taskStatus || "in_progress"
+    });
   }
   const tasks: ApiTask[] = [...taskByKey.values()];
   const projectById = new Map(projects.map((project) => [project.id, project]));

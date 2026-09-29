@@ -53,7 +53,7 @@ export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
   acceptance: "Nghiệm thu",
   paused: "Tạm dừng",
   at_risk: "Có rủi ro",
-  completed: "Hoàn thành"
+  completed: "Đã hoàn thành"
 };
 
 export type NodeStatus = "not_started" | "in_progress" | "blocked" | "completed";
@@ -62,7 +62,7 @@ export const NODE_STATUS_LABELS: Record<NodeStatus, string> = {
   not_started: "Chưa bắt đầu",
   in_progress: "Đang làm",
   blocked: "Bị chặn",
-  completed: "Hoàn thành"
+  completed: "Đã hoàn thành"
 };
 
 /** Status labels used by the Project page for milestones and stages. */
@@ -70,7 +70,7 @@ export const WORKFLOW_STATUS_LABELS: Record<NodeStatus, string> = {
   not_started: "Sắp tới",
   in_progress: "Đang làm",
   blocked: "Có rủi ro",
-  completed: "Hoàn thành"
+  completed: "Đã hoàn thành"
 };
 
 /** Member participation state inside a project (PTS-03). */
