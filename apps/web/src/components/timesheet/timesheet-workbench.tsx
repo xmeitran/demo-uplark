@@ -21,6 +21,7 @@ import { DailyWeeklyTimesheet } from "./daily-weekly-timesheet";
 import { useAuth } from "@/lib/auth";
 import { exportTimesheetWorkbook } from "./timesheet-export";
 import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-tab-bar";
+import { TimesheetAudienceSwitch } from "./timesheet-audience-switch";
 
 /**
  * /timesheet workbench — the shell that owns filters, permission scope and the
@@ -301,6 +302,14 @@ export function TimesheetWorkbench() {
           </span>
         </div>
       </header>
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Phạm vi xem</p>
+          <p className="text-[12px] text-muted-foreground">Chuyển nhanh giữa dữ liệu của nhóm và giờ cá nhân.</p>
+        </div>
+        <TimesheetAudienceSwitch active="group" view={view} groupScope={canViewWorkspace ? "workspace" : "managed_projects"} />
+      </div>
 
       {/* ── View tabs ──────────────────────────────────────────────────── */}
       <WorkspaceTabBar
