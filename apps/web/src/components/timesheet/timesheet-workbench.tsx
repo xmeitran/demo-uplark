@@ -22,6 +22,7 @@ import { useAuth } from "@/lib/auth";
 import { exportTimesheetWorkbook } from "./timesheet-export";
 import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-tab-bar";
 import { TimesheetAudienceSwitch } from "./timesheet-audience-switch";
+import { canViewTimesheetGroup } from "./timesheet-access";
 
 /**
  * /timesheet workbench — the shell that owns filters, permission scope and the
@@ -144,7 +145,7 @@ export function TimesheetWorkbench() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const [dataset, setDataset] = useState(() => emptyTimesheetDataset());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -167,8 +168,13 @@ export function TimesheetWorkbench() {
 
   const view = (searchParams.get("view") as TimesheetView | null) ?? "monthly";
   const requestedScope = (searchParams.get("scope") as ViewerScope | null) ?? "workspace";
-  const canViewWorkspace = Boolean(user?.roleCodes?.some((role) => ["FOUNDER_GM", "WORKSPACE_ADMIN", "DELIVERY_LEAD", "FINANCE_ADMIN"].includes(role)));
+  const canViewWorkspace = canViewTimesheetGroup(user?.roleCodes);
   const scope: ViewerScope = canViewWorkspace ? requestedScope : "self";
+
+  useEffect(() => {
+    if (authLoading || !user || canViewWorkspace || pathname !== "/timesheet") return;
+    router.replace(`/timesheet/me?view=${encodeURIComponent(view)}`);
+  }, [authLoading, canViewWorkspace, pathname, router, user, view]);
 
   const filters = useMemo<TimesheetFilters>(
     () => ({
@@ -286,6 +292,15 @@ export function TimesheetWorkbench() {
   ).length;
 
   const totalMinutes = logs.reduce((acc, log) => acc + log.minutes, 0);
+
+  if (!authLoading && user && !canViewWorkspace) {
+    return (
+      <section role="status" className="rounded-2xl border border-primary/20 bg-primary/[0.04] p-5">
+        <p className="font-semibold text-foreground">Timesheet nhóm chỉ dành cho Founder/GM và Workspace Admin.</p>
+        <p className="mt-1 text-[12px] text-muted-foreground">Bạn đang được chuyển sang màn Cá nhân để xem giờ và task của mình.</p>
+      </section>
+    );
+  }
 
   return (
     <div className="space-y-4">

@@ -44,6 +44,7 @@ import {
 import { Avatar, EmptyState, KpiCard, Pill, SectionCard } from "./timesheet-ui";
 import { LogDrawer, type LogDrawerRequest } from "./timesheet-log-drawer";
 import { TimesheetAudienceSwitch } from "./timesheet-audience-switch";
+import { canViewTimesheetGroup } from "./timesheet-access";
 
 const WEEKDAYS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
 
@@ -96,7 +97,7 @@ function LoadingPersonalTimesheet() {
   );
 }
 
-function PersonalTabs() {
+function PersonalTabs({ canViewGroup }: { canViewGroup: boolean }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const projectView = searchParams.get("view") === "project";
@@ -104,7 +105,7 @@ function PersonalTabs() {
     { href: "/timesheet/me", label: "Giờ của tôi", description: "Tập trung cá nhân" },
     { href: "/timesheet", label: "Bảng giờ theo tháng", description: "Tổng hợp theo nhân sự" },
     { href: "/timesheet?view=project", label: "Bảng giờ theo dự án", description: "Tổng hợp theo dự án" }
-  ];
+  ].filter((tab) => canViewGroup || tab.href === "/timesheet/me");
   return (
     <nav aria-label="Các màn hình Timesheet" className="flex flex-wrap gap-1 rounded-xl border border-border bg-card p-1">
       {tabs.map((tab) => {
@@ -290,6 +291,7 @@ export function PersonalTimesheet() {
   const allTasks = useMemo(() => person ? personalTasks(personalDataset, person.id) : [], [person, personalDataset]);
   const openTasks = allTasks.filter(({ task }) => task.status !== "completed");
   const overdueTasks = openTasks.filter(({ task }) => Boolean(task.dueDate && task.dueDate < today));
+  const canViewGroup = canViewTimesheetGroup(user?.roleCodes);
 
   const openDay = (date: string) => {
     const logs = personalLogs.filter((log) => log.date === date);
@@ -310,8 +312,8 @@ export function PersonalTimesheet() {
         <div><p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">TIMESHEET · GIỜ CỦA TÔI</p><h1 className="mt-1 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">Giờ của tôi</h1><p className="mt-1 text-[13px] text-muted-foreground">Tập trung vào giờ, task và kế hoạch của {person.name}.</p></div>
         <div className="flex items-center gap-2"><label className="sr-only" htmlFor="personal-month">Chọn tháng</label><select id="personal-month" value={month} onChange={(event) => router.push(`/timesheet/me?month=${event.target.value}`)} className="rounded-lg border border-border bg-card px-3 py-2 text-[12px] font-semibold text-foreground">{dataset.months.map((value) => <option key={value} value={value}>{formatMonth(value)}</option>)}</select><button type="button" onClick={() => setReloadToken((value) => value + 1)} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-[12px] font-semibold text-muted-foreground hover:text-foreground" aria-label="Tải lại dữ liệu"><RefreshCw className="h-3.5 w-3.5" /> Tải lại</button></div>
       </div>
-      <TimesheetAudienceSwitch active="personal" view={searchParams.get("view") ?? "monthly"} />
-      <PersonalTabs />
+      {canViewGroup ? <TimesheetAudienceSwitch active="personal" view={searchParams.get("view") ?? "monthly"} /> : null}
+      <PersonalTabs canViewGroup={canViewGroup} />
       {(missingDays.length > 0 || openTasks.length > 0) ? <div className="flex flex-wrap items-center gap-3 rounded-xl border border-warning/30 bg-warning/[0.08] px-4 py-3"><AlertTriangle className="h-4 w-4 shrink-0 text-warning" /><div className="min-w-0 flex-1"><p className="text-[12.5px] font-bold text-foreground">Cần bổ sung dữ liệu hôm nay</p><p className="text-[11.5px] text-muted-foreground">{missingDays.length > 0 ? `${missingDays.length} ngày làm việc chưa ghi giờ` : "Bạn vẫn còn task đang mở cần theo dõi."}{overdueTasks.length > 0 ? ` · ${overdueTasks.length} task quá hạn` : ""}</p></div><Link href={openTasks[0] ? `/tasks/${openTasks[0].task.id}` : "/tasks"} className="inline-flex items-center gap-1.5 rounded-lg bg-warning px-3 py-2 text-[12px] font-bold text-warning-foreground hover:opacity-90">Ghi giờ ngay <ArrowRight className="h-3.5 w-3.5" /></Link></div> : <div className="flex items-center gap-2 rounded-xl border border-success/25 bg-success/[0.06] px-4 py-3 text-[12px] text-success"><CheckCircle2 className="h-4 w-4" /> Dữ liệu ghi giờ của bạn đang đầy đủ trong kỳ đã chọn.</div>}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3"><KpiCard label={`Giờ tôi đã ghi — ${formatMonth(month)}`} value={formatHours(actualMinutes)} hint={`so với ${formatHours(standardMinutes)} giờ chuẩn`} badge={standardMinutes > 0 ? formatPercent((actualMinutes / standardMinutes) * 100) : "Chưa có chuẩn"} tone={actualMinutes >= standardMinutes ? "success" : "warning"} /><KpiCard label="Ngày còn trống" value={`${missingDays.length}`} hint={missingDays.length ? missingDays.slice(0, 3).map((cell) => formatDateShort(cell.date)).join(" · ") : "Không còn ngày trống"} badge={missingDays.length ? "Cần ghi bổ sung" : "Đã đủ"} tone={missingDays.length ? "warning" : "success"} /><KpiCard label="Task của tôi đang mở" value={`${openTasks.length}`} hint={`${overdueTasks.length} quá hạn · ${openTasks.filter(({ task }) => task.status === "in_progress").length} đang làm`} badge={openTasks.length ? "Theo dõi" : "Đã hoàn tất"} tone={openTasks.length ? "info" : "success"} /></div>
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]"><CalendarCard month={month} today={today} matrix={matrix} person={person} onDayClick={openDay} /><TodayTasksCard tasks={allTasks} today={today} onLog={openTask} /></div>
