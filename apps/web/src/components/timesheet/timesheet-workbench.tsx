@@ -272,7 +272,14 @@ export function TimesheetWorkbench() {
     { value: "all", label: "Tất cả nhân sự" },
     ...scopedDataset.people
       .filter((person) => filters.departmentId === "all" || person.departmentId === filters.departmentId)
-      .map((person) => ({ value: person.id, label: person.name }))
+      .map((person) => ({
+        value: person.id,
+        label: person.name,
+        meta: `${person.role} · ${person.teamName}`,
+        avatarUrl: person.avatarUrl,
+        initials: person.initials,
+        avatarColor: person.avatarColor
+      }))
   ], scopedDataset, filters, scope);
   const projectOptions: DropdownOption[] = decorateOptions("project", [
     { value: "all", label: "Tất cả dự án" },

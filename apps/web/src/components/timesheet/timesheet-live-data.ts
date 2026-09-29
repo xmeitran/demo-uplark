@@ -81,6 +81,12 @@ function initials(name: string) {
   return name.trim().split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]?.toUpperCase()).join("") || "U";
 }
 
+function avatarColor(id: string) {
+  const colors = ["#2563eb", "#059669", "#7c3aed", "#db2777", "#d97706", "#0891b2", "#64748b"];
+  const hash = Array.from(id).reduce((total, character) => total + character.charCodeAt(0), 0);
+  return colors[hash % colors.length];
+}
+
 function dateOnly(value?: string) {
   return value ? value.slice(0, 10) : null;
 }
@@ -226,6 +232,8 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
       id,
       name,
       initials: initials(name),
+      avatarUrl: user?.avatarUrl,
+      avatarColor: avatarColor(id),
       role: user?.resourceDisplayRole || user?.roleCodes?.[0] || "Workspace user",
       departmentId,
       teamName: departmentId,

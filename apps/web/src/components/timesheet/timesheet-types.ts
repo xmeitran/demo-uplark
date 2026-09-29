@@ -91,6 +91,8 @@ export interface Person {
   id: string;
   name: string;
   initials: string;
+  avatarUrl?: string;
+  avatarColor?: string;
   role: string;
   departmentId: string;
   teamName: string;

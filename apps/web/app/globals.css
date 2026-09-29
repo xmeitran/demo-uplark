@@ -234,6 +234,48 @@ button, input, textarea, select {
   letter-spacing: 0;
 }
 
+/* Shared native-select baseline. Custom dropdowns use the same geometry and
+   typography, while native selects keep their platform menu behavior. */
+select {
+  min-height: 2.75rem;
+  appearance: none;
+  border: 1px solid var(--color-input);
+  border-radius: 0.75rem;
+  background-color: var(--color-card);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364758b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-position: right 0.75rem center;
+  background-repeat: no-repeat;
+  background-size: 0.875rem;
+  color: var(--color-foreground);
+  padding: 0.625rem 2.5rem 0.625rem 0.875rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+  transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+}
+
+select:hover {
+  border-color: var(--color-border-strong);
+  background-color: color-mix(in srgb, var(--color-card) 92%, var(--color-primary));
+}
+
+select:focus-visible {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 16%, transparent);
+  outline: none;
+}
+
+select:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+select option {
+  background: var(--color-card);
+  color: var(--color-foreground);
+  font: inherit;
+}
+
 button, a {
   -webkit-tap-highlight-color: transparent;
 }
