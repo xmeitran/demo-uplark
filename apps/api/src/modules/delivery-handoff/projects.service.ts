@@ -3516,6 +3516,11 @@ export class ProjectsService {
       if (minutes > 480) {
         throw new BadRequestException("Daily log cannot exceed 8 office hours; log approved overtime separately");
       }
+      // Serialize the per-user/day write before reading the current total. Without
+      // this lock, two concurrent entries can both observe the same remaining
+      // capacity and push the daily total past the 8-hour limit.
+      const dailyLogLockScope = JSON.stringify([principal.workspaceId, userId, dailyLogWindow.localDate]);
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dailyLogLockScope}, 0))::text`;
       if (!dayOff) {
         const dailyMinutes = typeof tx.taskTimeEntry.aggregate === "function" ? await tx.taskTimeEntry.aggregate({
           where: {
@@ -3533,8 +3538,6 @@ export class ProjectsService {
           throw new ConflictException("Daily log cannot exceed 8 office hours; create an approved overtime plan for the remainder");
         }
       }
-      const dailyLogLockScope = JSON.stringify([principal.workspaceId, userId, dailyLogWindow.localDate]);
-      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dailyLogLockScope}, 0))::text`;
 
       await this.promoteTaskForActualWork(tx, {
         taskId: task.id,

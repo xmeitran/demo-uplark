@@ -1536,7 +1536,7 @@ export function TransitionStatusModal({
             label="Trạng thái mới"
             value={status}
             options={[
-              { value: "todo", label: "Cần làm / backlog", icon: "clock" },
+              { value: "todo", label: "Cần làm", icon: "clock" },
               { value: "in_progress", label: "Đang xử lý", icon: "star", iconTone: "info" },
               { value: "completed", label: "Hoàn tất", icon: "checkmark", iconTone: "success" },
               { value: "blocked", label: "Đang bị chặn", icon: "alert-circle", iconTone: "critical" },
@@ -1930,7 +1930,7 @@ export function LogWorkModal({
                   style={{ cursor: "pointer" }}
                 />
                 <label htmlFor="complete-task-check" className="font-semibold text-blue-600">
-                  Đánh dấu hoàn thành công việc này (Done)
+                  Đánh dấu hoàn thành công việc này
                 </label>
               </div>
             )}

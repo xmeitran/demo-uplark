@@ -11,6 +11,7 @@ import {
 import Link from "next/link";
 import { AdminInvitations } from "@/components/auth/admin-access-controls";
 import { AppShell } from "@/components/constructor-x/app-shell";
+import { formatDepartmentLabel } from "@/lib/department-labels";
 import { CustomDropdown } from "@/components/crm-workspace/tasks-workbench";
 import { downloadCsv } from "@/lib/csv-export";
 import { useAuth } from "@/lib/auth";
@@ -89,13 +90,6 @@ const ROLE_COLORS: Record<string, string> = {
   FINANCE_ADMIN: "#d97706"
 };
 
-const DEPARTMENT_LABELS: Record<string, string> = {
-  CDS: "Chuyển đổi số",
-  CDS_BUSINESS_DEVELOPMENT: "Business Development",
-  CDS_DX_ENABLER: "DX Enabler",
-  CDS_MARKETING_B2B: "Marketing B2B"
-};
-
 const AVATAR_COLORS = ["#2563eb", "#16a34a", "#7c3aed", "#d97706", "#db2777", "#0891b2", "#475569", "#0f766e"];
 
 function initials(name: string) {
@@ -122,7 +116,7 @@ function mapApiUser(user: ApiUser, index: number): User {
     roleCodes: user.roleCodes,
     role: primaryRole,
     roleColor: ROLE_COLORS[primaryRole] ?? "#64748b",
-    department: user.departmentCode ? DEPARTMENT_LABELS[user.departmentCode] ?? user.departmentCode : "Chưa có phòng ban",
+    department: formatDepartmentLabel(user.departmentCode, "Chưa có phòng ban"),
     status: user.status === "active" ? "active" : "offline",
     joined: formatDate(user.createdAt),
     projects: user.projectIds.length,

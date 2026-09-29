@@ -25,6 +25,7 @@ import {
   type WorkGroup
 } from "./timesheet-types";
 import { Avatar, Drawer, EmptyState, Pagination, usePagination } from "./timesheet-ui";
+import { formatDepartmentLabel } from "@/lib/department-labels";
 
 export interface LogDrawerRequest {
   title: string;
@@ -57,11 +58,13 @@ const WORK_GROUP_ICONS: Record<WorkGroup, IconType> = {
 export function LogDrawer({
   dataset,
   request,
-  onClose
+  onClose,
+  currentUserId
 }: {
   dataset: TimesheetDataset;
   request: LogDrawerRequest | null;
   onClose: () => void;
+  currentUserId?: string;
 }) {
   const [selectedLog, setSelectedLog] = useState<TimeLog | null>(null);
   useEffect(() => {
@@ -166,7 +169,7 @@ export function LogDrawer({
 
                           <div className="min-w-0 flex-1">
                             <div className="flex items-baseline justify-between gap-2">
-                              <span className="truncate text-[12.5px] font-semibold" title={person?.name}>
+                              <span className={`truncate text-[12.5px] ${person?.id === currentUserId ? "font-bold text-primary" : "font-semibold"}`} title={person?.name}>
                                 {person?.name ?? entry.personId}
                               </span>
                               <span className="shrink-0 font-mono text-[13px] font-bold tabular-nums">
@@ -274,7 +277,7 @@ function TimeLogDetailModal({
           <DetailSection title="Nhân sự">
             <DetailRow label="Họ tên" value={person?.name ?? "Chưa mapping"} />
             <DetailRow label="Lark user ID" value={log.personId} mono />
-            <DetailRow label="Phòng ban" value={person?.departmentId ?? "Chưa có dữ liệu"} />
+              <DetailRow label="Phòng ban" value={person?.departmentId ? formatDepartmentLabel(person.departmentId, "Chưa có dữ liệu") : "Chưa có dữ liệu"} />
             <DetailRow label="Vai trò" value={person?.role ?? "Chưa có dữ liệu"} />
           </DetailSection>
 

@@ -13,6 +13,7 @@ import type {
   TimesheetDataset,
   WorkGroup
 } from "./timesheet-types";
+import { formatDepartmentLabel } from "@/lib/department-labels";
 
 type ApiUser = {
   id: string;
@@ -321,7 +322,7 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
     };
   });
 
-  const departments: Department[] = [...new Set([...peopleById.values()].map((person) => person.departmentId))].map((id) => ({ id, name: id === "unassigned" ? "Chưa phân loại" : id }));
+  const departments: Department[] = [...new Set([...peopleById.values()].map((person) => person.departmentId))].map((id) => ({ id, name: formatDepartmentLabel(id) }));
   const months = [...new Set(logs.map((log) => log.date.slice(0, 7)))].sort();
   if (!months.includes(`${year}-${String(now.getMonth() + 1).padStart(2, "0")}`)) months.push(`${year}-${String(now.getMonth() + 1).padStart(2, "0")}`);
   const holidays = (dayOffResponse.data ?? []).filter((item) => item.isActive !== false && item.date).map((item) => item.date!.slice(0, 10));

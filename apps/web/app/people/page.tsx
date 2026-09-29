@@ -19,6 +19,7 @@ import type { AdminAccessMemberSummary } from "@b2b-crm/contracts";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { useAuth } from "@/lib/auth";
 import { downloadCsv } from "@/lib/csv-export";
+import { formatDepartmentLabel } from "@/lib/department-labels";
 import {
   type PeopleProfile,
   formatHours,
@@ -47,7 +48,7 @@ function mapLiveProfile(member: AdminAccessMemberSummary, minutesByUser: Map<str
     initials: initialsForName(name),
     color: colorForId(member.id),
     role,
-    department: member.departmentCode || "Chưa phân loại",
+    department: formatDepartmentLabel(member.departmentCode),
     level: "L3",
     employmentType: "Full-time",
     manager: "—",

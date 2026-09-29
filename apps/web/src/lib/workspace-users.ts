@@ -1,4 +1,5 @@
 import type { AdminAccessMemberSummary } from "@b2b-crm/contracts";
+import { formatDepartmentLabel } from "./department-labels";
 
 const WORKSPACE_USERS_ENDPOINT = "/api/workspace/users";
 const USER_COLORS = ["#2563eb", "#059669", "#7c3aed", "#db2777", "#d97706", "#dc2626", "#0891b2", "#64748b"];
@@ -48,7 +49,7 @@ export function mapWorkspaceUserToOption(user: WorkspaceDirectoryMember): Worksp
     color: colorForId(user.id || user.email),
     avatarUrl: user.avatarUrl,
     role: user.resourceDisplayRole || formatRole(user.roleCodes[0]) || "Team member",
-    department: user.departmentCode,
+    department: user.departmentCode ? formatDepartmentLabel(user.departmentCode) : undefined,
     status: user.status
   };
 }

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowRight, BriefcaseBusiness, Users } from "lucide-react";
 import { MoneyAmount } from "../../components/money-amount";
 import type { Project } from "../../../app/projects/data";
+import { formatProjectStatusLabel } from "../../../app/projects/live-projects";
 
 export type ProjectSheetSortKey = "name" | "status" | "progress" | "budget" | "dueDate" | "priority";
 export type ProjectSheetSortDir = "asc" | "desc";
@@ -108,7 +109,7 @@ export function ProjectSheet({ projects }: ProjectSheetProps) {
                       </span>
                     </Link>
                   </td>
-                  <td className="border-b border-border/70 px-4 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${STATUS_STYLES[project.status]}`}>{project.status}</span></td>
+                  <td className="border-b border-border/70 px-4 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${STATUS_STYLES[project.status]}`}>{formatProjectStatusLabel(project.status)}</span></td>
                   <td className="border-b border-border/70 px-4 py-4">
                     <div className="min-w-24">
                       <div className="mb-1.5 text-xs font-bold">{project.progress}%</div>

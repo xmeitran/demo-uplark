@@ -25,6 +25,7 @@ import type {
   ResourceListResponse,
 } from "@b2b-crm/contracts";
 import { AppShell } from "@/components/constructor-x/app-shell";
+import { formatDepartmentLabel } from "@/lib/department-labels";
 
 type ProfileTab = "Overview" | "Activity" | "Projects" | "Tasks";
 
@@ -46,13 +47,6 @@ const ROLE_LABELS: Record<string, string> = {
   SALES_OWNER: "Sales owner",
   DELIVERY_LEAD: "Delivery lead",
   FINANCE_ADMIN: "Finance admin",
-};
-
-const DEPARTMENT_LABELS: Record<string, string> = {
-  CDS: "Chuyển đổi số",
-  CDS_BUSINESS_DEVELOPMENT: "Business Development",
-  CDS_DX_ENABLER: "DX Enabler",
-  CDS_MARKETING_B2B: "Marketing B2B",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -95,7 +89,7 @@ function labelRole(roleCode: string) {
 }
 
 function labelDepartment(code?: string) {
-  return code ? DEPARTMENT_LABELS[code] ?? code : "Chưa gán phòng ban";
+  return formatDepartmentLabel(code, "Chưa gán phòng ban");
 }
 
 function uniquePairs(ids: string[], names: string[]) {

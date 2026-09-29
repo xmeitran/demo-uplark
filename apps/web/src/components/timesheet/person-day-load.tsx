@@ -40,12 +40,14 @@ export function PersonDayLoad({
   dataset,
   filters,
   logs,
-  onOpenLogs
+  onOpenLogs,
+  currentUserId
 }: {
   dataset: TimesheetDataset;
   filters: TimesheetFilters;
   logs: TimeLog[];
   onOpenLogs: (request: LogDrawerRequest) => void;
+  currentUserId?: string;
 }) {
   const matrix = useMemo(() => buildPersonDayMatrix(dataset, filters, logs), [dataset, filters, logs]);
   const paged = usePagination(matrix.rows, PEOPLE_PAGE_SIZE);
@@ -116,7 +118,7 @@ export function PersonDayLoad({
                       <span className="flex items-center gap-2">
                         <Avatar initials={row.person.initials} name={row.person.name} />
                         <span className="min-w-0">
-                          <span className="block truncate font-semibold" title={row.person.name}>{row.person.name}</span>
+                          <span className={`block truncate ${row.person.id === currentUserId ? "font-bold text-primary" : "font-semibold"}`} title={row.person.name}>{row.person.name}</span>
                           <span className="block truncate text-[10.5px] text-muted-foreground">
                             {formatHours(row.person.standardMinutesPerDay * row.person.contractRatio)}/ngày
                             {row.overloadedDays > 0 ? <span className="text-destructive"> · {row.overloadedDays} ngày quá tải</span> : null}

@@ -34,7 +34,7 @@ describe("workspace user options", () => {
       initials: "NK",
       avatarUrl: "https://avatar.example/kha.png",
       role: "Founder",
-      department: "CDS",
+      department: "Chuyển đổi số",
       status: "active"
     });
   });

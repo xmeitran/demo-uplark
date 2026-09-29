@@ -20,8 +20,8 @@ import {
   deploymentStagePlan,
   formatTaskMinutes,
   formatTaskTitle,
+  getStatusLabel,
   getDeploymentStageForTask,
-  statusLabels
 } from "./task-display-helpers";
 import {
   loadTaskDrafts,
@@ -1390,7 +1390,7 @@ function DeliveryWorkbench({ config, projectId }: Readonly<{ config: BusinessFun
                                 row.tasks.map((task) => (
                                   <a href={`/tasks/${task.id}`} className="delivery-stage-task-line" key={task.id}>
                                     <span>{formatTaskTitle(task.title)}</span>
-                                    <small>{statusLabels[task.status] || task.status}</small>
+                                    <small>{getStatusLabel(task.status)}</small>
                                     <small>{task.assigneeDisplayName || "Chưa giao"}</small>
                                     <small>{formatDeliveryDate(task.dueAt)}</small>
                                     <small>{formatTaskMinutes(Number(task.loggedMinutes || 0))} / {formatTaskMinutes(Number(task.estimateMinutes || 0))}</small>
@@ -1633,7 +1633,7 @@ function DeliveryWorkbench({ config, projectId }: Readonly<{ config: BusinessFun
                           <a href={`/tasks/${task.id}`} className="delivery-stage-task-row" key={task.id}>
                             <span>{formatTaskTitle(task.title)}</span>
                             <small>
-                              {statusLabels[task.status] || task.status} · {task.assigneeDisplayName || "Chưa giao"} · {formatDeliveryDate(task.dueAt)}
+                              {getStatusLabel(task.status)} · {task.assigneeDisplayName || "Chưa giao"} · {formatDeliveryDate(task.dueAt)}
                             </small>
                           </a>
                         ))

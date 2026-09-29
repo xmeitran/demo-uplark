@@ -217,7 +217,7 @@ export function DailyWeeklyTimesheet({
         </div>
       </SectionCard>
 
-      <PersonDayLoad dataset={dataset} filters={filters} logs={logs} onOpenLogs={setDrawerRequest} />
+      <PersonDayLoad dataset={dataset} filters={filters} logs={logs} onOpenLogs={setDrawerRequest} currentUserId={currentUserId} />
 
       <ChartCard
         title="Tổng hợp theo tuần"
@@ -476,7 +476,7 @@ export function DailyWeeklyTimesheet({
         <Pagination state={pagedDays} unit="ngày" />
       </SectionCard>
 
-      <LogDrawer dataset={dataset} request={drawerRequest} onClose={() => setDrawerRequest(null)} />
+      <LogDrawer dataset={dataset} request={drawerRequest} onClose={() => setDrawerRequest(null)} currentUserId={currentUserId} />
     </div>
   );
 }

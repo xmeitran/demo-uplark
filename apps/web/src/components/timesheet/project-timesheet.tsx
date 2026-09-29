@@ -6,7 +6,6 @@ import { ArrowRight, AlertTriangle, Check, ChevronDown, ChevronRight, FileSearch
 import {
   buildControlChart,
   buildCumulativeFlow,
-  CONTROL_CHART_MIN_SAMPLE,
   buildProjectBreakdown,
   buildProjectMemberRows,
   buildProjectReadiness,
@@ -58,8 +57,6 @@ const chartFallback = () => <div className="h-full w-full animate-pulse rounded-
 const EstimateVsActualChart = dynamic(() => import("./timesheet-charts").then((m) => ({ default: m.EstimateVsActualChart })), { ssr: false, loading: chartFallback });
 const ConsumptionChart = dynamic(() => import("./timesheet-charts").then((m) => ({ default: m.ConsumptionChart })), { ssr: false, loading: chartFallback });
 const ReadinessChart = dynamic(() => import("./timesheet-charts").then((m) => ({ default: m.ReadinessChart })), { ssr: false, loading: chartFallback });
-const CumulativeFlowChart = dynamic(() => import("./timesheet-charts").then((m) => ({ default: m.CumulativeFlowChart })), { ssr: false, loading: chartFallback });
-const CycleTimeControlChart = dynamic(() => import("./timesheet-charts").then((m) => ({ default: m.CycleTimeControlChart })), { ssr: false, loading: chartFallback });
 
 const PROJECT_PAGE_SIZE = 8;
 const MILESTONE_PAGE_SIZE = 3;
@@ -299,7 +296,7 @@ export function ProjectTimesheet({
                               </div>
                               <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10.5px] font-semibold text-primary">Đang mở</span>
                             </div>
-                            <ProjectBreakdownTable dataset={dataset} projectId={row.project.id} logs={logs} />
+                            <ProjectBreakdownTable dataset={dataset} projectId={row.project.id} logs={logs} currentUserId={currentUserId} />
                           </div>
                         </td>
                       </tr>
@@ -398,53 +395,6 @@ export function ProjectTimesheet({
         />
       </div>
 
-      <ChartCard
-        title="Dòng chảy công việc tích luỹ"
-        description="Số công việc nằm ở mỗi trạng thái theo từng ngày."
-        footnote={
-          "Tổng chiều cao là toàn bộ công việc đã tạo tính đến ngày đó. Độ dày mỗi dải là lượng việc đang nằm ở trạng thái ấy; "
-          + "độ dốc của dải “Hoàn thành” là tốc độ hoàn thành. Dải nào dày mãi không mỏng đi thì đó là nút thắt. "
-          + `Trong kỳ có ${flow.blockedGrowthDays} ngày lượng việc bị chặn tăng lên.`
-        }
-        minHeight={320}
-      >
-        {flow.points.length === 0 ? (
-          <EmptyState message="Chưa có lịch sử chuyển trạng thái trong kỳ này." />
-        ) : (
-          <CumulativeFlowChart data={flow.points} />
-        )}
-      </ChartCard>
-
-      <ChartCard
-        title="Thời gian hoàn thành mỗi công việc"
-        description="Mỗi chấm là một công việc đã xong: trục ngang là ngày hoàn thành, trục dọc là số ngày làm."
-        footnote={
-          "Tính từ lúc việc chuyển sang “Đang làm” đến lúc “Hoàn thành” — thời gian nằm chờ trong backlog không được tính vào, "
-          + "vì gộp hai loại lại sẽ làm quy trình trông đẹp hơn thực tế. Chấm đỏ là việc vượt giới hạn trên (trung bình + 2 độ lệch chuẩn) — "
-          + "đó mới là những việc đáng mổ xẻ, không phải con số trung bình. Chấm bám sát nhau và nằm dưới ngưỡng nghĩa là quy trình đủ ổn định để dự báo. "
-          + (control.sampleAdequate
-            ? ""
-            : `Kỳ này mới có ${control.points.length} việc hoàn thành — cần khoảng ${CONTROL_CHART_MIN_SAMPLE} việc trở lên thì giới hạn kiểm soát mới đủ tin cậy để ra quyết định.`)
-        }
-        minHeight={320}
-        actions={
-          <span className="flex flex-wrap items-center gap-2 text-[11px]">
-            <Pill tone={control.outliers === 0 ? "success" : control.outliers > 3 ? "danger" : "warning"}>
-              {control.points.length} việc hoàn thành · {control.outliers} vượt ngưỡng
-            </Pill>
-            {control.points.length > 0 && !control.sampleAdequate ? (
-              <Pill tone="warning">Mẫu nhỏ — giới hạn chỉ mang tính tham khảo</Pill>
-            ) : null}
-          </span>
-        }
-      >
-        {control.points.length === 0 ? (
-          <EmptyState message="Chưa có công việc nào hoàn thành trong kỳ này." />
-        ) : (
-          <CycleTimeControlChart data={control.points} mean={control.mean} upperLimit={control.upperLimit} startDate={control.days[0] ?? filters.month + "-01"} />
-        )}
-      </ChartCard>
-
       {/* ── Data readiness ─────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
         <ChartCard
@@ -498,7 +448,7 @@ export function ProjectTimesheet({
         </SectionCard>
       </div>
 
-      <LogDrawer dataset={dataset} request={drawerRequest} onClose={() => setDrawerRequest(null)} />
+      <LogDrawer dataset={dataset} request={drawerRequest} onClose={() => setDrawerRequest(null)} currentUserId={currentUserId} />
     </div>
   );
 }
@@ -508,11 +458,13 @@ export function ProjectTimesheet({
 function ProjectBreakdownTable({
   dataset,
   projectId,
-  logs
+  logs,
+  currentUserId
 }: {
   dataset: TimesheetDataset;
   projectId: string;
   logs: TimeLog[];
+  currentUserId?: string;
 }) {
   const project = dataset.projects.find((item) => item.id === projectId);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -565,13 +517,13 @@ function ProjectBreakdownTable({
         <tbody>
           {paged.items.map((milestone) => (
             <React.Fragment key={milestone.id}>
-              <BreakdownRow node={milestone} depth={0} collapsed={collapsed.has(milestone.id)} onToggle={toggle} />
+              <BreakdownRow node={milestone} depth={0} collapsed={collapsed.has(milestone.id)} onToggle={toggle} currentUserId={currentUserId} />
               {!collapsed.has(milestone.id)
                 ? milestone.children?.map((stage) => (
                     <React.Fragment key={stage.id}>
-                      <BreakdownRow node={stage} depth={1} collapsed={collapsed.has(stage.id)} onToggle={toggle} />
+                      <BreakdownRow node={stage} depth={1} collapsed={collapsed.has(stage.id)} onToggle={toggle} currentUserId={currentUserId} />
                       {!collapsed.has(stage.id)
-                        ? stage.children?.map((task) => <BreakdownRow key={task.id} node={task} depth={2} collapsed={false} onToggle={toggle} />)
+                        ? stage.children?.map((task) => <BreakdownRow key={task.id} node={task} depth={2} collapsed={false} onToggle={toggle} currentUserId={currentUserId} />)
                         : null}
                     </React.Fragment>
                   ))
@@ -603,12 +555,14 @@ function BreakdownRow({
   node,
   depth,
   collapsed,
-  onToggle
+  onToggle,
+  currentUserId
 }: {
   node: ProjectBreakdownNode;
   depth: number;
   collapsed: boolean;
   onToggle: (id: string) => void;
+  currentUserId?: string;
 }) {
   const hasChildren = (node.children?.length ?? 0) > 0;
   const overrun = node.variancePercent !== null && node.variancePercent > 0;
@@ -633,7 +587,7 @@ function BreakdownRow({
         </span>
       </Td>
       <Td className="truncate text-muted-foreground">
-        {node.ownerName ?? <span className="text-warning">Chưa gán</span>}
+        {node.ownerName ? <span className={node.ownerId === currentUserId ? "font-bold text-primary" : undefined}>{node.ownerName}</span> : <span className="text-warning">Chưa gán</span>}
       </Td>
       <Td align="center">
         <Pill tone={nodeStatusTone(node.status)}>{NODE_STATUS_LABELS[node.status as NodeStatus] ?? node.status}</Pill>

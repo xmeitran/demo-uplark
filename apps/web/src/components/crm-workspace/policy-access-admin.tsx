@@ -20,6 +20,7 @@ import type {
 } from "@b2b-crm/contracts";
 import { ConfirmActionDialog } from "./confirm-action-dialog";
 import { ModalLayer } from "../modal-layer";
+import { formatDepartmentLabel } from "@/lib/department-labels";
 
 type AdminMode = "internal" | "portal";
 type RoleCode = InternalRoleCode;
@@ -1333,14 +1334,7 @@ function initialsFor(value: string) {
 }
 
 function formatDepartment(departmentCode: string) {
-  const labels: Record<string, string> = {
-    delivery: "Delivery",
-    dx: "DX",
-    finance: "Finance",
-    founder: "Founder/GM",
-    sales: "Sales"
-  };
-  return labels[departmentCode] ?? departmentCode;
+  return formatDepartmentLabel(departmentCode);
 }
 
 function formatDateTime(value: string) {

@@ -398,7 +398,7 @@ export function MonthlyTimesheet({
         onClose={() => setDayDetailPersonId(null)}
         onOpenLogs={openPersonLogs}
       />
-      <LogDrawer dataset={dataset} request={drawerRequest} onClose={() => setDrawerRequest(null)} />
+      <LogDrawer dataset={dataset} request={drawerRequest} onClose={() => setDrawerRequest(null)} currentUserId={currentUserId} />
     </div>
   );
 }

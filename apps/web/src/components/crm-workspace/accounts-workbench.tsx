@@ -2,6 +2,7 @@
 import { MoneyAmount } from "@/components/money-amount";
 import { useDialogAccessibility } from "@/hooks/use-dialog-accessibility";
 import { formatVnd } from "@/lib/currency";
+import { formatDepartmentLabel } from "@/lib/department-labels";
 
 
 import React, { useState, useEffect, useMemo, useRef, useId } from "react";
@@ -168,7 +169,7 @@ function getMemberPicMeta(member: AdminAccessMemberSummary) {
   if (member.resourceDisplayRole) return member.resourceDisplayRole;
   const roles = member.roleCodes.map(getRoleLabel).filter(Boolean);
   if (roles.length > 0) return roles.join(", ");
-  return member.departmentCode || member.email;
+  return member.departmentCode ? formatDepartmentLabel(member.departmentCode) : member.email;
 }
 
 function getAccountPicOptions(resources: CapacitySummaryItem[], members: AdminAccessMemberSummary[] = []) {
@@ -192,7 +193,7 @@ function getAccountPicOptions(resources: CapacitySummaryItem[], members: AdminAc
         value: resource.userId,
         label: resource.userDisplayName || resource.userEmail || resource.userId,
         icon: "users",
-        meta: resource.displayRole || resource.departmentCode || resource.userEmail
+        meta: resource.displayRole || (resource.departmentCode ? formatDepartmentLabel(resource.departmentCode) : resource.userEmail)
       });
     });
 

@@ -32,6 +32,7 @@ describe("PrincipalService principal fallback policy", () => {
 
   it("rejects fallback principals in local tooling unless explicitly opted in", async () => {
     vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("CRM_ALLOW_PRINCIPAL_FALLBACK", "false");
     const service = new PrincipalService({} as any, {} as any);
     const fallbackSpy = vi.spyOn(service, "resolveFallbackPrincipal");
 

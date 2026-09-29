@@ -25,6 +25,7 @@ import type { Project } from "../data";
 import {
   fetchLiveProjectById as fetchLiveProjectSummaryById,
   mapProjectSummaryToUiProject,
+  formatProjectStatusLabel,
   readLiveProjectSnapshot,
   clearLiveProjectSnapshotCache
 } from "../live-projects";
@@ -604,8 +605,8 @@ function mapProjectActivityToLogItem(activity: ProjectActivitySummary): Activity
     id: activity.id,
     icon,
     color,
-    text: activity.subject,
-    target: activity.target ?? activity.createdByDisplayName ?? "",
+    text: formatProjectActivityText(activity.subject),
+    target: formatProjectActivityText(activity.target ?? activity.createdByDisplayName ?? ""),
     time: formatActivityTimestamp(activity.occurredAt, activity.occurredTime),
     sortAt: activity.occurredAt,
     source: "project",
@@ -614,6 +615,21 @@ function mapProjectActivityToLogItem(activity: ProjectActivitySummary): Activity
     userInitials: activity.createdByDisplayName ? initialsForDisplayName(activity.createdByDisplayName) : undefined,
     userAvatarUrl: activity.createdByAvatarUrl
   };
+}
+
+function formatProjectActivityText(value?: string) {
+  if (!value) return "";
+  return value
+    .replace(/^Planning status changed:/, "Đã cập nhật trạng thái kế hoạch:")
+    .replace(/^Changed task status:/, "Đã thay đổi trạng thái công việc:")
+    .replace(/^Planned work:/, "Đã lên kế hoạch:")
+    .replace(/\bIn Progress\b/g, "Đang thực hiện")
+    .replace(/\bCompleted\b/g, "Hoàn tất")
+    .replace(/\bDone\b/g, "Hoàn tất")
+    .replace(/\bTo Do\b/g, "Chưa bắt đầu")
+    .replace(/\bUpcoming\b/g, "Sắp tới")
+    .replace(/\bAt Risk\b/g, "Có rủi ro")
+    .replaceAll("Hoàn tất -> Hoàn tất", "Hoàn tất");
 }
 
 function buildWorkLogActivityItems(tasks: TaskItem[]): ActivityLogItem[] {
@@ -959,6 +975,7 @@ function ProjectSheetPanel({
   milestones,
   milestoneGroups,
   teamMembers,
+  currentUserId,
   onOpenTasks,
   onOpenTeam,
   onOpenTask
@@ -967,6 +984,7 @@ function ProjectSheetPanel({
   milestones: Milestone[];
   milestoneGroups: MilestoneGroup[];
   teamMembers: ProjectTeamMember[];
+  currentUserId?: string;
   onOpenTasks: () => void;
   onOpenTeam: () => void;
   onOpenTask: (task: TaskItem) => void;
@@ -1007,7 +1025,11 @@ function ProjectSheetPanel({
     return { milestone, tasks, plan, actual, variance: roundHours(actual - plan), done: tasks.filter((task) => task.status === "done").length };
   });
 
-  const statusLabel: Record<TaskItem["status"], string> = { done: "Done", "in-progress": "In Progress", todo: "To Do" };
+  const statusLabel: Record<TaskItem["status"], string> = {
+    done: TASK_STATUS.done.label,
+    "in-progress": TASK_STATUS["in-progress"].label,
+    todo: TASK_STATUS.todo.label
+  };
   const milestoneLabel: Record<Milestone["status"], string> = { done: "Hoàn tất", "in-progress": "Đang thực hiện", upcoming: "Sắp tới", "at-risk": "Có rủi ro" };
   const readiness = [project.client, project.ownerDisplayName, project.startDate && project.dueDate].filter(Boolean).length;
 
@@ -1081,7 +1103,7 @@ function ProjectSheetPanel({
                 return (
                   <tr key={task.id} tabIndex={0} role="button" onClick={() => onOpenTask(task)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpenTask(task); } }} className="cursor-pointer border-b border-border/70 transition-colors hover:bg-muted/25 focus:bg-primary/5 focus:outline-none">
                     <td className="px-5 py-4"><p className="text-[10px] font-black uppercase tracking-wide text-primary">{milestone.name}</p><p className="mt-1 text-xs text-muted-foreground"><strong className="text-foreground">Stage:</strong> {stage.name} · Deadline {task.due}</p><p className="mt-1 font-bold text-foreground">{task.title}</p></td>
-                    <td className="px-5 py-4"><span className="inline-flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-bold text-white" style={{ backgroundColor: member?.color || task.aColor }}>{member?.initials || task.assignee}</span><span className="text-sm font-medium text-foreground">{member?.name || task.assignee}</span></span></td>
+                    <td className="px-5 py-4"><span className="inline-flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-bold text-white" style={{ backgroundColor: member?.color || task.aColor }}>{member?.initials || task.assignee}</span><span className={`text-sm ${member?.id === currentUserId ? "font-bold text-primary" : "font-medium text-foreground"}`}>{member?.name || task.assignee}</span></span></td>
                     <td className="px-5 py-4"><span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${task.status === "done" ? "bg-emerald-50 text-emerald-700" : task.status === "in-progress" ? "bg-purple-50 text-purple-700" : "bg-slate-100 text-slate-600"}`}>{statusLabel[task.status]}</span></td>
                     <td className="px-5 py-4 font-mono text-sm tabular-nums text-foreground">{formatHours(task.plannedHours)}h</td>
                     <td className="px-5 py-4 font-mono text-sm tabular-nums text-foreground">{formatHours(task.actualHours)}h</td>
@@ -1098,13 +1120,13 @@ function ProjectSheetPanel({
       <section className="grid gap-5 xl:grid-cols-5">
         <article className="rounded-2xl border border-border bg-card p-5 shadow-sm xl:col-span-3">
           <div className="mb-4 flex items-start justify-between"><div><h3 className="text-lg font-black text-foreground">Nguồn lực đang tham gia</h3><p className="mt-1 text-sm text-muted-foreground">Active được xác định từ Time Log trong kỳ theo dõi.</p></div><button type="button" onClick={onOpenTeam} className="text-sm font-semibold text-primary hover:underline">Xem đầy đủ →</button></div>
-          <div className="space-y-2">{teamMembers.map((member) => { const memberTasks = rows.filter(({ task }) => task.assigneeUserId === member.id || task.assignee === member.initials); const memberActual = sumHours(memberTasks.map(({ task }) => task.actualHours ?? 0)); return <div key={member.id} className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-3"><div className="flex min-w-0 items-center gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-bold text-white" style={{ backgroundColor: member.color }}>{member.avatarUrl ? <img src={member.avatarUrl} alt="" className="h-full w-full object-cover" /> : member.initials}</span><div className="min-w-0"><p className="truncate text-sm font-bold text-foreground">{member.name}</p><p className="text-xs text-muted-foreground">{member.role}</p></div></div><div className="flex items-center gap-3"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${memberActual > 0 ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{memberActual > 0 ? "Active" : "No log"}</span><span className="font-mono text-sm font-bold text-foreground">{member.done}/{member.tasks}</span></div></div>; })}</div>
+          <div className="space-y-2">{teamMembers.map((member) => { const memberTasks = rows.filter(({ task }) => task.assigneeUserId === member.id || task.assignee === member.initials); const memberActual = sumHours(memberTasks.map(({ task }) => task.actualHours ?? 0)); return <div key={member.id} className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-3"><div className="flex min-w-0 items-center gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-bold text-white" style={{ backgroundColor: member.color }}>{member.avatarUrl ? <img src={member.avatarUrl} alt="" className="h-full w-full object-cover" /> : member.initials}</span><div className="min-w-0"><p className={`truncate text-sm ${member.id === currentUserId ? "font-bold text-primary" : "font-bold text-foreground"}`}>{member.name}</p><p className="text-xs text-muted-foreground">{member.role}</p></div></div><div className="flex items-center gap-3"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${memberActual > 0 ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{memberActual > 0 ? "Active" : "No log"}</span><span className="font-mono text-sm font-bold text-foreground">{member.done}/{member.tasks}</span></div></div>; })}</div>
           {teamMembers.length === 0 && <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Chưa có thành viên trong project.</p>}
         </article>
 
         <article className="rounded-2xl border border-border bg-card p-5 shadow-sm xl:col-span-2">
           <h3 className="text-lg font-black text-foreground">Project master data</h3>
-          <dl className="mt-5 grid grid-cols-2 gap-x-5 gap-y-5 text-sm"><div><dt className="text-xs text-muted-foreground">Client</dt><dd className="mt-1 font-bold text-foreground">{project.client || "Chưa thiết lập"}</dd></div><div><dt className="text-xs text-muted-foreground">Project PIC</dt><dd className="mt-1 font-bold text-foreground">{project.ownerDisplayName || "Chưa phân công"}</dd></div><div><dt className="text-xs text-muted-foreground">Trạng thái</dt><dd className="mt-1 font-bold text-foreground">{project.status}</dd></div><div><dt className="text-xs text-muted-foreground">Kỳ project</dt><dd className="mt-1 font-bold text-foreground">{project.startDate || "TBD"} → {project.dueDate || "TBD"}</dd></div><div><dt className="text-xs text-muted-foreground">Loại dịch vụ</dt><dd className="mt-1 font-bold text-foreground">{project.category}</dd></div><div><dt className="text-xs text-muted-foreground">Data readiness</dt><dd className="mt-1 font-bold text-foreground">{readiness}/3 trường kiểm tra đạt</dd></div></dl>
+          <dl className="mt-5 grid grid-cols-2 gap-x-5 gap-y-5 text-sm"><div><dt className="text-xs text-muted-foreground">Client</dt><dd className="mt-1 font-bold text-foreground">{project.client || "Chưa thiết lập"}</dd></div><div><dt className="text-xs text-muted-foreground">Project PIC</dt><dd className="mt-1 font-bold text-foreground">{project.ownerDisplayName || "Chưa phân công"}</dd></div><div><dt className="text-xs text-muted-foreground">Trạng thái</dt><dd className="mt-1 font-bold text-foreground">{formatProjectStatusLabel(project.status)}</dd></div><div><dt className="text-xs text-muted-foreground">Kỳ project</dt><dd className="mt-1 font-bold text-foreground">{project.startDate || "TBD"} → {project.dueDate || "TBD"}</dd></div><div><dt className="text-xs text-muted-foreground">Loại dịch vụ</dt><dd className="mt-1 font-bold text-foreground">{project.category}</dd></div><div><dt className="text-xs text-muted-foreground">Data readiness</dt><dd className="mt-1 font-bold text-foreground">{readiness}/3 trường kiểm tra đạt</dd></div></dl>
         </article>
       </section>
     </div>
@@ -1432,16 +1454,16 @@ const PRIORITY_CFG = {
 };
 
 const TASK_STATUS = {
-  done:          { color:C.success, bg:"#dcfce7", label:"Done" },
-  "in-progress": { color:C.purple,  bg:"#ede9fe", label:"In Progress" },
-  todo:          { color:C.slate,   bg:"#f1f5f9", label:"To Do" },
+  done:          { color:C.success, bg:"#dcfce7", label:"Hoàn tất" },
+  "in-progress": { color:C.purple,  bg:"#ede9fe", label:"Đang thực hiện" },
+  todo:          { color:C.slate,   bg:"#f1f5f9", label:"Chưa bắt đầu" },
 };
 
 const MILESTONE_STATUS = {
-  done:          { color:C.success, bg:"#dcfce7", label:"Completed",   icon:CheckCircle2 },
-  "in-progress": { color:C.blue,    bg:"#dbeafe", label:"In Progress", icon:Activity },
-  upcoming:      { color:C.slate,   bg:"#f1f5f9", label:"Upcoming",    icon:Clock },
-  "at-risk":     { color:C.danger,  bg:"#fee2e2", label:"At Risk",     icon:AlertCircle },
+  done:          { color:C.success, bg:"#dcfce7", label:"Hoàn tất",   icon:CheckCircle2 },
+  "in-progress": { color:C.blue,    bg:"#dbeafe", label:"Đang thực hiện", icon:Activity },
+  upcoming:      { color:C.slate,   bg:"#f1f5f9", label:"Sắp tới",    icon:Clock },
+  "at-risk":     { color:C.danger,  bg:"#fee2e2", label:"Có rủi ro",     icon:AlertCircle },
 };
 
 const TABS = ["Overview", "Project Sheet", "Issues", "Dashboard", "Tasks", "Timeline", "Team", "Activity", "Documents"] as const;
@@ -1893,9 +1915,9 @@ function AddStageModal({ milestoneName, color, onClose, onSave, members = EMPTY_
   }, [members, currentUserId]);
 
   const STAGE_STATUS_CFG = {
-    "upcoming": { label: "Upcoming", color: "#facc15", bg: "#fef9c31b" },
-    "in-progress": { label: "In Progress", color: "#3b82f6", bg: "#dbeafe1b" },
-    "done": { label: "Completed", color: "#22c55e", bg: "#dcfce71b" }
+    "upcoming": { label: "Sắp tới", color: "#facc15", bg: "#fef9c31b" },
+    "in-progress": { label: "Đang thực hiện", color: "#3b82f6", bg: "#dbeafe1b" },
+    "done": { label: "Hoàn tất", color: "#22c55e", bg: "#dcfce71b" }
   };
 
   return (
@@ -1942,7 +1964,7 @@ function AddStageModal({ milestoneName, color, onClose, onSave, members = EMPTY_
           )}
         </Field>
 
-        <Field label="Status">
+        <Field label="Trạng thái">
           <div className="flex gap-2 flex-wrap">
             {Object.entries(STAGE_STATUS_CFG).map(([k, cfg]) => (
               <motion.button key={k} whileTap={{ scale:0.95 }} onClick={() => setStatus(k as StageItem["status"])}
@@ -2075,7 +2097,7 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
           </div>
         </Field>
         {/* Status */}
-        <Field label="Status">
+        <Field label="Trạng thái">
           <div className="flex gap-2 flex-wrap">
             {(Object.entries(TASK_STATUS) as [TaskItem["status"], typeof TASK_STATUS[keyof typeof TASK_STATUS]][]).map(([k, cfg]) => (
               <motion.button key={k} whileTap={{ scale:0.95 }} onClick={() => setStatus(k)}
@@ -2220,7 +2242,7 @@ function MilestoneModal({ projectColor, onClose, onSave, members = EMPTY_TEAM_ME
           />
           {pic && <p className="mt-1 text-[10px] text-muted-foreground">Primary PIC: {pic.name}</p>}
         </Field>
-        <Field label="Status">
+        <Field label="Trạng thái">
           <div className="flex gap-2 flex-wrap">
             {(Object.entries(MILESTONE_STATUS) as [Milestone["status"], typeof MILESTONE_STATUS[keyof typeof MILESTONE_STATUS]][]).map(([k, cfg]) => (
               <motion.button key={k} whileTap={{ scale:0.95 }} onClick={() => setStatus(k)}
@@ -3024,9 +3046,9 @@ function EditStageModal({ stage, color, onClose, onSave, members = EMPTY_TEAM_ME
   }, [members, stage.pic, stage.picName, stage.picUserId]);
 
   const STAGE_STATUS_CFG = {
-    "upcoming": { label: "Upcoming", color: "#facc15", bg: "#fef9c31b" },
-    "in-progress": { label: "In Progress", color: "#3b82f6", bg: "#dbeafe1b" },
-    "done": { label: "Completed", color: "#22c55e", bg: "#dcfce71b" }
+    "upcoming": { label: "Sắp tới", color: "#facc15", bg: "#fef9c31b" },
+    "in-progress": { label: "Đang thực hiện", color: "#3b82f6", bg: "#dbeafe1b" },
+    "done": { label: "Hoàn tất", color: "#22c55e", bg: "#dcfce71b" }
   };
 
   return (
@@ -3063,7 +3085,7 @@ function EditStageModal({ stage, color, onClose, onSave, members = EMPTY_TEAM_ME
             className="w-full border border-input rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none" />
         </Field>
 
-        <Field label="Status">
+        <Field label="Trạng thái">
           <div className="flex gap-2 flex-wrap">
             {Object.entries(STAGE_STATUS_CFG).map(([k, cfg]) => (
               <motion.button key={k} whileTap={{ scale:0.95 }} onClick={() => setStatus(k as StageItem["status"])}
@@ -3170,7 +3192,7 @@ function EditMilestoneModal({ milestone, color, onClose, onSave, members = EMPTY
             className="w-full border border-input rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none" />
         </Field>
 
-        <Field label="Status">
+        <Field label="Trạng thái">
           <div className="flex gap-2 flex-wrap">
             {Object.entries(MILESTONE_STATUS).map(([k, cfg]) => (
               <motion.button key={k} whileTap={{ scale:0.95 }} onClick={() => setStatus(k as Milestone["status"])}
@@ -3300,7 +3322,7 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
             ))}
           </div>
         </Field>
-        <Field label="Status">
+        <Field label="Trạng thái">
           <div className="flex gap-2 flex-wrap">
             {(Object.entries(TASK_STATUS) as [TaskItem["status"], typeof TASK_STATUS[keyof typeof TASK_STATUS]][]).map(([k, cfg]) => (
               <motion.button key={k} whileTap={{ scale:0.95 }} onClick={() => setStatus(k)}
@@ -6652,7 +6674,7 @@ export default function ProjectDetailPage() {
             <div className="mb-6 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1 rounded-lg" style={{ backgroundColor:sc.bg, color:sc.color }}>
-                  <sc.icon className="w-3 h-3" />{project.status}
+                  <sc.icon className="w-3 h-3" />{formatProjectStatusLabel(project.status)}
                 </span>
                 <span className="text-[11px] font-semibold px-3 py-1 rounded-lg" style={{ backgroundColor:pc.bg, color:pc.color }}>{project.priority}</span>
                 {project.tags.slice(0, 3).map(t => (
@@ -6758,6 +6780,7 @@ export default function ProjectDetailPage() {
                   milestones={milestones}
                   milestoneGroups={milestoneGroups}
                   teamMembers={teamMembers}
+                  currentUserId={user?.id}
                   onOpenTasks={() => handleTabChange("Tasks")}
                   onOpenTeam={() => handleTabChange("Team")}
                   onOpenTask={(task) => taskDetailRouter.push(`/tasks/${encodeURIComponent(task.id)}`)}
@@ -6877,12 +6900,12 @@ export default function ProjectDetailPage() {
                   {/* Right col */}
                   <div className="space-y-6">
                     <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
-                      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-4.5">Task Status</h3>
+                      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-4.5">Trạng thái công việc</h3>
                       <div className="space-y-4">
                         {[
-                          { label:"Done",        count:allTasks.filter(t=>t.status==="done").length,        color:C.success },
-                          { label:"In Progress", count:allTasks.filter(t=>t.status==="in-progress").length, color:C.purple  },
-                          { label:"To Do",       count:allTasks.filter(t=>t.status==="todo").length,        color:C.slate   },
+                          { label:TASK_STATUS.done.label, count:allTasks.filter(t=>t.status==="done").length, color:C.success },
+                          { label:TASK_STATUS["in-progress"].label, count:allTasks.filter(t=>t.status==="in-progress").length, color:C.purple  },
+                          { label:TASK_STATUS.todo.label, count:allTasks.filter(t=>t.status==="todo").length, color:C.slate   },
                         ].map(s => (
                           <div key={s.label} className="flex items-center gap-3">
                             <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor:s.color }} />
@@ -6910,7 +6933,7 @@ export default function ProjectDetailPage() {
                                 <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-[1.5px] border-card" style={{ backgroundColor:m.status==="active"?C.success:C.warning }} />
                               </div>
                               <div className="flex-1 min-w-0">
-                                <p className="text-xs font-semibold text-foreground truncate">{m.name}</p>
+                                <p className={`text-xs truncate ${m.id === user?.id ? "font-bold text-primary" : "font-semibold text-foreground"}`}>{m.name}</p>
                                 <p className="text-[10px] text-muted-foreground">{m.role}</p>
                               </div>
                               <span className="text-[10px] font-mono text-muted-foreground">{m.done}/{m.tasks}</span>
@@ -6947,9 +6970,9 @@ export default function ProjectDetailPage() {
                   { key: "low", label: "Thấp", color: C.success }
                 ] as const;
                 const statusBuckets = [
-                  { key: "done", label: "Done", color: C.success },
-                  { key: "in-progress", label: "In Progress", color: C.blue },
-                  { key: "todo", label: "To Do", color: C.slate }
+                  { key: "done", label: TASK_STATUS.done.label, color: C.success },
+                  { key: "in-progress", label: TASK_STATUS["in-progress"].label, color: C.blue },
+                  { key: "todo", label: TASK_STATUS.todo.label, color: C.slate }
                 ] as const;
                 const priorityRows = priorityBuckets.map((bucket) => {
                   const tasks = filteredTasks.filter((task) => task.priority === bucket.key);
@@ -7490,7 +7513,7 @@ export default function ProjectDetailPage() {
                             {visiblePerformanceRows.map(row => (
                               <div key={projectMemberIdentity(row.member)} className="space-y-1">
                                 <div className="flex justify-between gap-3 text-[11px] font-medium">
-                                  <span className="truncate text-foreground">{row.member.name}</span>
+                                  <span className={`truncate ${row.member.id === user?.id ? "font-bold text-primary" : "text-foreground"}`}>{row.member.name}</span>
                                   <span className="shrink-0 text-muted-foreground font-mono">{row.completed}/{row.total} ({row.pct}%)</span>
                                 </div>
                                 <div className="h-3 bg-muted rounded-md overflow-hidden relative border border-border/50">
@@ -7548,7 +7571,7 @@ export default function ProjectDetailPage() {
                                   <div className="flex min-w-0 items-center gap-2">
                                     <TeamMemberAvatar member={row.member} size="sm" />
                                     <div className="min-w-0">
-                                      <p className="truncate text-xs font-semibold text-foreground">{row.member.name}</p>
+                                      <p className={`truncate text-xs ${row.member.id === user?.id ? "font-bold text-primary" : "font-semibold text-foreground"}`}>{row.member.name}</p>
                                       <p className="text-[10px] font-mono text-muted-foreground">
                                         {formatHours(row.actualHours)}h actual / {formatHours(row.plannedHours)}h plan
                                       </p>
@@ -7975,9 +7998,9 @@ export default function ProjectDetailPage() {
 
                                   const stageStatus = stage.status || "in-progress";
                                   const stageStatusCfg = {
-                                    "upcoming": { label: "Upcoming", color: "#facc15", bg: "#fef9c31b" },
-                                    "in-progress": { label: "In Progress", color: "#3b82f6", bg: "#dbeafe1b" },
-                                    "done": { label: "Completed", color: "#22c55e", bg: "#dcfce71b" }
+                                    "upcoming": { label: "Sắp tới", color: "#facc15", bg: "#fef9c31b" },
+                                    "in-progress": { label: "Đang thực hiện", color: "#3b82f6", bg: "#dbeafe1b" },
+                                    "done": { label: "Hoàn tất", color: "#22c55e", bg: "#dcfce71b" }
                                   }[stageStatus];
 
                                   let barBg = `${project.color}15`;
@@ -8042,7 +8065,7 @@ export default function ProjectDetailPage() {
 
                                         <span className="text-[8px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider shrink-0 transition-all"
                                           style={{ color: stageStatusCfg.color, backgroundColor: stageStatusCfg.bg, border: `1px solid ${stageStatusCfg.color}25` }}>
-                                          {stageStatus === "done" ? "Done" : stageStatus === "in-progress" ? "In Progress" : "Upcoming"}
+                                          {stageStatusCfg.label}
                                         </span>
                                       </div>
 
@@ -8119,7 +8142,7 @@ export default function ProjectDetailPage() {
                                   <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-card" style={{ backgroundColor:m.status==="active"?C.success:C.warning }} />
                                 </div>
                                 <div>
-                                  <p className="text-sm font-bold text-foreground">{m.name}</p>
+                                  <p className={`text-sm ${m.id === user?.id ? "font-bold text-primary" : "font-bold text-foreground"}`}>{m.name}</p>
                                   <p className="text-xs text-muted-foreground">{m.role}</p>
                                 </div>
                               </div>
@@ -8134,7 +8157,7 @@ export default function ProjectDetailPage() {
                               </button>
                             </div>
                             <div className="grid grid-cols-3 gap-2 mb-3">
-                              {[{label:"Assigned",value:m.tasks},{label:"Done",value:m.done},{label:"Done %",value:`${pct}%`}].map(s => (
+                              {[{label:"Đã giao",value:m.tasks},{label:"Hoàn tất",value:m.done},{label:"Tỷ lệ hoàn tất",value:`${pct}%`}].map(s => (
                                 <div key={s.label} className="text-center bg-muted/40 rounded-lg py-2">
                                   <p className="text-sm font-bold text-foreground">{s.value}</p>
                                   <p className="text-[9px] uppercase tracking-wide text-muted-foreground">{s.label}</p>
@@ -8298,7 +8321,7 @@ export default function ProjectDetailPage() {
                               .map(member => (
                                 <div key={member.id} className="flex items-center gap-2 rounded-lg border border-border bg-muted/20 px-3 py-2">
                                   <TeamMemberAvatar member={member} size="sm" />
-                                  <span className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground">{member.name}</span>
+                                  <span className={`min-w-0 flex-1 truncate text-xs ${member.id === user?.id ? "font-bold text-primary" : "font-semibold text-foreground"}`}>{member.name}</span>
                                 </div>
                               ))}
                             {activityUserKeys.size === 0 && (
@@ -8468,7 +8491,7 @@ export default function ProjectDetailPage() {
                                           color={picUser?.color ?? "#64748b"}
                                           size="sm"
                                         />
-                                        <span className="text-xs text-foreground font-medium hidden sm:inline">
+                                        <span className={`text-xs hidden sm:inline ${picUser?.id === user?.id ? "font-bold text-primary" : "font-medium text-foreground"}`}>
                                           {picUser?.name ?? latestVer.author}
                                         </span>
                                       </div>

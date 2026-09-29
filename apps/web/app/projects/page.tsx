@@ -28,6 +28,7 @@ import {
   isUnauthorizedLiveProjectsError,
   mapProjectSummaryToUiProject,
   PROJECT_PAGE_SIZE,
+  formatProjectStatusLabel,
   toBackendProjectStatus,
   type LiveProjectAccountOption
 } from "./live-projects";
@@ -271,7 +272,7 @@ function ProjectCard({
           <ProjectMemberAvatarStack members={project.members} />
           <div className="flex items-center gap-2">
             <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md" style={{ backgroundColor:sc.bg, color:sc.color }}>
-              <sc.icon className="w-3 h-3" />{project.status}
+              <sc.icon className="w-3 h-3" />{formatProjectStatusLabel(project.status)}
             </span>
             <button
               onClick={(e) => {
@@ -323,12 +324,12 @@ function ProjectCard({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const STATUS_OPTIONS = [
-  { value: "Active", label: "Active", color: "#16a34a" },
-  { value: "In Review", label: "In Review", color: "#2563eb" },
-  { value: "Planning", label: "Planning", color: "#0891b2" },
-  { value: "On Hold", label: "On Hold", color: "#64748b" },
-  { value: "At Risk", label: "At Risk", color: "#dc2626" },
-  { value: "Completed", label: "Completed", color: "#16a34a" },
+  { value: "Active", label: "Đang triển khai", color: "#16a34a" },
+  { value: "In Review", label: "Đang rà soát", color: "#2563eb" },
+  { value: "Planning", label: "Lập kế hoạch", color: "#0891b2" },
+  { value: "On Hold", label: "Tạm dừng", color: "#64748b" },
+  { value: "At Risk", label: "Có rủi ro", color: "#dc2626" },
+  { value: "Completed", label: "Hoàn thành", color: "#16a34a" },
 ];
 
 const PRIORITY_OPTIONS = [
@@ -1171,7 +1172,7 @@ export default function ProjectsPage() {
   };
 
   const filterStatusOptions = useMemo(() => [
-    { value: "all", label: "All Status" },
+    { value: "all", label: "Tất cả trạng thái" },
     ...STATUS_OPTIONS
   ], []);
 
@@ -1645,7 +1646,7 @@ export default function ProjectsPage() {
                               <Link href={`/projects/${p.id}`} className="text-xs font-bold text-foreground hover:text-primary truncate block transition-colors">{p.name}</Link>
                               <span className="text-[10px] text-muted-foreground block truncate">{p.client} · {p.category}</span>
                             </div>
-                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-lg shrink-0" style={{ backgroundColor: sc.bg, color: sc.color }}>{p.status}</span>
+                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-lg shrink-0" style={{ backgroundColor: sc.bg, color: sc.color }}>{formatProjectStatusLabel(p.status)}</span>
                           </div>
 
                           {/* Right Column: Month grid with the Gantt pill */}
@@ -1782,7 +1783,7 @@ export default function ProjectsPage() {
 
                     {/* Status */}
                     <div className="space-y-1.5">
-                      <span className="text-xs font-semibold text-muted-foreground">Status</span>
+                      <span className="text-xs font-semibold text-muted-foreground">Trạng thái</span>
                       <CustomDropdown
                         ariaLabel="Status"
                         options={STATUS_OPTIONS}

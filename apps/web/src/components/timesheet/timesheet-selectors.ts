@@ -864,6 +864,7 @@ export interface ProjectBreakdownNode {
   name: string;
   level: "milestone" | "stage" | "task";
   status: string;
+  ownerId: string | null;
   ownerName: string | null;
   estimateMinutes: number;
   actualMinutes: number;
@@ -895,6 +896,7 @@ export function buildProjectBreakdown(
           name: task.name,
           level: "task",
           status: task.status,
+          ownerId: task.assigneeId,
           ownerName: task.assigneeId ? nameById.get(task.assigneeId) ?? null : null,
           estimateMinutes: task.estimateMinutes,
           actualMinutes: actual,
@@ -910,6 +912,7 @@ export function buildProjectBreakdown(
         name: stage.name,
         level: "stage",
         status: stage.status,
+        ownerId: stage.ownerId,
         ownerName: stage.ownerId ? nameById.get(stage.ownerId) ?? null : null,
         estimateMinutes: estimate,
         actualMinutes: actual,
@@ -927,6 +930,7 @@ export function buildProjectBreakdown(
       name: milestone.name,
       level: "milestone",
       status: milestone.status,
+      ownerId: milestone.picId,
       ownerName: milestone.picId ? nameById.get(milestone.picId) ?? null : null,
       estimateMinutes: estimate,
       actualMinutes: actual,

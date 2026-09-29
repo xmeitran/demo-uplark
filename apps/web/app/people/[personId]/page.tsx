@@ -7,6 +7,7 @@ import { ArrowLeft, CalendarDays, Check, CircleDollarSign, Clock3, History, Save
 import type { AdminAccessMemberSummary } from "@b2b-crm/contracts";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { useAuth } from "@/lib/auth";
+import { formatDepartmentLabel } from "@/lib/department-labels";
 import { PEOPLE_PROFILES, type PeopleProfile, formatHours, formatVnd, statusClass } from "@/features/people/people-data";
 
 type LiveTimeEntry = { userId?: string; minutes?: number };
@@ -36,7 +37,7 @@ function mapLiveProfile(member: AdminAccessMemberSummary, minutesByUser: Map<str
     initials: initialsForName(name),
     color: colorForId(member.id),
     role: roleLabel(member),
-    department: member.departmentCode || "Chưa phân loại",
+    department: formatDepartmentLabel(member.departmentCode),
     level: "L3",
     employmentType: "Full-time",
     manager: "—",

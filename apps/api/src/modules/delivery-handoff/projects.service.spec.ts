@@ -1801,7 +1801,9 @@ describe("ProjectsService.createTimeEntry", () => {
           note: "Finished workflow setup",
           createdAt: new Date(workDate)
         }),
-        aggregate: vi.fn().mockResolvedValue({ _sum: { minutes: 480 } })
+        aggregate: vi.fn()
+          .mockResolvedValueOnce({ _sum: { minutes: 360 } })
+          .mockResolvedValueOnce({ _sum: { minutes: 480 } })
       },
       projectActivity: {
         create: vi.fn().mockResolvedValue({ id: "act-1" })
@@ -1872,9 +1874,11 @@ describe("ProjectsService.createTimeEntry", () => {
         subject: "Logged work: Configure approval workflow"
       })
     });
-    expect(prisma.$queryRaw).toHaveBeenCalledTimes(3);
-    expect(prisma.$queryRaw.mock.calls[1][1]).toBe("[\"twk-1\",\"usr-1\",\"2026-07-01\"]");
-    expect(prisma.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(4);
+    const dailyLogLockCall = prisma.$queryRaw.mock.calls.find((call: unknown[]) => call[1] === "[\"twk-1\",\"usr-1\",\"2026-07-01\"]");
+    expect(dailyLogLockCall).toBeDefined();
+    const dailyLogLockCallIndex = prisma.$queryRaw.mock.calls.indexOf(dailyLogLockCall);
+    expect(prisma.$queryRaw.mock.invocationCallOrder[dailyLogLockCallIndex]).toBeLessThan(
       prisma.taskTimeEntry.create.mock.invocationCallOrder[0]
     );
     expect(prisma.taskTimeEntry.aggregate).toHaveBeenCalledWith({
@@ -1902,7 +1906,7 @@ describe("ProjectsService.createTimeEntry", () => {
     });
   });
 
-  it("returns over-target metadata and uses workDate for a legacy entry without a start window", async () => {
+  it("rejects a legacy entry that would exceed the daily target", async () => {
     const workDate = "2026-07-01T17:00:00.000Z";
     const createdAt = new Date("2026-07-01T17:01:00.000Z");
     const prisma: Record<string, any> = {
@@ -1952,21 +1956,16 @@ describe("ProjectsService.createTimeEntry", () => {
       minutes: 45,
       approvalStatus: "submitted",
       note: "Legacy entry"
-    }, principal, "usr-1")).resolves.toMatchObject({
-      id: "time-legacy",
-      dailyActualLog: {
-        localDate: "2026-07-02",
-        totalMinutes: 525,
-        targetMinutes: 480,
-        state: "over_target"
-      }
-    });
+    }, principal, "usr-1")).rejects.toThrow(
+      "Daily log cannot exceed 8 office hours; create an approved overtime plan for the remainder"
+    );
+    expect(prisma.taskTimeEntry.create).not.toHaveBeenCalled();
 
     expect(prisma.taskTimeEntry.aggregate).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         workspaceId: "twk-1",
         userId: "usr-1",
-        approvalStatus: { in: ["submitted", "approved", "done"] },
+        approvalStatus: { not: "rejected" },
         OR: [
           {
             startAt: {
@@ -2134,7 +2133,8 @@ describe("ProjectsService.listTaskTimeEntries", () => {
       include: {
         task: { include: { account: true, project: true } },
         user: true,
-        reviewedBy: true
+        reviewedBy: true,
+        dayOff: true
       },
       where: expect.objectContaining({
         workspaceId: "twk-1",

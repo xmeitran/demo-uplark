@@ -483,25 +483,29 @@ export function formatProjectStatusLabel(status?: string) {
   if (!status) return "";
   const normalized = status.trim().toLowerCase();
   const labels: Record<string, string> = {
-    active: "Active",
-    in_progress: "In progress",
-    started: "In progress",
-    onboarding: "Onboarding",
-    discovery: "Discovery",
-    in_review: "In review",
-    review: "In review",
-    planning: "Planning",
-    not_started: "Not started",
-    todo: "To do",
-    on_hold: "On hold",
-    paused: "Paused",
-    pause: "Paused",
-    completed: "Completed",
-    done: "Done",
-    closed: "Closed",
-    at_risk: "At risk",
-    blocked: "Blocked",
-    cancelled: "Cancelled"
+    active: "Đang triển khai",
+    in_progress: "Đang triển khai",
+    "in progress": "Đang triển khai",
+    started: "Đang triển khai",
+    onboarding: "Đang khởi động",
+    discovery: "Khảo sát",
+    in_review: "Đang rà soát",
+    "in review": "Đang rà soát",
+    review: "Đang rà soát",
+    planning: "Lập kế hoạch",
+    not_started: "Chưa bắt đầu",
+    todo: "Chưa bắt đầu",
+    on_hold: "Tạm dừng",
+    "on hold": "Tạm dừng",
+    paused: "Tạm dừng",
+    pause: "Tạm dừng",
+    completed: "Hoàn thành",
+    done: "Hoàn thành",
+    closed: "Đã đóng",
+    at_risk: "Có rủi ro",
+    "at risk": "Có rủi ro",
+    blocked: "Bị chặn",
+    cancelled: "Đã hủy"
   };
   if (labels[normalized]) return labels[normalized];
   return normalized

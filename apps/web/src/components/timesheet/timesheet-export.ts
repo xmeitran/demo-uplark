@@ -6,6 +6,7 @@ import {
   type TimesheetFilters
 } from "./timesheet-selectors";
 import { formatMonth } from "./timesheet-format";
+import { formatDepartmentLabel } from "@/lib/department-labels";
 import {
   NODE_STATUS_LABELS,
   PROJECT_STATUS_LABELS,
@@ -140,7 +141,7 @@ export function buildTimesheetWorkbook(XLSX: XlsxModule, context: TimesheetExpor
         log.date,
         log.personId,
         person?.name ?? log.personId,
-        person?.departmentId ?? "Chưa phân loại",
+        person?.departmentId ? formatDepartmentLabel(person.departmentId) : "Chưa phân loại",
         person?.role ?? "—",
         log.projectId,
         project?.code ?? log.projectId,
@@ -171,7 +172,7 @@ export function buildTimesheetWorkbook(XLSX: XlsxModule, context: TimesheetExpor
     `Kỳ báo cáo: ${formatMonth(filters.month)}`,
     `Phạm vi: ${scopeLabel}`,
     `Chế độ xem: ${view}`,
-    `Phòng ban: ${filters.departmentId === "all" ? "Tất cả" : filters.departmentId}`,
+    `Phòng ban: ${filters.departmentId === "all" ? "Tất cả" : formatDepartmentLabel(filters.departmentId)}`,
     `Nhân sự: ${filters.personId === "all" ? "Tất cả" : filters.personId}`,
     `Dự án: ${filters.projectId === "all" ? "Tất cả" : filters.projectId}`,
     `Nhóm công việc: ${filters.workGroup === "all" ? "Tất cả" : WORK_GROUP_LABELS[filters.workGroup]}`
@@ -208,7 +209,7 @@ export function buildTimesheetWorkbook(XLSX: XlsxModule, context: TimesheetExpor
     ...summaries.map((item) => [
       item.person.name,
       item.person.id,
-      item.person.departmentId,
+      formatDepartmentLabel(item.person.departmentId),
       hours(item.actualMinutes),
       hours(item.standardMinutes),
       percent(item.completionPercent),

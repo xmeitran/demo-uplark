@@ -11,6 +11,7 @@ import type {
 import { ShopifyAppShell, ShopifyBanner, ShopifyDataTable, ShopifyIcon, ShopifyPage, ShopifySection } from "../shopify-ui";
 import { ShopifyModal } from "../shopify-modal";
 import { ConfirmActionDialog } from "./confirm-action-dialog";
+import { formatDepartmentLabel } from "@/lib/department-labels";
 
 type AllocationStatus = ResourceAllocationStatus | "blocked" | "completed";
 
@@ -864,14 +865,7 @@ function formatResourceSkill(skill: string) {
 }
 
 function formatDepartment(departmentCode: string) {
-  const labels: Record<string, string> = {
-    delivery: "Delivery",
-    dx: "DX",
-    finance: "Finance",
-    founder: "Founder/GM",
-    sales: "Sales"
-  };
-  return labels[departmentCode] ?? departmentCode;
+  return formatDepartmentLabel(departmentCode);
 }
 
 function buildWeekWindows(): WeekWindow[] {

@@ -257,7 +257,7 @@ describe("live project query params", () => {
 
     const result = await fetchLiveProjects({ limit: 10, offset: 0 });
 
-    expect(result.projects[0]?.tags).toEqual(["PRJ-RAW", "In progress"]);
+    expect(result.projects[0]?.tags).toEqual(["PRJ-RAW", "Đang triển khai"]);
     expect(result.projects[0]?.tags).not.toContain("in_progress");
   });
 
