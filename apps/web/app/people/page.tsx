@@ -46,6 +46,7 @@ function mapLiveProfile(member: AdminAccessMemberSummary, minutesByUser: Map<str
     id: member.id,
     name,
     initials: initialsForName(name),
+    avatarUrl: member.avatarUrl,
     color: colorForId(member.id),
     role,
     department: formatDepartmentLabel(member.departmentCode),
@@ -65,14 +66,15 @@ function mapLiveProfile(member: AdminAccessMemberSummary, minutesByUser: Map<str
   };
 }
 
-function Avatar({ initials, color, small = false }: { initials: string; color: string; small?: boolean }) {
+function Avatar({ initials, avatarUrl, color, small = false }: { initials: string; avatarUrl?: string; color: string; small?: boolean }) {
+  const [imageFailed, setImageFailed] = useState(false);
   return (
     <span
       className={`inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-white ${small ? "h-8 w-8 text-[10px]" : "h-11 w-11 text-sm"}`}
       style={{ backgroundColor: color }}
       aria-hidden="true"
     >
-      {initials}
+      {avatarUrl && !imageFailed ? <img src={avatarUrl} alt="" onError={() => setImageFailed(true)} className="h-full w-full rounded-full object-cover" referrerPolicy="no-referrer" /> : initials}
     </span>
   );
 }
@@ -241,7 +243,7 @@ export default function PeoplePage() {
                   <tbody className="divide-y divide-border">
                     {filtered.map((person) => (
                       <tr key={person.id} onClick={() => setSelectedId(person.id)} className={`cursor-pointer transition-colors hover:bg-blue-50/50 ${selected?.id === person.id ? "bg-blue-50/70" : "bg-card"}`}>
-                        <td className="px-5 py-3.5"><div className="flex items-center gap-3"><Avatar initials={person.initials} color={person.color} small /><div><Link onClick={(event) => event.stopPropagation()} href={`/people/${person.id}`} className="font-semibold text-slate-900 hover:text-blue-600">{person.name}</Link><p className="mt-0.5 text-xs text-muted-foreground">{person.userId}</p></div></div></td>
+                        <td className="px-5 py-3.5"><div className="flex items-center gap-3"><Avatar initials={person.initials} avatarUrl={person.avatarUrl} color={person.color} small /><div><Link onClick={(event) => event.stopPropagation()} href={`/people/${person.id}`} className="font-semibold text-slate-900 hover:text-blue-600">{person.name}</Link><p className="mt-0.5 text-xs text-muted-foreground">{person.userId}</p></div></div></td>
                         <td className="px-3 py-3.5"><p className="font-medium text-slate-800">{person.role}</p><p className="mt-0.5 text-xs text-muted-foreground">{person.department}</p></td>
                         <td className="px-3 py-3.5"><span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">{person.level}</span></td>
                         <td className="px-3 py-3.5"><span className={`rounded-full px-2 py-1 text-xs font-medium ${statusClass(person.status)}`}>{person.status}</span></td>
@@ -257,7 +259,7 @@ export default function PeoplePage() {
 
             {selected && <aside className="h-fit rounded-xl border border-border bg-card p-5 shadow-sm xl:sticky xl:top-4">
               <p className="text-[11px] font-semibold tracking-[0.14em] text-blue-600">HỒ SƠ ĐANG CHỌN</p>
-              <div className="mt-4 flex items-center gap-3"><Avatar initials={selected.initials} color={selected.color} /><div><h2 className="font-semibold text-slate-900">{selected.name}</h2><p className="mt-0.5 text-sm text-muted-foreground">{selected.role} · {selected.department}</p></div></div>
+              <div className="mt-4 flex items-center gap-3"><Avatar initials={selected.initials} avatarUrl={selected.avatarUrl} color={selected.color} /><div><h2 className="font-semibold text-slate-900">{selected.name}</h2><p className="mt-0.5 text-sm text-muted-foreground">{selected.role} · {selected.department}</p></div></div>
               <div className="mt-4 flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-xs font-medium ${statusClass(selected.status)}`}>{selected.status}</span><span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">{selected.userId}</span><span className="rounded-md bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">{selected.level}</span></div>
               {canViewFinancials && <div className="mt-5 rounded-xl border border-amber-100 bg-amber-50/70 p-4"><p className="text-xs font-medium text-amber-700">Cost Rate hiện tại</p><p className="mt-1 text-xl font-semibold tracking-tight text-slate-900">{selected.hourlyCostRate > 0 ? `${formatVnd(selected.hourlyCostRate)} / giờ` : "Chưa cấu hình"}</p><p className="mt-2 text-xs text-slate-600">{selected.hourlyCostRate > 0 ? `Hiệu lực từ ${selected.effectiveFrom}` : "Không hiển thị chi phí giả định khi chưa có cấu hình"} · {selected.rateCategory}</p></div>}
               <div className="mt-4 grid grid-cols-3 gap-2 text-center"><div className="rounded-lg bg-slate-50 p-2"><p className="text-xs text-muted-foreground">Plan</p><p className="mt-1 text-sm font-semibold">{formatHours(selected.planHours)}</p></div><div className="rounded-lg bg-slate-50 p-2"><p className="text-xs text-muted-foreground">Actual</p><p className="mt-1 text-sm font-semibold">{formatHours(selected.actualHours)}</p></div><div className="rounded-lg bg-slate-50 p-2"><p className="text-xs text-muted-foreground">P&amp;L</p><p className="mt-1 text-sm font-semibold">{formatHours(selected.pnlHours)}</p></div></div>

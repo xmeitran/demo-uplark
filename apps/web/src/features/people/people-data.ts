@@ -10,6 +10,7 @@ export type PeopleProfile = {
   id: string;
   name: string;
   initials: string;
+  avatarUrl?: string;
   color: string;
   role: string;
   department: string;

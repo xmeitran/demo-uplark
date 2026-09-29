@@ -35,6 +35,7 @@ function mapLiveProfile(member: AdminAccessMemberSummary, minutesByUser: Map<str
     id: member.id,
     name,
     initials: initialsForName(name),
+    avatarUrl: member.avatarUrl,
     color: colorForId(member.id),
     role: roleLabel(member),
     department: formatDepartmentLabel(member.departmentCode),
@@ -55,7 +56,8 @@ function mapLiveProfile(member: AdminAccessMemberSummary, minutesByUser: Map<str
 }
 
 function Avatar({ person }: { person: PeopleProfile }) {
-  return <span style={{ backgroundColor: person.color }} className="inline-flex h-16 w-16 items-center justify-center rounded-2xl text-lg font-bold text-white">{person.initials}</span>;
+  const [imageFailed, setImageFailed] = useState(false);
+  return <span style={{ backgroundColor: person.color }} className="inline-flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl text-lg font-bold text-white" aria-hidden="true">{person.avatarUrl && !imageFailed ? <img src={person.avatarUrl} alt="" onError={() => setImageFailed(true)} className="h-full w-full object-cover" referrerPolicy="no-referrer" /> : person.initials}</span>;
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
