@@ -270,6 +270,12 @@ export function AnalyticsWorkbench() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <header className="rounded-2xl border border-border bg-gradient-to-br from-card via-card to-primary/5 p-5 shadow-sm sm:p-6" data-testid="analytics-page-header">
+        <p className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">ANALYTICS · WORKSPACE INSIGHTS</p>
+        <h1 className="mt-1 text-2xl font-black tracking-tight text-foreground sm:text-3xl">Phân tích vận hành</h1>
+        <p className="mt-1 max-w-3xl text-sm text-muted-foreground">Theo dõi giờ làm, mức độ sử dụng nguồn lực và hiệu suất dự án trong cùng một màn hình.</p>
+      </header>
+
       {/* View tabs */}
       <div className="space-y-2">
         <WorkspaceTabBar

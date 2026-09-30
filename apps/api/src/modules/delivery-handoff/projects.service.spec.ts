@@ -2050,6 +2050,72 @@ describe("ProjectsService.updateTask", () => {
   });
 });
 
+describe("ProjectsService.transitionTask", () => {
+  it("records completedAt when the UI uses the canonical completed status", async () => {
+    const changedAt = new Date("2026-09-29T03:00:00.000Z");
+    const existingTask = {
+      id: "task-1",
+      workspaceId: "twk-1",
+      accountId: "acc-1",
+      account: { name: "AMOBEAR" },
+      projectId: "prj-1",
+      project: { name: "AMOBEAR - HRM" },
+      title: "Close UAT task",
+      description: null,
+      taskType: "implementation",
+      status: "in_progress",
+      priority: "medium",
+      ownerUserId: null,
+      owner: null,
+      assigneeUserId: null,
+      assignee: null,
+      taskAssignees: [],
+      ownerTeamId: null,
+      ownerTeam: null,
+      stageId: null,
+      stage: null,
+      opportunityId: null,
+      ticketId: null,
+      parentTaskId: null,
+      sortOrder: 10,
+      plannedStartAt: null,
+      dueAt: null,
+      startedAt: changedAt,
+      completedAt: null,
+      cancelledAt: null,
+      estimateMinutes: 60,
+      customerVisible: false,
+      archivedAt: null,
+      archivedByUserId: null,
+      archiveReason: null,
+      createdAt: changedAt,
+      updatedAt: changedAt,
+      statusHistory: [],
+      timeEntries: []
+    };
+    const prisma: Record<string, any> = {
+      projectTask: {
+        findFirst: vi.fn().mockResolvedValue(existingTask),
+        update: vi.fn().mockImplementation(async ({ data }: any) => ({ ...existingTask, ...data, status: data.status }))
+      },
+      taskStatusHistory: { create: vi.fn().mockResolvedValue({ id: "history-1" }) },
+      $transaction: vi.fn(async (callback: any) => callback(prisma))
+    };
+    const service = new ProjectsService(withMutationDependencies(prisma) as any);
+
+    await expect(service.transitionTask("task-1", {
+      status: "completed",
+      reason: "Đã hoàn tất",
+      changedAt: changedAt.toISOString()
+    }, principal, principal.subjectId)).resolves.toMatchObject({ status: "completed", completedAt: changedAt.toISOString() });
+
+    expect(prisma.projectTask.update.mock.calls[0]?.[0]).toMatchObject({
+      where: { id: "task-1" },
+      data: expect.objectContaining({ status: "completed", completedAt: changedAt })
+    });
+  });
+});
+
 describe("ProjectsService.listTaskTimeEntries", () => {
   it("does not hide legacy submitted actual work when no approval filter is requested", async () => {
     const prisma = {

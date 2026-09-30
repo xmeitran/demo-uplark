@@ -6,7 +6,7 @@ import {
   Search, ChevronUp, ChevronDown, ChevronsUpDown,
   UserPlus, Download,
   ArrowRight, Shield, Code, Palette, BarChart2, Globe,
-  CheckCircle2, Clock, XCircle, Mail, Phone, ShieldCheck, ShieldOff, Loader2,
+  CheckCircle2, XCircle, Mail, Phone, ShieldCheck, ShieldOff, Loader2,
 } from "lucide-react";
 import Link from "next/link";
 import { AdminInvitations } from "@/components/auth/admin-access-controls";
@@ -19,7 +19,7 @@ import { useAuth } from "@/lib/auth";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type SortDir = "asc" | "desc" | null;
-type SortKey = "name" | "role" | "department" | "status" | "joined" | "projects";
+type SortKey = "name" | "role" | "department" | "status";
 
 interface User {
   id: string;
@@ -31,13 +31,13 @@ interface User {
   role: string;
   roleColor: string;
   department: string;
-  status: "active" | "away" | "offline";
-  joined: string;
-  projects: number;
+  status: "active" | "offline";
   tasks: number;
   avatarColor: string;
   initials: string;
   location: string;
+  costPermissionGroup: string;
+  costPermissionCodes: string[];
 }
 
 interface ApiUser {
@@ -51,6 +51,7 @@ interface ApiUser {
   projectIds: string[];
   status: "active" | "suspended";
   createdAt: string;
+  costPermissionCodes?: string[];
 }
 
 interface UsersResponse {
@@ -63,8 +64,7 @@ interface UsersResponse {
 // ─── Status helpers ───────────────────────────────────────────────────────────
 
 const STATUS_CONFIG = {
-  active:  { label: "Active",  color: "#16a34a", bg: "#dcfce7", icon: CheckCircle2 },
-  away:    { label: "Away",    color: "#d97706", bg: "#fef3c7", icon: Clock },
+  active:  { label: "Online",  color: "#16a34a", bg: "#dcfce7", icon: CheckCircle2 },
   offline: { label: "Offline", color: "#64748b", bg: "#f1f5f9", icon: XCircle },
 };
 
@@ -98,12 +98,6 @@ function initials(name: string) {
   return lastTwo.map((part) => part[0]?.toUpperCase()).join("") || "U";
 }
 
-function formatDate(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "TBD";
-  return new Intl.DateTimeFormat("en", { month: "short", day: "2-digit", year: "numeric" }).format(date);
-}
-
 function mapApiUser(user: ApiUser, index: number): User {
   const primaryRole = user.roleCodes[0] ?? "DELIVERY_LEAD";
   const displayName = user.displayName || user.email;
@@ -118,12 +112,12 @@ function mapApiUser(user: ApiUser, index: number): User {
     roleColor: ROLE_COLORS[primaryRole] ?? "#64748b",
     department: formatDepartmentLabel(user.departmentCode, "Chưa có phòng ban"),
     status: user.status === "active" ? "active" : "offline",
-    joined: formatDate(user.createdAt),
-    projects: user.projectIds.length,
     tasks: 0,
     avatarColor: AVATAR_COLORS[index % AVATAR_COLORS.length],
     initials: initials(displayName),
-    location: user.larkOpenId ? "Lark" : "Internal"
+    location: user.larkOpenId ? "Lark" : "Internal",
+    costPermissionCodes: user.roleCodes.includes("FOUNDER_GM") ? ["COST_VIEW", "COST_EDIT", "COST_APPROVE", "COST_EXPORT"] : (user.costPermissionCodes ?? []),
+    costPermissionGroup: user.roleCodes.includes("FOUNDER_GM") ? "Toàn quyền chi phí" : (user.costPermissionCodes?.length ? user.costPermissionCodes.map((code) => code.replace("COST_", "")).join(" / ") : "Chưa cấp")
   };
 }
 
@@ -151,6 +145,7 @@ export default function UsersPage() {
   const [roleFilter, setRoleFilter]     = useState<string>("all");
   const [roleSavingId, setRoleSavingId] = useState<string | null>(null);
   const [roleMessage, setRoleMessage] = useState<string | null>(null);
+  const [costSavingId, setCostSavingId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -212,6 +207,19 @@ export default function UsersPage() {
     }
   }
 
+  async function changeCostPermissions(target: User, preset: string) {
+    const permissionCodes = preset === "ALL" ? ["COST_VIEW", "COST_EDIT", "COST_APPROVE", "COST_EXPORT"] : preset === "NONE" ? [] : [preset];
+    setCostSavingId(target.id); setRoleMessage(null);
+    try {
+      const response = await fetch(`/api/admin/users/${encodeURIComponent(target.id)}/cost-permissions`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ permissionCodes }) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message ?? "Không thể cập nhật nhóm quyền chi phí.");
+      setUsers((current) => current.map((item) => item.id === target.id ? { ...item, costPermissionCodes: payload.costPermissionCodes ?? permissionCodes, costPermissionGroup: permissionCodes.length ? permissionCodes.map((code) => code.replace("COST_", "")).join(" / ") : "Chưa cấp" } : item));
+      setRoleMessage(`Đã cập nhật nhóm quyền chi phí cho ${target.name}.`);
+    } catch (err) { setRoleMessage(err instanceof Error ? err.message : "Không thể cập nhật nhóm quyền chi phí."); }
+    finally { setCostSavingId(null); }
+  }
+
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
       setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -244,16 +252,23 @@ export default function UsersPage() {
   }, [query, sortKey, sortDir, statusFilter, roleFilter, users]);
 
   const uniqueRoles = useMemo(() => [...new Set(users.map(u => u.role))], [users]);
+  const workspaceAdminCount = useMemo(
+    () => users.filter((user) => user.roleCodes.some((role) => role === "FOUNDER_GM" || role === "WORKSPACE_ADMIN")).length,
+    [users]
+  );
+  const workspaceUserCount = useMemo(
+    () => users.filter((user) => user.roleCodes.includes("WORKSPACE_USER")).length,
+    [users]
+  );
 
   const statusOptions = useMemo(() => [
-    { value: "all", label: "All Status" },
-    { value: "active", label: "Active" },
-    { value: "away", label: "Away" },
+    { value: "all", label: "Tất cả trạng thái" },
+    { value: "active", label: "Online" },
     { value: "offline", label: "Offline" }
   ], []);
 
   const roleOptions = useMemo(() => [
-    { value: "all", label: "All Roles" },
+    { value: "all", label: "Tất cả quyền hệ thống" },
     ...uniqueRoles.map(r => ({ value: r, label: r }))
   ], [uniqueRoles]);
 
@@ -262,30 +277,30 @@ export default function UsersPage() {
     { key: "role",       label: "Role" },
     { key: "department", label: "Department" },
     { key: "status",     label: "Status" },
-    { key: "joined",     label: "Joined" },
-    { key: "projects",   label: "Projects" },
   ];
 
   return (
     <AppShell activeRoute="/users" title="Users">
-        <main className="flex-1 overflow-auto p-4 sm:p-6">
+        <main className="min-h-0 flex-1 overflow-y-auto bg-background p-4 sm:p-6">
+          <div className="mx-auto max-w-[1600px] space-y-5">
           {/* Page header */}
-          <div className="mb-6 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
+          <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <h1 className="text-xl font-bold text-foreground">Team Members</h1>
-              <p className="text-sm text-muted-foreground mt-0.5">{users.length} users · {users.filter(u => u.status === "active").length} online</p>
+              <p className="text-xs font-semibold tracking-[0.15em] text-primary">USERS · WORKSPACE ACCESS</p>
+              <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl">Team Members</h1>
+              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Quản lý thành viên workspace, vai trò hệ thống và quyền P&amp;L theo từng User ID.</p>
             </div>
-            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+            <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:justify-end">
               <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
-                onClick={() => downloadCsv("uplark-users-filtered.csv", ["Name", "Email", "Role", "Department", "Status", "Projects"], filtered.map((user) => [user.name, user.email, user.role, user.department, user.status, user.projects]))}
+                onClick={() => downloadCsv("uplark-users-filtered.csv", ["Name", "Email", "Role", "Department", "Status"], filtered.map((user) => [user.name, user.email, user.role, user.department, user.status]))}
                 aria-label={`Export ${filtered.length} filtered users as CSV`}
                 title="Export the currently loaded and filtered users"
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-border text-sm font-medium text-muted-foreground hover:bg-muted transition-colors">
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-border bg-card px-3.5 py-2 text-sm font-medium text-muted-foreground shadow-sm transition-colors hover:bg-muted">
                 <Download className="w-4 h-4" /> Export filtered CSV
               </motion.button>
 
             </div>
-          </div>
+          </header>
 
           <AdminInvitations />
 
@@ -293,26 +308,27 @@ export default function UsersPage() {
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-indigo-600" /><h2 className="text-sm font-semibold text-foreground">Workspace access theo Lark User ID</h2></div>
-                <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">Chọn đúng người được làm Workspace Admin ở cột quyền. Những người còn lại là Workspace User và không được xem Cost Rate, P&amp;L hoặc cảnh báo tài chính. Tài khoản đang đăng nhập được bảo vệ; hệ thống vẫn giữ ít nhất một Founder/GM.</p>
+                <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">Quyền hệ thống và nhóm quyền chi phí là hai lớp độc lập. Chỉ Founder/GM mới mặc định có toàn quyền chi phí; tài khoản khác chỉ thấy dữ liệu khi được cấp nhóm quyền.</p>
               </div>
               <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-[11px] font-semibold text-indigo-700 shadow-sm">{canManageRoles ? "Bạn có quyền quản trị" : "Chỉ Admin mới được chỉnh"}</span>
             </div>
             {roleMessage && <p role="status" className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">{roleMessage}</p>}
           </section>
           {/* Stats bar */}
-          <div className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+          <section aria-label="Workspace member metrics" className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-5">
             {[
-              { label: "Total",   value: users.length,                                      color: "#2563eb" },
-              { label: "Active",  value: users.filter(u => u.status === "active").length,   color: "#16a34a" },
-              { label: "Away",    value: users.filter(u => u.status === "away").length,     color: "#d97706" },
-              { label: "Offline", value: users.filter(u => u.status === "offline").length,  color: "#64748b" },
+              { label: "Total users",    value: users.length,                                      tone: "text-primary" },
+              { label: "Total admins",   value: workspaceAdminCount,                              tone: "text-indigo-600" },
+              { label: "Workspace users", value: workspaceUserCount,                              tone: "text-sky-600" },
+              { label: "Online",         value: users.filter(u => u.status === "active").length,  tone: "text-emerald-600" },
+              { label: "Offline",        value: users.filter(u => u.status === "offline").length, tone: "text-slate-500" },
             ].map(s => (
-              <motion.div key={s.label} whileHover={{ y: -2 }} className="bg-card border border-border rounded-xl p-4 shadow-sm">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">{s.label}</p>
-                <p className="text-2xl font-bold font-mono tabular-nums" style={{ color: s.color }}>{s.value}</p>
+              <motion.div key={s.label} whileHover={{ y: -2 }} className="rounded-xl border border-border bg-card p-4 shadow-sm">
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{s.label}</p>
+                <p className={`font-mono text-2xl font-bold tabular-nums ${s.tone}`}>{s.value}</p>
               </motion.div>
             ))}
-          </div>
+          </section>
 
           {/* Filters */}
           <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
@@ -352,7 +368,7 @@ export default function UsersPage() {
 
             {/* Table */}
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px]">
+              <table className="w-full min-w-[980px]">
                 <thead>
                   <tr className="bg-muted/30 border-b border-border">
                     {COLS.map(col => (
@@ -366,7 +382,8 @@ export default function UsersPage() {
                         </button>
                       </th>
                     ))}
-                    <th className="py-3 px-4 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Workspace access</th>
+                    <th className="py-3 px-4 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">System role</th>
+                    <th className="py-3 px-4 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Quyền P&amp;L</th>
                     <th className="py-3 px-4 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Actions</th>
                   </tr>
                 </thead>
@@ -428,22 +445,7 @@ export default function UsersPage() {
                             </span>
                           </td>
 
-                          {/* Joined */}
-                          <td className="py-3.5 px-4">
-                            <span className="text-sm text-muted-foreground font-mono">{user.joined}</span>
-                          </td>
-
-                          {/* Projects */}
-                          <td className="py-3.5 px-4">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-semibold font-mono tabular-nums text-foreground">{user.projects}</span>
-                              <div className="flex-1 max-w-[60px] h-1.5 bg-muted rounded-full overflow-hidden">
-                                <div className="h-full rounded-full bg-primary/60" style={{ width: `${(user.projects / 15) * 100}%` }} />
-                              </div>
-                            </div>
-                          </td>
-
-                          {/* Workspace access */}
+                          {/* System role */}
                           <td className="py-3.5 px-4" onClick={(event) => event.stopPropagation()}>
                             {user.id === currentUser?.id ? (
                               <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-700"><ShieldCheck className="h-3.5 w-3.5" /> {user.roleCodes.includes("FOUNDER_GM") ? "Founder/GM" : "Tài khoản hiện tại"}</span>
@@ -462,6 +464,21 @@ export default function UsersPage() {
                               <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600"><ShieldOff className="h-3.5 w-3.5" /> Workspace User</span>
                             )}
                             {roleSavingId === user.id && <Loader2 className="ml-2 inline h-3.5 w-3.5 animate-spin text-indigo-600" />}
+                          </td>
+
+                          {/* P&L permission */}
+                          <td className="py-3.5 px-4" onClick={(event) => event.stopPropagation()}>
+                            {canManageRoles && user.id !== currentUser?.id ? (
+                              <select id={`pnl-permission-${user.id}`} value={user.costPermissionCodes.length === 4 ? "ALL" : user.costPermissionCodes[0] ?? "NONE"} disabled={costSavingId === user.id} onChange={(event) => void changeCostPermissions(user, event.target.value)} aria-label={`Quyền P&L của ${user.name}`} className="max-w-[170px] rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-semibold text-muted-foreground">
+                                  <option value="NONE">Chưa cấp</option>
+                                  <option value="COST_VIEW">Xem</option>
+                                  <option value="COST_EDIT">Sửa</option>
+                                  <option value="COST_APPROVE">Duyệt</option>
+                                  <option value="COST_EXPORT">Xuất</option>
+                                  <option value="ALL">Toàn quyền</option>
+                              </select>
+                            ) : <span className="text-xs text-muted-foreground">{user.costPermissionGroup}</span>}
+                            {costSavingId === user.id && <Loader2 className="ml-2 inline h-3.5 w-3.5 animate-spin text-indigo-600" />}
                           </td>
 
                           {/* Actions */}
@@ -494,11 +511,12 @@ export default function UsersPage() {
             </div>
 
             {/* Table footer */}
-            <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-muted/20">
+          <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-muted/20">
               <p className="text-xs text-muted-foreground">
                 Showing <span className="font-semibold text-foreground">{filtered.length}</span> of <span className="font-semibold text-foreground">{users.length}</span> users
               </p>
             </div>
+          </div>
           </div>
         </main>
 

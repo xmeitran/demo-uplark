@@ -12,6 +12,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      "@": resolve(rootDir, "apps/web/src"),
       "@b2b-crm/contracts": resolve(rootDir, "packages/contracts/src/index.ts"),
       "@b2b-crm/ui-tokens": resolve(rootDir, "packages/ui-tokens/src/index.ts")
     }

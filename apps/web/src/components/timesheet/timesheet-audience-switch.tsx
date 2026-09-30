@@ -37,7 +37,10 @@ export function TimesheetAudienceSwitch({
   ];
 
   return (
-    <nav aria-label="Phạm vi xem Timesheet" className="inline-flex max-w-full flex-wrap items-center gap-1 rounded-xl border border-border bg-card p-1 shadow-sm">
+    <nav
+      aria-label="Phạm vi xem Timesheet"
+      className="grid w-full max-w-[320px] grid-cols-2 gap-1 rounded-xl border border-border bg-card p-1 shadow-sm"
+    >
       {items.map((item) => {
         const Icon = item.icon;
         const selected = active === item.id;
@@ -45,8 +48,9 @@ export function TimesheetAudienceSwitch({
           <Link
             key={item.id}
             href={item.href}
+            scroll={false}
             aria-current={selected ? "page" : undefined}
-            className={`inline-flex min-w-[132px] items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${selected ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"}`}
+            className={`flex min-w-0 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${selected ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"}`}
           >
             <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
             <span className="min-w-0">

@@ -34,4 +34,14 @@ export class SessionController {
   changeRole(@Headers("authorization") authorization: string | undefined, @Param("id") id: string, @Query("principal") principalFallback: string | undefined, @Body() body: { roleCode?: string }) {
     return this.auth.changeUserRole(authorization, id, nonEmptyString(body?.roleCode, "roleCode"), principalFallback);
   }
+
+  @Patch("admin/users/:id/cost-permissions")
+  costPermissions(@Headers("authorization") authorization: string | undefined, @Param("id") id: string, @Query("principal") principalFallback: string | undefined, @Body() body: { permissionCodes?: string[] }) {
+    return this.auth.updateCostPermissions(authorization, id, body?.permissionCodes as any, principalFallback);
+  }
+
+  @Patch("admin/users/:id/resource-profile")
+  resourceProfile(@Headers("authorization") authorization: string | undefined, @Param("id") id: string, @Query("principal") principalFallback: string | undefined, @Body() body: any) {
+    return this.auth.updateResourceProfile(authorization, id, body ?? {}, principalFallback);
+  }
 }

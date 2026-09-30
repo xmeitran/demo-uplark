@@ -5,6 +5,8 @@ import type { KeyboardEvent, ReactNode } from "react";
 export type WorkspaceTabItem<T extends string> = {
   id: T;
   label: string;
+  /** Optional screen-reader label when the visible label is intentionally localized. */
+  ariaLabel?: string;
   description?: string;
   badge?: ReactNode;
   icon?: ReactNode;
@@ -36,6 +38,10 @@ export function WorkspaceTabBar<T extends string>({
             key={item.id}
             type="button"
             role="tab"
+            // Keep the visible label as the accessible name by default. The
+            // optional override is only for localized labels with a stable
+            // automation/API-facing name.
+            aria-label={item.ariaLabel ?? item.label}
             id={`${idPrefix}-tab-${item.id.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
             aria-selected={active}
             tabIndex={active ? 0 : -1}

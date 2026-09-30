@@ -37,12 +37,18 @@ export const statusLabels: Record<string, string> = {
   in_progress: "Đang xử lý",
   completed: "Hoàn tất",
   blocked: "Đang bị chặn",
+  waiting: "Đang chờ",
   cancelled: "Đã hủy",
   done: "Hoàn tất",
   paused: "Tạm dừng",
   pending: "Đang chờ",
   skipped: "Bỏ qua"
 };
+
+/** Completed task statuses can come from old Base records or the canonical API status. */
+export function isCompletedTaskStatus(status?: string | null) {
+  return ["done", "completed", "closed"].includes(normalizeCodeKey(status));
+}
 
 export const taskTypeLabels: Record<string, string> = {
   implementation: "Triển khai",
@@ -238,7 +244,7 @@ export function getDeploymentStageForTask(task: Pick<ProjectTaskSummary, "taskTy
   return {
     index,
     stage,
-    isCompleted: task.status === "completed",
+    isCompleted: isCompletedTaskStatus(task.status),
     label: `${stage.activity} · ${stage.cumulativePercent}%`
   };
 }

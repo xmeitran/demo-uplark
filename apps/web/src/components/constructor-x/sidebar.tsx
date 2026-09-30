@@ -91,18 +91,17 @@ const visibleNavItems = NAV_ITEMS.filter((item) => isLocalNavigationVisibleRoute
 const visibleMoreItems = NAV_MORE.filter((item) => isLocalNavigationVisibleRoute(item.href));
 const visibleBottomItems = NAV_BOTTOM.filter((item) => item.isToggle || isLocalNavigationVisibleRoute(item.href));
 const PROJECT_SUB = [
-  { label: "Overview", tab: "Overview" },
+  // Keep the sidebar's historical Dashboard URL as a compatibility alias for
+  // the project detail Overview panel. This avoids breaking bookmarked links.
+  { label: "Overview", tab: "Dashboard" },
   { label: "Project Sheet", tab: "Project Sheet" },
-  { label: "Issues", tab: "Issues" },
-  { label: "Dashboard", tab: "Dashboard" },
   { label: "Tasks", tab: "Tasks" },
   { label: "Timeline", tab: "Timeline" },
-  { label: "Team", tab: "Team" },
   { label: "Activity", tab: "Activity" },
-  { label: "Documents", tab: "Documents" }
+  { label: "Điểm chốt & Tài liệu", tab: "Documents" }
 ] as const;
 
-type ProjectSubTab = typeof PROJECT_SUB[number]["tab"];
+type ProjectSubTab = typeof PROJECT_SUB[number]["tab"] | "Overview";
 
 function getProjectIdFromPath(pathname: string | null) {
   const match = pathname?.match(/^\/projects\/([^/?#]+)/);
@@ -110,7 +109,7 @@ function getProjectIdFromPath(pathname: string | null) {
 }
 
 function isProjectSubTab(value: string | null): value is ProjectSubTab {
-  return PROJECT_SUB.some((item) => item.tab === value);
+  return value === "Overview" || PROJECT_SUB.some((item) => item.tab === value);
 }
 
 function getSidebarProjectsCacheKey(ownerKey: string) {
@@ -188,7 +187,7 @@ export function Sidebar({ activeRoute = "/", onCreateProjectClick, variant = "de
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [activeProject, setActiveProject] = useState<string | null>(null);
   const [expandedProject, setExpandedProject] = useState<string | null>(null);
-  const [currentProjectTab, setCurrentProjectTab] = useState<ProjectSubTab>("Dashboard");
+  const [currentProjectTab, setCurrentProjectTab] = useState<ProjectSubTab>("Overview");
   const [moreOpen, setMoreOpen] = useState(false);
 
   const [pushedIds, setPushedIds] = useState<string[]>([]);
@@ -205,7 +204,7 @@ export function Sidebar({ activeRoute = "/", onCreateProjectClick, variant = "de
 
   useEffect(() => {
     const queryTab = searchParams.get("tab");
-    setCurrentProjectTab(isProjectSubTab(queryTab) ? queryTab : "Dashboard");
+    setCurrentProjectTab(isProjectSubTab(queryTab) ? queryTab : "Overview");
   }, [searchParams]);
 
   useLayoutEffect(() => {
@@ -240,7 +239,9 @@ export function Sidebar({ activeRoute = "/", onCreateProjectClick, variant = "de
     async function loadPinnedProjects() {
       if (pushedIds.length === 0) {
         setPinnedProjectsLoading(false);
-        setLocalProjects([]);
+        // The owner key can change immediately after auth hydration. The
+        // previous empty-id pass must not erase a cached project that the
+        // owner-specific hydration pass has just restored.
         return;
       }
 

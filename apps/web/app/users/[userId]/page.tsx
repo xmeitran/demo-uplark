@@ -301,7 +301,7 @@ export default function UserProfilePage() {
                 <section id="overview-profile-panel" className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_390px]">
                   <div className="space-y-5">
                     <section className="rounded-2xl border border-border bg-card shadow-sm">
-                      <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h2 className="text-base font-bold text-foreground">Identity</h2><p className="mt-0.5 text-xs text-muted-foreground">Thông tin định danh đã đồng bộ từ workspace.</p></div><span className="rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">Đã xác thực</span></div>
+                      <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h2 className="text-base font-bold text-foreground">Identity</h2><p className="mt-0.5 text-xs text-muted-foreground">Thông tin định danh đã đồng bộ từ workspace.</p></div><span className="rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">{user.larkOpenId ? "Lark SSO linked" : "Đã xác thực"}</span></div>
                       <dl className="divide-y divide-border px-5">
                         <InfoRow label="User ID nội bộ" value={user.id} mono />
                         <InfoRow label="Email" value={user.email} />
@@ -346,7 +346,7 @@ export default function UserProfilePage() {
                   <h2 className="text-sm font-bold text-foreground">Identity Activity</h2>
                   <div className="mt-4 space-y-4">
                     <TimelineItem icon={Clock3} title="Last active session" description={formatDateTime(user.lastSeenAt)} />
-                    <TimelineItem icon={KeyRound} title={user.larkOpenId ? "Lark identity linked" : "Lark identity not linked"} description={user.larkOpenId ?? "User can be linked when SSO profile is available."} />
+                    <TimelineItem icon={KeyRound} title={user.larkOpenId ? "Lark SSO linked" : "Lark SSO not linked"} description={user.larkOpenId ?? "User can be linked when SSO profile is available."} />
                     <TimelineItem icon={UserRound} title="Profile created" description={formatDateTime(user.createdAt)} />
                   </div>
                 </section>

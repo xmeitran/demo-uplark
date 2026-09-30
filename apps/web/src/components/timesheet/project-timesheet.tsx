@@ -1,11 +1,8 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import dynamic from "next/dynamic";
-import { ArrowRight, AlertTriangle, Check, ChevronDown, ChevronRight, FileSearch, X } from "lucide-react";
+import { ArrowRight, AlertTriangle, Check, ChevronDown, ChevronRight, ExternalLink, FileSearch, X } from "lucide-react";
 import {
-  buildControlChart,
-  buildCumulativeFlow,
   buildProjectBreakdown,
   buildProjectMemberRows,
   buildProjectReadiness,
@@ -40,7 +37,6 @@ import {
 import {
   Avatar,
   BarValue,
-  ChartCard,
   EmptyState,
   KpiCard,
   Pagination,
@@ -53,16 +49,9 @@ import {
 } from "./timesheet-ui";
 import { LogDrawer, type LogDrawerRequest } from "./timesheet-log-drawer";
 
-const chartFallback = () => <div className="h-full w-full animate-pulse rounded-lg bg-muted" aria-hidden />;
-const EstimateVsActualChart = dynamic(() => import("./timesheet-charts").then((m) => ({ default: m.EstimateVsActualChart })), { ssr: false, loading: chartFallback });
-const ConsumptionChart = dynamic(() => import("./timesheet-charts").then((m) => ({ default: m.ConsumptionChart })), { ssr: false, loading: chartFallback });
-const ReadinessChart = dynamic(() => import("./timesheet-charts").then((m) => ({ default: m.ReadinessChart })), { ssr: false, loading: chartFallback });
-
 const PROJECT_PAGE_SIZE = 8;
 const MILESTONE_PAGE_SIZE = 3;
 const MEMBER_PAGE_SIZE = 8;
-// 3 keeps the checklist card close in height to the readiness chart beside it;
-// a taller neighbour stretches the chart and spreads its bars uncomfortably thin.
 const READINESS_PAGE_SIZE = 3;
 
 /**
@@ -93,7 +82,6 @@ export function ProjectTimesheet({
     () => (filters.projectId === "all" ? allSummaries : allSummaries.filter((row) => row.project.id === filters.projectId)),
     [allSummaries, filters.projectId]
   );
-  const withEffort = useMemo(() => summaries.filter((row) => row.actualMinutes > 0 || row.estimateMinutes > 0), [summaries]);
   const readiness = useMemo(
     () => buildProjectReadiness(dataset, logs, today).filter((row) => filters.projectId === "all" || row.project.id === filters.projectId),
     [dataset, logs, today, filters.projectId]
@@ -120,14 +108,9 @@ export function ProjectTimesheet({
     return {
       estimate,
       actual,
-      consumption: estimate > 0 ? (actual / estimate) * 100 : 0,
-      overCount: summaries.filter((row) => row.risk === "over").length,
-      watchCount: summaries.filter((row) => row.risk === "watch").length,
-      overdueTasks: sum(summaries.map((row) => row.overdueTaskCount)),
-      blockedTasks: sum(summaries.map((row) => row.blockedTaskCount)),
-      lowReadiness: readiness.filter((row) => row.score < 70).length
+      consumption: estimate > 0 ? (actual / estimate) * 100 : 0
     };
-  }, [summaries, readiness]);
+  }, [summaries]);
   const hasPlanData = totals.estimate > 0;
 
   const totalTasks = useMemo(() => sum(summaries.map((row) => row.taskCount)), [summaries]);
@@ -138,9 +121,6 @@ export function ProjectTimesheet({
   }, [summaries, totalTasks]);
   const totalActiveMembers = useMemo(() => sum(summaries.map((row) => row.activeMemberCount)), [summaries]);
 
-  const flow = useMemo(() => buildCumulativeFlow(dataset, filters), [dataset, filters]);
-  const control = useMemo(() => buildControlChart(dataset, filters), [dataset, filters]);
-
   const pagedProjects = usePagination(summaries, PROJECT_PAGE_SIZE);
   const pagedReadiness = usePagination(readiness, READINESS_PAGE_SIZE);
 
@@ -149,7 +129,7 @@ export function ProjectTimesheet({
       {/* ── Headline totals ────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
-          label="Giờ kế hoạch đã nhập"
+          label="Giờ kế hoạch đã duyệt"
           value={hasPlanData ? formatHours(totals.estimate) : "—"}
           badge={hasPlanData ? `${summaries.length} dự án` : "Chưa có dữ liệu"}
           tone={hasPlanData ? "neutral" : "warning"}
@@ -163,18 +143,18 @@ export function ProjectTimesheet({
           hint={hasPlanData ? "Đã dùng so với kế hoạch" : "Chỉ hiển thị giờ đã ghi nhận"}
         />
         <KpiCard
-          label="Dự án vượt / sát ngưỡng giờ"
-          value={hasPlanData ? `${totals.overCount} / ${totals.watchCount}` : "—"}
-          badge={!hasPlanData ? "Chưa có kế hoạch" : totals.overCount > 0 ? "Có dự án vượt" : "Trong ngưỡng"}
-          tone={!hasPlanData ? "neutral" : totals.overCount > 0 ? "danger" : "success"}
-          hint={hasPlanData ? "Vượt 100% / trên 85% kế hoạch" : "Cần estimate để tính ngưỡng"}
+          label="Chênh lệch kế hoạch"
+          value={hasPlanData ? formatSignedHours(totals.actual - totals.estimate) : "—"}
+          badge={!hasPlanData ? "Chưa đối chiếu" : totals.actual > totals.estimate ? "Vượt kế hoạch" : "Trong kế hoạch"}
+          tone={!hasPlanData ? "neutral" : totals.actual > totals.estimate ? "danger" : "success"}
+          hint="Thực tế trừ kế hoạch đã duyệt"
         />
         <KpiCard
-          label="Công việc quá hạn / đang chặn"
-          value={`${totals.overdueTasks} / ${totals.blockedTasks}`}
-          badge={`${totals.lowReadiness} dự án dữ liệu yếu`}
-          tone={totals.lowReadiness > 0 ? "warning" : "success"}
-          hint="Dự án có điểm sẵn sàng dưới 70%"
+          label="Tỷ lệ sử dụng Estimate"
+          value={hasPlanData ? formatPercent(totals.consumption) : "—"}
+          badge={!hasPlanData ? "Chưa có kế hoạch" : totals.consumption > 100 ? "Vượt ngưỡng" : totals.consumption > 85 ? "Cần theo dõi" : "Trong ngưỡng"}
+          tone={!hasPlanData ? "neutral" : totals.consumption > 100 ? "danger" : totals.consumption > 85 ? "warning" : "success"}
+          hint="Giờ thực tế / giờ kế hoạch"
         />
       </div>
 
@@ -189,7 +169,7 @@ export function ProjectTimesheet({
           <EmptyState message="Không có dự án nào khớp bộ lọc." />
         ) : (
           <TableScroll>
-            <table className="w-full min-w-[1180px] table-fixed border-collapse">
+            <table className="w-full min-w-[1180px] table-fixed border-separate border-spacing-0">
               <colgroup>
                 <col className="w-[24%]" />
                 <col className="w-[8%]" />
@@ -203,7 +183,7 @@ export function ProjectTimesheet({
                 <col className="w-[8%]" />
                 <col className="w-[6%]" />
               </colgroup>
-              <thead className="border-b border-border bg-muted/40">
+              <thead className="border-b border-border bg-muted/60">
                 <tr>
                   <Th>Dự án</Th>
                   <Th align="center">Trạng thái</Th>
@@ -224,10 +204,10 @@ export function ProjectTimesheet({
                   return (
                     <React.Fragment key={row.project.id}>
                     <tr
-                      className={`cursor-pointer border-b border-border transition-colors hover:bg-muted/30 ${active ? "bg-primary/5" : ""}`}
+                      className={`cursor-pointer border-b border-border align-middle transition-colors hover:bg-primary/[0.04] ${active ? "bg-primary/[0.07]" : ""}`}
                       onClick={() => setSelectedProjectId(row.project.id)}
                     >
-                      <Td>
+                      <Td className={active ? "border-l-2 border-primary" : "border-l-2 border-transparent"}>
                         <span className="flex min-w-0 items-center gap-2">
                           {active ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />}
                           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: WORK_GROUP_COLORS[row.project.workGroup] }} aria-hidden />
@@ -286,18 +266,16 @@ export function ProjectTimesheet({
                       </Td>
                     </tr>
                     {active ? (
-                      <tr className="border-b border-primary/20 bg-primary/[0.025]">
+                      <tr className="border-b border-primary/20 bg-background">
                         <td colSpan={11} className="p-0">
-                          <div className="border-y border-primary/15 px-3 py-3 sm:px-4">
-                            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                              <div>
-                                <p className="text-[12.5px] font-bold text-foreground">Chi tiết milestone, giai đoạn và công việc</p>
-                                <p className="text-[11px] text-muted-foreground">{row.project.code} · {row.project.name} · Bấm mũi tên để thu gọn từng cấp</p>
-                              </div>
-                              <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10.5px] font-semibold text-primary">Đang mở</span>
+                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-primary/[0.035] px-4 py-3">
+                            <div>
+                              <p className="text-[12.5px] font-bold text-foreground">Chi tiết milestone, giai đoạn và công việc</p>
+                              <p className="text-[11px] text-muted-foreground">{row.project.code} · {row.project.name} · Bấm mũi tên để thu gọn từng cấp</p>
                             </div>
-                            <ProjectBreakdownTable dataset={dataset} projectId={row.project.id} logs={logs} currentUserId={currentUserId} />
+                            <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10.5px] font-semibold text-primary">Đang mở</span>
                           </div>
+                          <ProjectBreakdownTable dataset={dataset} projectId={row.project.id} logs={logs} currentUserId={currentUserId} />
                         </td>
                       </tr>
                     ) : null}
@@ -305,7 +283,7 @@ export function ProjectTimesheet({
                   );
                 })}
               </tbody>
-              <tfoot className="border-t-2 border-border bg-muted/40">
+              <tfoot className="border-t-2 border-border bg-muted/60">
                 <tr>
                   <Td className="font-bold">Tổng cộng {summaries.length} dự án</Td>
                   <Td />
@@ -332,24 +310,6 @@ export function ProjectTimesheet({
         <Pagination state={pagedProjects} unit="dự án" />
       </SectionCard>
 
-      {/* ── Planned vs actual ──────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-        <ChartCard
-          title="Giờ kế hoạch so với giờ thực tế"
-          description={hasPlanData ? "Cột đỏ là dự án có giờ thực tế đã vượt kế hoạch." : "Chưa có task estimate; biểu đồ chỉ hiển thị giờ thực tế đã ghi nhận."}
-          minHeight={320}
-        >
-          {withEffort.length === 0 ? <EmptyState message="Không có dự án nào có kế hoạch hoặc giờ ghi nhận." /> : <EstimateVsActualChart data={withEffort} />}
-        </ChartCard>
-        <ChartCard
-          title="Tỷ lệ giờ đã dùng"
-          description="Đường đứt là ngưỡng 100% giờ kế hoạch."
-          minHeight={Math.max(280, withEffort.length * 32 + 60)}
-        >
-          {withEffort.length === 0 ? <EmptyState message="Không có dữ liệu." /> : <ConsumptionChart data={withEffort} />}
-        </ChartCard>
-      </div>
-
       {/* ── Members for the selected project ────────────────────────────── */}
       {selected ? (
         <>
@@ -363,53 +323,8 @@ export function ProjectTimesheet({
         </>
       ) : null}
 
-      {/* ── Flow: cumulative flow + cycle-time control chart ───────────── */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard
-          label="Công việc đang làm dở (WIP)"
-          value={`${Math.round(flow.averageWip)}`}
-          badge={`Cao nhất ${flow.peakBlocked} việc bị chặn`}
-          tone={flow.peakBlocked > 0 ? "warning" : "success"}
-          hint="Trung bình trong kỳ"
-        />
-        <KpiCard
-          label="Việc hoàn thành trong kỳ"
-          value={`${flow.throughput}`}
-          badge={`${Math.round(flow.throughputPerWeek * 10) / 10} việc/tuần`}
-          tone="info"
-          hint="Tốc độ hoàn thành"
-        />
-        <KpiCard
-          label="Thời gian hoàn thành trung bình"
-          value={control.points.length > 0 ? `${control.mean} ngày` : "—"}
-          badge={control.points.length > 0 ? `Trung vị ${control.median} ngày` : "Chưa có việc hoàn thành"}
-          tone="neutral"
-          hint={`Độ lệch chuẩn ${control.standardDeviation} ngày`}
-        />
-        <KpiCard
-          label="Việc vượt giới hạn kiểm soát"
-          value={`${control.outliers}`}
-          badge={control.outliers === 0 ? "Quy trình ổn định" : "Cần xem lại"}
-          tone={control.outliers === 0 ? "success" : "warning"}
-          hint={control.points.length > 0 ? `Ngưỡng ${control.upperLimit} ngày` : undefined}
-        />
-      </div>
-
       {/* ── Data readiness ─────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-        <ChartCard
-          title="Điểm sẵn sàng dữ liệu theo dự án"
-          description="Điểm càng thấp thì số liệu chấm công của dự án đó càng kém tin cậy."
-          minHeight={Math.max(280, readiness.length * 32 + 60)}
-        >
-          {readiness.length === 0 ? (
-            <EmptyState message="Không có dự án nào." />
-          ) : (
-            <ReadinessChart data={readiness.map((row) => ({ code: row.project.code, name: row.project.name, score: row.score }))} />
-          )}
-        </ChartCard>
-
-        <SectionCard
+      <SectionCard
           id="pts-readiness"
           title="Checklist dữ liệu thiếu"
           description="Những thông tin còn thiếu khiến số liệu chấm công chưa phản ánh đúng."
@@ -445,8 +360,7 @@ export function ProjectTimesheet({
             </div>
           )}
           <Pagination state={pagedReadiness} unit="dự án" />
-        </SectionCard>
-      </div>
+      </SectionCard>
 
       <LogDrawer dataset={dataset} request={drawerRequest} onClose={() => setDrawerRequest(null)} currentUserId={currentUserId} />
     </div>
@@ -473,6 +387,25 @@ function ProjectBreakdownTable({
     [project, logs, dataset.people]
   );
 
+  const defaultCollapsed = useMemo(() => {
+    const next = new Set<string>();
+    const activeMilestone = nodes.find((node) => node.status === "in_progress") ?? nodes[0];
+    for (const milestone of nodes) {
+      if (milestone.id !== activeMilestone?.id) {
+        next.add(milestone.id);
+        continue;
+      }
+      for (const stage of milestone.children ?? []) {
+        if (stage.status !== "in_progress") next.add(stage.id);
+      }
+    }
+    return next;
+  }, [nodes]);
+
+  useEffect(() => {
+    setCollapsed(defaultCollapsed);
+  }, [defaultCollapsed]);
+
   // Paginate at the milestone level so a page break never splits a milestone
   // away from its own stages and tasks.
   const paged = usePagination(nodes, MILESTONE_PAGE_SIZE);
@@ -493,7 +426,7 @@ function ProjectBreakdownTable({
   return (
     <>
     <TableScroll>
-      <table className="w-full min-w-[960px] table-fixed border-collapse">
+      <table className="w-full min-w-[960px] table-fixed border-separate border-spacing-0">
         <colgroup>
           <col className="w-[31%]" />
           <col className="w-[13%]" />
@@ -503,9 +436,9 @@ function ProjectBreakdownTable({
           <col className="w-[8%]" />
           <col className="w-[10%]" />
         </colgroup>
-        <thead className="border-b border-border bg-muted/40">
+        <thead className="border-b border-border bg-muted/60">
           <tr>
-            <Th>Milestone / Giai đoạn / Công việc</Th>
+            <Th>Milestone / Stage / Task</Th>
             <Th>Phụ trách</Th>
             <Th align="center">Trạng thái</Th>
             <Th>Thời gian</Th>
@@ -517,13 +450,13 @@ function ProjectBreakdownTable({
         <tbody>
           {paged.items.map((milestone) => (
             <React.Fragment key={milestone.id}>
-              <BreakdownRow node={milestone} depth={0} collapsed={collapsed.has(milestone.id)} onToggle={toggle} currentUserId={currentUserId} />
+              <BreakdownRow node={milestone} depth={0} collapsed={collapsed.has(milestone.id)} onToggle={toggle} currentUserId={currentUserId} today={dataset.generatedAt} />
               {!collapsed.has(milestone.id)
                 ? milestone.children?.map((stage) => (
                     <React.Fragment key={stage.id}>
-                      <BreakdownRow node={stage} depth={1} collapsed={collapsed.has(stage.id)} onToggle={toggle} currentUserId={currentUserId} />
+                      <BreakdownRow node={stage} depth={1} collapsed={collapsed.has(stage.id)} onToggle={toggle} currentUserId={currentUserId} today={dataset.generatedAt} />
                       {!collapsed.has(stage.id)
-                        ? stage.children?.map((task) => <BreakdownRow key={task.id} node={task} depth={2} collapsed={false} onToggle={toggle} currentUserId={currentUserId} />)
+                        ? stage.children?.map((task) => <BreakdownRow key={task.id} node={task} depth={2} collapsed={false} onToggle={toggle} currentUserId={currentUserId} today={dataset.generatedAt} />)
                         : null}
                     </React.Fragment>
                   ))
@@ -531,7 +464,7 @@ function ProjectBreakdownTable({
             </React.Fragment>
           ))}
         </tbody>
-        <tfoot className="border-t-2 border-border bg-muted/40">
+        <tfoot className="border-t-2 border-border bg-muted/60">
           <tr>
             <Td className="font-bold">Tổng toàn dự án ({nodes.length} milestone)</Td>
             <Td />
@@ -556,21 +489,24 @@ function BreakdownRow({
   depth,
   collapsed,
   onToggle,
-  currentUserId
+  currentUserId,
+  today
 }: {
   node: ProjectBreakdownNode;
   depth: number;
   collapsed: boolean;
   onToggle: (id: string) => void;
   currentUserId?: string;
+  today: string;
 }) {
   const hasChildren = (node.children?.length ?? 0) > 0;
   const overrun = node.variancePercent !== null && node.variancePercent > 0;
+  const overdue = node.level === "task" && node.status !== "completed" && Boolean(node.dueDate && node.dueDate < today);
   const rowClass =
-    depth === 0 ? "bg-muted/30 font-bold" : depth === 1 ? "font-semibold" : "";
+    depth === 0 ? "bg-primary/[0.035] font-bold" : depth === 1 ? "bg-muted/[0.12] font-semibold" : "";
 
   return (
-    <tr className={`border-b border-border ${rowClass}`}>
+    <tr className={`border-b border-border transition-colors hover:bg-muted/30 ${rowClass}`}>
       <Td className={depth === 1 ? "pl-6" : depth === 2 ? "pl-12" : ""}>
         <span className="flex min-w-0 items-center gap-1.5">
           {hasChildren ? (
@@ -580,17 +516,27 @@ function BreakdownRow({
           ) : (
             <span className="w-3.5 shrink-0" aria-hidden />
           )}
-          <span className="truncate" title={node.name}>
+          <span className="min-w-0 truncate" title={node.name}>
             {depth === 0 ? "◆ " : depth === 1 ? "▸ " : ""}
             {node.name}
           </span>
+          {node.level === "task" ? (
+            <a
+              href={`/tasks/${encodeURIComponent(node.id)}`}
+              aria-label={`Mở task ${node.name}`}
+              title="Mở task"
+              className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+            >
+              <ExternalLink className="h-3 w-3" aria-hidden />
+            </a>
+          ) : null}
         </span>
       </Td>
       <Td className="truncate text-muted-foreground">
         {node.ownerName ? <span className={node.ownerId === currentUserId ? "font-bold text-primary" : undefined}>{node.ownerName}</span> : <span className="text-warning">Chưa gán</span>}
       </Td>
       <Td align="center">
-        <Pill tone={nodeStatusTone(node.status)}>{NODE_STATUS_LABELS[node.status as NodeStatus] ?? node.status}</Pill>
+        <Pill tone={overdue ? "danger" : nodeStatusTone(node.status)}>{overdue ? "Quá hạn" : NODE_STATUS_LABELS[node.status as NodeStatus] ?? node.status}</Pill>
       </Td>
       <Td className="text-[11.5px] leading-snug text-muted-foreground">
         {node.startDate || node.dueDate ? <>{formatDate(node.startDate, "—")} <ArrowRight aria-hidden="true" className="inline h-3 w-3 align-middle" /> {formatDate(node.dueDate, "—")}</> : "—"}
@@ -636,7 +582,7 @@ function ProjectMemberTable({
   return (
     <>
     <TableScroll>
-      <table className="w-full min-w-[860px] table-fixed border-collapse">
+      <table className="w-full min-w-[860px] table-fixed border-separate border-spacing-0">
         <colgroup>
           <col className="w-[22%]" />
           <col className="w-[15%]" />
@@ -647,7 +593,7 @@ function ProjectMemberTable({
           <col className="w-[9%]" />
           <col className="w-[7%]" />
         </colgroup>
-        <thead className="border-b border-border bg-muted/40">
+        <thead className="border-b border-border bg-muted/60">
           <tr>
             <Th>Nhân sự</Th>
             <Th>Vai trò</Th>
@@ -661,7 +607,7 @@ function ProjectMemberTable({
         </thead>
         <tbody>
           {paged.items.map((row) => (
-            <tr key={row.person.id} className="border-b border-border transition-colors hover:bg-muted/30">
+            <tr key={row.person.id} className="border-b border-border transition-colors hover:bg-primary/[0.04]">
               <Td>
                 <span className="flex items-center gap-2">
                   <Avatar initials={row.person.initials} name={row.person.name} />

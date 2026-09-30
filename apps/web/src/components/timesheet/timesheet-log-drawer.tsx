@@ -8,6 +8,7 @@ import {
   CalendarDays,
   Clock,
   Ellipsis,
+  ExternalLink,
   FileText,
   GraduationCap,
   Hash,
@@ -158,11 +159,11 @@ export function LogDrawer({
                     const project = projectsById.get(entry.projectId);
                     const GroupIcon = WORK_GROUP_ICONS[entry.workGroup];
                     return (
-                      <li key={entry.id}>
+                      <li key={entry.id} className="flex items-stretch">
                         <button
                           type="button"
                           onClick={() => setSelectedLog(entry)}
-                          className="flex w-full items-start gap-3 px-4 py-2.5 text-left transition-colors hover:bg-primary/[0.04] focus-visible:bg-primary/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30"
+                          className="flex min-w-0 flex-1 items-start gap-3 px-4 py-2.5 text-left transition-colors hover:bg-primary/[0.04] focus-visible:bg-primary/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30"
                           aria-label={`Xem chi tiết log ${entry.id}`}
                         >
                           {person ? <Avatar initials={person.initials} name={person.name} /> : null}
@@ -211,6 +212,14 @@ export function LogDrawer({
                             ) : null}
                           </div>
                         </button>
+                        <a
+                          href={`/tasks/${encodeURIComponent(entry.taskId)}`}
+                          aria-label={`Mở task ${entry.taskId}`}
+                          title="Mở task"
+                          className="mr-3 mt-3 inline-flex h-7 w-7 shrink-0 items-center justify-center self-start rounded-md border border-border text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                        </a>
                       </li>
                     );
                   })}

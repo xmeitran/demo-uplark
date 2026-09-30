@@ -11,9 +11,6 @@ import {
   SlidersHorizontal,
   UserRound,
   UsersRound,
-  ShieldCheck,
-  ShieldOff,
-  Loader2,
 } from "lucide-react";
 import type { AdminAccessMemberSummary } from "@b2b-crm/contracts";
 import { AppShell } from "@/components/constructor-x/app-shell";
@@ -38,9 +35,15 @@ function colorForId(id: string) {
   return palette[Math.abs(Array.from(id).reduce((sum, char) => sum + char.charCodeAt(0), 0)) % palette.length];
 }
 
+function workStatusLabel(status: PeopleProfile["status"]) {
+  if (status === "Active") return "Đang làm";
+  if (status === "On leave") return "Tạm nghỉ";
+  return "Đã nghỉ việc";
+}
+
 function mapLiveProfile(member: AdminAccessMemberSummary, minutesByUser: Map<string, number>): PeopleProfile {
   const name = member.displayName || member.email || member.id;
-  const role = member.resourceDisplayRole || (member.roleCodes.includes("FOUNDER_GM") ? "Founder / GM" : member.roleCodes.includes("WORKSPACE_ADMIN") ? "Workspace Admin" : "Workspace User");
+  const role = member.resourceDisplayRole || "Chưa gán chức danh";
   const actualHours = (minutesByUser.get(member.id) ?? 0) / 60;
   return {
     id: member.id,
@@ -53,7 +56,7 @@ function mapLiveProfile(member: AdminAccessMemberSummary, minutesByUser: Map<str
     level: "L3",
     employmentType: "Full-time",
     manager: "—",
-    status: member.status === "active" ? "Active" : "Inactive",
+    status: member.employmentStatus === "ON_LEAVE" ? "On leave" : member.employmentStatus === "INACTIVE" ? "Inactive" : "Active",
     userId: member.larkOpenId || member.id,
     rateCategory: member.hasResourceProfile ? "Resource profile" : "Chưa cấu hình",
     hourlyCostRate: 0,
@@ -104,16 +107,16 @@ function KpiCard({ icon: Icon, label, value, note, tone = "blue" }: {
 
 export default function PeoplePage() {
   const { user } = useAuth();
-  const canViewFinancials = Boolean(user?.roleCodes?.some((role) => ["FOUNDER_GM", "WORKSPACE_ADMIN", "FINANCE_ADMIN", "DX_DIRECTOR", "PM", "BD_LEAD"].includes(role)));
+  // Cost access is independent from workspace administration. Founder/GM is
+  // implicit full access; all other roles need an explicit COST_* binding.
+  const canViewFinancials = Boolean(user?.roleCodes?.some((role) => ["FOUNDER_GM", "COST_VIEW", "COST_EDIT", "COST_APPROVE", "COST_EXPORT"].includes(role)));
   const [query, setQuery] = useState("");
   const [department, setDepartment] = useState("all");
   const [status, setStatus] = useState("all");
   const [selectedId, setSelectedId] = useState("");
-  const [adminMembers, setAdminMembers] = useState<AdminAccessMemberSummary[]>([]);
   const [profiles, setProfiles] = useState<PeopleProfile[]>([]);
   const [directoryLoading, setDirectoryLoading] = useState(true);
-  const [roleSavingId, setRoleSavingId] = useState<string | null>(null);
-  const [roleMessage, setRoleMessage] = useState<string | null>(null);
+  const [directoryMessage, setDirectoryMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -132,35 +135,13 @@ export default function PeoplePage() {
         const members = payload.data ?? [];
         const minutesByUser = new Map<string, number>();
         for (const entry of entriesPayload.data ?? []) if (entry.userId) minutesByUser.set(entry.userId, (minutesByUser.get(entry.userId) ?? 0) + (entry.minutes ?? 0));
-        setAdminMembers(members);
         setProfiles(members.map((member) => mapLiveProfile(member, minutesByUser)));
         setSelectedId((current) => current || members[0]?.id || "");
       })
-      .catch((error: unknown) => { if (active) setRoleMessage(error instanceof Error ? error.message : "Không thể tải phân quyền."); })
+      .catch((error: unknown) => { if (active) setDirectoryMessage(error instanceof Error ? error.message : "Không thể tải dữ liệu nhân sự."); })
       .finally(() => { if (active) setDirectoryLoading(false); });
     return () => { active = false; };
   }, []);
-
-  async function changeWorkspaceRole(member: AdminAccessMemberSummary, roleCode: "WORKSPACE_ADMIN" | "WORKSPACE_USER") {
-    setRoleSavingId(member.id);
-    setRoleMessage(null);
-    try {
-      const response = await fetch(`/api/admin/users/${encodeURIComponent(member.id)}/role`, {
-        method: "PATCH",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ roleCode })
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.message ?? "Không thể cập nhật role.");
-      setAdminMembers((current) => current.map((item) => item.id === member.id ? { ...item, roleCodes: [roleCode] } : item));
-      setRoleMessage(`Đã cập nhật ${member.displayName} thành ${roleCode === "WORKSPACE_ADMIN" ? "Workspace Admin" : "Workspace User"}.`);
-    } catch (error) {
-      setRoleMessage(error instanceof Error ? error.message : "Không thể cập nhật role.");
-    } finally {
-      setRoleSavingId(null);
-    }
-  }
 
   const departments = useMemo(() => [...new Set(profiles.map((person) => person.department))], [profiles]);
   const filtered = useMemo(() => {
@@ -192,7 +173,7 @@ export default function PeoplePage() {
           </header>
 
           <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <KpiCard icon={UsersRound} label="Tổng nhân sự" value={directoryLoading ? "—" : String(profiles.length)} note={directoryLoading ? "Đang đồng bộ" : `${activeCount} Active`} />
+            <KpiCard icon={UsersRound} label="Tổng nhân sự" value={directoryLoading ? "—" : String(profiles.length)} note={directoryLoading ? "Đang đồng bộ" : `${activeCount} Đang làm`} />
             {canViewFinancials && <KpiCard icon={CheckCircle2} label="Cost Rate hợp lệ" value={directoryLoading ? "—" : `${rateCount} / ${profiles.length}`} note={directoryLoading ? "Đang kiểm tra" : `${profiles.length - rateCount} cần cấu hình`} tone="emerald" />}
             <KpiCard icon={UserRound} label="User ID đã map" value={directoryLoading ? "—" : `${mappedCount} / ${profiles.length}`} note="Theo directory Lark" tone="violet" />
             <KpiCard icon={Clock3} label="Time log tháng này" value={formatHours(hoursThisMonth)} note="Từ Timesheet" tone="amber" />
@@ -210,13 +191,13 @@ export default function PeoplePage() {
               </select>
               <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Lọc theo trạng thái" className="h-10 min-w-[145px] rounded-xl border border-border bg-background px-3 text-sm text-slate-700 outline-none focus:border-blue-400">
                 <option value="all">Tất cả trạng thái</option>
-                <option value="Active">Active</option>
-                <option value="On leave">On leave</option>
-                <option value="On Hold">On Hold</option>
-                <option value="Inactive">Inactive</option>
+                <option value="Active">Đang làm</option>
+                <option value="On leave">Tạm nghỉ</option>
+                <option value="On Hold">Tạm dừng</option>
+                <option value="Inactive">Đã nghỉ việc</option>
               </select>
               <button type="button" onClick={() => downloadCsv("uplark-ho-so-nhan-su.csv", canViewFinancials ? ["Họ tên", "User ID", "Vai trò", "Phòng ban", "Level", "Trạng thái", "Cost rate", "Hiệu lực", "Time log"] : ["Họ tên", "User ID", "Vai trò", "Phòng ban", "Level", "Trạng thái", "Time log"], filtered.map((person) => canViewFinancials ? [person.name, person.userId, person.role, person.department, person.level, person.status, person.hourlyCostRate, person.effectiveFrom, person.actualHours] : [person.name, person.userId, person.role, person.department, person.level, person.status, person.actualHours]))} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-border px-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50">
-                <Download className="h-4 w-4" /> Xuất Excel
+                <Download className="h-4 w-4" /> Xuất CSV
               </button>
             </div>
           </section>
@@ -246,7 +227,7 @@ export default function PeoplePage() {
                         <td className="px-5 py-3.5"><div className="flex items-center gap-3"><Avatar initials={person.initials} avatarUrl={person.avatarUrl} color={person.color} small /><div><Link onClick={(event) => event.stopPropagation()} href={`/people/${person.id}`} className="font-semibold text-slate-900 hover:text-blue-600">{person.name}</Link><p className="mt-0.5 text-xs text-muted-foreground">{person.userId}</p></div></div></td>
                         <td className="px-3 py-3.5"><p className="font-medium text-slate-800">{person.role}</p><p className="mt-0.5 text-xs text-muted-foreground">{person.department}</p></td>
                         <td className="px-3 py-3.5"><span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">{person.level}</span></td>
-                        <td className="px-3 py-3.5"><span className={`rounded-full px-2 py-1 text-xs font-medium ${statusClass(person.status)}`}>{person.status}</span></td>
+                        <td className="px-3 py-3.5"><span className={`rounded-full px-2 py-1 text-xs font-medium ${statusClass(person.status)}`}>{workStatusLabel(person.status)}</span></td>
                         {canViewFinancials && <><td className="px-3 py-3.5 font-semibold text-slate-800">{person.hourlyCostRate > 0 ? formatVnd(person.hourlyCostRate) : <span className="font-medium text-amber-700">Chưa cấu hình</span>}<span className="block pt-0.5 text-[11px] font-normal text-muted-foreground">{person.hourlyCostRate > 0 ? "/ giờ" : "Cost Rate"}</span></td><td className="px-3 py-3.5 text-slate-600">{person.effectiveFrom}</td></>}
                         <td className="px-5 py-3.5 text-right font-medium text-slate-800">{formatHours(person.actualHours)}</td>
                       </tr>
@@ -260,7 +241,7 @@ export default function PeoplePage() {
             {selected && <aside className="h-fit rounded-xl border border-border bg-card p-5 shadow-sm xl:sticky xl:top-4">
               <p className="text-[11px] font-semibold tracking-[0.14em] text-blue-600">HỒ SƠ ĐANG CHỌN</p>
               <div className="mt-4 flex items-center gap-3"><Avatar initials={selected.initials} avatarUrl={selected.avatarUrl} color={selected.color} /><div><h2 className="font-semibold text-slate-900">{selected.name}</h2><p className="mt-0.5 text-sm text-muted-foreground">{selected.role} · {selected.department}</p></div></div>
-              <div className="mt-4 flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-xs font-medium ${statusClass(selected.status)}`}>{selected.status}</span><span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">{selected.userId}</span><span className="rounded-md bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">{selected.level}</span></div>
+              <div className="mt-4 flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-xs font-medium ${statusClass(selected.status)}`}>{workStatusLabel(selected.status)}</span><span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">{selected.userId}</span><span className="rounded-md bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">{selected.level}</span></div>
               {canViewFinancials && <div className="mt-5 rounded-xl border border-amber-100 bg-amber-50/70 p-4"><p className="text-xs font-medium text-amber-700">Cost Rate hiện tại</p><p className="mt-1 text-xl font-semibold tracking-tight text-slate-900">{selected.hourlyCostRate > 0 ? `${formatVnd(selected.hourlyCostRate)} / giờ` : "Chưa cấu hình"}</p><p className="mt-2 text-xs text-slate-600">{selected.hourlyCostRate > 0 ? `Hiệu lực từ ${selected.effectiveFrom}` : "Không hiển thị chi phí giả định khi chưa có cấu hình"} · {selected.rateCategory}</p></div>}
               <div className="mt-4 grid grid-cols-3 gap-2 text-center"><div className="rounded-lg bg-slate-50 p-2"><p className="text-xs text-muted-foreground">Plan</p><p className="mt-1 text-sm font-semibold">{formatHours(selected.planHours)}</p></div><div className="rounded-lg bg-slate-50 p-2"><p className="text-xs text-muted-foreground">Actual</p><p className="mt-1 text-sm font-semibold">{formatHours(selected.actualHours)}</p></div><div className="rounded-lg bg-slate-50 p-2"><p className="text-xs text-muted-foreground">P&amp;L</p><p className="mt-1 text-sm font-semibold">{formatHours(selected.pnlHours)}</p></div></div>
               {canViewFinancials && <div className="mt-5 border-t border-border pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Lịch sử Cost Rate</p><div className="mt-3 space-y-3">{selected.rateHistory.length ? selected.rateHistory.slice(0, 2).map((item) => <div key={`${item.effectiveFrom}-${item.hourlyCostRate}`} className="flex items-center justify-between text-sm"><div><p className="font-medium text-slate-800">{formatVnd(item.hourlyCostRate)} / giờ</p><p className="text-xs text-muted-foreground">Từ {item.effectiveFrom}</p></div><span className={`h-2.5 w-2.5 rounded-full ${item.active ? "bg-emerald-500" : "bg-slate-300"}`} /></div>) : <p className="text-sm text-muted-foreground">Chưa có lịch sử Cost Rate.</p>}</div></div>}
@@ -268,37 +249,7 @@ export default function PeoplePage() {
             </aside>}
           </div>
 
-          <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-primary" /><h2 className="text-sm font-bold text-foreground">Phân quyền workspace</h2></div>
-                <p className="mt-1 text-xs text-muted-foreground">Chọn theo Lark User ID. User thường không xem được cost rate, P&amp;L và cảnh báo tài chính.</p>
-              </div>
-              <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">Admin/User policy</span>
-            </div>
-            {roleMessage && <p className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-800">{roleMessage}</p>}
-            {directoryLoading ? (
-              <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Đang tải danh sách Lark users…</div>
-            ) : adminMembers.length ? (
-              <div className="mt-4 overflow-x-auto rounded-xl border border-border">
-                <table className="w-full min-w-[720px] text-left text-sm">
-                  <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">User / Lark User ID</th><th className="px-4 py-3">Trạng thái</th><th className="px-4 py-3">Quyền workspace</th><th className="px-4 py-3 text-right">Hiệu lực</th></tr></thead>
-                  <tbody className="divide-y divide-border">
-                    {adminMembers.map((member) => {
-                      const isFounder = member.roleCodes.includes("FOUNDER_GM");
-                      const isAdmin = isFounder || member.roleCodes.includes("WORKSPACE_ADMIN");
-                      return <tr key={member.id}>
-                        <td className="px-4 py-3"><p className="font-semibold text-slate-900">{member.displayName}</p><p className="mt-0.5 font-mono text-xs text-muted-foreground">{member.larkOpenId ?? "Chưa map Lark ID"}</p></td>
-                        <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-xs font-medium ${member.status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{member.status === "active" ? "Active" : "Suspended"}</span></td>
-                        <td className="px-4 py-3">{isFounder ? <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-700"><ShieldCheck className="h-3.5 w-3.5" /> Founder/GM</span> : <select value={isAdmin ? "WORKSPACE_ADMIN" : "WORKSPACE_USER"} disabled={roleSavingId === member.id} onChange={(event) => void changeWorkspaceRole(member, event.target.value as "WORKSPACE_ADMIN" | "WORKSPACE_USER")} className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-sm font-medium text-slate-700 outline-none focus:border-indigo-400"><option value="WORKSPACE_ADMIN">Workspace Admin</option><option value="WORKSPACE_USER">Workspace User</option></select>}</td>
-                        <td className="px-4 py-3 text-right text-xs text-muted-foreground">{isFounder ? "Không thể hạ quyền" : isAdmin ? <span className="inline-flex items-center gap-1 text-indigo-700"><ShieldCheck className="h-3.5 w-3.5" /> Được xem cost/P&amp;L</span> : <span className="inline-flex items-center gap-1 text-slate-500"><ShieldOff className="h-3.5 w-3.5" /> Ẩn cost/P&amp;L</span>}</td>
-                      </tr>;
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            ) : <div className="mt-4 rounded-xl border border-dashed border-border bg-slate-50 px-4 py-3 text-sm text-muted-foreground">Chưa tải được workspace directory. Hãy đăng nhập bằng Founder/GM hoặc Workspace Admin để quản lý role.</div>}
-          </section>
+          {directoryMessage && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{directoryMessage}</p>}
         </div>
       </main>
     </AppShell>

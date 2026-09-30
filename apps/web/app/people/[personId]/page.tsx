@@ -22,11 +22,13 @@ function colorForId(id: string) {
 }
 
 function roleLabel(member: AdminAccessMemberSummary) {
-  if (member.resourceDisplayRole) return member.resourceDisplayRole;
-  if (member.roleCodes.includes("FOUNDER_GM")) return "Founder / GM";
-  if (member.roleCodes.includes("WORKSPACE_ADMIN")) return "Workspace Admin";
-  if (member.roleCodes.includes("WORKSPACE_USER")) return "Workspace User";
-  return member.roleCodes[0]?.replaceAll("_", " ") || "Workspace User";
+  return member.resourceDisplayRole || "Chưa gán chức danh";
+}
+
+function workStatusLabel(status: PeopleProfile["status"]) {
+  if (status === "Active") return "Đang làm";
+  if (status === "On leave") return "Tạm nghỉ";
+  return "Đã nghỉ việc";
 }
 
 function mapLiveProfile(member: AdminAccessMemberSummary, minutesByUser: Map<string, number>): PeopleProfile {
@@ -42,7 +44,7 @@ function mapLiveProfile(member: AdminAccessMemberSummary, minutesByUser: Map<str
     level: "L3",
     employmentType: "Full-time",
     manager: "—",
-    status: member.status === "active" ? "Active" : "Inactive",
+    status: member.employmentStatus === "ON_LEAVE" ? "On leave" : member.employmentStatus === "INACTIVE" ? "Inactive" : "Active",
     userId: member.larkOpenId || member.id,
     rateCategory: member.hasResourceProfile ? "Resource profile" : "Chưa cấu hình",
     hourlyCostRate: 0,
@@ -68,7 +70,7 @@ const fieldClass = "h-10 w-full rounded-xl border border-border bg-background px
 
 export default function PeopleProfilePage() {
   const { user } = useAuth();
-  const canViewFinancials = Boolean(user?.roleCodes?.some((role) => ["FOUNDER_GM", "WORKSPACE_ADMIN", "FINANCE_ADMIN", "DX_DIRECTOR", "PM", "BD_LEAD"].includes(role)));
+  const canViewFinancials = Boolean(user?.roleCodes?.some((role) => ["FOUNDER_GM", "COST_VIEW", "COST_EDIT", "COST_APPROVE", "COST_EXPORT"].includes(role)));
   const params = useParams<{ personId: string }>();
   const personId = Array.isArray(params.personId) ? params.personId[0] : params.personId;
   const source = PEOPLE_PROFILES.find((person) => person.id === personId);
@@ -76,6 +78,7 @@ export default function PeopleProfilePage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -121,7 +124,15 @@ export default function PeopleProfilePage() {
   }
 
   const update = <K extends keyof PeopleProfile>(key: K, value: PeopleProfile[K]) => setProfile((current) => current ? { ...current, [key]: value } : current);
-  const save = () => { setSaved(true); window.setTimeout(() => setSaved(false), 2800); };
+  const save = async () => {
+    setSaving(true);
+    try {
+      const response = await fetch(`/api/admin/users/${encodeURIComponent(profile.id)}/resource-profile`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ displayRole: profile.role, departmentCode: profile.department, employmentStatus: profile.status === "On leave" ? "ON_LEAVE" : profile.status === "Inactive" ? "INACTIVE" : "ACTIVE" }) });
+      if (!response.ok) throw new Error("Không thể lưu hồ sơ nhân sự.");
+      setSaved(true); window.setTimeout(() => setSaved(false), 2800);
+    } catch (error) { setLoadError(error instanceof Error ? error.message : "Không thể lưu hồ sơ nhân sự."); }
+    finally { setSaving(false); }
+  };
 
   return (
     <AppShell activeRoute="/people" title="Hồ sơ nhân sự">
@@ -132,8 +143,8 @@ export default function PeopleProfilePage() {
           <Link href="/people" className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 transition-colors hover:text-blue-600"><ArrowLeft className="h-4 w-4" /> Quay lại danh sách nhân sự</Link>
 
           <header className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-4"><Avatar person={profile} /><div><p className="text-xs font-semibold tracking-[0.15em] text-blue-600">HỒ SƠ NHÂN SỰ</p><h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">{profile.name}</h1><p className="mt-1 text-sm text-muted-foreground">{profile.role} · {profile.department} · Level {profile.level}</p><div className="mt-2 flex flex-wrap gap-2"><span className={`rounded-full px-2 py-1 text-xs font-medium ${statusClass(profile.status)}`}>{profile.status}</span><span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">{profile.userId}</span></div></div></div>
-            <button type="button" onClick={save} className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors ${saved ? "bg-emerald-600" : "bg-blue-600 hover:bg-blue-700"}`}><Save className="h-4 w-4" />{saved ? "Đã lưu trong phiên" : "Lưu thay đổi"}</button>
+            <div className="flex items-center gap-4"><Avatar person={profile} /><div><p className="text-xs font-semibold tracking-[0.15em] text-blue-600">HỒ SƠ NHÂN SỰ</p><h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">{profile.name}</h1><p className="mt-1 text-sm text-muted-foreground">{profile.role} · {profile.department} · Level {profile.level}</p><div className="mt-2 flex flex-wrap gap-2"><span className={`rounded-full px-2 py-1 text-xs font-medium ${statusClass(profile.status)}`}>{workStatusLabel(profile.status)}</span><span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">{profile.userId}</span></div></div></div>
+            <button type="button" onClick={() => void save()} disabled={saving} className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors ${saved ? "bg-emerald-600" : "bg-blue-600 hover:bg-blue-700"} disabled:opacity-60`}><Save className="h-4 w-4" />{saving ? "Đang lưu…" : saved ? "Đã lưu" : "Lưu thay đổi"}</button>
           </header>
 
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
@@ -144,7 +155,7 @@ export default function PeopleProfilePage() {
 
             <aside className="space-y-5 lg:sticky lg:top-4 lg:h-fit"><section className="rounded-2xl border border-border bg-card p-5 shadow-sm"><h2 className="font-semibold text-slate-900">Tóm tắt kỳ hiện tại</h2><div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-muted-foreground">Plan</p><p className="mt-1 text-lg font-semibold">{formatHours(profile.planHours)}</p></div><div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-muted-foreground">Actual</p><p className="mt-1 text-lg font-semibold">{formatHours(profile.actualHours)}</p></div>{canViewFinancials && <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-muted-foreground">P&amp;L Hour</p><p className="mt-1 text-lg font-semibold">{formatHours(profile.pnlHours)}</p></div>}<div className="rounded-xl bg-amber-50 p-3"><p className="text-xs text-amber-700">OT</p><p className="mt-1 text-lg font-semibold text-amber-900">{formatHours(profile.overtimeHours)}</p></div></div>{canViewFinancials && <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50/70 p-3"><div className="flex items-center gap-2 text-blue-700"><CircleDollarSign className="h-4 w-4" /><p className="text-xs font-semibold">Cost Rate hiện tại</p></div><p className="mt-1 text-xl font-semibold text-slate-900">{formatVnd(profile.hourlyCostRate)} <span className="text-sm font-normal text-slate-500">/ giờ</span></p><p className="mt-1 text-xs text-muted-foreground">Hiệu lực từ {profile.effectiveFrom}</p></div>}</section>{canViewFinancials && <section className="rounded-2xl border border-border bg-card p-5 shadow-sm"><div className="flex items-center gap-2"><History className="h-4 w-4 text-blue-600" /><h2 className="font-semibold text-slate-900">Lịch sử Cost Rate</h2></div><div className="mt-5 space-y-0">{profile.rateHistory.map((item, index) => <div key={`${item.effectiveFrom}-${item.hourlyCostRate}`} className="relative flex gap-3 pb-5 last:pb-0"><span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${item.active ? "bg-emerald-500 ring-4 ring-emerald-50" : "bg-slate-300"}`} />{index < profile.rateHistory.length - 1 && <span className="absolute left-[4px] top-5 h-[calc(100%-16px)] w-px bg-slate-200" />}<div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><p className="font-semibold text-slate-800">{formatVnd(item.hourlyCostRate)} / giờ</p>{item.active && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700"><Check className="h-3 w-3" /> Đang áp dụng</span>}</div><p className="mt-0.5 text-xs text-muted-foreground">Hiệu lực từ {item.effectiveFrom}</p></div></div>)}</div></section>}</aside>
           </div>
-          <p className="text-center text-xs text-muted-foreground">Định danh, quyền workspace và Actual Hour được tải từ dữ liệu workspace hiện tại. Các trường chỉnh sửa hồ sơ đang được giữ trong phiên làm việc này.</p>
+          <p className="text-center text-xs text-muted-foreground">User ID và quyền hệ thống được quản trị ở màn Users. Hồ sơ này chỉ quản lý thông tin nhân sự và dữ liệu chi phí.</p>
         </div>
       </main>
     </AppShell>

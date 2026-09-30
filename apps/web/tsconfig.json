@@ -17,21 +17,36 @@
     "isolatedModules": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./*", "./src/*"],
-      "@b2b-crm/contracts": ["../../packages/contracts/src/index.ts"],
-      "@b2b-crm/ui-tokens": ["../../packages/ui-tokens/src/index.ts"]
+      "@/*": [
+        "./*",
+        "./src/*"
+      ],
+      "@b2b-crm/contracts": [
+        "../../packages/contracts/src/index.ts"
+      ],
+      "@b2b-crm/ui-tokens": [
+        "../../packages/ui-tokens/src/index.ts"
+      ]
     }
   },
   "include": [
     "**/*.ts",
     "**/*.tsx",
     "../../packages/**/*.ts",
-    ".next/types/**/*.ts",
-    "next-env.d.ts",
-    ".next-dev/types/**/*.ts",
     ".next-dev-3000/types/**/*.ts",
     ".next-dev-3002/types/**/*.ts",
-    ".next-dev-3003/types/**/*.ts"
+    ".next-dev-3003/types/**/*.ts",
+    ".next-dev/types/**/*.ts",
+    ".next-playwright-3903/types/**/*.ts",
+    ".next-playwright-3904/types/**/*.ts",
+    ".next-playwright-3912/types/**/*.ts",
+    ".next-playwright-3913/types/**/*.ts",
+    ".next-playwright-3914/types/**/*.ts",
+    ".next-playwright-3915/types/**/*.ts",
+    ".next-playwright-3916/types/**/*.ts",
+    ".next/types/**/*.ts",
+    "next-env.d.ts",
+    ".next-playwright-3905/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",

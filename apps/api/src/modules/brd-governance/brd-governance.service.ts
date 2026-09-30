@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import type {
   OvertimePlanInput,
@@ -14,7 +15,7 @@ import { PrismaService } from "../../shared/prisma/prisma.service";
 
 const TASK_LAYER1 = new Set(["PRE_SALE", "DELIVERY", "PM"]);
 const TASK_LAYER2 = new Set(["CUSTOMER_PROJECT", "INTERNAL_PROJECT", "TICKET_MAINTENANCE", "DAY_OFF_COMPANY"]);
-const MANAGER_ROLES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN", "DX_DIRECTOR", "PM", "BD_LEAD"]);
+const MANAGER_ROLES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN", "FINANCE_ADMIN", "DX_DIRECTOR", "PM", "BD_LEAD"]);
 
 function isoDate(value: unknown, field: string, dateOnly = false) {
   if (typeof value !== "string" || !value.trim()) throw new BadRequestException(`${field} is required`);
@@ -29,7 +30,7 @@ function isManager(principal: PrincipalContext) { return principal.roleCodes.som
 
 @Injectable()
 export class BrdGovernanceService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   private assertManager(principal: PrincipalContext) {
     if (!isManager(principal)) throw new ForbiddenException("PM, BD Lead, Dx Director or Founder/GM role is required");
@@ -143,7 +144,22 @@ export class BrdGovernanceService {
     const existing = await this.prisma.resourceMonthlyCost.findUnique({ where: { workspaceId_userId_periodKey: { workspaceId: principal.workspaceId, userId: input.userId, periodKey: input.periodKey } } });
     if (existing?.status === "LOCKED") throw new ConflictException("A locked payroll period cannot be edited");
     const row = await this.prisma.resourceMonthlyCost.upsert({ where: { workspaceId_userId_periodKey: { workspaceId: principal.workspaceId, userId: input.userId, periodKey: input.periodKey } }, create: { workspaceId: principal.workspaceId, userId: input.userId, periodStart: start, periodEnd: end, periodKey: input.periodKey, currency: input.currency ?? "VND", p1BaseAmount: money(input.p1BaseAmount), p2AllowanceAmount: money(input.p2AllowanceAmount), p3PerformanceAmount: money(input.p3PerformanceAmount), p4OtherVariableAmount: money(input.p4OtherVariableAmount), overtimeAmount: money(input.overtimeAmount), socialInsuranceAmount: money(input.socialInsuranceAmount), pitAmount: money(input.pitAmount), otherAmount: money(input.otherAmount), totalMonthlyIncome: money(total), hourlyCostRate: input.hourlyCostRate === undefined ? undefined : money(input.hourlyCostRate) }, update: { periodStart: start, periodEnd: end, currency: input.currency ?? "VND", p1BaseAmount: money(input.p1BaseAmount), p2AllowanceAmount: money(input.p2AllowanceAmount), p3PerformanceAmount: money(input.p3PerformanceAmount), p4OtherVariableAmount: money(input.p4OtherVariableAmount), overtimeAmount: money(input.overtimeAmount), socialInsuranceAmount: money(input.socialInsuranceAmount), pitAmount: money(input.pitAmount), otherAmount: money(input.otherAmount), totalMonthlyIncome: money(total), hourlyCostRate: input.hourlyCostRate === undefined ? undefined : money(input.hourlyCostRate), status: "DRAFT" } });
+    await this.prisma.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "pnl.resource_monthly_cost_changed", resource: "resource_monthly_cost", resourceId: row.id, before: existing ? { status: existing.status, totalMonthlyIncome: existing.totalMonthlyIncome.toString(), hourlyCostRate: existing.hourlyCostRate?.toString() ?? null } : undefined, after: { periodKey: row.periodKey, totalMonthlyIncome: row.totalMonthlyIncome.toString(), hourlyCostRate: row.hourlyCostRate?.toString() ?? null, status: row.status }, requestId: randomUUID() } });
     return { data: row, meta: { source: "manual", locked: false } };
+  }
+
+  async getPnlConfiguration(periodKey: string, principal: PrincipalContext) {
+    this.assertManager(principal);
+    const row = await this.prisma.pnlConfiguration.findUnique({ where: { workspaceId_periodKey: { workspaceId: principal.workspaceId, periodKey } } });
+    return { data: row, meta: { periodKey, source: row ? "database" : "defaults" } };
+  }
+
+  async upsertPnlConfiguration(input: { periodKey: string; items: unknown; parameters: unknown; pool: unknown; templates: unknown }, principal: PrincipalContext) {
+    this.assertManager(principal);
+    if (!input?.periodKey) throw new BadRequestException("periodKey is required");
+    const row = await this.prisma.pnlConfiguration.upsert({ where: { workspaceId_periodKey: { workspaceId: principal.workspaceId, periodKey: input.periodKey } }, create: { workspaceId: principal.workspaceId, periodKey: input.periodKey, items: input.items as Prisma.InputJsonValue, parameters: input.parameters as Prisma.InputJsonValue, pool: input.pool as Prisma.InputJsonValue, templates: input.templates as Prisma.InputJsonValue, updatedByUserId: principal.subjectId }, update: { items: input.items as Prisma.InputJsonValue, parameters: input.parameters as Prisma.InputJsonValue, pool: input.pool as Prisma.InputJsonValue, templates: input.templates as Prisma.InputJsonValue, updatedByUserId: principal.subjectId } });
+    await this.prisma.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "pnl.configuration_changed", resource: "pnl_configuration", resourceId: row.id, after: { periodKey: row.periodKey, updatedByUserId: principal.subjectId }, requestId: randomUUID() } });
+    return { data: row, meta: { persisted: true } };
   }
 
   async upsertPnlPeriod(input: PnlPeriodInput, principal: PrincipalContext) {
@@ -154,6 +170,7 @@ export class BrdGovernanceService {
     const row = existing
       ? await this.prisma.pnlPeriod.update({ where: { id: existing.id }, data: { periodStart: start, periodEnd: end, currency: input.currency ?? "VND", revenueAmount: money(input.revenueAmount), status: "OPEN" } })
       : await this.prisma.pnlPeriod.create({ data: { workspaceId: principal.workspaceId, projectId: input.projectId, periodStart: start, periodEnd: end, periodKey: input.periodKey, currency: input.currency ?? "VND", revenueAmount: money(input.revenueAmount) } });
+    await this.prisma.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "pnl.period_changed", resource: "pnl_period", resourceId: row.id, before: existing ? { status: existing.status, revenueAmount: existing.revenueAmount.toString() } : undefined, after: { status: row.status, periodKey: row.periodKey, revenueAmount: row.revenueAmount.toString() }, requestId: randomUUID() } });
     return { data: row, meta: { status: row.status, advisory: row.status !== "LOCKED" } };
   }
 
@@ -162,6 +179,7 @@ export class BrdGovernanceService {
     const period = await this.prisma.pnlPeriod.findFirst({ where: { id: periodId, workspaceId: principal.workspaceId } });
     if (!period) throw new NotFoundException("P&L period not found");
     const row = await this.prisma.pnlPeriod.update({ where: { id: periodId }, data: { status: "LOCKED", lockedAt: new Date(), lockedByUserId: principal.subjectId } });
+    await this.prisma.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "pnl.period_locked", resource: "pnl_period", resourceId: periodId, before: { status: period.status }, after: { status: row.status, lockedByUserId: principal.subjectId }, requestId: randomUUID() } });
     return { data: row, meta: { locked: true, immutable: true } };
   }
 
@@ -171,6 +189,7 @@ export class BrdGovernanceService {
     const period = await this.prisma.pnlPeriod.findFirst({ where: { id: periodId, workspaceId: principal.workspaceId } });
     if (!period) throw new NotFoundException("P&L period not found");
     const row = await this.prisma.pnlPeriod.update({ where: { id: periodId }, data: { status: "REOPENED", reopenedAt: new Date(), reopenedByUserId: principal.subjectId, reopenReason: input.reason.trim() } });
+    await this.prisma.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "pnl.period_reopened", resource: "pnl_period", resourceId: periodId, before: { status: period.status }, after: { status: row.status, reason: input.reason.trim() }, requestId: randomUUID() } });
     return { data: row, meta: { locked: false, auditReason: input.reason.trim() } };
   }
 

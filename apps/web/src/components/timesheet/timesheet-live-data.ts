@@ -14,6 +14,8 @@ import type {
   WorkGroup
 } from "./timesheet-types";
 import { formatDepartmentLabel } from "@/lib/department-labels";
+import { normalizeNodeStatus } from "./timesheet-status";
+export { normalizeNodeStatus } from "./timesheet-status";
 
 type ApiUser = {
   id: string;
@@ -48,6 +50,8 @@ type ApiTask = {
   stageId?: string;
   stageKey?: string;
   stageActivity?: string;
+  milestoneId?: string;
+  milestoneName?: string;
   ownerUserId?: string;
   assigneeUserId?: string;
   plannedStartAt?: string;
@@ -91,14 +95,6 @@ function dateOnly(value?: string) {
   return value ? value.slice(0, 10) : null;
 }
 
-function nodeStatus(value?: string): NodeStatus {
-  const normalized = String(value ?? "").toLowerCase();
-  if (["done", "completed", "complete", "closed"].includes(normalized)) return "completed";
-  if (["in_progress", "in-progress", "in progress", "doing"].includes(normalized)) return "in_progress";
-  if (["blocked", "blocking"].includes(normalized)) return "blocked";
-  return "not_started";
-}
-
 function workGroup(value?: string, projectName?: string): WorkGroup {
   const normalized = `${value ?? ""} ${projectName ?? ""}`.toLowerCase();
   if (normalized.includes("training") || normalized.includes("đào tạo") || normalized.includes("onboard")) return "training";
@@ -109,7 +105,7 @@ function workGroup(value?: string, projectName?: string): WorkGroup {
 }
 
 function statusEventStatus(value?: string): NodeStatus {
-  return nodeStatus(value);
+  return normalizeNodeStatus(value);
 }
 
 function projectStatus(value?: string): ProjectStatus {
@@ -134,16 +130,18 @@ async function readJson<T>(url: string, signal?: AbortSignal): Promise<T> {
 async function loadPaged<T>(path: string, signal?: AbortSignal) {
   const separator = path.includes("?") ? "&" : "?";
   const pageUrl = (offset: number) => `${path}${separator}limit=100&offset=${offset}&principal=founder`;
-  const first = await readJson<ApiResponse<T>>(pageUrl(0), signal);
-  const rows = [...(first.data ?? [])];
-  const pagination = first.meta?.pagination;
-  if (!pagination?.hasNextPage) return rows;
-  const total = pagination.total ?? rows.length;
-  const returned = pagination.returned ?? rows.length;
-  if (!returned || total <= returned) return rows;
-  const offsets = Array.from({ length: Math.min(30, Math.ceil((total - returned) / 100)) }, (_, index) => returned + index * 100);
-  const pages = await Promise.all(offsets.map((offset) => readJson<ApiResponse<T>>(pageUrl(offset), signal)));
-  for (const page of pages) rows.push(...(page.data ?? []));
+  const rows: T[] = [];
+  let offset = 0;
+  for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
+    const payload = await readJson<ApiResponse<T>>(pageUrl(offset), signal);
+    const pageRows = payload.data ?? [];
+    rows.push(...pageRows);
+    const pagination = payload.meta?.pagination;
+    if (!pagination?.hasNextPage || pageRows.length === 0) break;
+    const nextOffset = (pagination.offset ?? offset) + (pagination.returned ?? pageRows.length);
+    if (nextOffset <= offset) break;
+    offset = nextOffset;
+  }
   return rows;
 }
 
@@ -251,16 +249,17 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
   const projectNodes: ProjectNode[] = projects.map((project) => {
     const groupedMilestones = new Map<string, Map<string, ApiTask[]>>();
     for (const task of tasksByProject.get(project.id) ?? []) {
-      const milestoneKey = task.stageActivity || task.stageKey || "unassigned";
+      const milestoneKey = task.milestoneId || "unassigned";
       const stageKey = task.stageId || task.stageKey || "unassigned-stage";
       const stages = groupedMilestones.get(milestoneKey) ?? new Map<string, ApiTask[]>();
       stages.set(stageKey, [...(stages.get(stageKey) ?? []), task]);
       groupedMilestones.set(milestoneKey, stages);
     }
-    const milestones: MilestoneNode[] = [...groupedMilestones.entries()].map(([milestoneName, stages], milestoneIndex) => {
+    const milestones: MilestoneNode[] = [...groupedMilestones.entries()].map(([milestoneKey, stages], milestoneIndex) => {
       const milestoneId = `ms-${project.id}-${milestoneIndex}`;
+      const milestoneName = (tasksByProject.get(project.id) ?? []).find((task) => (task.milestoneId || "unassigned") === milestoneKey)?.milestoneName || (milestoneKey === "unassigned" ? "Chưa phân loại" : milestoneKey);
       const stageNodes: StageNode[] = [...stages.entries()].map(([stageId, stageTasks]) => {
-        const taskStatuses = stageTasks.map((task) => nodeStatus(task.status));
+        const taskStatuses = stageTasks.map((task) => normalizeNodeStatus(task.status));
         const status: NodeStatus = taskStatuses.some((value) => value === "blocked")
           ? "blocked"
           : taskStatuses.length > 0 && taskStatuses.every((value) => value === "completed")
@@ -283,7 +282,7 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
             stageId,
             assigneeId: task.assigneeUserId || task.ownerUserId || null,
             estimateMinutes: task.estimateMinutes ?? 0,
-            status: nodeStatus(task.status),
+            status: normalizeNodeStatus(task.status),
             startDate: dateOnly(task.plannedStartAt),
             dueDate: dateOnly(task.dueAt),
             completedDate: dateOnly(task.completedAt)

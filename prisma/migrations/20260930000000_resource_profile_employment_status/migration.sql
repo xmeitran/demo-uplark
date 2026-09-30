@@ -1,0 +1,1 @@
+ALTER TABLE "ResourceProfile" ADD COLUMN IF NOT EXISTS "employmentStatus" TEXT NOT NULL DEFAULT 'ACTIVE';

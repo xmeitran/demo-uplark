@@ -131,7 +131,7 @@ export function Th({ children, align = "left", className = "" }: { children: Rea
   return (
     <th
       scope="col"
-      className={`whitespace-nowrap px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground ${align === "right" ? "text-right" : align === "center" ? "text-center" : "text-left"} ${className}`}
+      className={`whitespace-nowrap px-3 py-2.5 text-[11px] font-semibold text-muted-foreground ${align === "right" ? "text-right" : align === "center" ? "text-center" : "text-left"} ${className}`}
     >
       {children}
     </th>
@@ -140,7 +140,7 @@ export function Th({ children, align = "left", className = "" }: { children: Rea
 
 export function Td({ children = null, align = "left", className = "" }: { children?: React.ReactNode; align?: "left" | "right" | "center"; className?: string }) {
   return (
-    <td className={`px-3 py-2 text-[12.5px] text-foreground ${align === "right" ? "text-right" : align === "center" ? "text-center" : "text-left"} ${className}`}>
+    <td className={`px-3 py-2.5 text-[12.5px] text-foreground ${align === "right" ? "text-right" : align === "center" ? "text-center" : "text-left"} ${className}`}>
       {children}
     </td>
   );

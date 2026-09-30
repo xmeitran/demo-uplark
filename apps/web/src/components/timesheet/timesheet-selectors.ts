@@ -269,12 +269,13 @@ export function buildWeeklySeries(
 
 /* ── Cumulative flow + cycle time (Jira §4.2 reporting standards) ───────── */
 
-const FLOW_STATES: NodeStatus[] = ["not_started", "in_progress", "blocked", "completed"];
+const FLOW_STATES: NodeStatus[] = ["not_started", "waiting", "in_progress", "blocked", "completed"];
 
 export interface FlowDayPoint {
   date: string;
   label: string;
   not_started: number;
+  waiting: number;
   in_progress: number;
   blocked: number;
   completed: number;
@@ -332,7 +333,7 @@ export function buildCumulativeFlow(
 
   for (const date of days) {
     applyUpTo(date);
-    const counts: Record<NodeStatus, number> = { not_started: 0, in_progress: 0, blocked: 0, completed: 0 };
+    const counts: Record<NodeStatus, number> = { not_started: 0, waiting: 0, in_progress: 0, blocked: 0, completed: 0 };
     for (const state of stateByTask.values()) counts[state] += 1;
     points.push({
       date,

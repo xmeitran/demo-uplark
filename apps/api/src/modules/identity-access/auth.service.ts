@@ -1,6 +1,6 @@
 import { activeMembershipWhere, isActiveMembership } from "./active-membership";
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
-import type { AdminAccessMemberSummary, CreateInternalUserInput, InternalRoleCode } from "@b2b-crm/contracts";
+import type { AdminAccessMemberSummary, CostPermissionCode, CreateInternalUserInput, EmploymentStatus, InternalRoleCode } from "@b2b-crm/contracts";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../../shared/prisma/prisma.service";
@@ -9,7 +9,8 @@ import { TenantWorkspaceService } from "../tenant-workspace/tenant-workspace.ser
 import { ensureAnotherFounder, lockUserAuth, lockWorkspaceAuth } from "./auth-lifecycle-lock";
 import { PrincipalService } from "./principal.service";
 
-const INTERNAL_ROLE_CODES: InternalRoleCode[] = ["FOUNDER_GM", "WORKSPACE_ADMIN", "WORKSPACE_USER", "SALES_OWNER", "DELIVERY_LEAD", "FINANCE_ADMIN"];
+const COST_PERMISSION_CODES: CostPermissionCode[] = ["COST_VIEW", "COST_EDIT", "COST_APPROVE", "COST_EXPORT"];
+const INTERNAL_ROLE_CODES: InternalRoleCode[] = ["FOUNDER_GM", "WORKSPACE_ADMIN", "WORKSPACE_USER", "SALES_OWNER", "DELIVERY_LEAD", "FINANCE_ADMIN", ...COST_PERMISSION_CODES];
 
 @Injectable()
 export class AuthService {
@@ -219,8 +220,8 @@ export class AuthService {
       departmentCode: user.departmentCode, status: "active", roleCodes: user.roleBindings.map((binding) => binding.role.code) })), meta: { total: users.length } };
   }
 
-  async getUser(authorization: string | undefined, userId: string, includeSuspended = false) {
-    const principal = await this.requireAdminPrincipal(authorization);
+  async getUser(authorization: string | undefined, userId: string, includeSuspended = false, principalFallback?: string) {
+    const principal = await this.requireAdminPrincipal(authorization, principalFallback);
 
     const user = await this.prisma.user.findFirst({
       where: {
@@ -275,7 +276,7 @@ export class AuthService {
         ? await tx.user.update({ where: { id: userId }, data: { status: "SUSPENDED" } })
         : await tx.user.findUniqueOrThrow({ where: { id: userId } });
 
-      await tx.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "auth.member.deactivated", resource: "user", resourceId: userId, requestId: randomUUID() } });
+      await tx.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "auth.member.deactivated", resource: "user", resourceId: userId, before: { status: "ACTIVE" }, after: { status: user.status, endedRoleBindings: endedRoleBindings.count, revokedSessions: revokedSessions.count }, requestId: randomUUID() } });
       return { endedRoleBindings, revokedSessions, user };
     });
 
@@ -320,17 +321,18 @@ export class AuthService {
       await lockWorkspaceAuth(tx, principal.workspaceId);
       await lockUserAuth(tx, userId);
       await this.requireCurrentAdmin(tx, principal.subjectId, principal.workspaceId);
-      const user = await tx.user.findFirst({ where: { id: userId, status: "ACTIVE", roleBindings: { some: { workspaceId: principal.workspaceId, ...activeMembershipWhere() } } } });
+      const user = await tx.user.findFirst({ where: { id: userId, status: "ACTIVE", roleBindings: { some: { workspaceId: principal.workspaceId, ...activeMembershipWhere() } } }, include: { roleBindings: { where: { workspaceId: principal.workspaceId, ...activeMembershipWhere() }, include: { role: true } } } });
       if (!user) throw new NotFoundException("Active member not found");
       if (normalized !== "FOUNDER_GM") await ensureAnotherFounder(tx, principal.workspaceId, userId);
       const role = await tx.role.findUniqueOrThrow({ where: { code: normalized } });
-      await tx.roleBinding.updateMany({ where: { userId, workspaceId: principal.workspaceId, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] }, data: { endsAt: new Date() } });
+      const previousRoleCodes = user.roleBindings?.map((binding: any) => binding.role?.code).filter(Boolean) ?? [];
+      await tx.roleBinding.updateMany({ where: { userId, workspaceId: principal.workspaceId, role: { code: { notIn: COST_PERMISSION_CODES } }, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] }, data: { endsAt: new Date() } });
       await tx.roleBinding.upsert({
         where: { userId_roleId_tenantKey_workspaceId: { userId, roleId: role.id, tenantKey: principal.tenantKey, workspaceId: principal.workspaceId } },
         create: { userId, roleId: role.id, tenantKey: principal.tenantKey, workspaceId: principal.workspaceId }, update: { startsAt: new Date(), endsAt: null }
       });
       await tx.portalSession.updateMany({ where: { userId, workspaceId: principal.workspaceId, revokedAt: null }, data: { revokedAt: new Date() } });
-      await tx.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "auth.member.role_changed", resource: "user", resourceId: userId, after: { roleCode: normalized }, requestId: randomUUID() } });
+      await tx.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "auth.member.role_changed", resource: "user", resourceId: userId, before: { roleCodes: previousRoleCodes }, after: { roleCode: normalized }, requestId: randomUUID() } });
     });
     return { userId, roleCode: normalized };
   }
@@ -349,9 +351,55 @@ export class AuthService {
       await tx.user.update({ where: { id: userId }, data: { status: "ACTIVE" } });
       await tx.roleBinding.update({ where: { id: binding.id }, data: { startsAt: new Date(), endsAt: null } });
       await tx.portalSession.updateMany({ where: { userId, workspaceId: principal.workspaceId, revokedAt: null }, data: { revokedAt: new Date() } });
-      await tx.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "auth.member.reactivated", resource: "user", resourceId: userId, requestId: randomUUID() } });
+      await tx.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "auth.member.reactivated", resource: "user", resourceId: userId, before: { status: "SUSPENDED" }, after: { status: "ACTIVE", restoredRoleBindingId: binding.id }, requestId: randomUUID() } });
     });
     return { userId, status: "active" };
+  }
+
+  async updateCostPermissions(authorization: string | undefined, userId: string, permissions: CostPermissionCode[], principalFallback?: string) {
+    const principal = await this.requireAdminPrincipal(authorization, principalFallback);
+    if (!Array.isArray(permissions)) throw new ForbiddenException("permissionCodes must be an array");
+    const requested = [...new Set(permissions)].filter((code): code is CostPermissionCode => COST_PERMISSION_CODES.includes(code));
+    if (requested.length !== permissions.length) throw new ForbiddenException("Unsupported cost permission code");
+    const result = await this.prisma.$transaction(async (tx) => {
+      await lockWorkspaceAuth(tx, principal.workspaceId);
+      await lockUserAuth(tx, userId);
+      await this.requireCurrentAdmin(tx, principal.subjectId, principal.workspaceId);
+      const user = await tx.user.findFirst({ where: { id: userId, roleBindings: { some: { workspaceId: principal.workspaceId, tenantKey: principal.tenantKey } } }, include: { roleBindings: { where: { workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, ...activeMembershipWhere() }, include: { role: true } } } });
+      if (!user) throw new NotFoundException("Workspace member not found");
+      const isFounder = user.roleBindings.some((binding) => binding.role.code === "FOUNDER_GM");
+      const next = isFounder ? COST_PERMISSION_CODES : requested;
+      const before = user.roleBindings.map((binding) => binding.role.code).filter((code): code is CostPermissionCode => COST_PERMISSION_CODES.includes(code as CostPermissionCode));
+      const now = new Date();
+      await tx.roleBinding.updateMany({ where: { userId, workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, role: { code: { in: COST_PERMISSION_CODES } }, ...activeMembershipWhere() }, data: { endsAt: now } });
+      for (const code of next) {
+        const role = await tx.role.upsert({ where: { code }, update: {}, create: { code, name: code.replace("COST_", "Cost "), type: "BUSINESS" } });
+        await tx.roleBinding.upsert({ where: { userId_roleId_tenantKey_workspaceId: { userId, roleId: role.id, tenantKey: principal.tenantKey, workspaceId: principal.workspaceId } }, update: { startsAt: now, endsAt: null }, create: { userId, roleId: role.id, tenantKey: principal.tenantKey, workspaceId: principal.workspaceId } });
+      }
+      await tx.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "auth.member.cost_permissions_changed", resource: "user", resourceId: userId, before: { permissionCodes: before }, after: { permissionCodes: next }, requestId: randomUUID() } });
+      return next;
+    });
+    return { userId, costPermissionCodes: result };
+  }
+
+  async updateResourceProfile(authorization: string | undefined, userId: string, input: { departmentCode?: string; displayRole?: string; weeklyCapacityMinutes?: number; billableTargetPercent?: number; employmentStatus?: EmploymentStatus }, principalFallback?: string) {
+    const principal = await this.requireAdminPrincipal(authorization, principalFallback);
+    const result = await this.prisma.$transaction(async (tx) => {
+      await lockWorkspaceAuth(tx, principal.workspaceId);
+      await lockUserAuth(tx, userId);
+      await this.requireCurrentAdmin(tx, principal.subjectId, principal.workspaceId);
+      const user = await tx.user.findFirst({ where: { id: userId, roleBindings: { some: { workspaceId: principal.workspaceId, tenantKey: principal.tenantKey } } }, include: { resourceProfile: true } });
+      if (!user) throw new NotFoundException("Workspace member not found");
+      const employmentStatus = input.employmentStatus ?? (user.status === "ACTIVE" ? "ACTIVE" : "INACTIVE");
+      const profile = await tx.resourceProfile.upsert({ where: { userId }, update: { displayRole: input.displayRole, employmentStatus, defaultWeeklyCapacityMinutes: input.weeklyCapacityMinutes, billableTargetPercent: input.billableTargetPercent, active: employmentStatus !== "INACTIVE" }, create: { userId, displayRole: input.displayRole, employmentStatus, defaultWeeklyCapacityMinutes: input.weeklyCapacityMinutes ?? 2400, billableTargetPercent: input.billableTargetPercent ?? 70, skills: [], active: employmentStatus !== "INACTIVE" } });
+      const before = { status: user.status, departmentCode: user.departmentCode, displayRole: user.resourceProfile?.displayRole ?? null, active: user.resourceProfile?.active ?? null };
+      const shouldSuspend = employmentStatus !== "ACTIVE";
+      const nextUser = await tx.user.update({ where: { id: userId }, data: { departmentCode: input.departmentCode, status: shouldSuspend ? "SUSPENDED" : "ACTIVE" } });
+      if (employmentStatus === "INACTIVE") await tx.roleBinding.updateMany({ where: { userId, workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, ...activeMembershipWhere() }, data: { endsAt: new Date() } });
+      await tx.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "people.profile_changed", resource: "user", resourceId: userId, before, after: { status: nextUser.status, departmentCode: nextUser.departmentCode, displayRole: profile.displayRole, employmentStatus }, requestId: randomUUID() } });
+      return { user: nextUser, profile, employmentStatus };
+    });
+    return { data: { userId, status: result.user.status === "ACTIVE" ? "active" : "suspended", employmentStatus: result.employmentStatus, resourceDisplayRole: result.profile.displayRole }, meta: { audited: true } };
   }
 
   private async requireCurrentAdmin(tx: Prisma.TransactionClient, userId: string, workspaceId: string) {
@@ -466,6 +514,8 @@ export class AuthService {
 
   private mapAdminAccessMember(user: any, workspaceId: string, bindingTenantKey: string): AdminAccessMemberSummary {
     const larkOpenId = user.identities.find((identity: any) => identity.provider === "lark")?.providerUserId;
+    const roleCodes = user.roleBindings.filter((binding: any) => isActiveMembership(binding)).map((binding: any) => binding.role.code);
+    const costPermissionCodes = roleCodes.includes("FOUNDER_GM") ? COST_PERMISSION_CODES : roleCodes.filter((code: string): code is CostPermissionCode => COST_PERMISSION_CODES.includes(code as CostPermissionCode));
 
     return {
       id: user.id,
@@ -484,7 +534,9 @@ export class AuthService {
       status: user.status === "ACTIVE" && user.roleBindings.some((binding: any) => isActiveMembership(binding)) ? "active" : "suspended",
       tenantKey: bindingTenantKey,
       workspaceId,
-      roleCodes: user.roleBindings.filter((binding: any) => isActiveMembership(binding)).map((binding: any) => binding.role.code),
+      roleCodes,
+      costPermissionCodes,
+      employmentStatus: user.status === "ACTIVE" ? (user.resourceProfile?.employmentStatus ?? "ACTIVE") : (user.resourceProfile?.employmentStatus === "ON_LEAVE" ? "ON_LEAVE" : "INACTIVE"),
       accountIds: user.customerGrants.flatMap((grant: any) => (grant.accountId ? [grant.accountId] : [])),
       accountNames: user.customerGrants.flatMap((grant: any) => (grant.account?.name ? [grant.account.name] : [])),
       projectIds: user.customerGrants.flatMap((grant: any) => (grant.projectId ? [grant.projectId] : [])),

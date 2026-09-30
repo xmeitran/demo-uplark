@@ -64,9 +64,10 @@ export class AdminUsersController {
   getUser(
     @Headers("authorization") authorization: string | undefined,
     @Param("userId") userId: string,
-    @Query("includeSuspended") includeSuspended?: string
+    @Query("includeSuspended") includeSuspended?: string,
+    @Query("principal") principalFallback?: string
   ) {
-    return this.auth.getUser(authorization, userId, includeSuspended === "true");
+    return this.auth.getUser(authorization, userId, includeSuspended === "true", principalFallback);
   }
 
   @Post()

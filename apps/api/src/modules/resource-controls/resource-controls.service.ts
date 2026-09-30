@@ -11,6 +11,7 @@ import type {
 import { PrismaService } from "../../shared/prisma/prisma.service";
 
 const DEFAULT_WEEKLY_CAPACITY_MINUTES = 2400;
+const COST_VIEW_ROLES = new Set(["FOUNDER_GM", "COST_VIEW", "COST_EDIT", "COST_APPROVE", "COST_EXPORT"]);
 
 @Injectable()
 export class ResourceControlsService {
@@ -202,8 +203,8 @@ export class ResourceControlsService {
   }
 
   async projectPlSummary(query: any, principal: PrincipalContext): Promise<ProjectPlSummaryResponse> {
-    if (!principal.roleCodes.some((role) => ["FOUNDER_GM", "WORKSPACE_ADMIN", "FINANCE_ADMIN", "DX_DIRECTOR", "PM", "BD_LEAD"].includes(role))) {
-      throw new ForbiddenException("Financial P&L access is restricted to workspace finance roles");
+    if (!principal.roleCodes.some((role) => COST_VIEW_ROLES.has(role))) {
+      throw new ForbiddenException("Financial P&L access requires an assigned cost permission group");
     }
     const projects = await this.prisma.project.findMany({
       where: {

@@ -21,6 +21,7 @@ import {
   Search,
   ShieldAlert,
   ShieldCheck,
+  Settings2,
   TimerReset,
   TriangleAlert
 } from "lucide-react";
@@ -49,7 +50,7 @@ import { useAuth } from "@/lib/auth";
 import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-tab-bar";
 
 const ADMIN_ROLES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN"]);
-type AdminSection = "overview" | "alerts" | "day-offs" | "reminders" | "milestones";
+type AdminSection = "overview" | "alerts" | "day-offs" | "reminders" | "milestones" | "pnl-config";
 type MilestoneView = "templates" | "project-gates";
 
 const MILESTONE_TAB_ITEMS: WorkspaceTabItem<MilestoneView>[] = [
@@ -200,6 +201,10 @@ export function WorkspaceAdminDashboard() {
   }, [isAdmin, selectedProjectId]);
 
   const selectSection = (next: AdminSection) => {
+    if (next === "pnl-config") {
+      window.location.assign("/pnl/config");
+      return;
+    }
     setSection(next);
     window.history.replaceState(window.history.state, "", next === "overview" ? "/admin" : `/admin#${next}`);
     window.requestAnimationFrame(() => document.getElementById("admin-content")?.scrollIntoView({ behavior: "smooth", block: "start" }));
@@ -300,7 +305,8 @@ export function WorkspaceAdminDashboard() {
                     { id: "alerts" as AdminSection, label: "Cảnh báo", description: "Estimate & Actual", badge: alertDetails.length || undefined, icon: <TriangleAlert className="h-4 w-4" /> },
                     { id: "day-offs" as AdminSection, label: "Ngày nghỉ", description: "Khóa ngày & loại phí", icon: <CalendarDays className="h-4 w-4" /> },
                     { id: "reminders" as AdminSection, label: "Nhắc Lark", description: "Lịch gửi & người nhận", icon: <BellRing className="h-4 w-4" /> },
-                    { id: "milestones" as AdminSection, label: "Milestone", description: "Template & gate", icon: <LockKeyhole className="h-4 w-4" /> }
+                    { id: "milestones" as AdminSection, label: "Milestone", description: "Template & gate", icon: <LockKeyhole className="h-4 w-4" /> },
+                    { id: "pnl-config" as AdminSection, label: "Thiết lập P&L", description: "Khoản mục & kỳ khóa", icon: <Settings2 className="h-4 w-4" /> }
                   ]}
                   value={section}
                   onChange={selectSection}
@@ -385,7 +391,7 @@ function OverviewPanel({ overview, loading, onRefresh, onOpen }: { overview: Adm
     <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">CONTROL ROOM</p><h2 id="admin-overview-title" className="mt-1 text-2xl font-bold tracking-tight text-slate-950">Tổng quan vận hành</h2><p className="mt-1 text-sm text-slate-600">Chỉ hiển thị các vấn đề admin cần biết hoặc cần xử lý.</p></div><button type="button" onClick={onRefresh} className="inline-flex min-h-10 items-center justify-center gap-2 self-start rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"><RefreshCw className="h-4 w-4" /> Làm mới</button></div>
     <section aria-labelledby="admin-alerts-title" className="rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5"><div className="flex items-center justify-between gap-3"><div><h3 id="admin-alerts-title" className="text-base font-bold text-slate-950">Cảnh báo cần xử lý</h3><p className="mt-1 text-xs text-slate-500">Cảnh báo thông tin chỉ hiện khi cần admin xem lại.</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${actionAlerts.length ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>{actionAlerts.length ? `${actionAlerts.length} cần xử lý` : "Đang ổn định"}</span></div><div className="mt-4 grid gap-3 lg:grid-cols-2">{alerts.map((alert) => { const tone = alertTone(alert.severity); return <a key={alert.id} href={alert.href ?? "#"} className={`rounded-2xl border p-4 transition hover:-translate-y-0.5 hover:shadow-sm ${tone.box}`}><div className="flex items-start gap-3"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${tone.icon}`}>{alert.severity === "info" ? <Info className="h-4 w-4" /> : <TriangleAlert className="h-4 w-4" />}</span><div><p className={`text-sm font-bold ${tone.title}`}>{alert.title}</p><p className="mt-1 text-xs leading-relaxed text-slate-600">{alert.detail}</p><span className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-slate-700">Xem chi tiết <ArrowRight className="h-3.5 w-3.5" /></span></div></div></a>; })}{loading && !overview ? <div className="rounded-2xl border border-border bg-slate-50 p-5 text-sm text-muted-foreground lg:col-span-2">Đang tải cảnh báo…</div> : null}</div></section>
     <section aria-label="Admin metrics" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric icon={<LockKeyhole className="h-4 w-4" />} label="Ngày off đã khóa" value={overview?.metrics.activeDayOffs} tone="amber" /><Metric icon={<CalendarClock className="h-4 w-4" />} label="Ngày off sắp tới" value={overview?.metrics.upcomingDayOffs} tone="sky" /><Metric icon={<TriangleAlert className="h-4 w-4" />} label="Task quá hạn" value={overview?.metrics.overdueTasks} tone="rose" /><Metric icon={<TimerReset className="h-4 w-4" />} label="Task đang mở" value={overview?.metrics.openTasks} tone="indigo" /></section>
-    <section aria-labelledby="quick-actions-title" className="rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5"><div className="flex items-start gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-700"><CheckCircle2 className="h-5 w-5" /></span><div><h3 id="quick-actions-title" className="text-base font-bold text-slate-950">Quản trị nhanh</h3><p className="mt-1 text-xs text-slate-500">Các chính sách vận hành được quản lý tập trung ở đây.</p></div></div><div className="mt-4 grid gap-3 md:grid-cols-2"><button type="button" onClick={() => onOpen("day-offs")} className="group flex items-center justify-between rounded-2xl border border-amber-200 bg-amber-50/60 p-4 text-left transition hover:border-amber-300 hover:bg-amber-50"><span><span className="block text-sm font-bold text-amber-950">Đăng ký ngày nghỉ</span><span className="mt-1 block text-xs text-amber-900/70">Khóa ngày lễ và loại khỏi billable.</span></span><ArrowRight className="h-4 w-4 text-amber-700 transition group-hover:translate-x-1" /></button><button type="button" onClick={() => onOpen("reminders")} className="group flex items-center justify-between rounded-2xl border border-violet-200 bg-violet-50/60 p-4 text-left transition hover:border-violet-300 hover:bg-violet-50"><span><span className="block text-sm font-bold text-violet-950">Cấu hình nhắc Lark</span><span className="mt-1 block text-xs text-violet-900/70">08:30 · 14:00 · 17:00 và ngày chạy.</span></span><ArrowRight className="h-4 w-4 text-violet-700 transition group-hover:translate-x-1" /></button></div></section>
+    <section aria-labelledby="quick-actions-title" className="rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5"><div className="flex items-start gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-700"><CheckCircle2 className="h-5 w-5" /></span><div><h3 id="quick-actions-title" className="text-base font-bold text-slate-950">Quản trị nhanh</h3><p className="mt-1 text-xs text-slate-500">Các chính sách vận hành được quản lý tập trung ở đây.</p></div></div><div className="mt-4 grid gap-3 md:grid-cols-3"><button type="button" onClick={() => onOpen("day-offs")} className="group flex items-center justify-between rounded-2xl border border-amber-200 bg-amber-50/60 p-4 text-left transition hover:border-amber-300 hover:bg-amber-50"><span><span className="block text-sm font-bold text-amber-950">Đăng ký ngày nghỉ</span><span className="mt-1 block text-xs text-amber-900/70">Khóa ngày lễ và loại khỏi billable.</span></span><ArrowRight className="h-4 w-4 text-amber-700 transition group-hover:translate-x-1" /></button><button type="button" onClick={() => onOpen("reminders")} className="group flex items-center justify-between rounded-2xl border border-violet-200 bg-violet-50/60 p-4 text-left transition hover:border-violet-300 hover:bg-violet-50"><span><span className="block text-sm font-bold text-violet-950">Cấu hình nhắc Lark</span><span className="mt-1 block text-xs text-violet-900/70">08:30 · 14:00 · 17:00 và ngày chạy.</span></span><ArrowRight className="h-4 w-4 text-violet-700 transition group-hover:translate-x-1" /></button><button type="button" onClick={() => onOpen("pnl-config")} className="group flex items-center justify-between rounded-2xl border border-blue-200 bg-blue-50/60 p-4 text-left transition hover:border-blue-300 hover:bg-blue-50"><span><span className="block text-sm font-bold text-blue-950">Thiết lập P&amp;L</span><span className="mt-1 block text-xs text-blue-900/70">Khoản mục, tham số và kỳ khóa.</span></span><ArrowRight className="h-4 w-4 text-blue-700 transition group-hover:translate-x-1" /></button></div></section>
   </section>;
 }
 

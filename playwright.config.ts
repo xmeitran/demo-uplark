@@ -13,6 +13,10 @@ const webCommand = [
   shellEnv("PUBLIC_WEB_URL", baseURL),
   shellEnv("NEXT_DIST_DIR", process.env.NEXT_DIST_DIR ?? `.next-playwright-${port}`),
   shellEnv("CRM_PUBLIC_SESSION_REQUIRED", crmPublicSessionRequired),
+  // Keep the E2E contract fail-closed even when a developer's .env.local
+  // enables the local demo auto-auth shortcut.
+  shellEnv("CRM_LOCAL_AUTO_AUTH", "false"),
+  shellEnv("CRM_STAGING_BYPASS_AUTH", "false"),
   shellEnv("CRM_DEMO_AUTH_ENABLED", process.env.CRM_DEMO_AUTH_ENABLED ?? "true"),
   shouldStartApi ? shellEnv("CRM_API_INTERNAL_URL", apiBaseUrl) : undefined,
   shouldStartApi ? shellEnv("NEXT_PUBLIC_API_URL", `${apiBaseUrl}/api`) : undefined,

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useMemo, useState } from "react";
-import { AlertTriangle, FileSearch } from "lucide-react";
+import { AlertTriangle, ExternalLink, FileSearch } from "lucide-react";
 import {
   buildPersonDayMatrix,
   logsForPersonDay,
@@ -266,8 +266,16 @@ function DayDetailCard({
                 <span className="block truncate text-[11.5px] font-semibold">
                   {projectsById.get(entry.projectId)?.code ?? entry.projectId}
                 </span>
-                <span className="block text-[10.5px] leading-snug text-muted-foreground">
-                  {taskNames.get(entry.taskId) ?? entry.taskId}
+                <span className="flex items-center gap-1 text-[10.5px] leading-snug text-muted-foreground">
+                  <a
+                    href={`/tasks/${encodeURIComponent(entry.taskId)}`}
+                    aria-label={`Mở task ${taskNames.get(entry.taskId) ?? entry.taskId}`}
+                    title="Mở task"
+                    className="min-w-0 truncate hover:text-primary hover:underline"
+                  >
+                    {taskNames.get(entry.taskId) ?? entry.taskId}
+                  </a>
+                  <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
                 </span>
               </span>
               <span className="shrink-0 font-mono text-[11.5px] font-bold tabular-nums">{formatHours(entry.minutes)}</span>

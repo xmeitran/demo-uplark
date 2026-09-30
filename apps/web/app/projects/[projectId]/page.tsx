@@ -53,6 +53,7 @@ import {
 import { formatVietnamTime, VIETNAM_TIME_ZONE, VIETNAM_TIME_ZONE_LABEL } from "@/lib/vietnam-time";
 import { hasAnyAuthRole } from "@/lib/auth-role";
 import { formatProjectDateRange } from "@/lib/project-date";
+import { isCompletedTaskStatus } from "@/components/crm-workspace/task-display-helpers";
 import {
   alignItemsToOrder,
   buildHierarchyOrderInput,
@@ -964,6 +965,12 @@ function formatHours(hours = 0) {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
+function isTaskOverdue(task: Pick<TaskItem, "status" | "due">) {
+  if (task.status === "done" || !task.due || ["TBD", "Not set"].includes(task.due)) return false;
+  const due = new Date(task.due);
+  return Number.isFinite(due.getTime()) && due.getTime() < Date.now();
+}
+
 type ProjectSheetTaskRow = {
   task: TaskItem;
   milestone: Milestone;
@@ -977,7 +984,6 @@ function ProjectSheetPanel({
   teamMembers,
   currentUserId,
   onOpenTasks,
-  onOpenTeam,
   onOpenTask
 }: {
   project: Project;
@@ -986,7 +992,6 @@ function ProjectSheetPanel({
   teamMembers: ProjectTeamMember[];
   currentUserId?: string;
   onOpenTasks: () => void;
-  onOpenTeam: () => void;
   onOpenTask: (task: TaskItem) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -1043,7 +1048,6 @@ function ProjectSheetPanel({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" onClick={onOpenTasks} className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-muted"><ListChecks className="h-4 w-4" /> Mở Tasks</button>
-          <button type="button" onClick={onOpenTeam} className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-sm transition-opacity hover:opacity-90"><Users className="h-4 w-4" /> Xem thành viên</button>
         </div>
       </section>
 
@@ -1094,8 +1098,8 @@ function ProjectSheetPanel({
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[920px] text-left">
-            <thead className="bg-muted/25"><tr>{["Hạng mục công việc", "Người thực hiện", "Trạng thái", "Kế hoạch", "Đã ghi nhận", "Chênh lệch"].map((label) => <th key={label} className="border-y border-border px-5 py-3 text-[10px] font-black uppercase tracking-wider text-muted-foreground">{label}</th>)}</tr></thead>
+          <table className="w-full min-w-[1040px] text-left">
+            <thead className="bg-muted/25"><tr>{["Hạng mục công việc", "Người thực hiện", "Trạng thái", "Điểm chốt", "Kế hoạch", "Đã ghi nhận", "Chênh lệch"].map((label) => <th key={label} className="border-y border-border px-5 py-3 text-[10px] font-black uppercase tracking-wider text-muted-foreground">{label}</th>)}</tr></thead>
             <tbody>
               {visibleRows.map(({ task, milestone, stage }) => {
                 const taskVariance = roundHours((task.actualHours ?? 0) - (task.plannedHours ?? 0));
@@ -1104,7 +1108,8 @@ function ProjectSheetPanel({
                   <tr key={task.id} tabIndex={0} role="button" onClick={() => onOpenTask(task)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpenTask(task); } }} className="cursor-pointer border-b border-border/70 transition-colors hover:bg-muted/25 focus:bg-primary/5 focus:outline-none">
                     <td className="px-5 py-4"><p className="text-[10px] font-black uppercase tracking-wide text-primary">{milestone.name}</p><p className="mt-1 text-xs text-muted-foreground"><strong className="text-foreground">Stage:</strong> {stage.name} · Deadline {task.due}</p><p className="mt-1 font-bold text-foreground">{task.title}</p></td>
                     <td className="px-5 py-4"><span className="inline-flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-bold text-white" style={{ backgroundColor: member?.color || task.aColor }}>{member?.initials || task.assignee}</span><span className={`text-sm ${member?.id === currentUserId ? "font-bold text-primary" : "font-medium text-foreground"}`}>{member?.name || task.assignee}</span></span></td>
-                    <td className="px-5 py-4"><span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${task.status === "done" ? "bg-emerald-50 text-emerald-700" : task.status === "in-progress" ? "bg-purple-50 text-purple-700" : "bg-slate-100 text-slate-600"}`}>{statusLabel[task.status]}</span></td>
+                    <td className="px-5 py-4"><span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${isTaskOverdue(task) ? "bg-red-50 text-red-700" : task.status === "done" ? "bg-emerald-50 text-emerald-700" : task.status === "in-progress" ? "bg-purple-50 text-purple-700" : "bg-slate-100 text-slate-600"}`}>{isTaskOverdue(task) ? "Quá hạn" : statusLabel[task.status]}</span></td>
+                    <td className="px-5 py-4"><span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${milestone.status === "done" ? "bg-emerald-50 text-emerald-700" : milestone.status === "at-risk" ? "bg-red-50 text-red-700" : milestone.status === "in-progress" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"}`}>{milestone.status === "done" ? "Đã đạt" : milestone.status === "at-risk" ? "Cần xử lý" : milestone.status === "in-progress" ? "Đang theo dõi" : "Chưa mở"}</span></td>
                     <td className="px-5 py-4 font-mono text-sm tabular-nums text-foreground">{formatHours(task.plannedHours)}h</td>
                     <td className="px-5 py-4 font-mono text-sm tabular-nums text-foreground">{formatHours(task.actualHours)}h</td>
                     <td className={`px-5 py-4 font-mono text-sm font-semibold tabular-nums ${taskVariance > 0 ? "text-red-600" : "text-emerald-600"}`}>{taskVariance > 0 ? "+" : ""}{formatHours(taskVariance)}h</td>
@@ -1119,7 +1124,7 @@ function ProjectSheetPanel({
 
       <section className="grid gap-5 xl:grid-cols-5">
         <article className="rounded-2xl border border-border bg-card p-5 shadow-sm xl:col-span-3">
-          <div className="mb-4 flex items-start justify-between"><div><h3 className="text-lg font-black text-foreground">Nguồn lực đang tham gia</h3><p className="mt-1 text-sm text-muted-foreground">Active được xác định từ Time Log trong kỳ theo dõi.</p></div><button type="button" onClick={onOpenTeam} className="text-sm font-semibold text-primary hover:underline">Xem đầy đủ →</button></div>
+          <div className="mb-4 flex items-start justify-between"><div><h3 className="text-lg font-black text-foreground">Nguồn lực đang tham gia</h3><p className="mt-1 text-sm text-muted-foreground">Active được xác định từ Time Log trong kỳ theo dõi.</p></div></div>
           <div className="space-y-2">{teamMembers.map((member) => { const memberTasks = rows.filter(({ task }) => task.assigneeUserId === member.id || task.assignee === member.initials); const memberActual = sumHours(memberTasks.map(({ task }) => task.actualHours ?? 0)); return <div key={member.id} className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-3"><div className="flex min-w-0 items-center gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-bold text-white" style={{ backgroundColor: member.color }}>{member.avatarUrl ? <img src={member.avatarUrl} alt="" className="h-full w-full object-cover" /> : member.initials}</span><div className="min-w-0"><p className={`truncate text-sm ${member.id === currentUserId ? "font-bold text-primary" : "font-bold text-foreground"}`}>{member.name}</p><p className="text-xs text-muted-foreground">{member.role}</p></div></div><div className="flex items-center gap-3"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${memberActual > 0 ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{memberActual > 0 ? "Active" : "No log"}</span><span className="font-mono text-sm font-bold text-foreground">{member.done}/{member.tasks}</span></div></div>; })}</div>
           {teamMembers.length === 0 && <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Chưa có thành viên trong project.</p>}
         </article>
@@ -1435,6 +1440,93 @@ function ProjectIssuesPanel({
   );
 }
 
+function ProjectOverviewSignals({
+  projectColor,
+  milestones,
+  tasks,
+  risks,
+  documents,
+  onOpenIssues,
+  onOpenDocuments
+}: {
+  projectColor: string;
+  milestones: Milestone[];
+  tasks: TaskItem[];
+  risks: RiskItem[];
+  documents: ProjectDoc[];
+  onOpenIssues: () => void;
+  onOpenDocuments: () => void;
+}) {
+  const today = new Date();
+  const openRisks = risks.filter((risk) => !["resolved", "closed", "done"].includes(risk.status.toLowerCase()));
+  const overdueTasks = tasks.filter((task) => {
+    if (task.status === "done" || !task.due || ["TBD", "Not set"].includes(task.due)) return false;
+    const due = new Date(task.due);
+    return Number.isFinite(due.getTime()) && due < today;
+  });
+  const atRiskMilestones = milestones.filter((milestone) => milestone.status === "at-risk");
+  const activeMilestone = milestones.find((milestone) => milestone.status === "in-progress") ?? milestones.find((milestone) => milestone.status === "upcoming");
+  const signalCount = openRisks.length + overdueTasks.length + atRiskMilestones.length;
+
+  return (
+    <section aria-label="Tín hiệu điều phối project" className="space-y-3">
+      <div className={`flex flex-col gap-3 rounded-2xl border px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${signalCount > 0 ? "border-amber-200 bg-amber-50/70" : "border-emerald-200 bg-emerald-50/70"}`}>
+        <div className="flex min-w-0 items-start gap-3">
+          {signalCount > 0 ? <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" /> : <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />}
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-foreground">{signalCount > 0 ? `${signalCount} tín hiệu cần điều phối` : "Chưa có tín hiệu cần xử lý"}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {openRisks.length} vấn đề mở · {overdueTasks.length} task quá hạn · {atRiskMilestones.length} milestone có rủi ro
+            </p>
+          </div>
+        </div>
+        <button type="button" onClick={onOpenIssues} className="inline-flex shrink-0 items-center justify-center rounded-lg border border-amber-300 bg-white/80 px-3 py-2 text-xs font-semibold text-amber-800 transition hover:bg-white">
+          Mở Blocker Management →
+        </button>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-[1.35fr_1fr]">
+        {openRisks.length > 0 ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 shadow-sm lg:col-span-2">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <div className="min-w-0">
+                <p className="text-xs font-bold uppercase tracking-wide text-amber-800">Operational risk</p>
+                <p className="mt-1 text-sm font-semibold text-foreground">{openRisks[0].description}</p>
+                <p className="mt-1 text-xs text-muted-foreground">Owner: {openRisks[0].owner || "Chưa phân công"}</p>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Milestone đang chạy</p>
+              <p className="mt-1 text-sm font-bold text-foreground">{activeMilestone?.name ?? "Chưa có milestone đang chạy"}</p>
+            </div>
+            <span className="rounded-full px-2.5 py-1 text-[10px] font-bold" style={{ backgroundColor: `${projectColor}15`, color: projectColor }}>{activeMilestone ? "Đang theo dõi" : "Chưa cấu hình"}</span>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span>{activeMilestone ? `${activeMilestone.startDate || "TBD"} → ${activeMilestone.dueDate || "TBD"}` : "Bổ sung kế hoạch để xác định điểm chốt"}</span>
+            <span aria-hidden="true">·</span>
+            <span>{documents.length > 0 ? `${documents.length} tài liệu đã liên kết` : "Chưa có hồ sơ chuyển tiếp"}</span>
+          </div>
+        </div>
+        <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Hồ sơ chuyển tiếp</p>
+              <p className="mt-1 text-sm font-bold text-foreground">{documents.length > 0 ? `${documents.length} tài liệu trong project` : "Chưa có tài liệu bắt buộc"}</p>
+            </div>
+            <button type="button" onClick={onOpenDocuments} className="text-xs font-semibold text-primary hover:underline">Mở hồ sơ →</button>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">Tài liệu được quản lý tập trung theo Milestone trong tab Điểm chốt &amp; Tài liệu.</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 // ─── Config maps ──────────────────────────────────────────────────────────────
 
 const STATUS_CFG = {
@@ -1458,6 +1550,7 @@ const TASK_STATUS = {
   "in-progress": { color:C.purple,  bg:"#ede9fe", label:"Đang thực hiện" },
   todo:          { color:C.slate,   bg:"#f1f5f9", label:"Chưa bắt đầu" },
 };
+const MANUAL_TASK_STATUS: Array<TaskItem["status"]> = ["todo", "done"];
 
 const MILESTONE_STATUS = {
   done:          { color:C.success, bg:"#dcfce7", label:"Hoàn tất",   icon:CheckCircle2 },
@@ -1466,23 +1559,28 @@ const MILESTONE_STATUS = {
   "at-risk":     { color:C.danger,  bg:"#fee2e2", label:"Có rủi ro",     icon:AlertCircle },
 };
 
-const TABS = ["Overview", "Project Sheet", "Issues", "Dashboard", "Tasks", "Timeline", "Team", "Activity", "Documents"] as const;
+// Dashboard is the project control-center view. Team is a real detail view and
+// therefore belongs in the primary navigation as well.
+const TABS = ["Overview", "Dashboard", "Project Sheet", "Tasks", "Timeline", "Activity", "Documents", "Issues", "Team"] as const;
 type Tab = typeof TABS[number];
 
 const PROJECT_TAB_ITEMS: WorkspaceTabItem<Tab>[] = [
   { id: "Overview", label: "Overview", description: "Tổng quan dự án" },
+  { id: "Dashboard", label: "Dashboard", description: "Điều phối & biểu đồ" },
   { id: "Project Sheet", label: "Project Sheet", description: "Milestone & ngân sách" },
-  { id: "Issues", label: "Issues", description: "Rủi ro & blockers" },
-  { id: "Dashboard", label: "Dashboard", description: "KPI vận hành" },
   { id: "Tasks", label: "Tasks", description: "Công việc & tiến độ" },
   { id: "Timeline", label: "Timeline", description: "Lịch thực hiện" },
-  { id: "Team", label: "Team", description: "Nhân sự tham gia" },
   { id: "Activity", label: "Activity", description: "Lịch sử thay đổi" },
-  { id: "Documents", label: "Documents", description: "Tài liệu dự án" }
+  { id: "Documents", label: "Điểm chốt & Tài liệu", ariaLabel: "Documents", description: "Hồ sơ chuyển tiếp" },
+  { id: "Team", label: "Team", description: "Thành viên dự án" }
 ];
 
 function isProjectDetailTab(value: string | null): value is Tab {
   return TABS.includes(value as Tab);
+}
+
+function resolveProjectDetailTab(value: string | null): Tab | null {
+  return isProjectDetailTab(value) ? value : null;
 }
 
 // ─── Modals ───────────────────────────────────────────────────────────────────
@@ -1670,6 +1768,9 @@ function TeamMemberMultiSelect({
   }, []);
 
   const toggleMember = (memberId: string) => {
+    // Keep at least one assignee selected when toggling an existing sole member.
+    // Use the explicit Clear action when an empty assignment is intentional.
+    if (selectedIds.includes(memberId) && selectedIds.length === 1) return;
     onChange(
       selectedIds.includes(memberId)
         ? selectedIds.filter((id) => id !== memberId)
@@ -1721,6 +1822,9 @@ function TeamMemberMultiSelect({
             exit={{ opacity: 0, y: 8, scale: 0.98 }}
             transition={{ duration: 0.15 }}
             className="absolute left-0 right-0 z-[70] mt-1.5 overflow-hidden rounded-xl border border-border bg-card shadow-xl"
+            role="listbox"
+            aria-label="Project members"
+            aria-multiselectable="true"
             style={{ boxShadow: "0 16px 40px rgba(15,23,42,0.16)" }}
           >
             <div className="flex items-center justify-between border-b border-border px-3 py-2">
@@ -1744,6 +1848,8 @@ function TeamMemberMultiSelect({
                   <button
                     key={member.id}
                     type="button"
+                    role="option"
+                    aria-selected={selected}
                     onClick={() => toggleMember(member.id)}
                     className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-muted ${
                       selected ? "bg-primary/5" : ""
@@ -2098,15 +2204,19 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
         </Field>
         {/* Status */}
         <Field label="Trạng thái">
-          <div className="flex gap-2 flex-wrap">
-            {(Object.entries(TASK_STATUS) as [TaskItem["status"], typeof TASK_STATUS[keyof typeof TASK_STATUS]][]).map(([k, cfg]) => (
+          <div className="flex flex-wrap gap-2">
+            {MANUAL_TASK_STATUS.map((k) => {
+              const cfg = TASK_STATUS[k];
+              return (
               <motion.button key={k} whileTap={{ scale:0.95 }} onClick={() => setStatus(k)}
                 className="px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all"
                 style={{ borderColor:status===k?cfg.color:"var(--color-border)", backgroundColor:status===k?cfg.bg:"transparent", color:status===k?cfg.color:"var(--color-muted-foreground)" }}>
                 {cfg.label}
               </motion.button>
-            ))}
+              );
+            })}
           </div>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">“Đang thực hiện” và “Quá hạn” được hệ thống xác định từ kế hoạch, ngày hạn và giờ đã ghi.</p>
         </Field>
         <Field label="Assignee">
           <TeamMemberMultiSelect
@@ -2115,7 +2225,7 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
             onChange={setSelectedAssigneeIds}
             placeholder="Select task assignees"
           />
-          {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected assignees: {selectedAssigneeIds.length} · {pic.name}{pic.id === currentUserId ? " · tài khoản đang đăng nhập" : ""}</p>}
+          {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected {selectedAssigneeIds.length === 1 ? "assignee" : "assignees"}: {pic.name}{selectedAssigneeIds.length > 1 ? ` +${selectedAssigneeIds.length - 1}` : ""}{pic.id === currentUserId ? " · tài khoản đang đăng nhập" : ""}</p>}
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Start Date (optional)">
@@ -3323,15 +3433,20 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
           </div>
         </Field>
         <Field label="Trạng thái">
-          <div className="flex gap-2 flex-wrap">
-            {(Object.entries(TASK_STATUS) as [TaskItem["status"], typeof TASK_STATUS[keyof typeof TASK_STATUS]][]).map(([k, cfg]) => (
+          <div className="flex flex-wrap gap-2">
+            {MANUAL_TASK_STATUS.map((k) => {
+              const cfg = TASK_STATUS[k];
+              return (
               <motion.button key={k} whileTap={{ scale:0.95 }} onClick={() => setStatus(k)}
                 className="px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all"
                 style={{ borderColor:status===k?cfg.color:"var(--color-border)", backgroundColor:status===k?cfg.bg:"transparent", color:status===k?cfg.color:"var(--color-muted-foreground)" }}>
                 {cfg.label}
               </motion.button>
-            ))}
+              );
+            })}
+            {status === "in-progress" && <span className="inline-flex items-center rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700">Đang thực hiện · hệ thống</span>}
           </div>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">Chỉ trạng thái đầu vào được chỉnh tay; trạng thái đang làm/quá hạn được suy ra tự động.</p>
         </Field>
         <Field label="Assignees (unlimited)">
           <TeamMemberMultiSelect
@@ -4690,6 +4805,7 @@ function TaskRow({ task, projectColor, onEdit, onDelete, onViewDetails, sortHand
   members?: ProjectTeamMember[];
 }) {
   const ts = TASK_STATUS[task.status];
+  const overdue = isTaskOverdue(task);
   const tp = PRIORITY_CFG[task.priority];
   const assigneeMember = findTeamMember(members, task.assignee, undefined, task.assigneeUserId);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -4718,7 +4834,7 @@ function TaskRow({ task, projectColor, onEdit, onDelete, onViewDetails, sortHand
         </div>
         <div className="min-w-0 flex-1">
           <p
-            className={`truncate text-sm font-medium ${task.status==="done" ? "line-through text-muted-foreground/75" : "text-foreground hover:underline"}`}
+            className={`truncate text-sm font-medium ${isCompletedTaskStatus(task.status) ? "text-muted-foreground" : "text-foreground hover:underline"}`}
             title={task.title}
           >
             {task.title}
@@ -4732,7 +4848,7 @@ function TaskRow({ task, projectColor, onEdit, onDelete, onViewDetails, sortHand
       </div>
       <div className="flex items-center gap-2.5 shrink-0">
         <span className="hidden sm:inline text-[10px] font-semibold px-2 py-0.5 rounded-md" style={{ backgroundColor:tp.bg, color:tp.color }}>{tp.label}</span>
-        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md" style={{ backgroundColor:ts.bg, color:ts.color }}>{ts.label}</span>
+        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md" style={{ backgroundColor: overdue ? "#fee2e2" : ts.bg, color: overdue ? C.danger : ts.color }}>{overdue ? "Quá hạn" : ts.label}</span>
 
         {/* Hours indicator styled with project accent color */}
         <span className="flex items-center gap-1 text-[10px] font-semibold px-2.5 py-0.5 rounded-md border font-mono transition-all duration-300"
@@ -5313,8 +5429,8 @@ export default function ProjectDetailPage() {
 
   const searchParams = useSearchParams();
   const [tab, setTab] = useState<Tab>(() => {
-    const initialTab = searchParams.get("tab");
-    return isProjectDetailTab(initialTab) ? initialTab : "Overview";
+    const initialTab = resolveProjectDetailTab(searchParams.get("tab"));
+    return initialTab ?? "Overview";
   });
   const projectMainRef = useRef<HTMLElement>(null);
   const pendingTabScrollTopRef = useRef<number | null>(null);
@@ -5370,8 +5486,9 @@ export default function ProjectDetailPage() {
 
   useEffect(() => {
     const qTab = searchParams.get("tab");
-    if (isProjectDetailTab(qTab)) {
-      setTabPreservingScroll(qTab);
+    const resolvedTab = resolveProjectDetailTab(qTab);
+    if (resolvedTab) {
+      setTabPreservingScroll(resolvedTab);
     }
   }, [searchParams, setTabPreservingScroll]);
 
@@ -5379,13 +5496,15 @@ export default function ProjectDetailPage() {
     const handleProjectTabNavigation = (event: Event) => {
       const detail = (event as CustomEvent<{ projectId?: string; tab?: string }>).detail;
       const nextTab = detail?.tab ?? null;
-      if (detail?.projectId !== projectId || !isProjectDetailTab(nextTab)) return;
-      setTabPreservingScroll(nextTab);
+      const resolvedTab = resolveProjectDetailTab(nextTab);
+      if (detail?.projectId !== projectId || !resolvedTab) return;
+      setTabPreservingScroll(resolvedTab);
     };
     const handleHistoryNavigation = () => {
       const queryTab = new URLSearchParams(window.location.search).get("tab");
-      if (isProjectDetailTab(queryTab)) {
-        setTabPreservingScroll(queryTab);
+      const resolvedTab = resolveProjectDetailTab(queryTab);
+      if (resolvedTab) {
+        setTabPreservingScroll(resolvedTab);
       }
     };
 
@@ -6675,6 +6794,7 @@ export default function ProjectDetailPage() {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1 rounded-lg" style={{ backgroundColor:sc.bg, color:sc.color }}>
                   <sc.icon className="w-3 h-3" />{formatProjectStatusLabel(project.status)}
+                  {project.status === "Active" ? <span className="sr-only">In progress</span> : null}
                 </span>
                 <span className="text-[11px] font-semibold px-3 py-1 rounded-lg" style={{ backgroundColor:pc.bg, color:pc.color }}>{project.priority}</span>
                 {project.tags.slice(0, 3).map(t => (
@@ -6782,7 +6902,6 @@ export default function ProjectDetailPage() {
                   teamMembers={teamMembers}
                   currentUserId={user?.id}
                   onOpenTasks={() => handleTabChange("Tasks")}
-                  onOpenTeam={() => handleTabChange("Team")}
                   onOpenTask={(task) => taskDetailRouter.push(`/tasks/${encodeURIComponent(task.id)}`)}
                 />
               )}
@@ -6797,7 +6916,17 @@ export default function ProjectDetailPage() {
 
               {/* ─── OVERVIEW ─── */}
               {tab === "Overview" && (
-                <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
+                <div className="space-y-5">
+                  <ProjectOverviewSignals
+                    projectColor={project.color}
+                    milestones={milestones}
+                    tasks={allTasks}
+                    risks={riskRegistry}
+                    documents={documents}
+                    onOpenIssues={() => handleTabChange("Issues")}
+                    onOpenDocuments={() => handleTabChange("Documents")}
+                  />
+                  <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
                   <div className="space-y-5 xl:col-span-2">
                     {/* Milestones */}
                     <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
@@ -6922,7 +7051,7 @@ export default function ProjectDetailPage() {
                     <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
                       <div className="flex items-center justify-between mb-4.5">
                         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Team</h3>
-                        <button onClick={() => handleTabChange("Team")} className="text-xs font-medium hover:underline" style={{ color:project.color }}>View all</button>
+                        <button onClick={() => handleTabChange("Project Sheet")} className="text-xs font-medium hover:underline" style={{ color:project.color }}>Xem trong Project Sheet</button>
                       </div>
                       <div className="space-y-4">
                         {teamMembers.length > 0 ? (
@@ -6959,10 +7088,11 @@ export default function ProjectDetailPage() {
                     </div>
                   </div>
                 </div>
+                </div>
               )}
 
               {/* ─── DASHBOARD ─── */}
-              {tab === "Dashboard" && (() => {
+              {String(tab) === "Dashboard" && (() => {
                 const priorityBuckets = [
                   { key: "critical", label: "Rất khẩn cấp", color: C.danger },
                   { key: "high", label: "Khẩn cấp", color: C.warning },
@@ -7542,7 +7672,7 @@ export default function ProjectDetailPage() {
                               <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Trạng thái năng lực nhân sự</h3>
                               <button
                                 type="button"
-                                onClick={() => handleTabChange("Team")}
+                                onClick={() => handleTabChange("Project Sheet")}
                                 className="text-[10px] font-bold hover:underline"
                                 style={{ color: project.color }}
                               >
@@ -8107,7 +8237,7 @@ export default function ProjectDetailPage() {
               })()}
 
               {/* ─── TEAM ─── */}
-              {tab === "Team" && (
+              {String(tab) === "Team" && (
                 <div>
                   <div className="flex items-center justify-between mb-4">
                     <div>
@@ -8346,7 +8476,7 @@ export default function ProjectDetailPage() {
                 </div>
               )}
 
-              {/* ─── DOCUMENTS ─── */}
+              {/* ─── CHECKPOINTS & DOCUMENTS ─── */}
               {tab === "Documents" && (() => {
                 const filteredDocs = documents.filter(doc => {
                   const matchSearch = doc.name.toLowerCase().includes(docSearchQuery.toLowerCase());
@@ -8358,6 +8488,14 @@ export default function ProjectDetailPage() {
 
                 return (
                   <div className="space-y-4">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                      <div>
+                        <p className="text-[11px] font-black uppercase tracking-[0.16em] text-primary">PROJECT CONTROL</p>
+                        <h2 className="mt-1 text-2xl font-black tracking-tight text-foreground">Điểm chốt &amp; Tài liệu</h2>
+                        <p className="mt-1 text-sm text-muted-foreground">Tổ chức hồ sơ theo Milestone để theo dõi điều kiện chuyển tiếp.</p>
+                      </div>
+                      <span className="text-xs font-semibold text-muted-foreground">{documents.length} tài liệu đã liên kết</span>
+                    </div>
                     {/* Control Bar */}
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-4 bg-card border border-border rounded-2xl shadow-sm">
                       <div className="flex flex-1 flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
@@ -8366,7 +8504,7 @@ export default function ProjectDetailPage() {
                           <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-3" />
                           <input
                             type="text"
-                            placeholder="Search documents..."
+                            placeholder="Tìm tài liệu..."
                             value={docSearchQuery}
                             onChange={e => setDocSearchQuery(e.target.value)}
                             className="w-full bg-background border border-input rounded-xl pl-9 pr-4 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring"
@@ -8396,7 +8534,7 @@ export default function ProjectDetailPage() {
                         className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-sm"
                         style={{ backgroundColor:project.color }}
                       >
-                        <Plus className="w-4 h-4" /> Upload Document
+                        <Plus className="w-4 h-4" /> Tải tài liệu
                       </motion.button>
                     </div>
                     {documentMutationError ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700" role="alert">{documentMutationError}</div> : null}

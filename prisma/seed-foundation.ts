@@ -29,6 +29,10 @@ const roleDefinitions = [
   ["role-sales-owner", "SALES_OWNER", "Sales Owner", "BUSINESS", "Owns accounts, leads, opportunities, and proposal readiness."],
   ["role-delivery-lead", "DELIVERY_LEAD", "Delivery Lead", "BUSINESS", "Owns implementation projects, tasks, blockers, and acceptance."],
   ["role-finance-admin", "FINANCE_ADMIN", "Finance Admin", "BUSINESS", "Owns contracts, payment schedules, invoices, AR, and financial views."],
+  ["role-cost-view", "COST_VIEW", "Cost Viewer", "BUSINESS", "Can view approved cost and P&L data."],
+  ["role-cost-edit", "COST_EDIT", "Cost Editor", "BUSINESS", "Can edit resource cost inputs."],
+  ["role-cost-approve", "COST_APPROVE", "Cost Approver", "BUSINESS", "Can approve cost and P&L inputs."],
+  ["role-cost-export", "COST_EXPORT", "Cost Exporter", "BUSINESS", "Can export approved cost and P&L data."],
   ["role-customer-sponsor", "CUSTOMER_SPONSOR", "Customer Sponsor", "PORTAL", "Customer-facing portal role with scoped access."],
   ["role-lark-event-service", "LARK_EVENT_SERVICE", "Lark Event Service", "SERVICE", "Service role for Lark event ingestion adapters."]
 ] as const;

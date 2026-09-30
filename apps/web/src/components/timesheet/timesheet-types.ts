@@ -56,10 +56,11 @@ export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
   completed: "Đã hoàn thành"
 };
 
-export type NodeStatus = "not_started" | "in_progress" | "blocked" | "completed";
+export type NodeStatus = "not_started" | "waiting" | "in_progress" | "blocked" | "completed";
 
 export const NODE_STATUS_LABELS: Record<NodeStatus, string> = {
   not_started: "Chưa bắt đầu",
+  waiting: "Đang chờ",
   in_progress: "Đang làm",
   blocked: "Bị chặn",
   completed: "Đã hoàn thành"
@@ -68,6 +69,7 @@ export const NODE_STATUS_LABELS: Record<NodeStatus, string> = {
 /** Status labels used by the Project page for milestones and stages. */
 export const WORKFLOW_STATUS_LABELS: Record<NodeStatus, string> = {
   not_started: "Sắp tới",
+  waiting: "Đang chờ",
   in_progress: "Đang làm",
   blocked: "Có rủi ro",
   completed: "Đã hoàn thành"

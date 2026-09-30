@@ -7,6 +7,7 @@ import { AnalyticsWorkbench } from "@/components/analytics/analytics-workbench";
 function WorkbenchFallback() {
   return (
     <div className="space-y-4" aria-busy="true" aria-label="Đang tải phân tích vận hành">
+      <div className="h-32 animate-pulse rounded-2xl bg-muted" />
       <div className="h-10 animate-pulse rounded-xl bg-muted" />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[0, 1, 2, 3].map((index) => (

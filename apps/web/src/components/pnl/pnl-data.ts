@@ -13,6 +13,11 @@ export type PnlDailyPoint = {
   date: string;
   label: string;
   minutes: number;
+  pnlMinutes?: number;
+  pendingMinutes?: number;
+  isWorkingDay?: boolean;
+  entryCount?: number;
+  peopleLogged?: number;
 };
 
 export type PnlPerson = {
@@ -30,6 +35,22 @@ export type PnlProject = {
   code: string;
   name: string;
   client: string;
+  currency: string;
+  plannedRevenue: number;
+  paidRevenue: number;
+  plannedCost: number;
+  grossMargin: number;
+  grossMarginPercent?: number;
+  projectStatus?: string;
+  progressPercent?: number;
+  taskCount?: number;
+  completedTaskCount?: number;
+  ownerDisplayName?: string;
+  plannedStartAt?: string;
+  plannedEndAt?: string;
+  budgetAmount?: number;
+  spentAmount?: number;
+  dataSource: "period" | "project";
   status: PnlProjectStatus;
   revenue: number;
   planMinutes: number;
@@ -133,6 +154,12 @@ function demoProject(input: {
   const pnlMinutes = input.pnlHours * 60;
   return {
     ...input,
+    currency: "VND",
+    plannedRevenue: input.revenue,
+    paidRevenue: input.revenue,
+    plannedCost: input.expenses,
+    grossMargin: input.revenue - input.expenses,
+    dataSource: "project",
     status: logworkMinutes === pnlMinutes ? "Đã đối soát" : "Chờ xử lý",
     planMinutes,
     logworkMinutes,
@@ -159,6 +186,11 @@ export function formatVnd(value: number) {
   return `${new Intl.NumberFormat("vi-VN").format(Math.round(value))} ₫`;
 }
 
+export function formatMoney(value: number, currency = "VND") {
+  const code = currency.trim().toUpperCase() || "VND";
+  return `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Math.round(value))} ${code}`;
+}
+
 export function formatHours(value: number) {
   return `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 1 }).format(hours(value))}h`;
 }
@@ -179,6 +211,23 @@ function statusFromEntries(logwork: number, pnl: number, planned: number, missin
   return "Đã đối soát";
 }
 
+function localDateKey(value: string | Date) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(parsed);
+}
+
+function periodDateKeys(period: string) {
+  const [year, month] = period.split("-").map(Number);
+  const days = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return Array.from({ length: days }, (_, index) => `${period}-${String(index + 1).padStart(2, "0")}`);
+}
+
+function isWeekday(date: string) {
+  const day = new Date(`${date}T12:00:00+07:00`).getDay();
+  return day !== 0 && day !== 6;
+}
+
 function mapExpenseGroups(summary: ProjectPlSummaryItem): PnlExpense[] {
   const total = summary.totalCostAmount || summary.actualLaborCostAmount + summary.directCostAmount + summary.writeOffAmount;
   if (!total) return makeExpenses(0);
@@ -195,7 +244,8 @@ function mapExpenseGroups(summary: ProjectPlSummaryItem): PnlExpense[] {
 export function adaptLivePnlProjects(
   summaries: ProjectPlSummaryItem[],
   projects: ProjectSummary[],
-  entries: TaskTimeEntrySummary[]
+  entries: TaskTimeEntrySummary[],
+  period?: string
 ): PnlProject[] {
   const projectById = new Map(projects.map((project) => [project.id, project]));
   const entriesByProject = new Map<string, TaskTimeEntrySummary[]>();
@@ -208,21 +258,41 @@ export function adaptLivePnlProjects(
 
   return summaries.map((summary) => {
     const projectEntries = entriesByProject.get(summary.projectId) ?? [];
-    const logworkMinutes = projectEntries.length > 0
+    const project = projectById.get(summary.projectId);
+    const hasPeriodEntries = projectEntries.length > 0;
+    const logworkMinutes = hasPeriodEntries
       ? projectEntries.reduce((total, entry) => total + entry.minutes, 0)
-      : summary.approvedLaborMinutes;
-    const pnlMinutes = projectEntries.length > 0
+      : project?.loggedMinutes ?? summary.approvedLaborMinutes;
+    const pnlMinutes = hasPeriodEntries
       ? projectEntries.filter((entry) => normalizeApprovalStatus(entry.approvalStatus) === "approved").reduce((total, entry) => total + entry.minutes, 0)
-      : summary.approvedLaborMinutes;
+      : project?.approvedMinutes ?? summary.approvedLaborMinutes;
     const excludedMinutes = projectEntries.filter((entry) => ["rejected", "cancelled"].includes(normalizeApprovalStatus(entry.approvalStatus))).reduce((total, entry) => total + entry.minutes, 0);
     const pendingMinutes = Math.max(logworkMinutes - pnlMinutes - excludedMinutes, 0);
-    const project = projectById.get(summary.projectId);
-    const daily = new Map<string, number>();
+    const daily = new Map<string, { minutes: number; pnlMinutes: number; entryCount: number; people: Set<string> }>();
     projectEntries.forEach((entry) => {
-      const date = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Ho_Chi_Minh", day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(entry.workDate));
-      daily.set(date, (daily.get(date) ?? 0) + entry.minutes);
+      const date = localDateKey(entry.workDate);
+      if (!date) return;
+      const bucket = daily.get(date) ?? { minutes: 0, pnlMinutes: 0, entryCount: 0, people: new Set<string>() };
+      bucket.minutes += entry.minutes;
+      bucket.entryCount += 1;
+      bucket.people.add(entry.userId);
+      if (normalizeApprovalStatus(entry.approvalStatus) === "approved") bucket.pnlMinutes += entry.minutes;
+      daily.set(date, bucket);
     });
-    const dailyPoints = Array.from(daily.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([date, minutes]) => ({ date, label: date.slice(0, 5), minutes }));
+    const dateKeys = period ? periodDateKeys(period) : Array.from(daily.keys()).sort();
+    const dailyPoints = dateKeys.map((date) => {
+      const bucket = daily.get(date) ?? { minutes: 0, pnlMinutes: 0, entryCount: 0, people: new Set<string>() };
+      return {
+        date,
+        label: `${date.slice(8, 10)}/${date.slice(5, 7)}`,
+        minutes: bucket.minutes,
+        pnlMinutes: bucket.pnlMinutes,
+        pendingMinutes: Math.max(bucket.minutes - bucket.pnlMinutes, 0),
+        isWorkingDay: isWeekday(date),
+        entryCount: bucket.entryCount,
+        peopleLogged: bucket.people.size
+      };
+    });
     const people = new Map<string, PnlPerson>();
     projectEntries.forEach((entry) => {
       const current = people.get(entry.userId) ?? {
@@ -237,7 +307,8 @@ export function adaptLivePnlProjects(
       current.logworkMinutes += entry.minutes;
       const approvalStatus = normalizeApprovalStatus(entry.approvalStatus);
       if (approvalStatus === "approved") current.pnlMinutes += entry.minutes;
-      const date = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Ho_Chi_Minh", day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(entry.workDate));
+      const date = localDateKey(entry.workDate);
+      if (!date) return;
       const daily = current.daily[date] ?? { plan: 0, logwork: 0, pnl: 0 };
       daily.logwork += entry.minutes;
       if (approvalStatus === "approved") daily.pnl += entry.minutes;
@@ -249,6 +320,22 @@ export function adaptLivePnlProjects(
       code: project?.code ?? summary.projectId,
       name: summary.projectName,
       client: summary.accountName ?? "Chưa gán khách hàng",
+      currency: summary.currency,
+      plannedRevenue: summary.plannedRevenueAmount,
+      paidRevenue: summary.paidRevenueAmount,
+      plannedCost: summary.plannedCostAmount,
+      grossMargin: summary.grossMarginAmount,
+      grossMarginPercent: summary.grossMarginPercent,
+      projectStatus: project?.status,
+      progressPercent: project?.progressPercent,
+      taskCount: project?.taskCount,
+      completedTaskCount: project?.completedTaskCount,
+      ownerDisplayName: project?.ownerDisplayName,
+      plannedStartAt: project?.plannedStartAt,
+      plannedEndAt: project?.plannedEndAt,
+      budgetAmount: project?.budgetAmount,
+      spentAmount: project?.spentAmount,
+      dataSource: hasPeriodEntries ? "period" : "project",
       status: statusFromEntries(logworkMinutes, pnlMinutes, project?.plannedMinutes ?? 0, !project),
       revenue: summary.paidRevenueAmount || summary.plannedRevenueAmount,
       planMinutes: project?.plannedMinutes ?? 0,

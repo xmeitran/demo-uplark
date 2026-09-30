@@ -344,6 +344,8 @@ export function mapTaskSummary(task: any): ProjectTaskSummary {
     stageId: task.stageId ?? undefined,
     stageKey: task.stage?.stageKey ?? undefined,
     stageActivity: task.stage?.activity ?? undefined,
+    milestoneId: task.stage?.milestoneId ?? task.stage?.milestone?.id ?? undefined,
+    milestoneName: task.stage?.milestone?.name ?? undefined,
     opportunityId: task.opportunityId ?? undefined,
     ticketId: task.ticketId ?? undefined,
     parentTaskId: task.parentTaskId ?? undefined,

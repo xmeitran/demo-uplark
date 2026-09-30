@@ -15,7 +15,7 @@ import {
   type TimeLog
 } from "./timesheet-types";
 
-type XlsxModule = typeof import("xlsx");
+type ExcelJsModule = typeof import("exceljs");
 
 export interface TimesheetExportContext {
   dataset: TimesheetDataset;
@@ -42,34 +42,25 @@ function dateLabel(value: string | null | undefined) {
   return value ? value : "Chưa đặt";
 }
 
-function setSheetLayout(sheet: Record<string, unknown>, widths: number[]) {
-  sheet["!cols"] = widths.map((wch) => ({ wch }));
-  sheet["!freeze"] = { xSplit: 0, ySplit: 1 };
+function setSheetLayout(sheet: import("exceljs").Worksheet, widths: number[]) {
+  sheet.columns = widths.map((width) => ({ width }));
+  sheet.views = [{ state: "frozen", ySplit: 1 }];
 }
 
-function styleHeader(XLSX: XlsxModule, sheet: Record<string, any>, range: string) {
-  const decoded = XLSX.utils.decode_range(range);
-  for (let row = decoded.s.r; row <= decoded.e.r; row += 1) {
-    for (let column = decoded.s.c; column <= decoded.e.c; column += 1) {
-      const address = XLSX.utils.encode_cell({ r: row, c: column });
-      const cell = sheet[address];
-      if (!cell) continue;
-      cell.s = {
-        fill: { patternType: "solid", fgColor: { rgb: "1D4ED8" } },
-        font: { bold: true, color: { rgb: "FFFFFF" } },
-        alignment: { horizontal: "center", vertical: "center", wrapText: true }
-      };
-    }
+function styleHeader(sheet: import("exceljs").Worksheet, rowNumber: number, lastColumn: number) {
+  for (let column = 1; column <= lastColumn; column += 1) {
+    const cell = sheet.getCell(rowNumber, column);
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1D4ED8" } };
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    cell.border = { bottom: { style: "thin", color: { argb: "FFD1D5DB" } } };
   }
 }
 
-function styleTitle(sheet: Record<string, any>, address: string) {
-  const cell = sheet[address];
-  if (!cell) return;
-  cell.s = {
-    font: { bold: true, sz: 16, color: { rgb: "0F172A" } },
-    alignment: { horizontal: "left" }
-  };
+function styleTitle(sheet: import("exceljs").Worksheet, rowNumber: number) {
+  const cell = sheet.getCell(rowNumber, 1);
+  cell.font = { bold: true, size: 16, color: { argb: "FF0F172A" } };
+  cell.alignment = { horizontal: "left" };
 }
 
 function makeTaskIndex(dataset: TimesheetDataset) {
@@ -97,7 +88,7 @@ function makeTaskIndex(dataset: TimesheetDataset) {
  * The raw sheet is intentionally one row per live time entry. The dashboard
  * is a snapshot of the exact filters currently visible in the workbench.
  */
-export function buildTimesheetWorkbook(XLSX: XlsxModule, context: TimesheetExportContext) {
+export function buildTimesheetWorkbook(ExcelJS: ExcelJsModule, context: TimesheetExportContext) {
   const { dataset, filters, logs, scopeLabel, view } = context;
   const peopleById = new Map(dataset.people.map((person) => [person.id, person]));
   const projectsById = new Map(dataset.projects.map((project) => [project.id, project]));
@@ -162,11 +153,16 @@ export function buildTimesheetWorkbook(XLSX: XlsxModule, context: TimesheetExpor
       ];
     });
 
-  const workbook = XLSX.utils.book_new();
-  const rawSheet = XLSX.utils.aoa_to_sheet([rawHeader, ...rawRows]);
+  const workbook = new ExcelJS.Workbook();
+  // Create the reader-facing tab first. ExcelJS serializes worksheets in their
+  // creation order, so mutating workbook.worksheets later does not change the
+  // tab order in the downloaded file.
+  const dashboardSheet = workbook.addWorksheet("Tổng quan & Biểu đồ");
+  const rawSheet = workbook.addWorksheet("Data Raw");
+  rawSheet.addRows([rawHeader, ...rawRows]);
   setSheetLayout(rawSheet, [12, 26, 24, 18, 24, 28, 22, 34, 26, 18, 26, 26, 28, 42, 18, 22, 12, 12, 12, 18, 42]);
-  styleHeader(XLSX, rawSheet, `A1:U1`);
-  rawSheet["!autofilter"] = { ref: `A1:U${Math.max(1, rawRows.length + 1)}` };
+  styleHeader(rawSheet, 1, rawHeader.length);
+  rawSheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, rawRows.length + 1), column: rawHeader.length } };
 
   const filterText = [
     `Kỳ báo cáo: ${formatMonth(filters.month)}`,
@@ -242,27 +238,50 @@ export function buildTimesheetWorkbook(XLSX: XlsxModule, context: TimesheetExpor
       row.risk === "over" ? "Vượt estimate" : row.risk === "watch" ? "Theo dõi" : "Bình thường"
     ])
   ];
-  const dashboardSheet = XLSX.utils.aoa_to_sheet(dashboardRows);
+  dashboardSheet.addRows(dashboardRows);
   setSheetLayout(dashboardSheet, [34, 28, 22, 22, 18, 16, 16, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 20]);
-  styleTitle(dashboardSheet, "A1");
+  styleTitle(dashboardSheet, 1);
   const headerRows = [
     12,
     23,
     25 + daily.length,
     27 + daily.length + summaries.length
   ];
-  for (const row of headerRows) styleHeader(XLSX, dashboardSheet, `A${row}:R${row}`);
-  XLSX.utils.book_append_sheet(workbook, dashboardSheet, "Dashboard");
-  // Keep the reader-facing output first and the source-level table second.
-  XLSX.utils.book_append_sheet(workbook, rawSheet, "Data Raw");
+  for (const row of headerRows) styleHeader(dashboardSheet, row, 18);
+  // ExcelJS cannot author native chart objects, but this is a real visual
+  // chart when the workbook opens: Excel renders a data bar per day beside the
+  // source values, while retaining the exact values for auditing.
+  // `color` is required by ExcelJS at runtime but omitted from its DataBar
+  // TypeScript declaration; the cast keeps that upstream typing gap local.
+  const dailyHoursDataBar = {
+    type: "dataBar",
+    priority: 1,
+    gradient: true,
+    minLength: 4,
+    maxLength: 100,
+    showValue: true,
+    cfvo: [{ type: "min" }, { type: "max" }],
+    color: { argb: "FF2563EB" }
+  } as unknown as import("exceljs").ConditionalFormattingRule;
+  dashboardSheet.addConditionalFormatting({
+    ref: `B24:B${23 + daily.length}`,
+    rules: [dailyHoursDataBar]
+  });
 
   return workbook;
 }
 
 export async function exportTimesheetWorkbook(context: TimesheetExportContext): Promise<TimesheetExportResult> {
-  const XLSX = await import("xlsx");
-  const workbook = buildTimesheetWorkbook(XLSX, context);
+  const ExcelJS = await import("exceljs");
+  const workbook = buildTimesheetWorkbook(ExcelJS, context);
   const filename = `uplark-timesheet-${context.filters.month}-${context.view}.xlsx`;
-  XLSX.writeFile(workbook, filename, { bookType: "xlsx", cellStyles: true });
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer as BlobPart], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
   return { filename, logCount: context.logs.length };
 }

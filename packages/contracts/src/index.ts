@@ -966,6 +966,8 @@ export interface ProjectTaskSummary {
   stageId?: string;
   stageKey?: string;
   stageActivity?: string;
+  milestoneId?: string;
+  milestoneName?: string;
   opportunityId?: string;
   ticketId?: string;
   parentTaskId?: string;
@@ -2523,6 +2525,8 @@ export interface AdminRevokeSessionsResponse {
 
 export type AdminAccessMemberStatus = "active" | "suspended";
 export type AdminAccessMemberType = "internal" | "portal";
+export type CostPermissionCode = "COST_VIEW" | "COST_EDIT" | "COST_APPROVE" | "COST_EXPORT";
+export type EmploymentStatus = "ACTIVE" | "ON_LEAVE" | "INACTIVE";
 
 export interface AdminAccessMemberSummary {
   id: string;
@@ -2542,6 +2546,8 @@ export interface AdminAccessMemberSummary {
   tenantKey: string;
   workspaceId?: string;
   roleCodes: string[];
+  costPermissionCodes?: CostPermissionCode[];
+  employmentStatus?: EmploymentStatus;
   accountIds: string[];
   accountNames: string[];
   projectIds: string[];
@@ -2648,7 +2654,7 @@ export interface CreatePortalInvitationResponse {
   magicLink: string;
 }
 
-export type InternalRoleCode = "FOUNDER_GM" | "WORKSPACE_ADMIN" | "WORKSPACE_USER" | "SALES_OWNER" | "DELIVERY_LEAD" | "FINANCE_ADMIN";
+export type InternalRoleCode = "FOUNDER_GM" | "WORKSPACE_ADMIN" | "WORKSPACE_USER" | "SALES_OWNER" | "DELIVERY_LEAD" | "FINANCE_ADMIN" | "COST_VIEW" | "COST_EDIT" | "COST_APPROVE" | "COST_EXPORT";
 
 export interface CreateInternalUserInput {
   email: string;

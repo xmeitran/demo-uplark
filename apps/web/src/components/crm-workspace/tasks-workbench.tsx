@@ -81,6 +81,7 @@ function getTaskTypeShopifyIcon(type: string): ShopifyIconName {
 function getTaskStatusTone(status: string) {
   if (status === "completed") return "success";
   if (status === "in_progress") return "info";
+  if (status === "waiting") return "warning";
   if (status === "blocked") return "danger";
   if (status === "todo") return "warning";
   return "neutral";
@@ -1536,11 +1537,9 @@ export function TransitionStatusModal({
             label="Trạng thái mới"
             value={status}
             options={[
-              { value: "todo", label: "Cần làm", icon: "clock" },
-              { value: "in_progress", label: "Đang xử lý", icon: "star", iconTone: "info" },
-              { value: "completed", label: "Hoàn tất", icon: "checkmark", iconTone: "success" },
-              { value: "blocked", label: "Đang bị chặn", icon: "alert-circle", iconTone: "critical" },
-              { value: "cancelled", label: "Đã hủy", icon: "alert-circle", iconTone: "neutral" }
+              { value: "todo", label: "Chưa bắt đầu", icon: "clock" },
+              { value: "waiting", label: "Đang chờ", icon: "clock", iconTone: "warning" },
+              { value: "completed", label: "Đã hoàn thành", icon: "checkmark", iconTone: "success" }
             ]}
             onChange={setStatus}
           />

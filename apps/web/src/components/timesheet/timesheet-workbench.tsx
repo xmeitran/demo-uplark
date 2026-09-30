@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { CalendarDays, Download, Info, Link2, RotateCcw, ShieldCheck, Users, Clock3 } from "lucide-react";
+import { AlertTriangle, CalendarDays, Download, Info, Link2, RotateCcw, ShieldCheck, Users, Clock3 } from "lucide-react";
 import { CustomDropdown, type DropdownOption } from "@/components/constructor-x/custom-controls";
 import { emptyTimesheetDataset, loadTimesheetDataset } from "./timesheet-live-data";
 import { filterLogs, type TimesheetFilters } from "./timesheet-selectors";
@@ -20,9 +20,9 @@ import { ProjectTimesheet } from "./project-timesheet";
 import { DailyWeeklyTimesheet } from "./daily-weekly-timesheet";
 import { useAuth } from "@/lib/auth";
 import { exportTimesheetWorkbook } from "./timesheet-export";
-import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-tab-bar";
-import { TimesheetAudienceSwitch } from "./timesheet-audience-switch";
 import { canViewTimesheetGroup } from "./timesheet-access";
+import { buildTimesheetAlerts, type TimesheetAlert } from "./timesheet-alerts";
+import { TimesheetViewNav } from "./timesheet-view-nav";
 
 /**
  * /timesheet workbench — the shell that owns filters, permission scope and the
@@ -33,12 +33,6 @@ import { canViewTimesheetGroup } from "./timesheet-access";
  */
 
 type TimesheetView = "monthly" | "project" | "daily";
-
-const VIEW_TABS: WorkspaceTabItem<TimesheetView>[] = [
-  { id: "monthly", label: "Bảng giờ theo tháng", description: "Tổng hợp theo nhân sự" },
-  { id: "project", label: "Bảng giờ theo dự án", description: "Tổng hợp theo dự án" },
-  { id: "daily", label: "Theo ngày & theo tuần", description: "Chi tiết ngày công và tuần" }
-];
 
 type FilterKind = "month" | "department" | "person" | "project" | "workGroup" | "scope";
 
@@ -145,7 +139,7 @@ export function TimesheetWorkbench() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const { user, isLoading: authLoading } = useAuth();
+  const { user } = useAuth();
   const [dataset, setDataset] = useState(() => emptyTimesheetDataset());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -155,6 +149,7 @@ export function TimesheetWorkbench() {
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [filterDetail, setFilterDetail] = useState<FilterDetail | null>(null);
+  const [alertsOpen, setAlertsOpen] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -170,11 +165,6 @@ export function TimesheetWorkbench() {
   const requestedScope = (searchParams.get("scope") as ViewerScope | null) ?? "workspace";
   const canViewWorkspace = canViewTimesheetGroup(user?.roleCodes);
   const scope: ViewerScope = canViewWorkspace ? requestedScope : "self";
-
-  useEffect(() => {
-    if (authLoading || !user || canViewWorkspace || pathname !== "/timesheet") return;
-    router.replace(`/timesheet/me?view=${encodeURIComponent(view)}`);
-  }, [authLoading, canViewWorkspace, pathname, router, user, view]);
 
   const filters = useMemo<TimesheetFilters>(
     () => ({
@@ -222,8 +212,10 @@ export function TimesheetWorkbench() {
   );
 
   const resetFilters = useCallback(() => {
-    router.replace(`${pathname}?view=${view}`, { scroll: false });
-  }, [pathname, router, view]);
+    const next = new URLSearchParams({ view });
+    if (canViewWorkspace && scope !== "workspace") next.set("scope", scope);
+    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+  }, [canViewWorkspace, pathname, router, scope, view]);
 
   const copyLink = useCallback(async () => {
     try {
@@ -246,7 +238,7 @@ export function TimesheetWorkbench() {
         filters,
         logs,
         scopeLabel: VIEWER_SCOPE_LABELS[scope],
-        view: VIEW_TABS.find((tab) => tab.id === view)?.label ?? view
+        view: view === "project" ? "Theo dự án" : view === "daily" ? "Theo ngày" : "Theo tháng"
       });
       setExportMessage(`Đã xuất ${result.logCount} dòng raw · 2 sheet`);
       window.setTimeout(() => setExportMessage(null), 5000);
@@ -298,53 +290,48 @@ export function TimesheetWorkbench() {
     (value) => value !== "all"
   ).length;
 
-  const totalMinutes = logs.reduce((acc, log) => acc + log.minutes, 0);
+  const viewCopy = view === "project"
+    ? {
+        title: "Bảng giờ theo dự án",
+        description: "Theo dõi giờ kế hoạch, giờ thực tế và công việc theo từng dự án."
+      }
+    : view === "daily"
+      ? {
+          title: "Chi tiết theo ngày & tuần",
+          description: "Xem lịch ghi nhận, ngày công và phân bổ giờ theo tuần."
+        }
+      : {
+          title: "Bảng giờ theo tháng",
+          description: "Tổng hợp giờ đã ghi nhận theo nhân sự trong kỳ báo cáo."
+        };
 
-  if (!authLoading && user && !canViewWorkspace) {
-    return (
-      <section role="status" className="rounded-2xl border border-primary/20 bg-primary/[0.04] p-5">
-        <p className="font-semibold text-foreground">Timesheet nhóm chỉ dành cho Founder/GM và Workspace Admin.</p>
-        <p className="mt-1 text-[12px] text-muted-foreground">Bạn đang được chuyển sang màn Cá nhân để xem giờ và task của mình.</p>
-      </section>
-    );
-  }
+  const totalMinutes = logs.reduce((acc, log) => acc + log.minutes, 0);
+  const alerts = useMemo(() => buildTimesheetAlerts(scopedDataset, logs, scopedDataset.generatedAt), [scopedDataset, logs]);
 
   return (
     <div className="space-y-4">
-      <header className="rounded-2xl border border-sky-100 bg-gradient-to-r from-sky-50 via-blue-50 to-violet-50 px-4 py-4 sm:px-5">
+      <header className="rounded-2xl border border-border bg-card px-4 py-4 shadow-sm sm:px-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-[11px] font-semibold tracking-[0.15em] text-primary">TIMESHEET · TIME RECORD</p>
-            <h1 className="mt-1 text-xl font-bold tracking-tight text-foreground sm:text-2xl">Bảng chấm công dự án</h1>
-            <p className="mt-1 max-w-2xl text-[12.5px] leading-relaxed text-muted-foreground">Theo dõi giờ đã ghi nhận, mức độ đầy đủ và đối chiếu kế hoạch theo nhân sự, dự án, ngày và tuần.</p>
+            <h1 className="mt-1 text-xl font-bold tracking-tight text-foreground sm:text-2xl">{viewCopy.title}</h1>
+            <p className="mt-1 max-w-2xl text-[12.5px] leading-relaxed text-muted-foreground">{viewCopy.description}</p>
           </div>
-          <span className="inline-flex items-center gap-2 self-start rounded-xl border border-white/80 bg-white/75 px-3 py-2 text-[11.5px] font-semibold text-slate-600 shadow-sm sm:self-auto">
-            <CalendarDays className="h-4 w-4 text-primary" aria-hidden />
-            {loading ? "Đang đồng bộ…" : formatMonth(filters.month)}
-          </span>
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <span className="inline-flex items-center gap-2 rounded-xl border border-primary/20 bg-primary/[0.04] px-3 py-2 text-[11.5px] font-semibold text-primary shadow-sm">
+              <CalendarDays className="h-4 w-4 text-primary" aria-hidden />
+              {loading ? "Đang đồng bộ…" : formatMonth(filters.month)}
+            </span>
+          </div>
         </div>
       </header>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Phạm vi xem</p>
-          <p className="text-[12px] text-muted-foreground">Chuyển nhanh giữa dữ liệu của nhóm và giờ cá nhân.</p>
-        </div>
-        <TimesheetAudienceSwitch active="group" view={view} groupScope={canViewWorkspace ? "workspace" : "managed_projects"} />
-      </div>
-
-      {/* ── View tabs ──────────────────────────────────────────────────── */}
-      <WorkspaceTabBar
-        items={VIEW_TABS}
-        value={view}
-        onChange={(nextView) => commit({ view: nextView })}
-        ariaLabel="Chế độ xem bảng chấm công"
-        idPrefix="timesheet"
-        className="w-full"
+      <TimesheetViewNav
+        groupScope={canViewWorkspace ? scope : "self"}
       />
 
       {/* ── Filters + permission scope ─────────────────────────────────── */}
-      <section aria-label="Bộ lọc Timesheet" className="rounded-xl border border-border bg-card p-3">
+      <section aria-label="Bộ lọc và phạm vi xem Timesheet" className="rounded-xl border border-border bg-card p-3">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
           <FilterField label="Kỳ báo cáo">
             <CustomDropdown ariaLabel="Chọn tháng" options={monthOptions} value={filters.month} onChange={(value) => commit({ month: value })} onOptionInfo={(option) => openFilterDetail("month", option)} />
@@ -407,7 +394,7 @@ export function TimesheetWorkbench() {
           </span>
         </div>
 
-        {exportMessage ? <p role="status" className="mt-2 text-[11px] font-medium text-emerald-700">{exportMessage}</p> : null}
+        {exportMessage ? <p role="status" className="mt-2 text-[11px] font-medium text-success">{exportMessage}</p> : null}
         {exportError ? <p role="alert" className="mt-2 text-[11px] font-medium text-rose-700">{exportError}</p> : null}
 
         {scope !== "workspace" ? (
@@ -420,6 +407,16 @@ export function TimesheetWorkbench() {
         ) : null}
       </section>
 
+      {/* Alerts describe the selected filters, so keep them directly above the
+          data instead of interrupting the navigation flow. */}
+      <div className="min-h-12">
+        {loading ? (
+          <div aria-label="Đang tải cảnh báo Timesheet" className="h-12 animate-pulse rounded-xl border border-border bg-muted/30" />
+        ) : (
+          <TimesheetAlertBar alerts={alerts} onOpen={() => setAlertsOpen(true)} />
+        )}
+      </div>
+
       {loadError ? <section role="alert" className="flex flex-col gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 sm:flex-row sm:items-center sm:justify-between"><span>{loadError}</span><button type="button" onClick={() => setReloadToken((value) => value + 1)} className="inline-flex min-h-9 items-center justify-center rounded-lg border border-rose-300 bg-white px-3 font-semibold text-rose-700 hover:bg-rose-100">Thử lại</button></section> : null}
       {loading ? <section aria-live="polite" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><div className="h-24 animate-pulse rounded-xl bg-muted" /><div className="h-24 animate-pulse rounded-xl bg-muted" /><div className="h-24 animate-pulse rounded-xl bg-muted" /><div className="h-24 animate-pulse rounded-xl bg-muted" /></section> : null}
 
@@ -429,11 +426,56 @@ export function TimesheetWorkbench() {
       ) : view === "project" ? (
         <ProjectTimesheet dataset={scopedDataset} filters={filters} logs={logs} currentUserId={user?.id} />
       ) : (
-        <DailyWeeklyTimesheet dataset={scopedDataset} filters={filters} logs={logs} currentUserId={user?.id} />
+        <DailyWeeklyTimesheet dataset={scopedDataset} filters={filters} logs={logs} currentUserId={user?.id} personalScope={scope === "self"} />
       ))}
 
       <FilterOptionDetailDrawer detail={filterDetail} onClose={() => setFilterDetail(null)} />
+      <Drawer
+        open={alertsOpen}
+        title="Cảnh báo Timesheet"
+        description="Các cảnh báo được tính trực tiếp từ dữ liệu live trong phạm vi đang xem."
+        icon={AlertTriangle}
+        onClose={() => setAlertsOpen(false)}
+      >
+        <div className="divide-y divide-border">
+          {alerts.length === 0 ? (
+            <p className="p-5 text-sm text-muted-foreground">Không có cảnh báo cần xử lý trong phạm vi hiện tại.</p>
+          ) : alerts.map((alert) => (
+            <div key={alert.id} className="flex items-start gap-3 p-4">
+              <span className={`mt-0.5 inline-flex h-7 min-w-7 items-center justify-center rounded-full px-2 text-[11px] font-bold ${alert.tone === "danger" ? "bg-destructive/10 text-destructive" : alert.tone === "warning" ? "bg-warning/10 text-warning" : "bg-info/10 text-info"}`}>
+                {alert.count}
+              </span>
+              <div>
+                <p className="text-[12.5px] font-semibold text-foreground">{alert.label}</p>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">{alert.detail}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Drawer>
     </div>
+  );
+}
+
+function TimesheetAlertBar({ alerts, onOpen }: { alerts: TimesheetAlert[]; onOpen: () => void }) {
+  if (alerts.length === 0) {
+    return <div className="flex items-center gap-2 rounded-xl border border-success/25 bg-success/[0.06] px-4 py-3 text-[12px] text-success"><AlertTriangle className="h-4 w-4" aria-hidden /> Không có cảnh báo cần xử lý trong phạm vi hiện tại.</div>;
+  }
+
+  return (
+    <section aria-label="Cảnh báo Timesheet" className="rounded-xl border border-warning/30 bg-warning/[0.08] px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden />
+        {alerts.slice(0, 3).map((alert) => (
+          <span key={alert.id} className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${alert.tone === "danger" ? "bg-destructive/10 text-destructive" : alert.tone === "warning" ? "bg-warning/10 text-warning" : "bg-info/10 text-info"}`}>
+            {alert.count} {alert.label}
+          </span>
+        ))}
+        <button type="button" onClick={onOpen} className="ml-auto text-[11px] font-semibold text-primary hover:underline">
+          {alerts.length > 3 ? `+${alerts.length - 3} cảnh báo khác` : "Xem tất cả"}
+        </button>
+      </div>
+    </section>
   );
 }
 

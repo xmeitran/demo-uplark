@@ -63,6 +63,16 @@ export class BrdGovernanceController {
     return this.principal(auth, fallback).then((p) => this.governance.upsertPnlPeriod(body, p));
   }
 
+  @Get("pnl-configurations")
+  getPnlConfiguration(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Query("periodKey") periodKey = "2026-09") {
+    return this.principal(auth, fallback).then((p) => this.governance.getPnlConfiguration(periodKey, p));
+  }
+
+  @Patch("pnl-configurations")
+  upsertPnlConfiguration(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Body() body: any) {
+    return this.principal(auth, fallback).then((p) => this.governance.upsertPnlConfiguration(body, p));
+  }
+
   @Post("pnl-periods/:periodId/lock")
   lockPnlPeriod(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Param("periodId") periodId: string) {
     return this.principal(auth, fallback).then((p) => this.governance.lockPnlPeriod(periodId, p));

@@ -106,6 +106,8 @@ export function nodeStatusTone(status: string): "success" | "warning" | "danger"
   switch (status) {
     case "completed":
       return "success";
+    case "waiting":
+      return "warning";
     case "in_progress":
       return "info";
     case "blocked":

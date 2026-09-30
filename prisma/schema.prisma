@@ -491,6 +491,7 @@ model TenantWorkspace {
   overtimePlans              OvertimePlan[]
   monthlyCostProfiles        ResourceMonthlyCost[]
   pnlPeriods                 PnlPeriod[]
+  pnlConfigurations          PnlConfiguration[]
   pnlAllocations             PnlTimeEntryAllocation[]
   reminderDeliveryLogs       ReminderDeliveryLog[]
   reminderPolicy             WorkspaceReminderPolicy?
@@ -1417,6 +1418,7 @@ model ProjectStage {
 model ResourceProfile {
   id                           String   @id @default(cuid())
   userId                       String   @unique
+  employmentStatus             String   @default("ACTIVE")
   displayRole                  String?
   defaultWeeklyCapacityMinutes Int      @default(2400)
   billableTargetPercent        Int      @default(70)
@@ -2390,6 +2392,23 @@ model PnlPeriod {
   @@unique([workspaceId, projectId, periodKey])
   @@index([workspaceId, periodStart, periodEnd, status])
   @@index([projectId, periodStart, periodEnd])
+}
+
+model PnlConfiguration {
+  id             String          @id @default(cuid())
+  workspaceId    String
+  periodKey      String
+  items          Json
+  parameters     Json
+  pool           Json
+  templates      Json
+  updatedByUserId String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  workspace      TenantWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, periodKey])
+  @@index([workspaceId, periodKey])
 }
 
 // Materialized classification of every worklog; this is what makes P&L auditable.

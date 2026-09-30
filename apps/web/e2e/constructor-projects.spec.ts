@@ -717,6 +717,30 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     });
   });
 
+  await page.route("**/api/milestone-templates**", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: [], meta: { tenantKey: "prod" } })
+    });
+  });
+
+  await page.route("**/api/workspace/day-offs**", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: [], meta: { tenantKey: "prod" } })
+    });
+  });
+
   await page.route(/\/api\/(?:admin|workspace)\/users(?:[/?].*)?$/, async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === `/api/admin/users/${liveUser.id}` && route.request().method() === "GET") {
@@ -1301,12 +1325,12 @@ test("projects page renders real project member avatars from the API", async ({ 
 
 test("project sheet presents the delivery summary and opens the project control center", async ({ page }) => {
   await page.goto("/projects");
-  await page.getByRole("button", { name: "Project Sheet View", exact: true }).click();
+  await page.getByRole("tab", { name: "Project Sheet View", exact: true }).click();
 
   const sheet = page.getByTestId("project-sheet");
   await expect(sheet).toBeVisible();
   await expect(sheet.getByRole("heading", { name: "Project Sheet", exact: true })).toBeVisible();
-  await expect(sheet.getByRole("link", { name: new RegExp(liveProject.name) })).toBeVisible();
+  await expect(sheet.getByRole("link", { name: `Open Project Sheet for ${liveProject.name}` })).toBeVisible();
   await expect(sheet.getByRole("columnheader", { name: "Plan hour", exact: true })).toBeVisible();
   await expect(sheet.getByRole("columnheader", { name: "Logwork hour", exact: true })).toBeVisible();
   await expect(sheet.getByRole("columnheader", { name: "P&L hour", exact: true })).toBeVisible();
@@ -1478,13 +1502,13 @@ test("projects search filter and pagination keep the page frame stable", async (
   await expect(nextButton).toBeEnabled();
 
   await page.getByRole("button", { name: "All Status" }).click();
-  await page.getByRole("button", { name: "Active", exact: true }).last().click();
+  await page.getByRole("option", { name: "Đang triển khai", exact: true }).click();
   await expect(page.getByRole("button", { name: "Completed", exact: true })).toBeHidden();
   await expect.poll(() => projectListRequests.some((search) => new URLSearchParams(search).get("status") === "in_progress")).toBe(true);
   await expectStableFrame("after status filter", initialFrame);
 
-  await page.getByRole("button", { name: "Active", exact: true }).click();
-  await page.getByRole("button", { name: "All Status", exact: true }).last().click();
+  await page.getByRole("button", { name: "All Status", exact: true }).click();
+  await page.getByRole("option", { name: "Tất cả trạng thái", exact: true }).click();
   await expect(page.getByRole("button", { name: "Completed", exact: true })).toBeHidden();
   await expect(nextButton).toBeEnabled();
   await nextButton.click();
@@ -1573,7 +1597,6 @@ test("project sidebar submenu uses one client navigation from the projects index
       consoleErrors.push(message.text());
     }
   });
-
   await sidebar.locator(`a[href="/projects/${liveProject.id}?tab=Timeline"]`).click();
 
   await expect(page).toHaveURL(new RegExp(`/projects/${liveProject.id}\\?tab=Timeline$`));
@@ -3815,7 +3838,7 @@ test("calendar keeps paginated overlapping events within bounds and shows one ge
   await page.getByRole("button", { name: "Thêm kế hoạch", exact: true }).click();
   const addModal = page.getByRole("dialog", { name: "Lên lịch kế hoạch tuần mới" });
   await expect(addModal).toBeVisible();
-  await addModal.getByRole("button", { name: "Page one Calendar option", exact: true }).click();
+  await addModal.getByRole("button", { name: /Page one Calendar option/ }).click();
   await expect(addModal.getByRole("option", { name: /Page two Calendar option/ })).toBeVisible();
   expect(taskOffsets).toEqual(["0", "1"]);
   expect(actualPostBodies).toHaveLength(0);

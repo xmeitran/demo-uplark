@@ -582,10 +582,13 @@ export default function CalendarPage() {
         loadSource<WorkspaceDayOffSummary>("/api/workspace/day-offs")
       ]);
       if (generation !== loadGenerationRef.current || controller.signal.aborted) return;
+      // Planning blocks and actual time entries are the calendar's primary
+      // records. Day-off data is enrichment and can be unavailable to a valid
+      // workspace session; render the calendar with an explicit partial state
+      // instead of sending the user through a misleading login redirect.
       if (
         (planningResult.status === "rejected" && planningResult.reason instanceof CalendarUnauthorizedError) ||
-        (actualResult.status === "rejected" && actualResult.reason instanceof CalendarUnauthorizedError) ||
-        (dayOffResult.status === "rejected" && dayOffResult.reason instanceof CalendarUnauthorizedError)
+        (actualResult.status === "rejected" && actualResult.reason instanceof CalendarUnauthorizedError)
       ) {
         window.location.assign(`/login?returnTo=${encodeURIComponent("/calendar")}`);
         return;
@@ -1060,7 +1063,7 @@ export default function CalendarPage() {
             >
               {hasActiveFilters
                 ? `${activeBlocks.length}/${blocks.length} mốc phù hợp`
-                : `${blocks.length} mốc · ${dayOffByDate.size} ngày off`}
+                : `${blocks.length} mốc trong phạm vi`}
             </p>
           </section>
 

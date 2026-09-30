@@ -33,6 +33,7 @@ import {
 } from "./timesheet-ui";
 import { LogDrawer, type LogDrawerRequest } from "./timesheet-log-drawer";
 import { PersonDayLoad } from "./person-day-load";
+import { PersonalProjectTree } from "./personal-timesheet";
 
 const chartFallback = () => <div className="h-full w-full animate-pulse rounded-lg bg-muted" aria-hidden />;
 const DailyEffortChart = dynamic(() => import("./timesheet-charts").then((m) => ({ default: m.DailyEffortChart })), { ssr: false, loading: chartFallback });
@@ -59,12 +60,14 @@ export function DailyWeeklyTimesheet({
   dataset,
   filters,
   logs,
-  currentUserId
+  currentUserId,
+  personalScope = false
 }: {
   dataset: TimesheetDataset;
   filters: TimesheetFilters;
   logs: TimeLog[];
   currentUserId?: string;
+  personalScope?: boolean;
 }) {
   const [drawerRequest, setDrawerRequest] = useState<LogDrawerRequest | null>(null);
 
@@ -218,6 +221,8 @@ export function DailyWeeklyTimesheet({
       </SectionCard>
 
       <PersonDayLoad dataset={dataset} filters={filters} logs={logs} onOpenLogs={setDrawerRequest} currentUserId={currentUserId} />
+
+      {personalScope ? <PersonalProjectTree dataset={dataset} logs={logs} /> : null}
 
       <ChartCard
         title="Tổng hợp theo tuần"

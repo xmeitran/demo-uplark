@@ -142,6 +142,7 @@ function getPriorityTone(priority?: string) {
 function getStatusClass(status?: string) {
   if (status === "completed") return "success";
   if (status === "in_progress") return "info";
+  if (status === "waiting") return "warning";
   if (status === "blocked") return "critical";
   if (status === "todo") return "warning";
   return "neutral";

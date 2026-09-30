@@ -60,6 +60,7 @@ import {
   getDailyActualLogWindow
 } from "./daily-actual-log";
 import { dateOnlyToUtcDate, getLocalDateKeysForTimeRange, lockWorkspaceDayOffDates } from "../workspace-calendar/day-off-time";
+import { isCompletedTaskStatus } from "./task-status";
 
 const projectInclude = {
   account: true,
@@ -251,7 +252,7 @@ function workspaceDayOffMessage(dayOff: { date: Date; name: string }) {
 const taskInclude = {
   account: true,
   project: true,
-  stage: true,
+  stage: { include: { milestone: true } },
   owner: true,
   assignee: true,
   taskAssignees: {
@@ -267,7 +268,7 @@ const taskInclude = {
 const portalTaskInclude = {
   account: true,
   project: true,
-  stage: true,
+  stage: { include: { milestone: true } },
   owner: true,
   assignee: true,
   taskAssignees: {
@@ -2998,8 +2999,8 @@ export class ProjectsService {
         data: {
           status: toStatus,
           startedAt: toStatus === "in_progress" && !existing.startedAt ? changedAt : undefined,
-          completedAt: toStatus === "done" ? changedAt : undefined,
-          cancelledAt: toStatus === "cancelled" ? changedAt : undefined
+          completedAt: isCompletedTaskStatus(toStatus) ? existing.completedAt ?? changedAt : undefined,
+          cancelledAt: toStatus === "cancelled" ? existing.cancelledAt ?? changedAt : undefined
         },
         include: taskInclude
       });

@@ -54,7 +54,7 @@ type SortDir = ProjectSheetSortDir;
 type ProjectListView = "grid" | "sheet" | "timeline";
 const PROJECT_LIST_VIEW_TABS: WorkspaceTabItem<ProjectListView>[] = [
   { id: "grid", label: "Tổng quan", description: "Cards dự án & trạng thái" },
-  { id: "sheet", label: "Project Sheet", description: "Bảng dữ liệu & chi phí" },
+  { id: "sheet", label: "Project Sheet", ariaLabel: "Project Sheet View", description: "Bảng dữ liệu & chi phí" },
   { id: "timeline", label: "Timeline", description: "Lịch thực hiện dự án" }
 ];
 
@@ -1505,6 +1505,7 @@ export default function ProjectsPage() {
                 options={filterStatusOptions}
                 value={statusFilter}
                 onChange={handleStatusFilterChange}
+                ariaLabel="All Status"
                 className="w-full shrink-0 sm:w-40"
               />
 
