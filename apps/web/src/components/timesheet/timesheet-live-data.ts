@@ -121,6 +121,11 @@ function projectStatus(value?: string): ProjectStatus {
   return "in_progress";
 }
 
+/** Prefer the canonical task status; time-entry rows may carry a stale/default status. */
+export function resolveTaskStatus(taskStatus?: string, entryStatus?: string) {
+  return taskStatus?.trim() || entryStatus || "in_progress";
+}
+
 async function readJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, { cache: "no-store", credentials: "same-origin", signal });
   if (!response.ok) throw new Error(`Không tải được dữ liệu Timesheet (${response.status}).`);
@@ -211,9 +216,10 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
     const key = `${entry.projectId}:${entry.taskId}`;
     const task = taskByKey.get(key);
     if (task) {
-      // A time-entry record is the freshest source for the logged task
-      // status/estimate when the task API is eventually consistent.
-      task.status = entry.taskStatus || task.status;
+      // Keep the canonical task status. The time-entry endpoint may expose a
+      // generic/default status for every row, which would incorrectly turn a
+      // completed or not-started task into "Đang làm".
+      task.status = resolveTaskStatus(task.status, entry.taskStatus);
       if ((task.estimateMinutes ?? 0) <= 0 && (entry.taskEstimateMinutes ?? 0) > 0) task.estimateMinutes = entry.taskEstimateMinutes;
       continue;
     }
@@ -224,7 +230,7 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
       stageActivity: "Chưa phân loại",
       assigneeUserId: entry.userId,
       estimateMinutes: entry.taskEstimateMinutes ?? 0,
-      status: entry.taskStatus || "in_progress"
+      status: resolveTaskStatus(undefined, entry.taskStatus)
     });
   }
   const tasks: ApiTask[] = [...taskByKey.values()];

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTimesheetDateRanges } from "./timesheet-live-data";
+import { buildTimesheetDateRanges, resolveTaskStatus } from "./timesheet-live-data";
 import { normalizeNodeStatus } from "./timesheet-status";
 
 describe("timesheet history ranges", () => {
@@ -27,5 +27,11 @@ describe("live timesheet status mapping", () => {
 
   it("keeps completed aliases as Đã hoàn thành", () => {
     expect(normalizeNodeStatus("done")).toBe("completed");
+  });
+
+  it("does not let a generic time-entry status overwrite the task status", () => {
+    expect(resolveTaskStatus("todo", "in_progress")).toBe("todo");
+    expect(resolveTaskStatus("completed", "in_progress")).toBe("completed");
+    expect(resolveTaskStatus(undefined, "completed")).toBe("completed");
   });
 });
