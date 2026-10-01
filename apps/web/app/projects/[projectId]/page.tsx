@@ -1457,20 +1457,22 @@ function ProjectIssuesPanel({
   };
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col gap-4 rounded-2xl border border-sky-100 bg-gradient-to-r from-sky-50 via-blue-50 to-violet-50 p-5 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">PROJECT CONTROL</p>
-          <h2 className="mt-1 text-2xl font-black tracking-tight text-foreground">Sổ Blocker / Risk / Issue</h2>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Tập trung các vấn đề cần xử lý trong project và làm rõ owner, mức độ ảnh hưởng cùng hành động tiếp theo.</p>
-        </div>
-        <div className="grid grid-cols-2 gap-2 sm:min-w-[210px]">
-          <div className="rounded-xl border border-white/80 bg-white/75 px-3 py-2"><p className="text-[10px] font-semibold uppercase text-muted-foreground">Đang mở</p><p className="mt-1 text-xl font-black text-foreground">{openCount}</p></div>
-          <div className="rounded-xl border border-white/80 bg-white/75 px-3 py-2"><p className="text-[10px] font-semibold uppercase text-muted-foreground">Mức cao</p><p className="mt-1 text-xl font-black text-rose-600">{highCount}</p></div>
-        </div>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div><p className="text-[10px] font-black uppercase tracking-[0.16em] text-primary">ISSUES</p><h2 className="mt-1 text-xl font-black tracking-tight text-foreground">Sổ Blocker / Risk / Issue</h2><p className="mt-1 text-xs text-muted-foreground">Dùng làm đầu vào cho cảnh báo tiến độ và điều phối owner.</p></div>
+        <button type="button" className="inline-flex min-h-9 items-center justify-center rounded-lg bg-primary px-3 text-xs font-bold text-primary-foreground"><Plus className="mr-1.5 h-3.5 w-3.5" /> Báo vấn đề</button>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {[
+          { label: "Đang mở", value: openCount, detail: `${risks.filter((risk) => risk.category === "Blocker").length} blocker · ${risks.filter((risk) => risk.category === "Risk").length} risk · ${risks.filter((risk) => risk.category === "Issue").length} issue`, tone: "text-foreground" },
+          { label: "Mức cao trở lên", value: highCount, detail: "Theo khả năng hoặc tác động", tone: "text-rose-600" },
+          { label: "Quá hạn xử lý", value: 0, detail: "Chưa có hạn xử lý", tone: "text-amber-600" },
+          { label: "Chưa có owner", value: risks.filter((risk) => !risk.owner).length, detail: "Cần phân công", tone: "text-violet-600" },
+          { label: "Đang chặn điểm chốt", value: risks.filter((risk) => risk.category === "Blocker" && !["resolved", "closed", "done"].includes(risk.status.toLowerCase())).length, detail: "Cần xử lý trước khi chuyển stage", tone: "text-rose-600" }
+        ].map((card) => <div key={card.label} className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{card.label}</p><p className={`mt-1 text-2xl font-black ${card.tone}`}>{card.value}</p><p className="mt-1 text-[11px] text-muted-foreground">{card.detail}</p></div>)}
       </div>
 
-      <form onSubmit={submit} className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+      <form onSubmit={submit} className="order-3 rounded-2xl border border-border bg-card p-5 shadow-sm">
         <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-bold text-foreground">Báo blocker / risk / issue</h3><p className="mt-1 text-xs text-muted-foreground">Bản ghi mới sẽ xuất hiện ngay trong danh sách điều phối của project.</p></div><AlertCircle className="h-5 w-5 text-amber-500" /></div>
         <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           <label className="lg:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Mô tả vấn đề</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="Ví dụ: Chờ dữ liệu đầu vào từ khách hàng để hoàn thành stage…" className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15" /></label>
@@ -1484,14 +1486,18 @@ function ProjectIssuesPanel({
         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs text-rose-600">{error}</p><button type="submit" disabled={saving} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"><Plus className="h-4 w-4" />{saving ? "Đang lưu…" : "Báo vấn đề"}</button></div>
       </form>
 
-      <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+      <div className="order-2 overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
         <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h3 className="text-sm font-bold text-foreground">Danh sách theo dõi</h3><p className="mt-1 text-xs text-muted-foreground">Các bản ghi được dùng làm đầu vào cho cảnh báo tiến độ và điều phối owner.</p></div><span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">{risks.length} bản ghi</span></div>
-        <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3">
+          <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Trạng thái</span>
           {[{ value: "all", label: "Tất cả" }, { value: "open", label: "Đang mở" }, { value: "resolved", label: "Đã xử lý" }].map((filter) => (
             <button key={filter.value} type="button" onClick={() => setStatusFilter(filter.value)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${statusFilter === filter.value ? "bg-foreground text-background" : "bg-muted/40 text-muted-foreground hover:bg-muted"}`}>
               {filter.label}
             </button>
           ))}
+          </div>
+          <span className="text-xs font-semibold text-muted-foreground">{visibleRisks.length} / {risks.length} bản ghi</span>
         </div>
         {visibleRisks.length === 0 ? <div className="px-5 py-12 text-center"><AlertCircle className="mx-auto h-8 w-8 text-muted-foreground/50" /><p className="mt-3 text-sm font-semibold text-foreground">{risks.length === 0 ? "Chưa có Blocker, Risk hoặc Issue" : "Không có bản ghi phù hợp"}</p><p className="mt-1 text-xs text-muted-foreground">Báo vấn đề đầu tiên để project có lịch sử xử lý rõ ràng.</p></div> : <div className="divide-y divide-border">{visibleRisks.map((risk) => <div key={risk.id} className="grid gap-3 px-5 py-4 lg:grid-cols-[minmax(0,1fr)_130px_130px_180px] lg:items-center"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${riskKindTone(risk.category)}`}>{riskKindLabel(risk.category)}</span><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${risk.status.toLowerCase() === "open" ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{risk.status.toLowerCase() === "open" ? "Đang mở" : risk.status}</span></div><p className="mt-2 text-sm font-semibold text-foreground">{risk.description}</p><p className="mt-1 text-xs text-muted-foreground">Owner: {risk.owner || "Chưa phân công"}</p></div><div><p className="text-[10px] font-semibold uppercase text-muted-foreground">Khả năng</p><p className={`mt-1 text-sm font-bold ${risk.likelihood === "High" ? "text-rose-600" : risk.likelihood === "Medium" ? "text-amber-600" : "text-slate-600"}`}>{risk.likelihood === "High" ? "Cao" : risk.likelihood === "Medium" ? "Vừa" : "Thấp"}</p></div><div><p className="text-[10px] font-semibold uppercase text-muted-foreground">Tác động</p><p className={`mt-1 text-sm font-bold ${risk.impact === "High" ? "text-rose-600" : risk.impact === "Medium" ? "Vừa" : "Thấp"}`}>{risk.impact === "High" ? "Cao" : risk.impact === "Medium" ? "Vừa" : "Thấp"}</p></div><div><p className="text-[10px] font-semibold uppercase text-muted-foreground">Phương án xử lý</p><p className="mt-1 text-sm text-muted-foreground">{risk.response || "Chưa cập nhật"}</p></div></div>)}</div>}
       </div>
@@ -1610,8 +1616,9 @@ function MilestoneOverviewBar({
       {milestones.length === 0 ? (
         <div className="mt-4 rounded-xl border border-dashed border-border bg-muted/20 px-4 py-5 text-center text-xs text-muted-foreground">Chưa có milestone trong kế hoạch giao hàng.</div>
       ) : (
+        <>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {milestones.map((milestone, index) => {
+          {milestones.slice(0, 4).map((milestone, index) => {
             const group = milestoneGroups.find((item) => item.milestoneId === milestone.id);
             const stages = group?.stages ?? [];
             const taskCount = stages.reduce((sum, stage) => sum + stage.tasks.length, 0);
@@ -1650,7 +1657,49 @@ function MilestoneOverviewBar({
             );
           })}
         </div>
+        {milestones.length > 4 ? <p className="mt-3 text-right text-[11px] font-semibold text-primary">+ {milestones.length - 4} milestone khác trong Project Sheet →</p> : null}
+        </>
       )}
+    </section>
+  );
+}
+
+function ProjectStatusSlaBar({
+  project,
+  milestones,
+  tasks,
+  projectColor
+}: {
+  project: Project;
+  milestones: Milestone[];
+  tasks: TaskItem[];
+  projectColor: string;
+}) {
+  const activeMilestone = milestones.find((milestone) => milestone.status === "in-progress") ?? milestones[0];
+  const completedTasks = tasks.filter((task) => task.status === "done").length;
+  const progress = tasks.length > 0 ? Math.round((completedTasks / tasks.length) * 100) : project.progress;
+  const statusLabel = project.status === "Active" ? "Đang chạy" : formatProjectStatusLabel(project.status);
+  return (
+    <section aria-label="Trạng thái dự án và SLA" className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-sm md:grid-cols-[1.15fr_1fr_1fr_auto] md:items-center">
+      <div className="min-w-0">
+        <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Trạng thái dự án</p>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-700">{statusLabel}</span>
+          <span className="text-xs text-muted-foreground">{activeMilestone?.name ?? "Chưa có milestone đang chạy"}</span>
+        </div>
+      </div>
+      <div>
+        <div className="flex items-center justify-between gap-2 text-xs">
+          <span className="font-semibold text-foreground">Tiến độ nghiệm thu</span>
+          <span className="font-black" style={{ color: projectColor }}>{progress}%</span>
+        </div>
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full" style={{ width: `${progress}%`, backgroundColor: projectColor }} /></div>
+      </div>
+      <div>
+        <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Đồng hồ SLA</p>
+        <p className="mt-1 text-xs font-semibold text-emerald-700">Đang chạy <span className="font-normal text-muted-foreground">· theo dõi đến {project.dueDate}</span></p>
+      </div>
+      <button type="button" className="inline-flex min-h-9 items-center justify-center rounded-lg border border-border px-3 text-xs font-bold text-muted-foreground transition hover:bg-muted">Sửa trạng thái</button>
     </section>
   );
 }
@@ -1803,17 +1852,17 @@ const MILESTONE_STATUS = {
 // and Team were redundant views; their useful content now lives in Overview,
 // Project Sheet and the resource block. Issues remains a first-class tab so
 // blocker/risk/issue work is reachable without hiding it in Overview.
-const TABS = ["Overview", "Project Sheet", "Tasks", "Documents", "Timeline", "Activity", "Issues"] as const;
+const TABS = ["Overview", "Project Sheet", "Tasks", "Issues", "Documents", "Timeline", "Activity"] as const;
 type Tab = typeof TABS[number];
 
 const PROJECT_TAB_ITEMS: WorkspaceTabItem<Tab>[] = [
   { id: "Overview", label: "Overview", description: "Tổng quan dự án" },
   { id: "Project Sheet", label: "Project Sheet", description: "Milestone & ngân sách" },
   { id: "Tasks", label: "Tasks", description: "Công việc & tiến độ" },
+  { id: "Issues", label: "Sổ vấn đề", ariaLabel: "Issues", description: "Blocker / Risk / Issue" },
   { id: "Documents", label: "Điểm chốt & Tài liệu", ariaLabel: "Documents", description: "Hồ sơ chuyển tiếp" },
   { id: "Timeline", label: "Timeline", description: "Lịch thực hiện" },
-  { id: "Activity", label: "Activity", description: "Lịch sử thay đổi" },
-  { id: "Issues", label: "Sổ vấn đề", ariaLabel: "Issues", description: "Blocker / Risk / Issue" }
+  { id: "Activity", label: "Activity", description: "Lịch sử thay đổi" }
 ];
 
 function isProjectDetailTab(value: string | null): value is Tab {
@@ -6733,8 +6782,8 @@ export default function ProjectDetailPage() {
   }, [projectId, reloadCanonicalHierarchy]);
 
   const coverStyle: React.CSSProperties = {
-    background: `linear-gradient(135deg, ${project.color}18 0%, ${project.color}35 50%, rgba(15,23,42,0.15) 100%)`,
-    backgroundColor: `${project.color}12`,
+    background: "linear-gradient(135deg, #f8fbff 0%, #ffffff 62%, #f5f7fb 100%)",
+    backgroundColor: "#ffffff",
   };
 
   // Total tasks stats across all milestones
@@ -6797,6 +6846,14 @@ export default function ProjectDetailPage() {
 
   const doneFiltered = filteredTasks.filter(t => t.status === "done").length;
   const filteredProgress = filteredTasks.length > 0 ? Math.round((doneFiltered / filteredTasks.length) * 100) : 0;
+  const openRiskCount = riskRegistry.filter((risk) => !["resolved", "closed", "done"].includes(risk.status.toLowerCase())).length;
+  const overdueTaskCount = allTasks.filter((task) => task.status !== "done" && task.due && !["TBD", "Not set"].includes(task.due) && new Date(task.due).getTime() < Date.now()).length;
+  const coordinationCount = openRiskCount + overdueTaskCount + milestones.filter((milestone) => milestone.status === "at-risk").length;
+  const projectTabItems: WorkspaceTabItem<Tab>[] = PROJECT_TAB_ITEMS.map((item) => item.id === "Issues"
+    ? { ...item, badge: `${openRiskCount} đang mở` }
+    : item.id === "Documents"
+      ? { ...item, badge: `${documents.length} tài liệu` }
+      : item);
 
   const projectPending = !projectResolved && project.id === PROJECT_NOT_FOUND.id;
   const projectMissing = projectResolved && project.id === PROJECT_NOT_FOUND.id;
@@ -6982,7 +7039,7 @@ export default function ProjectDetailPage() {
           </div>
 
           {/* Cover */}
-          <div className="relative mx-4 mt-5 h-40 overflow-hidden rounded-2xl border border-border shadow-sm sm:mx-6 sm:h-28" style={coverStyle}>
+          <div className="relative mx-4 mt-4 h-16 overflow-hidden rounded-xl border border-border shadow-sm sm:mx-6 sm:h-16" style={coverStyle}>
             <div className="absolute -top-4 -right-8 w-40 h-40 rounded-full opacity-30 blur-2xl pointer-events-none" style={{ backgroundColor:project.color }} />
             <div className="absolute -bottom-6 left-12 w-28 h-28 rounded-full opacity-20 blur-2xl pointer-events-none" style={{ backgroundColor:project.color }} />
             <div className="absolute top-3 right-3 flex items-center gap-1.5 z-10">
@@ -7030,15 +7087,15 @@ export default function ProjectDetailPage() {
                 <MoreHorizontal className="w-3.5 h-3.5" />
               </button>
             </div>
-            <div className="absolute bottom-4 left-5">
-              <p className="text-xs font-semibold text-foreground/60 uppercase tracking-wider">{project.category}</p>
-              <h1 className="text-lg font-black text-foreground">{project.name}</h1>
+            <div className="absolute bottom-3 left-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">{project.category}</p>
+              <h1 className="font-black tracking-tight text-foreground" style={{ fontSize: "1.25rem", lineHeight: 1.2 }}>{project.name}</h1>
             </div>
           </div>
 
           {/* Header Info */}
-          <div className="mt-8 px-4 sm:px-6">
-            <div className="mb-6 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
+          <div className="mt-4 px-4 sm:px-6">
+            <div className="mb-4 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1 rounded-lg" style={{ backgroundColor:sc.bg, color:sc.color }}>
                   <sc.icon className="w-3 h-3" />{formatProjectStatusLabel(project.status)}
@@ -7078,57 +7135,33 @@ export default function ProjectDetailPage() {
                 </motion.button>
               </div>
             </div>
-            <p className="text-sm text-muted-foreground leading-relaxed mb-6 max-w-3xl">{project.description}</p>
-            <div className="flex flex-wrap items-center gap-3 mb-7">
+            <p className="max-w-3xl text-xs leading-relaxed text-muted-foreground">{project.description}</p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               {[
                 { key:"dates", icon:Calendar, label:<>{project.startDate} <ArrowRight aria-hidden="true" className="inline h-3 w-3 align-middle" /> {project.dueDate}</> },
                 { key:"team", icon:Users, label:`${teamMembers.length} members` },
                 { key:"category", icon:Layers, label:project.category },
                 { key:"client", icon:BarChart2,label:project.client },
               ].map(({ key, icon:Icon, label }) => (
-                <span key={key} className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/50 px-2.5 py-1 rounded-lg border border-border">
+                <span key={key} className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/30 px-2.5 py-1 text-[11px] text-muted-foreground">
                   <Icon className="w-3.5 h-3.5" />{label}
                 </span>
               ))}
             </div>
 
-            {/* KPI grid */}
-            <div className="mb-6 grid grid-cols-2 gap-3 rounded-xl border border-border bg-card p-4 shadow-sm lg:grid-cols-5">
-              {[
-                { label:"Weighted progress", value:`${project.progress}%`, color:project.color, icon:TrendingUp   },
-                { label:"Task completion", value:`${doneTasks}/${allTasks.length}`, color:C.success, icon:ListChecks   },
-                { label:"Budget",     value:<MoneyAmount value={project.budget} />, color:C.blue, icon:Wallet },
-                { label:"Spent",      value:`${budgetPct}%`,                color:budgetPct>90?C.danger:C.slate, icon:BarChart2 },
-                { label:"Due Date",   value:project.dueDate,                color:C.warning, icon:Calendar      },
-              ].map(s => (
-                <div key={s.label} className="flex items-start gap-2.5">
-                  <div className="p-1.5 rounded-lg shrink-0" style={{ backgroundColor:`${s.color}15` }}>
-                    <s.icon className="w-3.5 h-3.5" style={{ color:s.color }} />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-foreground">{s.value}</p>
-                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{s.label}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mb-2">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Weighted progress</span>
-                <span className="text-[11px] font-bold font-mono" style={{ color:project.color }}>{project.progress}%</span>
+            <div className={`mt-4 flex flex-col gap-3 rounded-xl border px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${coordinationCount > 0 ? "border-amber-200 bg-amber-50/70" : "border-emerald-200 bg-emerald-50/70"}`}>
+              <div className="flex min-w-0 items-start gap-2.5">
+                {coordinationCount > 0 ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />}
+                <div><p className="text-xs font-bold text-foreground">{coordinationCount > 0 ? `${coordinationCount} tín hiệu cần điều phối` : "Project đang trong trạng thái ổn định"}</p><p className="mt-0.5 text-[11px] text-muted-foreground">{openRiskCount} vấn đề mở · {overdueTaskCount} task quá hạn · {milestones.filter((milestone) => milestone.status === "at-risk").length} milestone có rủi ro</p></div>
               </div>
-              <div className="h-2 rounded-full overflow-hidden bg-muted">
-                <motion.div initial={{ width:0 }} animate={{ width:`${project.progress}%` }} transition={{ duration:0.9, ease:"easeOut" }}
-                  className="h-full rounded-full" style={{ backgroundColor:project.color }} />
-              </div>
+              <button type="button" onClick={() => handleTabChange("Issues")} className="inline-flex shrink-0 items-center justify-center rounded-lg border border-amber-300 bg-white/80 px-3 py-2 text-xs font-semibold text-amber-800 transition hover:bg-white">Mở Sổ vấn đề →</button>
             </div>
           </div>
 
           {/* Tabs */}
           <div className="mt-8 px-4 sm:px-6">
             <WorkspaceTabBar
-              items={PROJECT_TAB_ITEMS}
+              items={projectTabItems}
               value={tab}
               onChange={handleTabChange}
               ariaLabel="Project detail sections"
@@ -7165,15 +7198,7 @@ export default function ProjectDetailPage() {
               {/* ─── OVERVIEW ─── */}
               {tab === "Overview" && (
                 <div className="space-y-5">
-                  <ProjectOverviewSignals
-                    projectColor={project.color}
-                    milestones={milestones}
-                    tasks={allTasks}
-                    risks={riskRegistry}
-                    documents={documents}
-                    onOpenIssues={() => handleTabChange("Issues")}
-                    onOpenDocuments={() => handleTabChange("Documents")}
-                  />
+                  <ProjectStatusSlaBar project={project} milestones={milestones} tasks={allTasks} projectColor={project.color} />
                   <MilestoneOverviewBar
                     milestones={milestones}
                     milestoneGroups={milestoneGroups}
@@ -7192,168 +7217,6 @@ export default function ProjectDetailPage() {
                     onOpenTasks={() => handleTabChange("Tasks")}
                     onOpenDocuments={() => handleTabChange("Documents")}
                   />
-                  <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-                  <div className="space-y-5 xl:col-span-2">
-                    {/* Milestones */}
-                    <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
-                      <div className="flex items-center justify-between px-5 py-3.5 border-b border-border">
-                        <div className="flex items-center gap-2">
-                          <Target className="w-4 h-4 text-muted-foreground" />
-                          <h3 className="text-sm font-semibold text-foreground">Milestones</h3>
-                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
-                            {milestones.filter(m=>m.status==="done").length}/{milestones.length}
-                          </span>
-                        </div>
-                        <motion.button whileHover={{ scale:1.03 }} whileTap={{ scale:0.97 }}
-                          onClick={() => setShowMilestoneModal(true)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white shadow-sm"
-                          style={{ backgroundColor:project.color }}>
-                          <Plus className="w-3.5 h-3.5" /> Add Milestone
-                        </motion.button>
-                      </div>
-                      <div className="p-5 space-y-0">
-                        {milestones.length > 0 ? (
-                          milestones.map((m, i) => (
-                            <div key={m.id} className="relative">
-                              {i < milestones.length - 1 && <div className="absolute left-4 top-9 w-px h-4 bg-border z-0" />}
-                              <div className="relative z-10 mb-3">
-                                <MilestoneRow milestone={m} isNext={i===nextMilestoneIdx} members={teamMembers} />
-                              </div>
-                            </div>
-                          ))
-                        ) : (
-                          <ProjectEmptyState
-                            icon={Target}
-                            title="No milestones yet"
-                            description="This project has no synced delivery plan yet. Add a milestone when the scope is ready to track."
-                            actionLabel="Add Milestone"
-                            onAction={() => setShowMilestoneModal(true)}
-                            accentColor={project.color}
-                          />
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Budget */}
-                    <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
-                      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-4">Budget Overview</h3>
-                      <div className="grid grid-cols-3 gap-3 mb-4">
-                        {[
-                          { label:"Total Budget", value:<MoneyAmount value={project.budget} />, color:C.blue },
-                          { label:"Spent",         value:<MoneyAmount value={project.spent} />,  color:budgetPct>90?C.danger:C.warning },
-                          { label:"Remaining",     value:<MoneyAmount value={(project.budget-project.spent)} />, color:C.success },
-                        ].map(b => (
-                          <div key={b.label} className="text-center p-3 rounded-xl border border-border bg-muted/30">
-                            <p className="text-xl font-bold font-mono" style={{ color:b.color }}>{b.value}</p>
-                            <p className="text-[10px] uppercase tracking-wide text-muted-foreground mt-0.5">{b.label}</p>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="h-2.5 bg-muted rounded-full overflow-hidden">
-                        <motion.div initial={{ width:0 }} animate={{ width:`${budgetPct}%` }} transition={{ duration:0.8 }}
-                          className="h-full rounded-full" style={{ backgroundColor:budgetPct>90?C.danger:C.blue }} />
-                      </div>
-                      <div className="flex justify-between mt-1.5">
-                        <span className="text-[10px] text-muted-foreground"><MoneyAmount value={0} /></span>
-                        <span className="text-[10px] font-semibold" style={{ color:budgetPct>90?C.danger:C.slate }}>{budgetPct}% utilized</span>
-                        <span className="text-[10px] text-muted-foreground"><MoneyAmount value={project.budget} /></span>
-                      </div>
-                    </div>
-
-                    {/* Activity */}
-                    <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
-                      <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Recent Activity</h3>
-                        <button onClick={() => handleTabChange("Activity")} className="text-xs font-medium hover:underline" style={{ color:project.color }}>View all</button>
-                      </div>
-                      <div className="space-y-3">
-                        {projectActivityFeed.length > 0 ? (
-                          projectActivityFeed.slice(0, 4).map(item => (
-                            <div key={item.id} className="flex items-start gap-3">
-                              <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor:`${item.color}15` }}>
-                                <item.icon className="w-3.5 h-3.5" style={{ color:item.color }} />
-                              </div>
-                              <div>
-                                <p className="text-xs text-foreground leading-relaxed">
-                                  {item.text}{" "}{item.target && <span className="font-semibold" style={{ color:project.color }}>{item.target}</span>}
-                                </p>
-                                <p className="text-[10px] text-muted-foreground mt-0.5">{item.time}{item.badge ? ` · ${item.badge}` : ""}</p>
-                              </div>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="rounded-xl border border-dashed border-border bg-muted/20 px-4 py-6 text-center">
-                            <Activity className="mx-auto mb-2 h-4 w-4 text-muted-foreground" />
-                            <p className="text-xs font-semibold text-foreground">No activity yet</p>
-                            <p className="mt-1 text-xs text-muted-foreground">Project decisions and updates will appear here after work starts.</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Right col */}
-                  <div className="space-y-6">
-                    <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
-                      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-4.5">Trạng thái công việc</h3>
-                      <div className="space-y-4">
-                        {[
-                          { label:TASK_STATUS.done.label, count:allTasks.filter(t=>t.status==="done").length, color:C.success },
-                          { label:TASK_STATUS["in-progress"].label, count:allTasks.filter(t=>t.status==="in-progress").length, color:C.purple  },
-                          { label:TASK_STATUS.todo.label, count:allTasks.filter(t=>t.status==="todo").length, color:C.slate   },
-                        ].map(s => (
-                          <div key={s.label} className="flex items-center gap-3">
-                            <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor:s.color }} />
-                            <span className="text-xs text-foreground flex-1">{s.label}</span>
-                            <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
-                              <div className="h-full rounded-full" style={{ width:`${allTasks.length?((s.count/allTasks.length)*100):0}%`, backgroundColor:s.color }} />
-                            </div>
-                            <span className="text-xs font-mono font-bold text-foreground w-4 text-right">{s.count}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
-                      <div className="flex items-center justify-between mb-4.5">
-                        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Team</h3>
-                        <button onClick={() => handleTabChange("Project Sheet")} className="text-xs font-medium hover:underline" style={{ color:project.color }}>Xem trong Project Sheet</button>
-                      </div>
-                      <div className="space-y-4">
-                        {teamMembers.length > 0 ? (
-                          teamMembers.map(m => (
-                            <div key={m.initials} className="flex items-center gap-2.5">
-                              <div className="relative shrink-0">
-                                <TeamMemberAvatar member={m} />
-                                <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-[1.5px] border-card" style={{ backgroundColor:m.status==="active"?C.success:C.warning }} />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className={`text-xs truncate ${m.id === user?.id ? "font-bold text-primary" : "font-semibold text-foreground"}`}>{m.name}</p>
-                                <p className="text-[10px] text-muted-foreground">{m.role}</p>
-                              </div>
-                              <span className="text-[10px] font-mono text-muted-foreground">{m.done}/{m.tasks}</span>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="rounded-xl border border-dashed border-border bg-muted/20 px-4 py-6 text-center">
-                            <Users className="mx-auto mb-2 h-4 w-4 text-muted-foreground" />
-                            <p className="text-xs font-semibold text-foreground">No team members yet</p>
-                            <p className="mt-1 text-xs text-muted-foreground">Invite synced workspace users before assigning delivery work.</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
-                      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-4.5">Tags</h3>
-                      <div className="flex flex-wrap gap-2.5">
-                        {project.tags.map(tag => (
-                          <span key={tag} className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-muted text-muted-foreground border border-border">{tag}</span>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
                 </div>
               )}
 
@@ -8756,11 +8619,16 @@ export default function ProjectDetailPage() {
                   <div className="space-y-4">
                     <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                       <div>
-                        <p className="text-[11px] font-black uppercase tracking-[0.16em] text-primary">PROJECT CONTROL</p>
-                        <h2 className="mt-1 text-2xl font-black tracking-tight text-foreground">Điểm chốt &amp; Tài liệu</h2>
-                        <p className="mt-1 text-sm text-muted-foreground">Tổ chức hồ sơ theo Milestone để theo dõi điều kiện chuyển tiếp.</p>
+                        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-primary">CHECKPOINTS &amp; DOCUMENTS</p>
+                        <h2 className="mt-1 text-xl font-black tracking-tight text-foreground">Điểm chốt &amp; Tài liệu</h2>
+                        <p className="mt-1 text-xs text-muted-foreground">Theo dõi tài liệu bắt buộc theo Milestone và điều kiện chuyển tiếp.</p>
                       </div>
                       <span className="text-xs font-semibold text-muted-foreground">{documents.length} tài liệu đã liên kết</span>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Tổng tài liệu theo template</p><p className="mt-1 text-xl font-black text-foreground">{documents.length}</p><p className="mt-1 text-[11px] text-muted-foreground">Từ project hiện tại</p></div>
+                      <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Đã nộp &amp; có version</p><p className="mt-1 text-xl font-black text-emerald-700">{documents.filter((doc) => doc.versions.length > 0).length}</p><p className="mt-1 text-[11px] text-muted-foreground">Có thể mở lịch sử</p></div>
+                      <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Đang chờ bổ sung</p><p className="mt-1 text-xl font-black text-amber-700">{documents.filter((doc) => doc.versions.length === 0).length}</p><p className="mt-1 text-[11px] text-muted-foreground">Cần gắn link hoặc tải file</p></div>
                     </div>
                     {/* Control Bar */}
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-4 bg-card border border-border rounded-2xl shadow-sm">
