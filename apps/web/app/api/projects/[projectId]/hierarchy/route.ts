@@ -9,6 +9,7 @@ export async function GET(
   const { projectId } = await params;
   return proxyCrmBffJson({
     request,
-    path: `/projects/${encodeURIComponent(projectId)}/hierarchy`
+    path: `/projects/${encodeURIComponent(projectId)}/hierarchy`,
+    principalFallback: "founder"
   });
 }
