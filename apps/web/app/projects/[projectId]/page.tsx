@@ -10,7 +10,7 @@ import {
   Check, CheckCircle2, Clock, AlertCircle, Flag,
   MessageSquare, BarChart2, TrendingUp, Wallet, Layers, ChevronRight, ChevronLeft,
   ListChecks, FileText, GitBranch, Download, UserPlus,
-  Target, X, ChevronDown, ChevronUp, Activity,
+  Target, X, ChevronDown, ChevronUp, Activity, Lock,
   Trash2, Pencil, Pin, History, Search, Upload, Paperclip
 } from "lucide-react";
 import Link from "next/link";
@@ -1330,7 +1330,7 @@ interface ActivityLogItem {
 
 interface RiskItem {
   id: string;
-  category: "Financial" | "Operational" | "External" | "Strategic";
+  category: "Financial" | "Operational" | "External" | "Strategic" | "Blocker" | "Risk" | "Issue";
   description: string;
   likelihood: "Low" | "Medium" | "High";
   impact: "Low" | "Medium" | "High";
@@ -1353,6 +1353,21 @@ type ProjectRiskDraft = {
   status: string;
 };
 
+function riskKindLabel(category: RiskItem["category"]) {
+  if (category === "Blocker" || category === "Issue") return category;
+  if (category === "Risk") return "Risk";
+  return "Risk";
+}
+
+function riskKindTone(category: RiskItem["category"]) {
+  const kind = riskKindLabel(category);
+  return kind === "Blocker"
+    ? "bg-rose-50 text-rose-700"
+    : kind === "Issue"
+      ? "bg-violet-50 text-violet-700"
+      : "bg-amber-50 text-amber-700";
+}
+
 function ProjectIssuesPanel({
   risks,
   teamMembers,
@@ -1363,16 +1378,18 @@ function ProjectIssuesPanel({
   onCreate: (draft: ProjectRiskDraft) => Promise<void>;
 }) {
   const [description, setDescription] = useState("");
-  const [category, setCategory] = useState<RiskItem["category"]>("Operational");
+  const [category, setCategory] = useState<RiskItem["category"]>("Risk");
   const [likelihood, setLikelihood] = useState<RiskItem["likelihood"]>("Medium");
   const [impact, setImpact] = useState<RiskItem["impact"]>("Medium");
   const [response, setResponse] = useState("");
   const [switchTrigger, setSwitchTrigger] = useState("");
   const [ownerUserId, setOwnerUserId] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const openCount = risks.filter((risk) => !["resolved", "closed", "done"].includes(risk.status.toLowerCase())).length;
   const highCount = risks.filter((risk) => risk.likelihood === "High" || risk.impact === "High").length;
+  const visibleRisks = risks.filter((risk) => statusFilter === "all" || (statusFilter === "open" ? !["resolved", "closed", "done"].includes(risk.status.toLowerCase()) : risk.status.toLowerCase() === statusFilter));
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1422,7 +1439,7 @@ function ProjectIssuesPanel({
         <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-bold text-foreground">Báo blocker / risk / issue</h3><p className="mt-1 text-xs text-muted-foreground">Bản ghi mới sẽ xuất hiện ngay trong danh sách điều phối của project.</p></div><AlertCircle className="h-5 w-5 text-amber-500" /></div>
         <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           <label className="lg:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Mô tả vấn đề</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="Ví dụ: Chờ dữ liệu đầu vào từ khách hàng để hoàn thành stage…" className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15" /></label>
-          <label><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Phân loại</span><select value={category} onChange={(event) => setCategory(event.target.value as RiskItem["category"])} className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm"><option value="Operational">Vận hành</option><option value="Financial">Tài chính</option><option value="External">Đối ngoại</option><option value="Strategic">Chiến lược</option></select></label>
+          <label><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Loại bản ghi</span><select value={category} onChange={(event) => setCategory(event.target.value as RiskItem["category"])} className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm"><option value="Blocker">Blocker — đang chặn</option><option value="Risk">Risk — nguy cơ</option><option value="Issue">Issue — đã phát sinh</option></select></label>
           <div><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Owner</span><TeamMemberSingleSelect members={teamMembers} value={teamMembers.find((member) => member.id === ownerUserId)} onChange={(member) => setOwnerUserId(member?.id ?? "")} placeholder="Chưa phân công" /></div>
           <label><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Khả năng</span><select value={likelihood} onChange={(event) => setLikelihood(event.target.value as RiskItem["likelihood"])} className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm"><option value="Low">Thấp</option><option value="Medium">Vừa</option><option value="High">Cao</option></select></label>
           <label><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Tác động</span><select value={impact} onChange={(event) => setImpact(event.target.value as RiskItem["impact"])} className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm"><option value="Low">Thấp</option><option value="Medium">Vừa</option><option value="High">Cao</option></select></label>
@@ -1434,7 +1451,14 @@ function ProjectIssuesPanel({
 
       <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
         <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h3 className="text-sm font-bold text-foreground">Danh sách theo dõi</h3><p className="mt-1 text-xs text-muted-foreground">Các bản ghi được dùng làm đầu vào cho cảnh báo tiến độ và điều phối owner.</p></div><span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">{risks.length} bản ghi</span></div>
-        {risks.length === 0 ? <div className="px-5 py-12 text-center"><AlertCircle className="mx-auto h-8 w-8 text-muted-foreground/50" /><p className="mt-3 text-sm font-semibold text-foreground">Chưa có blocker hoặc risk nào</p><p className="mt-1 text-xs text-muted-foreground">Báo vấn đề đầu tiên để project có lịch sử xử lý rõ ràng.</p></div> : <div className="divide-y divide-border">{risks.map((risk) => <div key={risk.id} className="grid gap-3 px-5 py-4 lg:grid-cols-[1fr_130px_130px_180px] lg:items-center"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-700">{risk.category === "Operational" ? "Vận hành" : risk.category === "Financial" ? "Tài chính" : risk.category === "External" ? "Đối ngoại" : "Chiến lược"}</span><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${risk.status.toLowerCase() === "open" ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{risk.status.toLowerCase() === "open" ? "Đang mở" : risk.status}</span></div><p className="mt-2 text-sm font-semibold text-foreground">{risk.description}</p><p className="mt-1 text-xs text-muted-foreground">Owner: {risk.owner || "Chưa phân công"}</p></div><div><p className="text-[10px] font-semibold uppercase text-muted-foreground">Khả năng</p><p className={`mt-1 text-sm font-bold ${risk.likelihood === "High" ? "text-rose-600" : risk.likelihood === "Medium" ? "text-amber-600" : "text-slate-600"}`}>{risk.likelihood === "High" ? "Cao" : risk.likelihood === "Medium" ? "Vừa" : "Thấp"}</p></div><div><p className="text-[10px] font-semibold uppercase text-muted-foreground">Tác động</p><p className={`mt-1 text-sm font-bold ${risk.impact === "High" ? "text-rose-600" : risk.impact === "Medium" ? "text-amber-600" : "text-slate-600"}`}>{risk.impact === "High" ? "Cao" : risk.impact === "Medium" ? "Vừa" : "Thấp"}</p></div><div><p className="text-[10px] font-semibold uppercase text-muted-foreground">Phương án xử lý</p><p className="mt-1 text-sm text-muted-foreground">{risk.response || "Chưa cập nhật"}</p></div></div>)}</div>}
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
+          {[{ value: "all", label: "Tất cả" }, { value: "open", label: "Đang mở" }, { value: "resolved", label: "Đã xử lý" }].map((filter) => (
+            <button key={filter.value} type="button" onClick={() => setStatusFilter(filter.value)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${statusFilter === filter.value ? "bg-foreground text-background" : "bg-muted/40 text-muted-foreground hover:bg-muted"}`}>
+              {filter.label}
+            </button>
+          ))}
+        </div>
+        {visibleRisks.length === 0 ? <div className="px-5 py-12 text-center"><AlertCircle className="mx-auto h-8 w-8 text-muted-foreground/50" /><p className="mt-3 text-sm font-semibold text-foreground">{risks.length === 0 ? "Chưa có Blocker, Risk hoặc Issue" : "Không có bản ghi phù hợp"}</p><p className="mt-1 text-xs text-muted-foreground">Báo vấn đề đầu tiên để project có lịch sử xử lý rõ ràng.</p></div> : <div className="divide-y divide-border">{visibleRisks.map((risk) => <div key={risk.id} className="grid gap-3 px-5 py-4 lg:grid-cols-[minmax(0,1fr)_130px_130px_180px] lg:items-center"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${riskKindTone(risk.category)}`}>{riskKindLabel(risk.category)}</span><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${risk.status.toLowerCase() === "open" ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{risk.status.toLowerCase() === "open" ? "Đang mở" : risk.status}</span></div><p className="mt-2 text-sm font-semibold text-foreground">{risk.description}</p><p className="mt-1 text-xs text-muted-foreground">Owner: {risk.owner || "Chưa phân công"}</p></div><div><p className="text-[10px] font-semibold uppercase text-muted-foreground">Khả năng</p><p className={`mt-1 text-sm font-bold ${risk.likelihood === "High" ? "text-rose-600" : risk.likelihood === "Medium" ? "text-amber-600" : "text-slate-600"}`}>{risk.likelihood === "High" ? "Cao" : risk.likelihood === "Medium" ? "Vừa" : "Thấp"}</p></div><div><p className="text-[10px] font-semibold uppercase text-muted-foreground">Tác động</p><p className={`mt-1 text-sm font-bold ${risk.impact === "High" ? "text-rose-600" : risk.impact === "Medium" ? "Vừa" : "Thấp"}`}>{risk.impact === "High" ? "Cao" : risk.impact === "Medium" ? "Vừa" : "Thấp"}</p></div><div><p className="text-[10px] font-semibold uppercase text-muted-foreground">Phương án xử lý</p><p className="mt-1 text-sm text-muted-foreground">{risk.response || "Chưa cập nhật"}</p></div></div>)}</div>}
       </div>
     </div>
   );
@@ -1527,6 +1551,64 @@ function ProjectOverviewSignals({
   );
 }
 
+function MilestoneOverviewBar({
+  milestones,
+  milestoneGroups,
+  projectColor,
+  onOpenProjectSheet
+}: {
+  milestones: Milestone[];
+  milestoneGroups: MilestoneGroup[];
+  projectColor: string;
+  onOpenProjectSheet: () => void;
+}) {
+  return (
+    <section aria-label="Tổng quan milestone" className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Delivery plan</p>
+          <h2 className="mt-1 text-base font-black text-foreground">Milestone overview</h2>
+          <p className="mt-1 text-xs text-muted-foreground">Theo dõi điểm chốt, số stage và trạng thái khóa chuyển tiếp.</p>
+        </div>
+        <button type="button" onClick={onOpenProjectSheet} className="text-xs font-semibold text-primary hover:underline">Mở Project Sheet →</button>
+      </div>
+      {milestones.length === 0 ? (
+        <div className="mt-4 rounded-xl border border-dashed border-border bg-muted/20 px-4 py-5 text-center text-xs text-muted-foreground">Chưa có milestone trong kế hoạch giao hàng.</div>
+      ) : (
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {milestones.map((milestone, index) => {
+            const group = milestoneGroups.find((item) => item.milestoneId === milestone.id);
+            const stages = group?.stages ?? [];
+            const taskCount = stages.reduce((sum, stage) => sum + stage.tasks.length, 0);
+            const doneCount = stages.reduce((sum, stage) => sum + stage.tasks.filter((task) => task.status === "done").length, 0);
+            const progress = taskCount > 0 ? Math.round((doneCount / taskCount) * 100) : milestone.status === "done" ? 100 : 0;
+            const locked = index > 0 && milestones[index - 1]?.status !== "done";
+            const status = MILESTONE_STATUS[milestone.status];
+            return (
+              <div key={milestone.id} className="min-w-0 rounded-xl border border-border bg-background p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg" style={{ backgroundColor: `${status.color}16`, color: status.color }}>
+                    {locked ? <Lock className="h-3.5 w-3.5" aria-label="Đang khóa" /> : <status.icon className="h-3.5 w-3.5" aria-hidden="true" />}
+                  </span>
+                  <span className="rounded-full px-2 py-1 text-[10px] font-bold" style={{ backgroundColor: status.bg, color: status.color }}>{locked ? "Đang khóa" : status.label}</span>
+                </div>
+                <p className="mt-3 truncate text-xs font-bold text-foreground" title={milestone.name}>{index + 1}. {milestone.name}</p>
+                <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
+                  <span>{stages.length} stage · {taskCount} task</span>
+                  <span className="font-semibold text-foreground">{progress}%</span>
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted" aria-label={`Tiến độ ${progress}%`}>
+                  <div className="h-full rounded-full transition-all" style={{ width: `${progress}%`, backgroundColor: locked ? "#94a3b8" : projectColor }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ─── Config maps ──────────────────────────────────────────────────────────────
 
 const STATUS_CFG = {
@@ -1536,6 +1618,7 @@ const STATUS_CFG = {
   "On Hold":   { color:C.slate,   bg:"#f1f5f9", icon:Clock },
   "Completed": { color:C.success, bg:"#dcfce7", icon:CheckCircle2 },
   "At Risk":   { color:C.danger,  bg:"#fee2e2", icon:AlertCircle },
+  "Cancelled": { color:C.slate,   bg:"#f1f5f9", icon:X },
 };
 
 const PRIORITY_CFG = {
@@ -1559,20 +1642,21 @@ const MILESTONE_STATUS = {
   "at-risk":     { color:C.danger,  bg:"#fee2e2", label:"Có rủi ro",     icon:AlertCircle },
 };
 
-// Dashboard is the project control-center view. Team is a real detail view and
-// therefore belongs in the primary navigation as well.
-const TABS = ["Overview", "Dashboard", "Project Sheet", "Tasks", "Timeline", "Activity", "Documents", "Issues", "Team"] as const;
+// Keep the project detail navigation focused on delivery decisions. Dashboard
+// and Team were redundant views; their useful content now lives in Overview,
+// Project Sheet and the resource block. Issues remains a first-class tab so
+// blocker/risk/issue work is reachable without hiding it in Overview.
+const TABS = ["Overview", "Project Sheet", "Tasks", "Documents", "Timeline", "Activity", "Issues"] as const;
 type Tab = typeof TABS[number];
 
 const PROJECT_TAB_ITEMS: WorkspaceTabItem<Tab>[] = [
   { id: "Overview", label: "Overview", description: "Tổng quan dự án" },
-  { id: "Dashboard", label: "Dashboard", description: "Điều phối & biểu đồ" },
   { id: "Project Sheet", label: "Project Sheet", description: "Milestone & ngân sách" },
   { id: "Tasks", label: "Tasks", description: "Công việc & tiến độ" },
+  { id: "Documents", label: "Điểm chốt & Tài liệu", ariaLabel: "Documents", description: "Hồ sơ chuyển tiếp" },
   { id: "Timeline", label: "Timeline", description: "Lịch thực hiện" },
   { id: "Activity", label: "Activity", description: "Lịch sử thay đổi" },
-  { id: "Documents", label: "Điểm chốt & Tài liệu", ariaLabel: "Documents", description: "Hồ sơ chuyển tiếp" },
-  { id: "Team", label: "Team", description: "Thành viên dự án" }
+  { id: "Issues", label: "Issues", description: "Sổ Blocker / Risk / Issue" }
 ];
 
 function isProjectDetailTab(value: string | null): value is Tab {
@@ -1580,7 +1664,14 @@ function isProjectDetailTab(value: string | null): value is Tab {
 }
 
 function resolveProjectDetailTab(value: string | null): Tab | null {
+  // Keep old deep links working after the navigation cleanup. These views no
+  // longer have their own tab, but users should never land on a blank panel.
+  if (value === "Dashboard" || value === "Team") return "Overview";
   return isProjectDetailTab(value) ? value : null;
+}
+
+function projectTabDomId(value: Tab) {
+  return `project-tab-${value.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
 }
 
 // ─── Modals ───────────────────────────────────────────────────────────────────
@@ -5465,7 +5556,7 @@ export default function ProjectDetailPage() {
     const nextTab = TABS[nextIndex];
     handleTabChange(nextTab);
     window.requestAnimationFrame(() => {
-      document.getElementById(`project-tab-${nextTab.toLowerCase()}`)?.focus({ preventScroll: true });
+      document.getElementById(projectTabDomId(nextTab))?.focus({ preventScroll: true });
     });
   }, [handleTabChange]);
 
@@ -6890,7 +6981,7 @@ export default function ProjectDetailPage() {
           </div>
 
           {/* Tab content */}
-          <div id="project-tab-panel" role="tabpanel" aria-labelledby={`project-tab-${tab.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+          <div id="project-tab-panel" role="tabpanel" aria-labelledby={projectTabDomId(tab)}
             className="px-4 py-7 sm:px-6">
 
               {/* ─── PROJECT SHEET ─── */}
@@ -6925,6 +7016,12 @@ export default function ProjectDetailPage() {
                     documents={documents}
                     onOpenIssues={() => handleTabChange("Issues")}
                     onOpenDocuments={() => handleTabChange("Documents")}
+                  />
+                  <MilestoneOverviewBar
+                    milestones={milestones}
+                    milestoneGroups={milestoneGroups}
+                    projectColor={project.color}
+                    onOpenProjectSheet={() => handleTabChange("Project Sheet")}
                   />
                   <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
                   <div className="space-y-5 xl:col-span-2">

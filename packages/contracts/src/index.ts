@@ -783,7 +783,10 @@ export interface UpdateProjectActivityInput {
   status?: string;
 }
 
-export type ProjectRiskCategory = "Financial" | "Operational" | "External" | "Strategic";
+// The project detail register is a single source for Blocker, Risk and Issue
+// records. Keep the legacy categories for existing rows, while allowing the
+// canonical register types used by the delivery workflow.
+export type ProjectRiskCategory = "Financial" | "Operational" | "External" | "Strategic" | "Blocker" | "Risk" | "Issue";
 export type ProjectRiskLevel = "Low" | "Medium" | "High";
 
 export interface ProjectRiskSummary {

@@ -403,7 +403,9 @@ export function mapTaskSummary(task: any): ProjectTaskSummary {
 }
 
 function normalizeRiskCategory(value: unknown): ProjectRiskSummary["category"] {
-  return value === "Financial" || value === "External" || value === "Strategic" ? value : "Operational";
+  return value === "Financial" || value === "External" || value === "Strategic" || value === "Blocker" || value === "Risk" || value === "Issue"
+    ? value
+    : "Operational";
 }
 
 function normalizeRiskLevel(value: unknown): ProjectRiskSummary["likelihood"] {
