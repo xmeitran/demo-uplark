@@ -1655,6 +1655,117 @@ function MilestoneOverviewBar({
   );
 }
 
+function ProjectDeliveryWireframePanels({
+  projectColor,
+  milestones,
+  milestoneGroups,
+  tasks,
+  risks,
+  documents,
+  teamMembers,
+  onOpenIssues,
+  onOpenTasks,
+  onOpenDocuments
+}: {
+  projectColor: string;
+  milestones: Milestone[];
+  milestoneGroups: MilestoneGroup[];
+  tasks: TaskItem[];
+  risks: RiskItem[];
+  documents: ProjectDoc[];
+  teamMembers: ProjectTeamMember[];
+  onOpenIssues: () => void;
+  onOpenTasks: () => void;
+  onOpenDocuments: () => void;
+}) {
+  const activeMilestone = milestones.find((milestone) => milestone.status === "in-progress") ?? milestones[0];
+  const activeGroup = activeMilestone ? milestoneGroups.find((group) => group.milestoneId === activeMilestone.id) : undefined;
+  const requiredDocuments = activeMilestone?.requiredDocumentCount ?? 0;
+  const submittedDocuments = activeMilestone?.submittedDocumentCount ?? 0;
+  const documentsConfigured = requiredDocuments > 0;
+  const documentsReady = documentsConfigured && submittedDocuments >= requiredDocuments;
+  const confirmationReady = !activeMilestone?.customerConfirmationRequired;
+  const gateConfigured = documentsConfigured || Boolean(activeMilestone?.customerConfirmationRequired) || Boolean(activeMilestone?.unlockCriteria);
+  const handoffReady = Boolean(activeMilestone) && gateConfigured && documentsReady && confirmationReady;
+  const openRisks = risks.filter((risk) => !["resolved", "closed", "done"].includes(risk.status.toLowerCase()));
+  const previewTasks = (activeGroup?.stages ?? []).flatMap((stage) => stage.tasks.slice(0, 2).map((task) => ({ task, stageName: stage.name }))).slice(0, 5);
+  const taskOwner = (task: TaskItem) => teamMembers.find((member) => member.id === task.assigneeUserId || member.initials === task.assignee);
+  const memberRows = teamMembers.slice(0, 8).map((member) => {
+    const memberTasks = tasks.filter((task) => task.assigneeUserId === member.id || task.assignee === member.initials);
+    const planned = sumHours(memberTasks.map((task) => task.plannedHours ?? 0));
+    const actual = sumHours(memberTasks.map((task) => task.actualHours ?? 0));
+    const latestLog = memberTasks
+      .flatMap((task) => task.timeEntries ?? [])
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
+    return {
+      member,
+      openTasks: memberTasks.filter((task) => task.status !== "done").length,
+      actual,
+      capacity: planned > 0 ? Math.round((actual / planned) * 100) : 0,
+      latestLog: latestLog?.date ?? "Chưa ghi nhận"
+    };
+  });
+
+  return (
+    <section aria-label="Project delivery operating view" className="space-y-5">
+      <div className="grid gap-5 xl:grid-cols-[1.15fr_1fr]">
+        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Handoff dossier</p>
+              <h3 className="mt-1 text-base font-black text-foreground">Hồ sơ chuyển tiếp</h3>
+              <p className="mt-1 text-xs text-muted-foreground">Theo dõi điều kiện để chuyển sang milestone tiếp theo.</p>
+            </div>
+            <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${handoffReady ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+              {handoffReady ? "Đủ điều kiện" : "Đang chờ"}
+            </span>
+          </div>
+          <div className="mt-4 rounded-xl border border-border bg-muted/20 p-3">
+            <p className="text-xs font-bold text-foreground">{activeMilestone?.name ?? "Chưa có milestone đang chạy"}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">{activeMilestone ? `${activeMilestone.startDate || "TBD"} → ${activeMilestone.dueDate || "TBD"}` : "Bổ sung delivery plan để tạo hồ sơ"}</p>
+          </div>
+          <div className="mt-4 space-y-2.5">
+            {[
+              { label: "Tài liệu bắt buộc", detail: documentsConfigured ? `${submittedDocuments}/${requiredDocuments} hồ sơ` : "Chưa cấu hình", ready: documentsReady, action: onOpenDocuments },
+              { label: "Xác nhận khách hàng", detail: activeMilestone?.customerConfirmationRequired ? "Chưa ghi nhận" : "Không yêu cầu", ready: confirmationReady },
+              { label: "Tiêu chí chuyển trạng thái", detail: activeMilestone?.unlockCriteria || "Theo checklist milestone", ready: handoffReady }
+            ].map((item) => (
+              <div key={item.label} className="flex items-start gap-2.5 rounded-lg border border-border bg-background px-3 py-2.5">
+                <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${item.ready ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                  {item.ready ? <Check className="h-3 w-3" aria-hidden="true" /> : <Clock className="h-3 w-3" aria-hidden="true" />}
+                </span>
+                <div className="min-w-0 flex-1"><p className="text-xs font-semibold text-foreground">{item.label}</p><p className="mt-0.5 truncate text-[11px] text-muted-foreground">{item.detail}</p></div>
+                {item.action ? <button type="button" onClick={item.action} className="text-[11px] font-semibold text-primary hover:underline">Mở</button> : null}
+              </div>
+            ))}
+          </div>
+          <button type="button" disabled={!handoffReady} className="mt-4 inline-flex min-h-9 w-full items-center justify-center rounded-lg border border-border px-3 text-xs font-semibold text-muted-foreground disabled:cursor-not-allowed disabled:opacity-70">
+            {handoffReady ? "Chuyển milestone" : "Chưa đủ điều kiện chuyển milestone"}
+          </button>
+        </div>
+
+        <div className="rounded-2xl border border-border bg-card shadow-sm">
+          <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
+            <div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Issue register</p><h3 className="mt-1 text-base font-black text-foreground">Sổ Blocker / Risk / Issue</h3><p className="mt-1 text-xs text-muted-foreground">Điều phối owner và tác động ngay từ Overview.</p></div>
+            <button type="button" onClick={onOpenIssues} className="text-xs font-semibold text-primary hover:underline">Mở sổ →</button>
+          </div>
+          {openRisks.length === 0 ? <div className="px-5 py-10 text-center"><CheckCircle2 className="mx-auto h-7 w-7 text-emerald-500" /><p className="mt-2 text-sm font-semibold text-foreground">Chưa có vấn đề mở</p><p className="mt-1 text-xs text-muted-foreground">Các blocker, risk và issue mới sẽ xuất hiện tại đây.</p></div> : <div className="divide-y divide-border">{openRisks.slice(0, 4).map((risk) => <button type="button" key={risk.id} onClick={onOpenIssues} className="flex w-full items-start gap-3 px-5 py-3 text-left transition hover:bg-muted/30"><span className={`mt-0.5 rounded-full px-2 py-1 text-[10px] font-bold ${riskKindTone(risk.category)}`}>{riskKindLabel(risk.category)}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold text-foreground">{risk.description}</span><span className="mt-1 block text-[11px] text-muted-foreground">Owner: {risk.owner || "Chưa phân công"}</span></span><ChevronRight className="mt-1 h-3.5 w-3.5 shrink-0 text-muted-foreground" /></button>)}</div>}
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4"><div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Delivery execution</p><h3 className="mt-1 text-base font-black text-foreground">Task Board</h3><p className="mt-1 text-xs text-muted-foreground">Milestone → Stage → Task · kế hoạch, thực tế và sai lệch.</p></div><button type="button" onClick={onOpenTasks} className="text-xs font-semibold text-primary hover:underline">Mở toàn bộ Task Board →</button></div>
+        {previewTasks.length === 0 ? <div className="px-5 py-10 text-center text-xs text-muted-foreground">Chưa có task trong milestone đang chạy.</div> : <div className="overflow-x-auto"><div className="min-w-[760px]"><div className="grid grid-cols-[minmax(0,1fr)_150px_100px_100px_110px] gap-3 border-b border-border bg-muted/30 px-5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><span>Milestone / Stage / Task</span><span>Phụ trách</span><span>Trạng thái</span><span>Plan / Actual</span><span>Due</span></div>{previewTasks.map(({ task, stageName }) => { const owner = taskOwner(task); const variance = roundHours((task.actualHours ?? 0) - (task.plannedHours ?? 0)); return <div key={task.id} className="grid grid-cols-[minmax(0,1fr)_150px_100px_100px_110px] items-center gap-3 border-b border-border px-5 py-3 last:border-b-0"><div className="min-w-0"><p className="truncate text-xs font-semibold text-foreground"><span className="mr-1 text-muted-foreground">{activeMilestone?.name} / {stageName} /</span>{task.title}</p></div><div className="flex min-w-0 items-center gap-2">{owner ? <TeamMemberAvatar member={owner} /> : <span className="h-6 w-6 rounded-full bg-muted" />}<span className="truncate text-[11px] text-muted-foreground">{owner?.name ?? task.assignee ?? "Chưa phân công"}</span></div><span className="w-fit rounded-full px-2 py-1 text-[10px] font-bold" style={{ backgroundColor: TASK_STATUS[task.status].bg, color: TASK_STATUS[task.status].color }}>{TASK_STATUS[task.status].label}</span><span className="text-[11px] font-semibold text-foreground">{formatHours(task.plannedHours ?? 0)}h / {formatHours(task.actualHours ?? 0)}h <span className={variance > 0 ? "text-rose-600" : "text-muted-foreground"}>({variance > 0 ? "+" : ""}{formatHours(variance)}h)</span></span><span className="truncate text-[11px] text-muted-foreground">{task.due || "TBD"}</span></div>})}</div></div>}
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+        <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4"><div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">People & capacity</p><h3 className="mt-1 text-base font-black text-foreground">Nguồn lực tham gia</h3><p className="mt-1 text-xs text-muted-foreground">Vai trò, task đang mở, giờ thực tế và lần ghi nhận gần nhất.</p></div><button type="button" onClick={onOpenTasks} className="text-xs font-semibold text-primary hover:underline">Xem Project Sheet →</button></div>
+        {memberRows.length === 0 ? <div className="px-5 py-10 text-center text-xs text-muted-foreground">Chưa có nguồn lực được gán cho project.</div> : <div className="overflow-x-auto"><div className="min-w-[760px]"><div className="grid grid-cols-[minmax(0,1.2fr)_160px_100px_110px_110px_120px] gap-3 border-b border-border bg-muted/30 px-5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><span>Nhân sự / Vai trò</span><span>Trạng thái</span><span>Task mở</span><span>Giờ thực tế</span><span>Năng lực</span><span>Log gần nhất</span></div>{memberRows.map(({ member, openTasks, actual, capacity, latestLog }) => <div key={member.id} className="grid grid-cols-[minmax(0,1.2fr)_160px_100px_110px_110px_120px] items-center gap-3 border-b border-border px-5 py-3 last:border-b-0"><div className="flex min-w-0 items-center gap-2.5"><TeamMemberAvatar member={member} /><div className="min-w-0"><p className="truncate text-xs font-semibold text-foreground">{member.name}</p><p className="truncate text-[11px] text-muted-foreground">{member.role}</p></div></div><span className="w-fit rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">Đang tham gia</span><span className="text-xs font-semibold text-foreground">{openTasks}</span><span className="text-xs font-semibold text-foreground">{formatHours(actual)}h</span><span className={`text-xs font-semibold ${capacity > 100 ? "text-rose-600" : "text-foreground"}`}>{capacity}%</span><span className="text-[11px] text-muted-foreground">{latestLog}</span></div>)}</div></div>}
+      </div>
+    </section>
+  );
+}
+
 // ─── Config maps ──────────────────────────────────────────────────────────────
 
 const STATUS_CFG = {
@@ -7068,6 +7179,18 @@ export default function ProjectDetailPage() {
                     milestoneGroups={milestoneGroups}
                     projectColor={project.color}
                     onOpenProjectSheet={() => handleTabChange("Project Sheet")}
+                  />
+                  <ProjectDeliveryWireframePanels
+                    projectColor={project.color}
+                    milestones={milestones}
+                    milestoneGroups={milestoneGroups}
+                    tasks={allTasks}
+                    risks={riskRegistry}
+                    documents={documents}
+                    teamMembers={teamMembers}
+                    onOpenIssues={() => handleTabChange("Issues")}
+                    onOpenTasks={() => handleTabChange("Tasks")}
+                    onOpenDocuments={() => handleTabChange("Documents")}
                   />
                   <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
                   <div className="space-y-5 xl:col-span-2">
