@@ -145,22 +145,54 @@ async function loadPaged<T>(path: string, signal?: AbortSignal) {
   return rows;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const TIME_ENTRY_MAX_RANGE_DAYS = 90;
+const TIMESHEET_HISTORY_DAYS = 1095;
+
+export function buildTimesheetDateRanges(startAt: Date, endAt: Date, maxRangeDays = TIME_ENTRY_MAX_RANGE_DAYS) {
+  const startMs = startAt.getTime();
+  const endMs = endAt.getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs >= endMs || maxRangeDays <= 0) return [];
+
+  const ranges: Array<{ startAt: string; endAt: string }> = [];
+  let cursorMs = startMs;
+  const maxRangeMs = maxRangeDays * DAY_MS;
+  while (cursorMs < endMs) {
+    const nextMs = Math.min(cursorMs + maxRangeMs, endMs);
+    ranges.push({ startAt: new Date(cursorMs).toISOString(), endAt: new Date(nextMs).toISOString() });
+    cursorMs = nextMs;
+  }
+  return ranges;
+}
+
+async function loadTimeEntriesAcrossHistory(now: Date, signal?: AbortSignal) {
+  const startAt = new Date(now.getTime() - TIMESHEET_HISTORY_DAYS * DAY_MS);
+  const endAt = new Date(now.getTime() + DAY_MS);
+  const ranges = buildTimesheetDateRanges(startAt, endAt);
+  const batches = await Promise.all(ranges.map((range) => (
+    loadPaged<ApiTimeEntry>(
+      `/api/tasks/time-entries?startAt=${encodeURIComponent(range.startAt)}&endAt=${encodeURIComponent(range.endAt)}`,
+      signal
+    )
+  )));
+
+  const entriesById = new Map<string, ApiTimeEntry>();
+  for (const entry of batches.flat()) entriesById.set(entry.id, entry);
+  return [...entriesById.values()];
+}
+
 export async function loadTimesheetDataset(signal?: AbortSignal): Promise<TimesheetDataset> {
   const now = new Date();
   const year = now.getFullYear();
-  // The time-entry API enforces a maximum 90-day window. Keep the default
-  // sheet within that contract while still covering the current quarter.
-  const startAt = new Date(now.getTime() - 89 * 24 * 60 * 60 * 1000).toISOString();
-  const endAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
   const [projects, entries, users, dayOffResponse, apiTasks] = await Promise.all([
     loadPaged<ApiProject>("/api/projects", signal),
-    loadPaged<ApiTimeEntry>(`/api/tasks/time-entries?startAt=${encodeURIComponent(startAt)}&endAt=${encodeURIComponent(endAt)}`, signal),
+    loadTimeEntriesAcrossHistory(now, signal),
     readJson<ApiResponse<ApiUser>>("/api/workspace/users?principal=founder", signal),
     readJson<ApiResponse<{ date?: string; isActive?: boolean }>>(`/api/workspace/day-offs?year=${year}&principal=founder`, signal),
     // Keep the full task hierarchy separate from the time-entry slice. The
     // entry endpoint intentionally omits milestone/stage metadata, which made
     // every live row fall back to the generic "Time log" bucket.
-    loadPaged<ApiTask>("/api/tasks", signal)
+    loadPaged<ApiTask>("/api/tasks?includeArchived=true", signal)
   ]);
 
   // The time-entry contract carries the task title, ID, canonical task status
