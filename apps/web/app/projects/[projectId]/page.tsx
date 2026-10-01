@@ -1863,7 +1863,7 @@ const PROJECT_TAB_ITEMS: WorkspaceTabItem<Tab>[] = [
   { id: "Overview", label: "Overview", description: "Tổng quan dự án" },
   { id: "Project Sheet", label: "Project Sheet", description: "Milestone & ngân sách" },
   { id: "Tasks", label: "Tasks", description: "Công việc & tiến độ" },
-  { id: "Issues", label: "Sổ vấn đề", ariaLabel: "Issues", description: "Blocker / Risk / Issue" },
+  { id: "Issues", label: "Issues", ariaLabel: "Issues", description: "Blocker / Risk / Issue" },
   { id: "Documents", label: "Điểm chốt & Tài liệu", ariaLabel: "Documents", description: "Hồ sơ chuyển tiếp" },
   { id: "Timeline", label: "Timeline", description: "Lịch thực hiện" },
   { id: "Activity", label: "Activity", description: "Lịch sử thay đổi" }
@@ -6852,11 +6852,14 @@ export default function ProjectDetailPage() {
   const filteredProgress = filteredTasks.length > 0 ? Math.round((doneFiltered / filteredTasks.length) * 100) : 0;
   const openRiskCount = riskRegistry.filter((risk) => !["resolved", "closed", "done"].includes(risk.status.toLowerCase())).length;
   const overdueTaskCount = allTasks.filter((task) => task.status !== "done" && task.due && !["TBD", "Not set"].includes(task.due) && new Date(task.due).getTime() < Date.now()).length;
+  const pendingDocumentCount = documents.filter((doc) => doc.versions.length === 0).length;
   const coordinationCount = openRiskCount + overdueTaskCount + milestones.filter((milestone) => milestone.status === "at-risk").length;
   const projectTabItems: WorkspaceTabItem<Tab>[] = PROJECT_TAB_ITEMS.map((item) => item.id === "Issues"
     ? { ...item, badge: `${openRiskCount} đang mở` }
+    : item.id === "Tasks"
+      ? { ...item, badge: `${overdueTaskCount} quá hạn` }
     : item.id === "Documents"
-      ? { ...item, badge: `${documents.length} tài liệu` }
+      ? { ...item, badge: `${pendingDocumentCount} treo` }
       : item);
 
   const projectPending = !projectResolved && project.id === PROJECT_NOT_FOUND.id;
