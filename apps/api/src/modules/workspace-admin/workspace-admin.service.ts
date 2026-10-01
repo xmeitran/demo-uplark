@@ -5,6 +5,7 @@ import type {
   AdminAlertDetailRow,
   AdminAlertType,
   AdminOverviewAlert,
+  CreateWorkspaceTeamInput,
   PrincipalContext,
   SendWorkspaceReminderInput,
   SendWorkspaceReminderResponse,
@@ -35,6 +36,17 @@ function assertAdmin(principal: PrincipalContext) {
   if (principal.subjectType !== "internal_user" || !principal.roleCodes.some((role) => ADMIN_ROLES.has(role))) {
     throw new ForbiddenException("Founder/GM or Workspace Admin role is required");
   }
+}
+
+function normalizeTeamCode(name: string, requested?: string) {
+  const value = (requested || name)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 48);
+  return value || `TEAM_${Date.now().toString(36).toUpperCase()}`;
 }
 
 function localDateKey() {
@@ -320,9 +332,39 @@ export class WorkspaceAdminService {
           roleCodes: user.roleBindings.map((binding) => binding.role.code),
           teamIds: user.workspaceTeamMemberships.map((membership) => membership.teamId)
         })),
-        teams: teams.map((team) => ({ id: team.id, name: team.name, memberCount: team._count.members }))
+        teams: teams.map((team) => ({ id: team.id, code: team.code, name: team.name, memberCount: team._count.members }))
       }
     };
+  }
+
+  async listTeams(principal: PrincipalContext) {
+    assertAdmin(principal);
+    const teams = await this.prisma.workspaceTeam.findMany({
+      where: { workspaceId: principal.workspaceId, active: true },
+      include: { _count: { select: { members: true } } },
+      orderBy: { name: "asc" }
+    });
+    return { data: teams.map((team) => ({ id: team.id, code: team.code, name: team.name, memberCount: team._count.members })) };
+  }
+
+  async createTeam(input: CreateWorkspaceTeamInput, principal: PrincipalContext) {
+    assertAdmin(principal);
+    const name = String(input?.name ?? "").trim();
+    if (!name) throw new BadRequestException("Tên team là bắt buộc");
+    if (name.length > 120) throw new BadRequestException("Tên team không được dài hơn 120 ký tự");
+    const code = normalizeTeamCode(name, input?.code);
+    try {
+      const team = await this.prisma.workspaceTeam.create({
+        data: { workspaceId: principal.workspaceId, code, name, source: "manual", active: true },
+        include: { _count: { select: { members: true } } }
+      });
+      return { data: { id: team.id, code: team.code, name: team.name, memberCount: team._count.members } };
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        throw new BadRequestException("Mã team đã tồn tại trong workspace");
+      }
+      throw error;
+    }
   }
 
   async sendReminder(input: SendWorkspaceReminderInput, principal: PrincipalContext): Promise<SendWorkspaceReminderResponse> {

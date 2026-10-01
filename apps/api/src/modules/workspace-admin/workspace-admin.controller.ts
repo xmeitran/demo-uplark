@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Headers, Inject, Patch, Post, Query } from "@nestjs/common";
-import type { SendWorkspaceReminderInput, UpdateWorkspaceReminderPolicyInput } from "@b2b-crm/contracts";
+import type { CreateWorkspaceTeamInput, SendWorkspaceReminderInput, UpdateWorkspaceReminderPolicyInput } from "@b2b-crm/contracts";
 import { PrincipalService } from "../identity-access/principal.service";
 import { WorkspaceAdminService } from "./workspace-admin.service";
 
@@ -26,6 +26,18 @@ export class WorkspaceAdminController {
   async reminderRecipients(@Headers("authorization") authorization?: string, @Query("principal") principalFallback?: string) {
     const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
     return this.admin.reminderRecipients(principal);
+  }
+
+  @Get("teams")
+  async teams(@Headers("authorization") authorization?: string, @Query("principal") principalFallback?: string) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.admin.listTeams(principal);
+  }
+
+  @Post("teams")
+  async createTeam(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Body() input: CreateWorkspaceTeamInput) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.admin.createTeam(input, principal);
   }
 
   @Post("reminders/send")

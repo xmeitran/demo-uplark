@@ -9,7 +9,7 @@ import {
   ArrowLeft, ArrowRight, Edit3, MoreHorizontal, Plus, Calendar, Users,
   Check, CheckCircle2, Clock, AlertCircle, Flag,
   MessageSquare, BarChart2, TrendingUp, Wallet, Layers, ChevronRight, ChevronLeft,
-  ListChecks, FileText, GitBranch, Download, UserPlus,
+  ListChecks, FileText, GitBranch, Download, ExternalLink, UserPlus,
   Target, X, ChevronDown, ChevronUp, Activity, Lock,
   Trash2, Pencil, Pin, History, Search, Upload, Paperclip
 } from "lucide-react";
@@ -148,14 +148,22 @@ async function fetchLiveProjectById(projectId: string, signal?: AbortSignal, cac
   return fetchLiveProjectSummaryById(projectId, { signal, cacheScope });
 }
 
+function withProjectPrincipal(path: string) {
+  if (typeof window === "undefined") return path;
+  const principal = new URLSearchParams(window.location.search).get("principal")?.trim();
+  if (!principal) return path;
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}principal=${encodeURIComponent(principal)}`;
+}
+
 async function fetchLiveProjectWorkItems(projectId: string, signal?: AbortSignal) {
   const [stagesResponse, hierarchyResponse, taskSummaries] = await Promise.all([
-    fetch(`/api/projects/${encodeURIComponent(projectId)}/stages`, {
+    fetch(withProjectPrincipal(`/api/projects/${encodeURIComponent(projectId)}/stages`), {
       cache: "no-store",
       credentials: "same-origin",
       signal
     }),
-    fetch(`/api/projects/${encodeURIComponent(projectId)}/hierarchy`, {
+    fetch(withProjectPrincipal(`/api/projects/${encodeURIComponent(projectId)}/hierarchy`), {
       cache: "no-store",
       credentials: "same-origin",
       signal
@@ -188,6 +196,15 @@ async function fetchLiveProjectWorkItems(projectId: string, signal?: AbortSignal
       return gate
         ? {
             ...milestone,
+            // An open gate means the milestone is available even when its
+            // first stage has not received a task yet. Do not render that
+            // valid entry point as "Sắp tới"/locked just because the stage
+            // is still `not_started`.
+            status: gate.gateStatus === "approved"
+              ? "done"
+              : gate.gateStatus === "open" && milestone.status === "upcoming"
+                ? "in-progress"
+                : milestone.status,
             gateStatus: gate.gateStatus,
             requiredDocumentCount: gate.requiredDocumentCount,
             submittedDocumentCount: gate.submittedDocumentCount,
@@ -206,7 +223,7 @@ async function fetchAllProjectTasks(projectId: string, signal?: AbortSignal) {
   let hasNextPage = true;
 
   while (hasNextPage) {
-    const response = await fetch(`/api/tasks?projectId=${encodeURIComponent(projectId)}&limit=${limit}&offset=${offset}`, {
+    const response = await fetch(withProjectPrincipal(`/api/tasks?projectId=${encodeURIComponent(projectId)}&limit=${limit}&offset=${offset}`), {
       cache: "no-store",
       credentials: "same-origin",
       signal
@@ -584,6 +601,7 @@ interface DocVersion {
   author: string; // initials
   note: string;
   fileObjectId?: string;
+  externalUrl?: string;
 }
 
 interface ProjectDoc {
@@ -614,7 +632,8 @@ function mapProjectDocumentToDoc(document: ProjectDocumentSummary): ProjectDoc {
       date: formatApiDate(version.createdAt),
       author: version.createdByDisplayName || "API",
       note: version.note || "Uploaded version",
-      fileObjectId: version.fileObjectId
+      fileObjectId: version.fileObjectId,
+      externalUrl: version.file.externalUrl
     }))
   };
 }
@@ -1702,7 +1721,12 @@ function MilestoneOverviewBar({
             const doneCount = stages.reduce((sum, stage) => sum + stage.tasks.filter((task) => task.status === "done").length, 0);
             const progress = taskCount > 0 ? Math.round((doneCount / taskCount) * 100) : milestone.status === "done" ? 100 : 0;
             const status = MILESTONE_STATUS[milestone.status];
-            const locked = milestone.gateStatus === "locked" || (index > 0 && milestones[index - 1]?.status !== "done");
+            // When a gate exists, its persisted status is authoritative. Do not
+            // re-lock an explicitly open milestone because a legacy stage row
+            // still says `not_started`.
+            const locked = milestone.gateStatus
+              ? milestone.gateStatus === "locked"
+              : index > 0 && milestones[index - 1]?.status !== "done";
             const gateLabel = milestone.gateStatus === "pending_review"
               ? "Chờ duyệt"
               : milestone.gateStatus === "approved"
@@ -1724,7 +1748,7 @@ function MilestoneOverviewBar({
                 </div>
                 <p className="mt-3 truncate text-xs font-bold text-foreground" title={milestone.name}>{index + 1}. {milestone.name}</p>
                 <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span>{stages.length} stage · {taskCount} task · {milestone.submittedDocumentCount ?? 0}/{milestone.requiredDocumentCount ?? 0} hồ sơ</span>
+                  <span>{stages.length} stage · {taskCount} task · {milestone.requiredDocumentCount ? `${milestone.submittedDocumentCount ?? 0}/${milestone.requiredDocumentCount} hồ sơ` : "Không yêu cầu hồ sơ"}</span>
                   <span className="font-semibold text-foreground">{progress}%</span>
                 </div>
                 <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted" aria-label={`Tiến độ ${progress}%`}>
@@ -1752,7 +1776,9 @@ function ProjectStatusSlaBar({
   tasks: TaskItem[];
   projectColor: string;
 }) {
-  const activeMilestone = milestones.find((milestone) => milestone.status === "in-progress") ?? milestones[0];
+  const activeMilestone = milestones.find((milestone) => milestone.gateStatus === "open")
+    ?? milestones.find((milestone) => milestone.status === "in-progress" && milestone.gateStatus !== "approved")
+    ?? milestones[0];
   const completedTasks = tasks.filter((task) => task.status === "done").length;
   const progress = tasks.length > 0 ? Math.round((completedTasks / tasks.length) * 100) : project.progress;
   const statusLabel = project.status === "Active" ? "Đang chạy" : formatProjectStatusLabel(project.status);
@@ -1785,7 +1811,9 @@ function ProjectStatusSlaBar({
 
 function milestoneIsLocked(milestones: Milestone[], milestone: Milestone) {
   const index = milestones.findIndex((item) => item.id === milestone.id);
-  return milestone.gateStatus === "locked" || milestone.status === "upcoming" || (index > 0 && milestones[index - 1]?.status !== "done");
+  if (milestone.gateStatus === "open") return false;
+  if (milestone.gateStatus === "locked") return true;
+  return milestone.status === "upcoming" || (index > 0 && milestones[index - 1]?.status !== "done");
 }
 
 function ProjectDeliveryWireframePanels({
@@ -1798,7 +1826,10 @@ function ProjectDeliveryWireframePanels({
   teamMembers,
   onOpenIssues,
   onOpenTasks,
-  onOpenDocuments
+  onOpenDocuments,
+  onAdvanceMilestone,
+  handoffBusy,
+  handoffError
 }: {
   projectColor: string;
   milestones: Milestone[];
@@ -1810,16 +1841,27 @@ function ProjectDeliveryWireframePanels({
   onOpenIssues: () => void;
   onOpenTasks: () => void;
   onOpenDocuments: () => void;
+  onAdvanceMilestone: () => void | Promise<void>;
+  handoffBusy: boolean;
+  handoffError?: string | null;
 }) {
-  const activeMilestone = milestones.find((milestone) => milestone.status === "in-progress") ?? milestones[0];
+  // The gate is the source of truth for which milestone is currently actionable.
+  // Legacy stage rows can still say `not_started` after the gate has opened, and
+  // conversely a locked milestone must never be presented as a ready handoff.
+  const activeMilestone = milestones.find((milestone) => milestone.gateStatus === "open")
+    ?? milestones.find((milestone) => milestone.status === "in-progress" && milestone.gateStatus !== "locked" && milestone.gateStatus !== "approved")
+    ?? milestones[0];
   const activeGroup = activeMilestone ? milestoneGroups.find((group) => group.milestoneId === activeMilestone.id) : undefined;
   const requiredDocuments = activeMilestone?.requiredDocumentCount ?? 0;
   const submittedDocuments = activeMilestone?.submittedDocumentCount ?? 0;
   const documentsConfigured = requiredDocuments > 0;
-  const documentsReady = documentsConfigured && submittedDocuments >= requiredDocuments;
+  // A milestone with no required evidence is already satisfied. Treating
+  // zero as "not ready" leaves every default project locked forever.
+  const documentsReady = !documentsConfigured || submittedDocuments >= requiredDocuments;
   const confirmationReady = !activeMilestone?.customerConfirmationRequired;
   const gateConfigured = documentsConfigured || Boolean(activeMilestone?.customerConfirmationRequired) || Boolean(activeMilestone?.unlockCriteria);
-  const handoffReady = Boolean(activeMilestone) && gateConfigured && documentsReady && confirmationReady;
+  const gateOpen = activeMilestone?.gateStatus !== "locked" && activeMilestone?.gateStatus !== "approved";
+  const handoffReady = Boolean(activeMilestone) && gateOpen && gateConfigured && documentsReady && confirmationReady;
   const openRisks = risks.filter((risk) => !["resolved", "closed", "done"].includes(risk.status.toLowerCase()));
   const previewTasks = (activeGroup?.stages ?? []).flatMap((stage) => stage.tasks.slice(0, 2).map((task) => ({ task, stageName: stage.name }))).slice(0, 5);
   const taskOwner = (task: TaskItem) => teamMembers.find((member) => member.id === task.assigneeUserId || member.initials === task.assignee);
@@ -1859,7 +1901,7 @@ function ProjectDeliveryWireframePanels({
           </div>
           <div className="mt-4 space-y-2.5">
             {[
-              { label: "Tài liệu bắt buộc", detail: documentsConfigured ? `${submittedDocuments}/${requiredDocuments} hồ sơ` : "Chưa cấu hình", ready: documentsReady, action: onOpenDocuments },
+              { label: "Tài liệu bắt buộc", detail: documentsConfigured ? `${submittedDocuments}/${requiredDocuments} hồ sơ` : "Không yêu cầu", ready: documentsReady, action: onOpenDocuments },
               { label: "Xác nhận khách hàng", detail: activeMilestone?.customerConfirmationRequired ? "Chưa ghi nhận" : "Không yêu cầu", ready: confirmationReady },
               { label: "Tiêu chí chuyển trạng thái", detail: activeMilestone?.unlockCriteria || "Theo checklist milestone", ready: handoffReady }
             ].map((item) => (
@@ -1872,8 +1914,9 @@ function ProjectDeliveryWireframePanels({
               </div>
             ))}
           </div>
-          <button type="button" disabled={!handoffReady} className="mt-4 inline-flex min-h-9 w-full items-center justify-center rounded-lg border border-border px-3 text-xs font-semibold text-muted-foreground disabled:cursor-not-allowed disabled:opacity-70">
-            {handoffReady ? "Chuyển milestone" : "Chưa đủ điều kiện chuyển milestone"}
+          {handoffError ? <p role="alert" className="mt-3 text-xs text-rose-600">{handoffError}</p> : null}
+          <button type="button" onClick={() => void onAdvanceMilestone()} disabled={!handoffReady || handoffBusy} className="mt-4 inline-flex min-h-9 w-full items-center justify-center rounded-lg border border-border px-3 text-xs font-semibold text-muted-foreground disabled:cursor-not-allowed disabled:opacity-70">
+            {handoffBusy ? "Đang đánh giá…" : handoffReady ? "Chuyển milestone" : "Chưa đủ điều kiện chuyển milestone"}
           </button>
         </div>
 
@@ -2984,6 +3027,10 @@ function FileUploadArea({
 }
 
 // Add Document Modal
+type DocumentSaveResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
 function AddDocModal({
   projectColor,
   onClose,
@@ -2991,7 +3038,7 @@ function AddDocModal({
 }: {
   projectColor: string;
   onClose: () => void;
-  onAdd: (doc: Omit<ProjectDoc, "id">, file: File, note: string) => Promise<boolean>;
+  onAdd: (doc: Omit<ProjectDoc, "id">, file: File, note: string) => Promise<DocumentSaveResult>;
 }) {
   const [name, setName] = useState("");
   const [category, setCategory] = useState("Requirements");
@@ -3053,7 +3100,7 @@ function AddDocModal({
 
                 setSaving(true);
                 setError(null);
-                const saved = await onAdd(
+                const result = await onAdd(
                   {
                     name: name.trim(),
                     type,
@@ -3065,8 +3112,8 @@ function AddDocModal({
                   note.trim() || "Initial upload"
                 );
                 setSaving(false);
-                if (saved) onClose();
-                else setError("Upload failed. Your selected file and notes are still available.");
+                if (result.ok) onClose();
+                else setError(result.error);
               }}
               disabled={!name.trim() || !selectedFile || saving}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm disabled:opacity-40"
@@ -3148,6 +3195,46 @@ function AddDocModal({
       </ModalShell>
     </AnimatePresence>
   );
+}
+
+function AddLinkDocModal({
+  projectColor,
+  onClose,
+  onAdd
+}: {
+  projectColor: string;
+  onClose: () => void;
+  onAdd: (doc: { name: string; category: string; url: string }, note: string) => Promise<DocumentSaveResult>;
+}) {
+  const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
+  const [category, setCategory] = useState("Requirements");
+  const [note, setNote] = useState("Initial link");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const categories = ["Requirements", "Technical", "Design", "Operations", "Legal", "Other"];
+
+  return <AnimatePresence>
+    <ModalShell title="Link tài liệu" icon={FileText} iconColor={projectColor} onClose={onClose} footer={<>
+      <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-muted">Hủy</button>
+      <button type="button" disabled={!name.trim() || !url.trim() || saving} onClick={async () => {
+        setSaving(true);
+        setError(null);
+        const result = await onAdd({ name, category, url }, note.trim() || "Initial link");
+        setSaving(false);
+        if (result.ok) onClose(); else setError(result.error);
+      }} className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white shadow-sm disabled:opacity-40" style={{ backgroundColor: projectColor }}>
+        <Plus className="h-4 w-4" /> {saving ? "Đang lưu…" : "Lưu link"}
+      </button>
+    </>}>
+      <Field label="Tên tài liệu" required><input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="VD: BRD đã duyệt" className="w-full rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground focus:outline-none" /></Field>
+      <Field label="URL tài liệu" required><input type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://..." className="w-full rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground focus:outline-none" /></Field>
+      <Field label="Category"><CustomDropdown options={categories.map((value) => ({ value, label: value }))} value={category} onChange={setCategory} /></Field>
+      {error ? <p className="text-xs font-semibold text-red-600" role="alert">{error}</p> : null}
+      <Field label="Ghi chú"><textarea value={note} onChange={(event) => setNote(event.target.value)} rows={2} className="w-full resize-none rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground focus:outline-none" /></Field>
+      <p className="rounded-xl border border-sky-100 bg-sky-50/70 px-3 py-2 text-xs leading-relaxed text-sky-800">Link được lưu như một bằng chứng của Project và được tính vào rule “Link” hoặc “File hoặc link”.</p>
+    </ModalShell>
+  </AnimatePresence>;
 }
 
 type VersionSaveResult = { ok: true } | { ok: false; error: string };
@@ -6080,6 +6167,8 @@ export default function ProjectDetailPage() {
   const [hierarchyOrderVersion, setHierarchyOrderVersion] = useState(initialProjectSnapshot?.project?.hierarchyOrderVersion ?? 0);
   const [hierarchyBusy, setHierarchyBusy] = useState(false);
   const [hierarchyAnnouncement, setHierarchyAnnouncement] = useState("");
+  const [handoffBusy, setHandoffBusy] = useState(false);
+  const [handoffError, setHandoffError] = useState<string | null>(null);
   const hierarchyMutationInFlightRef = useRef(false);
   const hierarchyCoordinator = useRef(createHierarchyOrderCoordinator<HierarchyUiState>({
     milestones: EMPTY_MILESTONES,
@@ -6168,6 +6257,35 @@ export default function ProjectDetailPage() {
     hierarchyCoordinator.current.replaceConfirmed(canonical);
     return canonical;
   }, [projectId]);
+
+  const handleAdvanceMilestone = useCallback(async () => {
+    if (handoffBusy) return;
+    const activeMilestone = milestones.find((milestone) => milestone.status === "in-progress") ?? milestones[0];
+    if (!activeMilestone) return;
+
+    setHandoffBusy(true);
+    setHandoffError(null);
+    try {
+      const response = await fetch(
+        withProjectPrincipal(`/api/projects/${encodeURIComponent(projectId)}/milestones/${encodeURIComponent(activeMilestone.id)}/evaluate`),
+        { method: "POST", credentials: "same-origin", cache: "no-store" }
+      );
+      if (response.status === 401) {
+        window.location.assign(`/login?returnTo=${encodeURIComponent(`/projects/${projectId}?tab=Overview`)}`);
+        return;
+      }
+      const payload = await response.json().catch(() => null) as { message?: string } | null;
+      if (!response.ok) {
+        throw new Error(payload?.message || `Không thể đánh giá hồ sơ (${response.status}).`);
+      }
+      const refreshed = await reloadCanonicalHierarchy();
+      if (!refreshed) throw new Error("Không thể tải lại trạng thái milestone.");
+    } catch (error) {
+      setHandoffError(error instanceof Error ? error.message : "Không thể chuyển milestone.");
+    } finally {
+      setHandoffBusy(false);
+    }
+  }, [handoffBusy, milestones, projectId, reloadCanonicalHierarchy]);
 
   const handleHierarchyReorder = useCallback(async (
     kind: ProjectHierarchyOrderKind,
@@ -6293,6 +6411,7 @@ export default function ProjectDetailPage() {
     setRiskRegistry((current) => [mapProjectRiskToRiskItem(created), ...current]);
   }, [projectId]);
   const [showAddDocModal, setShowAddDocModal] = useState(false);
+  const [showAddLinkModal, setShowAddLinkModal] = useState(false);
   const [addVersionForDoc, setAddVersionForDoc] = useState<ProjectDoc | null>(null);
   const [showVersionHistoryForDoc, setShowVersionHistoryForDoc] = useState<ProjectDoc | null>(null);
   const [docSearchQuery, setDocSearchQuery] = useState("");
@@ -6304,27 +6423,61 @@ export default function ProjectDetailPage() {
   const [documentMutationError, setDocumentMutationError] = useState<string | null>(null);
   const uploadedProjectFileCache = useRef(new WeakMap<File, FileObjectSummary>());
 
+  const createDocumentDownloadUrl = useCallback(async (fileObjectId: string, inline = false) => {
+    const response = await fetch(`/api/files/${encodeURIComponent(fileObjectId)}/download-grants`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ expiresInSeconds: 300 })
+    });
+    if (!response.ok) throw new Error(`Could not create download grant: ${response.status}`);
+    const payload = await response.json() as { signedUrl?: string };
+    if (!payload.signedUrl?.startsWith("/")) throw new Error("Download grant returned an invalid URL.");
+    const url = new URL(payload.signedUrl, window.location.origin);
+    if (inline) url.searchParams.set("inline", "1");
+    return `${url.pathname}${url.search}`;
+  }, []);
+
   const handleDownloadDocument = useCallback(async (fileObjectId: string) => {
     if (downloadingFileId) return;
     setDownloadingFileId(fileObjectId);
     setDocumentMutationError(null);
     try {
-      const response = await fetch(`/api/files/${encodeURIComponent(fileObjectId)}/download-grants`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ expiresInSeconds: 300 })
-      });
-      if (!response.ok) throw new Error(`Could not create download grant: ${response.status}`);
-      const payload = await response.json() as { signedUrl?: string };
-      if (!payload.signedUrl?.startsWith("/")) throw new Error("Download grant returned an invalid URL.");
-      window.location.assign(payload.signedUrl);
+      const downloadUrl = await createDocumentDownloadUrl(fileObjectId);
+      const anchor = document.createElement("a");
+      anchor.href = downloadUrl;
+      anchor.download = "";
+      anchor.rel = "noreferrer";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
     } catch (error) {
       setDocumentMutationError(error instanceof Error ? error.message : "Could not download this file.");
     } finally {
       setDownloadingFileId(null);
     }
-  }, [downloadingFileId]);
+  }, [createDocumentDownloadUrl, downloadingFileId]);
+
+  const handleOpenDocument = useCallback(async (fileObjectId: string) => {
+    if (downloadingFileId) return;
+    const openedWindow = window.open("about:blank", "_blank");
+    if (openedWindow) openedWindow.opener = null;
+    setDownloadingFileId(fileObjectId);
+    setDocumentMutationError(null);
+    try {
+      const openUrl = await createDocumentDownloadUrl(fileObjectId, true);
+      if (openedWindow && !openedWindow.closed) {
+        openedWindow.location.href = openUrl;
+      } else {
+        window.location.assign(openUrl);
+      }
+    } catch (error) {
+      openedWindow?.close();
+      setDocumentMutationError(error instanceof Error ? error.message : "Could not open this file.");
+    } finally {
+      setDownloadingFileId(null);
+    }
+  }, [createDocumentDownloadUrl, downloadingFileId]);
 
   const uploadProjectFile = useCallback(async (file: File) => {
     const cached = uploadedProjectFileCache.current.get(file);
@@ -6346,47 +6499,102 @@ export default function ProjectDetailPage() {
         customerVisible: false
       })
     });
-    if (!response.ok) throw new Error(`Could not upload file: ${response.status}`);
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as { message?: string } | null;
+      throw new Error(payload?.message || `Could not upload file (${response.status}).`);
+    }
     const uploaded = await response.json() as FileObjectSummary;
     uploadedProjectFileCache.current.set(file, uploaded);
     return uploaded;
   }, [project.accountId, projectId]);
 
-  const handleAddDocument = useCallback(async (doc: Omit<ProjectDoc, "id">, file: File, note: string) => {
+  const handleAddDocument = useCallback(async (doc: Omit<ProjectDoc, "id">, file: File, note: string): Promise<DocumentSaveResult> => {
     try {
       const uploaded = await uploadProjectFile(file);
-    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/documents`, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        name: doc.name,
-        artifactType: artifactTypeFromCategory(doc.category),
-        fileObjectId: uploaded.id,
-        note,
-        internalOnly: true,
-        customerVisible: false,
-        allowedRoles: []
-      })
-    });
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/documents`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: doc.name,
+          artifactType: artifactTypeFromCategory(doc.category),
+          fileObjectId: uploaded.id,
+          note,
+          internalOnly: true,
+          customerVisible: false,
+          allowedRoles: []
+        })
+      });
 
-    if (response.status === 401) {
-      window.location.assign(`/login?returnTo=${encodeURIComponent(`/projects/${projectId}?tab=Documents`)}`);
-      return false;
-    }
-    if (!response.ok) {
-      return false;
-    }
+      if (response.status === 401) {
+        window.location.assign(`/login?returnTo=${encodeURIComponent(`/projects/${projectId}?tab=Documents`)}`);
+        return { ok: false, error: "Your session expired. Sign in again to upload this document." };
+      }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { message?: string } | null;
+        return { ok: false, error: payload?.message || `Document upload failed (${response.status}).` };
+      }
 
-    const created = (await response.json()) as ProjectDocumentSummary;
-    const nextDoc = mapProjectDocumentToDoc(created);
-    setDocuments(prev => [...prev, nextDoc]);
-    return true;
+      const created = (await response.json()) as ProjectDocumentSummary;
+      const nextDoc = mapProjectDocumentToDoc(created);
+      setDocuments(prev => [...prev, nextDoc]);
+      return { ok: true };
     } catch (error) {
       console.error("Project document upload failed", error);
-      return false;
+      return { ok: false, error: error instanceof Error ? error.message : "Document upload failed. Your selected file and notes are still available." };
     }
   }, [projectId, uploadProjectFile]);
+
+  const handleAddLinkDocument = useCallback(async (doc: { name: string; category: string; url: string }, note: string): Promise<DocumentSaveResult> => {
+    try {
+      const fileResponse = await fetch("/api/files", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          accountId: project.accountId,
+          projectId,
+          fileName: `${doc.name.trim() || "External link"}.url`,
+          contentType: "text/uri-list",
+          base64Data: "",
+          storageProvider: "external",
+          externalUrl: doc.url.trim(),
+          ownerType: "project_document",
+          ownerId: projectId,
+          internalOnly: true,
+          customerVisible: false
+        })
+      });
+      if (!fileResponse.ok) {
+        const payload = await fileResponse.json().catch(() => null) as { message?: string } | null;
+        return { ok: false, error: payload?.message || `Could not save link (${fileResponse.status}).` };
+      }
+      const uploaded = await fileResponse.json() as FileObjectSummary;
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/documents`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: doc.name.trim(),
+          artifactType: artifactTypeFromCategory(doc.category),
+          fileObjectId: uploaded.id,
+          note,
+          internalOnly: true,
+          customerVisible: false,
+          allowedRoles: []
+        })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { message?: string } | null;
+        return { ok: false, error: payload?.message || `Link document creation failed (${response.status}).` };
+      }
+      const created = await response.json() as ProjectDocumentSummary;
+      setDocuments((current) => [...current, mapProjectDocumentToDoc(created)]);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Could not save this link." };
+    }
+  }, [project.accountId, projectId]);
 
   const handleAddVersion = useCallback(async (docId: string, file: File, note: string): Promise<VersionSaveResult> => {
     const current = documents.find(doc => doc.id === docId);
@@ -7023,6 +7231,13 @@ export default function ProjectDetailPage() {
           onAdd={handleAddDocument}
         />
       )}
+      {showAddLinkModal && (
+        <AddLinkDocModal
+          projectColor={project.color}
+          onClose={() => setShowAddLinkModal(false)}
+          onAdd={handleAddLinkDocument}
+        />
+      )}
       {addVersionForDoc && (
         <AddVersionModal
           doc={addVersionForDoc}
@@ -7334,6 +7549,9 @@ export default function ProjectDetailPage() {
                     onOpenIssues={() => handleTabChange("Issues")}
                     onOpenTasks={() => handleTabChange("Tasks")}
                     onOpenDocuments={() => handleTabChange("Documents")}
+                    onAdvanceMilestone={handleAdvanceMilestone}
+                    handoffBusy={handoffBusy}
+                    handoffError={handoffError}
                   />
                 </div>
               )}
@@ -8929,10 +9147,24 @@ export default function ProjectDetailPage() {
                                         >
                                           <FileText className="w-4 h-4" style={{ color:doc.color }} />
                                         </div>
-                                        <div>
-                                          <p className="font-semibold text-sm hover:underline cursor-pointer" onClick={() => setShowVersionHistoryForDoc(doc)}>
-                                            {doc.name}
-                                          </p>
+                                        <div className="min-w-0">
+                                          {latestVer.externalUrl ? (
+                                            <a href={latestVer.externalUrl} target="_blank" rel="noreferrer" className="font-semibold text-sm hover:underline" title="Mở link tài liệu">
+                                              {doc.name}
+                                            </a>
+                                          ) : latestVer.fileObjectId ? (
+                                            <button
+                                              type="button"
+                                              onClick={() => void handleOpenDocument(latestVer.fileObjectId!)}
+                                              disabled={downloadingFileId === latestVer.fileObjectId}
+                                              className="font-semibold text-sm text-left hover:underline disabled:opacity-60"
+                                              title="Mở tài liệu"
+                                            >
+                                              {doc.name}
+                                            </button>
+                                          ) : (
+                                            <p className="font-semibold text-sm">{doc.name}</p>
+                                          )}
                                           <p className="text-[10px] text-muted-foreground sm:hidden">
                                             {doc.type} • {latestVer.size}
                                           </p>
@@ -8977,17 +9209,33 @@ export default function ProjectDetailPage() {
                                     {/* Actions */}
                                     <td className="py-3.5 px-4 text-right">
                                       <div className="flex items-center justify-end gap-1.5">
-                                        {latestVer.fileObjectId ? (
-                                          <button
-                                            aria-label={`Download ${doc.name} version ${latestVer.version}`}
-                                            className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                                            disabled={downloadingFileId === latestVer.fileObjectId}
-                                            onClick={() => handleDownloadDocument(latestVer.fileObjectId!)}
-                                            title="Download latest version"
-                                            type="button"
-                                          >
-                                            <Download className="w-4 h-4" />
-                                          </button>
+                                        {latestVer.externalUrl ? (
+                                          <a href={latestVer.externalUrl} target="_blank" rel="noreferrer" aria-label={`Open ${doc.name}`} title="Mở link tài liệu" className="inline-flex items-center rounded-lg p-1.5 text-sky-700 transition-colors hover:bg-sky-50">
+                                            <ExternalLink className="h-4 w-4" />
+                                          </a>
+                                        ) : latestVer.fileObjectId ? (
+                                          <>
+                                            <button
+                                              aria-label={`Open ${doc.name} version ${latestVer.version}`}
+                                              className="p-1.5 rounded-lg hover:bg-sky-50 text-sky-700 transition-colors disabled:opacity-50"
+                                              disabled={downloadingFileId === latestVer.fileObjectId}
+                                              onClick={() => void handleOpenDocument(latestVer.fileObjectId!)}
+                                              title="Mở tài liệu"
+                                              type="button"
+                                            >
+                                              <ExternalLink className="w-4 h-4" />
+                                            </button>
+                                            <button
+                                              aria-label={`Download ${doc.name} version ${latestVer.version}`}
+                                              className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                                              disabled={downloadingFileId === latestVer.fileObjectId}
+                                              onClick={() => void handleDownloadDocument(latestVer.fileObjectId!)}
+                                              title="Tải xuống phiên bản mới nhất"
+                                              type="button"
+                                            >
+                                              <Download className="w-4 h-4" />
+                                            </button>
+                                          </>
                                         ) : (
                                           <span className="px-2 py-1 text-[10px] text-muted-foreground" title="Legacy metadata has no durable file version">No file</span>
                                         )}
@@ -9037,7 +9285,7 @@ export default function ProjectDetailPage() {
                     </div>
                     <aside className="space-y-4">
                       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm"><div className="flex items-center justify-between gap-2"><h3 className="text-sm font-bold text-foreground">Danh mục tài liệu bắt buộc</h3><span className="rounded-full bg-muted px-2 py-1 text-[10px] font-bold text-muted-foreground">Template</span></div><div className="mt-4 space-y-3"><div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">Tổng số theo template</span><span className="font-bold text-foreground">{documents.length}</span></div><div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">Đã nộp và có version</span><span className="font-bold text-emerald-700">{documents.filter((doc) => doc.versions.length > 0).length}</span></div><div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">Đang chờ bổ sung</span><span className="font-bold text-amber-700">{documents.filter((doc) => doc.versions.length === 0).length}</span></div></div><p className="mt-4 rounded-lg bg-muted/30 px-3 py-2 text-[11px] leading-5 text-muted-foreground">Tài liệu bắt buộc và xác nhận khách hàng là điều kiện để mở milestone tiếp theo.</p></div>
-                      <div className="rounded-2xl border border-border bg-card p-4 shadow-sm"><h3 className="text-sm font-bold text-foreground">Hai cách gắn tài liệu</h3><div className="mt-3 space-y-2"><button type="button" onClick={() => setDocumentMutationError("Backend hiện chỉ lưu fileObjectId; liên kết Lark doc cần bổ sung trường URL trước khi bật lưu.")} className="flex w-full items-center justify-between rounded-lg border border-dashed border-amber-300 bg-amber-50/40 px-3 py-2 text-left text-xs font-semibold text-amber-800 transition hover:bg-amber-50"><span>Link Lark doc <small className="block font-normal text-amber-700">Chưa bật lưu URL</small></span><ChevronRight className="h-3.5 w-3.5 text-amber-600" /></button><button type="button" onClick={() => setShowAddDocModal(true)} className="flex w-full items-center justify-between rounded-lg border border-border px-3 py-2 text-xs font-semibold text-foreground transition hover:bg-muted"><span>Tải file lên</span><ChevronRight className="h-3.5 w-3.5 text-muted-foreground" /></button></div></div>
+                      <div className="rounded-2xl border border-border bg-card p-4 shadow-sm"><h3 className="text-sm font-bold text-foreground">Hai cách gắn tài liệu</h3><div className="mt-3 space-y-2"><button type="button" onClick={() => setShowAddLinkModal(true)} className="flex w-full items-center justify-between rounded-lg border border-dashed border-sky-300 bg-sky-50/40 px-3 py-2 text-left text-xs font-semibold text-sky-800 transition hover:bg-sky-50"><span>Gắn link Lark / URL <small className="block font-normal text-sky-700">Được tính vào rule bằng chứng</small></span><ChevronRight className="h-3.5 w-3.5 text-sky-600" /></button><button type="button" onClick={() => setShowAddDocModal(true)} className="flex w-full items-center justify-between rounded-lg border border-border px-3 py-2 text-xs font-semibold text-foreground transition hover:bg-muted"><span>Tải file lên</span><ChevronRight className="h-3.5 w-3.5 text-muted-foreground" /></button></div></div>
                       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm"><h3 className="text-sm font-bold text-foreground">Nhật ký điểm chốt</h3><div className="mt-3 space-y-3"><div className="border-l-2 border-emerald-200 pl-3"><p className="text-xs font-semibold text-foreground">Chưa có sự kiện</p><p className="mt-0.5 text-[11px] text-muted-foreground">Lịch sử gắn link, tải file và duyệt tài liệu sẽ hiển thị tại đây.</p></div></div></div>
                     </aside>
                     </div>

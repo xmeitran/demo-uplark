@@ -1734,14 +1734,109 @@ s-app-nav {
 
 .delivery-create-project-section-heading {
   display: flex;
-  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 4px;
   margin-bottom: 12px;
+}
+
+.delivery-create-project-section-heading > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .delivery-create-project-section-heading small {
   color: var(--text-muted, #64748b);
   font-size: 12px;
+}
+
+.delivery-plan-action,
+.delivery-plan-apply {
+  border: 1px solid #b9cdfb;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  min-height: 32px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.delivery-plan-action:disabled {
+  cursor: not-allowed;
+  opacity: .6;
+}
+
+.delivery-plan-preview {
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+  background: #f8fbff;
+  margin-bottom: 14px;
+  padding: 12px;
+}
+
+.delivery-plan-preview-header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.delivery-plan-preview-header > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.delivery-plan-preview-header strong {
+  color: #17233d;
+  font-size: 13px;
+}
+
+.delivery-plan-preview-header small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.delivery-plan-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.delivery-plan-preview-milestone {
+  border-left: 2px solid #93c5fd;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-left: 10px;
+}
+
+.delivery-plan-preview-milestone > strong {
+  color: #1e3a8a;
+  font-size: 12px;
+}
+
+.delivery-plan-preview-stage {
+  display: grid;
+  gap: 3px;
+  grid-template-columns: minmax(120px, .45fr) minmax(0, 1fr);
+}
+
+.delivery-plan-preview-stage span {
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.delivery-plan-preview-stage small {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .delivery-milestone-mode-grid {
@@ -1791,6 +1886,10 @@ s-app-nav {
 
 @media (max-width: 720px) {
   .delivery-milestone-mode-grid, .delivery-milestone-gate-grid { grid-template-columns: 1fr; }
+  .delivery-create-project-section-heading,
+  .delivery-plan-preview-header { align-items: stretch; flex-direction: column; }
+  .delivery-plan-action, .delivery-plan-apply { align-self: flex-start; }
+  .delivery-plan-preview-stage { grid-template-columns: 1fr; }
 }
 
 .delivery-project-row-actions {

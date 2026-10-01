@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { CreateProjectInput, ProjectStageSummary, ProjectSummary, UpdateProjectInput } from "@b2b-crm/contracts";
+import type { CreateProjectInput, ProjectPlanPreviewResponse, ProjectStageSummary, ProjectSummary, UpdateProjectInput } from "@b2b-crm/contracts";
 import { CustomDropdown, DatePickerField, FormField, FormTextArea, Modal, type TaskSelectOption } from "./tasks-workbench";
 
 type DeliveryCreateProjectAccountOption = {
@@ -45,7 +45,8 @@ export default function DeliveryCreateProjectModal({
   mode = "create",
   onClose,
   onSave,
-  resourceOptions
+  resourceOptions,
+  principal
 }: Readonly<{
   accounts: DeliveryCreateProjectAccountOption[];
   initialProject?: ProjectSummary;
@@ -55,6 +56,7 @@ export default function DeliveryCreateProjectModal({
   onClose: () => void;
   onSave: (data: DeliveryCreateProjectPayload | DeliveryUpdateProjectPayload) => void;
   resourceOptions: TaskSelectOption[];
+  principal?: string;
 }>) {
   const [accountId, setAccountId] = useState(initialProject?.accountId || accounts[0]?.id || "");
   const [code, setCode] = useState("");
@@ -68,6 +70,9 @@ export default function DeliveryCreateProjectModal({
   const [createStageTemplate, setCreateStageTemplate] = useState(true);
   const [milestoneMode, setMilestoneMode] = useState<"auto" | "manual">("auto");
   const [milestones, setMilestones] = useState<DraftMilestone[]>(PILOT_MILESTONE_DRAFT);
+  const [planPreview, setPlanPreview] = useState<ProjectPlanPreviewResponse["data"] | null>(null);
+  const [planPreviewError, setPlanPreviewError] = useState("");
+  const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
 
   useEffect(() => {
     if (!isOpen) {
@@ -86,7 +91,82 @@ export default function DeliveryCreateProjectModal({
     setCreateStageTemplate(true);
     setMilestoneMode("auto");
     setMilestones(PILOT_MILESTONE_DRAFT.map((milestone) => ({ ...milestone, stages: milestone.stages.map((stage) => ({ ...stage })) })));
+    setPlanPreview(null);
+    setPlanPreviewError("");
   }, [accounts, initialProject, initialStage, isOpen, resourceOptions]);
+
+  const buildPlanPreviewInput = () => ({
+    name: name.trim(),
+    scopeSummary: scopeSummary.trim() || undefined,
+    acceptanceCriteria: acceptanceCriteria.trim() || undefined,
+    milestoneMode,
+    milestoneTemplateKey: milestoneMode === "auto" ? "pilot-v1" : undefined,
+    manualMilestones: milestoneMode === "manual" ? milestones.map((milestone, milestoneIndex) => ({
+      name: milestone.name.trim(),
+      sortOrder: (milestoneIndex + 1) * 10,
+      requiredDocumentCount: milestone.requiredDocumentCount,
+      requiredDocumentTypes: milestone.requiredDocumentTypes.split(",").map((value) => value.trim()).filter(Boolean),
+      unlockCriteria: milestone.unlockCriteria.trim(),
+      customerConfirmationRequired: milestone.customerConfirmationRequired,
+      reviewerRole: milestone.reviewerRole.trim() || undefined,
+      stages: milestone.stages.map((stage, stageIndex) => ({
+        stageKey: `${milestone.id}-${stageIndex + 1}`,
+        activity: stage.activity.trim(),
+        phase: stage.activity.trim(),
+        sortOrder: (stageIndex + 1) * 10
+      }))
+    })) : undefined
+  });
+
+  const generatePlanPreview = async () => {
+    if (!name.trim() || isEditMode) {
+      return;
+    }
+
+    setIsGeneratingPlan(true);
+    setPlanPreviewError("");
+    try {
+      const response = await fetch(`/api/projects/plan-preview?principal=${encodeURIComponent(principal || "founder")}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(buildPlanPreviewInput())
+      });
+      const payload = (await response.json().catch(() => null)) as ProjectPlanPreviewResponse | { message?: string | string[] } | null;
+      if (!response.ok) {
+        const rawMessage = payload && "message" in payload ? payload.message : undefined;
+        const message = Array.isArray(rawMessage) ? rawMessage.join(" ") : rawMessage;
+        throw new Error(message || "Chưa tạo được gợi ý theo mẫu.");
+      }
+      setPlanPreview((payload as ProjectPlanPreviewResponse).data);
+    } catch (error) {
+      setPlanPreview(null);
+      setPlanPreviewError(error instanceof Error ? error.message : "Chưa tạo được gợi ý theo mẫu.");
+    } finally {
+      setIsGeneratingPlan(false);
+    }
+  };
+
+  const applyPlanPreview = () => {
+    if (!planPreview) {
+      return;
+    }
+    const currentMilestones = milestones;
+    setMilestoneMode("manual");
+    setMilestones(planPreview.milestones.map((milestone, milestoneIndex) => {
+      const current = currentMilestones[milestoneIndex];
+      return {
+        id: milestone.id,
+        name: milestone.name,
+        requiredDocumentCount: current?.requiredDocumentCount ?? 0,
+        requiredDocumentTypes: current?.requiredDocumentTypes ?? "",
+        unlockCriteria: current?.unlockCriteria ?? "",
+        customerConfirmationRequired: current?.customerConfirmationRequired ?? false,
+        reviewerRole: current?.reviewerRole ?? "PM",
+        stages: milestone.stages.map((stage) => ({ id: stage.id, activity: stage.activity }))
+      };
+    }));
+    setPlanPreview(null);
+  };
 
   const selectedAccount = accounts.find((account) => account.id === accountId);
   const selectedOwner = resourceOptions.find((option) => option.value === ownerUserId);
@@ -121,7 +201,7 @@ export default function DeliveryCreateProjectModal({
             createStageTemplate: isEditMode ? undefined : createStageTemplate,
             milestoneMode: isEditMode ? undefined : milestoneMode,
             milestoneTemplateKey: isEditMode ? undefined : milestoneMode === "auto" ? "pilot-v1" : undefined,
-            manualMilestones: isEditMode ? undefined : milestones.map((milestone, milestoneIndex) => ({
+            manualMilestones: isEditMode || milestoneMode !== "manual" ? undefined : milestones.map((milestone, milestoneIndex) => ({
               name: milestone.name.trim(),
               sortOrder: (milestoneIndex + 1) * 10,
               requiredDocumentCount: milestone.requiredDocumentCount,
@@ -205,9 +285,39 @@ export default function DeliveryCreateProjectModal({
         {!isEditMode ? (
           <div className="delivery-create-project-section delivery-milestone-config">
             <div className="delivery-create-project-section-heading">
-              <span className="delivery-create-project-section-title">Milestone & điều kiện mở khóa</span>
-              <small>Milestone tiếp theo chỉ mở khi đủ hồ sơ chuyển tiếp và điều kiện được admin cấu hình.</small>
+              <div>
+                <span className="delivery-create-project-section-title">Milestone & điều kiện mở khóa</span>
+                <small>Milestone tiếp theo chỉ mở khi đủ hồ sơ chuyển tiếp và điều kiện được admin cấu hình.</small>
+              </div>
+              <button className="delivery-plan-action" disabled={!name.trim() || isGeneratingPlan} onClick={generatePlanPreview} type="button">
+                {isGeneratingPlan ? "Đang dựng kế hoạch..." : "Gợi ý theo mẫu"}
+              </button>
             </div>
+            {planPreviewError ? <p className="delivery-create-project-error" role="alert">{planPreviewError}</p> : null}
+            {planPreview ? (
+              <article className="delivery-plan-preview" aria-label="Xem trước kế hoạch theo mẫu">
+                <div className="delivery-plan-preview-header">
+                  <div>
+                    <strong>Kế hoạch theo rule/template</strong>
+                    <small>{planPreview.summary.milestoneCount} milestone · {planPreview.summary.stageCount} stage · {planPreview.summary.taskCount} task gợi ý</small>
+                  </div>
+                  <button className="delivery-plan-apply" onClick={applyPlanPreview} type="button">Dùng cấu trúc này</button>
+                </div>
+                <div className="delivery-plan-preview-list">
+                  {planPreview.milestones.map((milestone) => (
+                    <div className="delivery-plan-preview-milestone" key={milestone.id}>
+                      <strong>{milestone.name}</strong>
+                      {milestone.stages.map((stage) => (
+                        <div className="delivery-plan-preview-stage" key={stage.id}>
+                          <span>{stage.activity}</span>
+                          <small>{stage.tasks.map((task) => `${task.title} (${Math.round(task.estimateMinutes / 60)}h)`).join(" · ")}</small>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </article>
+            ) : null}
             <div className="delivery-milestone-mode-grid" role="radiogroup" aria-label="Cách tạo milestone">
               <label className={milestoneMode === "auto" ? "selected" : ""}>
                 <input checked={milestoneMode === "auto"} name="milestone-mode" onChange={() => setMilestoneMode("auto")} type="radio" />

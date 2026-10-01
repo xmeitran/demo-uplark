@@ -34,7 +34,9 @@ import type {
   CreateProjectMilestoneTemplateInput,
   ProjectMilestoneTemplateSummary,
   ProjectMilestoneSummary,
+  ProjectMilestoneEvidenceMode,
   ProjectSummary,
+  WorkspaceReminderTeamOption,
   SendWorkspaceReminderInput,
   WorkspaceReminderRecipientsResponse,
   UpdateWorkspaceReminderPolicyInput,
@@ -264,6 +266,28 @@ export function WorkspaceAdminDashboard() {
     }
   };
 
+  const createWorkspaceTeam = async (input: { name: string; code?: string }): Promise<WorkspaceReminderTeamOption | void> => {
+    setError(null);
+    const response = await fetch("/api/admin/teams", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input)
+    });
+    const body = await response.json().catch(() => null) as { data?: WorkspaceReminderTeamOption; message?: string } | null;
+    if (!response.ok) {
+      const message = errorMessage(body, "Không tạo được team.");
+      setError(message);
+      throw new Error(message);
+    }
+    const created = body?.data;
+    if (created) {
+      setReminderRecipients((current) => ({ ...current, teams: [...current.teams, created].sort((a, b) => a.name.localeCompare(b.name)) }));
+      setNotice(`Đã tạo team “${created.name}”.`);
+    }
+    return created;
+  };
+
   if (authLoading) return <div className="flex min-h-dvh items-center justify-center bg-background text-sm text-muted-foreground">Đang kiểm tra quyền truy cập…</div>;
 
   if (!isAdmin) {
@@ -328,7 +352,7 @@ export function WorkspaceAdminDashboard() {
             {section === "reminders" ? <ReminderPolicyPanel policy={policy} saving={saving} sending={sending} recipients={reminderRecipients} onSave={() => void savePolicy()} onSendManual={(input) => void sendManualReminder(input)} onUpdateSlot={updateSlot} onSetPolicy={setPolicy} /> : null}
             {section === "milestones" ? <>
               <WorkspaceTabBar items={MILESTONE_TAB_ITEMS} value={milestoneView} onChange={setMilestoneView} ariaLabel="Quản lý milestone" idPrefix="milestone" className="w-full" />
-              {milestoneView === "templates" ? <MilestoneTemplateManager templates={milestoneTemplates} loading={milestoneTemplatesLoading} saving={milestoneTemplatesSaving} onCreate={async (input) => {
+              {milestoneView === "templates" ? <MilestoneTemplateManager templates={milestoneTemplates} loading={milestoneTemplatesLoading} saving={milestoneTemplatesSaving} teams={reminderRecipients.teams} onCreateTeam={createWorkspaceTeam} onCreate={async (input) => {
                 setMilestoneTemplatesSaving(true); setError(null);
                 try {
                   const response = await fetch("/api/milestone-templates?principal=founder", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
@@ -452,6 +476,8 @@ function templateToDraft(template: ProjectMilestoneTemplateSummary): TemplateDra
       sortOrder: milestone.sortOrder,
       requiredDocumentCount: milestone.requiredDocumentCount ?? 0,
       requiredDocumentTypes: (milestone.requiredDocumentTypes ?? []).join(", "),
+      evidenceMode: milestone.evidenceMode ?? "file_or_link",
+      ownerTeamId: milestone.ownerTeamId ?? "",
       unlockCriteria: milestone.unlockCriteria ?? "",
       customerConfirmationRequired: Boolean(milestone.customerConfirmationRequired),
       reviewerRole: milestone.reviewerRole ?? "PM",
@@ -471,6 +497,8 @@ function emptyTemplateDraft(): TemplateDraft {
       sortOrder: 10,
       requiredDocumentCount: 0,
       requiredDocumentTypes: "",
+      evidenceMode: "file_or_link",
+      ownerTeamId: "",
       unlockCriteria: "",
       customerConfirmationRequired: false,
       reviewerRole: "PM",
@@ -483,12 +511,16 @@ function MilestoneTemplateManager({
   templates,
   loading,
   saving,
+  teams,
+  onCreateTeam,
   onCreate,
   onUpdate
 }: {
   templates: ProjectMilestoneTemplateSummary[];
   loading: boolean;
   saving: boolean;
+  teams: WorkspaceReminderTeamOption[];
+  onCreateTeam: (input: { name: string; code?: string }) => Promise<WorkspaceReminderTeamOption | void>;
   onCreate: (input: CreateProjectMilestoneTemplateInput) => Promise<ProjectMilestoneTemplateSummary | void>;
   onUpdate: (templateId: string, input: UpdateProjectMilestoneTemplateInput) => Promise<void>;
 }) {
@@ -514,6 +546,18 @@ function MilestoneTemplateManager({
     setActiveId("");
     setDraft(emptyTemplateDraft());
   };
+  const duplicateTemplate = () => {
+    if (!draft) return;
+    setIsCreating(true);
+    setActiveId("");
+    setDraft({
+      ...draft,
+      id: undefined,
+      key: `${draft.key}-custom`,
+      name: `${draft.name} · bản tuỳ chỉnh`,
+      readOnly: false
+    });
+  };
   const updateDraft = (patch: Partial<TemplateDraft>) => setDraft((current) => current ? { ...current, ...patch } : current);
   const updateMilestone = (id: string, patch: Partial<TemplateMilestoneDraft>) => setDraft((current) => current ? { ...current, milestones: current.milestones.map((milestone) => milestone.id === id ? { ...milestone, ...patch } : milestone) } : current);
   const save = async () => {
@@ -523,6 +567,8 @@ function MilestoneTemplateManager({
       sortOrder: (milestoneIndex + 1) * 10,
       requiredDocumentCount: Math.max(0, Number(milestone.requiredDocumentCount) || 0),
       requiredDocumentTypes: milestone.requiredDocumentTypes.split(",").map((value) => value.trim()).filter(Boolean),
+      evidenceMode: milestone.evidenceMode,
+      ownerTeamId: milestone.ownerTeamId || undefined,
       unlockCriteria: milestone.unlockCriteria?.trim() || undefined,
       customerConfirmationRequired: Boolean(milestone.customerConfirmationRequired),
       reviewerRole: milestone.reviewerRole?.trim() || undefined,
@@ -552,21 +598,146 @@ function MilestoneTemplateManager({
     }
   };
 
-  return <section aria-labelledby="milestone-template-title" className="grid gap-4 rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5">
+  return <>
+  {draft?.readOnly ? <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-bold text-indigo-950">Muốn dùng team và rule riêng?</p><p className="mt-0.5 text-xs text-indigo-800">Tạo một bản tuỳ chỉnh từ template mặc định để gán team và cấu hình số file/link mở khóa.</p></div><button type="button" onClick={duplicateTemplate} className="inline-flex min-h-9 shrink-0 items-center justify-center rounded-xl bg-indigo-600 px-3 text-xs font-bold text-white hover:bg-indigo-700">Tạo bản sao để chỉnh sửa</button></div> : null}
+  <section aria-labelledby="milestone-template-title" className="grid gap-4 rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5">
     <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-700">MILESTONE LIBRARY</p><h2 id="milestone-template-title" className="mt-1 text-xl font-bold tracking-tight text-slate-950">Mẫu milestone dùng khi tạo Project</h2><p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Admin tạo một lần, sau đó người tạo Project chỉ cần chọn mẫu. Điều kiện hồ sơ và bước chuyển tiếp sẽ được copy sang Project mới.</p></div><button type="button" onClick={startCreate} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-primary-foreground shadow-sm hover:opacity-90"><span className="text-lg leading-none">+</span> Tạo template</button></div>
     {loading ? <div className="rounded-2xl border border-border bg-slate-50 p-6 text-center text-sm text-slate-500">Đang tải thư viện template…</div> : null}
     {!loading ? <div className="grid gap-4 lg:grid-cols-[270px_minmax(0,1fr)] lg:items-start"><aside className="rounded-2xl border border-border bg-slate-50/70 p-2"><div className="flex items-center justify-between px-2 pb-2"><span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">TEMPLATE ĐÃ LƯU</span><span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold text-slate-500">{templates.length}</span></div><div className="space-y-1">{templates.map((template) => <button type="button" key={template.id} onClick={() => selectTemplate(template)} className={`w-full rounded-xl px-3 py-3 text-left transition ${template.id === activeId && !isCreating ? "bg-white ring-1 ring-violet-200 shadow-sm" : "hover:bg-white"}`}><span className="flex items-center justify-between gap-2"><span className="truncate text-sm font-bold text-slate-900">{template.name}</span>{template.readOnly ? <span className="shrink-0 rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">Mặc định</span> : null}</span><span className="mt-1 block text-[11px] text-slate-500">{template.milestoneCount} milestone · {template.stageCount} stage</span></button>)}</div>{templates.length === 0 ? <p className="px-2 py-4 text-xs leading-relaxed text-slate-500">Chưa có template riêng. Bấm “Tạo template” để bắt đầu.</p> : null}</aside><div className="min-w-0 rounded-2xl border border-border bg-white">{draft ? <><div className="border-b border-border bg-gradient-to-r from-violet-50 via-white to-sky-50 px-4 py-4 sm:px-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><p className="text-[11px] font-bold uppercase tracking-wider text-violet-700">{isCreating ? "TEMPLATE MỚI" : draft.readOnly ? "SYSTEM TEMPLATE" : "TEMPLATE ĐÃ LƯU"}</p><h3 className="mt-1 text-lg font-bold text-slate-950">{isCreating ? "Thiết lập format milestone" : draft.name}</h3><p className="mt-1 text-xs text-slate-500">{draft.milestones.length} milestone · {draft.milestones.reduce((sum, milestone) => sum + milestone.stages.length, 0)} stage</p></div>{draft.readOnly ? <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-500">Chỉ xem</span> : <button type="button" disabled={saving || !draft.name.trim()} onClick={() => void save()} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-primary-foreground disabled:opacity-50"><Save className="h-4 w-4" />{saving ? "Đang lưu…" : isCreating ? "Lưu template" : "Cập nhật template"}</button>}</div></div><div className="space-y-4 p-4 sm:p-5"><div className="grid gap-3 sm:grid-cols-2"><label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Tên template</span><input disabled={draft.readOnly} value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} placeholder="VD: CRM triển khai chuẩn" className="h-10 w-full rounded-xl border border-border px-3 text-sm font-semibold disabled:bg-slate-50" /></label><label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Mã template <span className="font-normal text-slate-400">(tự sinh nếu bỏ trống)</span></span><input disabled={draft.readOnly || !isCreating} value={draft.key} onChange={(event) => updateDraft({ key: event.target.value })} placeholder="crm-standard-v1" className="h-10 w-full rounded-xl border border-border px-3 text-sm disabled:bg-slate-50" /></label></div><label className="block"><span className="mb-1.5 block text-xs font-semibold text-slate-600">Mô tả sử dụng</span><textarea disabled={draft.readOnly} rows={2} value={draft.description} onChange={(event) => updateDraft({ description: event.target.value })} placeholder="Template này dùng cho loại dự án nào?" className="w-full resize-none rounded-xl border border-border px-3 py-2.5 text-sm disabled:bg-slate-50" /></label><div className="flex items-center justify-between border-t border-border pt-4"><div><p className="text-sm font-bold text-slate-900">Chuỗi milestone</p><p className="mt-0.5 text-xs text-slate-500">Mỗi milestone cần ít nhất một stage để project mới tạo được hierarchy.</p></div>{!draft.readOnly ? <button type="button" onClick={() => updateDraft({ milestones: [...draft.milestones, { id: `milestone-${Date.now()}`, name: `Milestone ${draft.milestones.length + 1}`, sortOrder: (draft.milestones.length + 1) * 10, requiredDocumentCount: 0, requiredDocumentTypes: "", unlockCriteria: "", customerConfirmationRequired: false, reviewerRole: "PM", stages: [{ id: `stage-${Date.now()}`, activity: "Stage 1", phase: "stage" }] }] })} className="text-xs font-bold text-primary hover:underline">+ Thêm milestone</button> : null}</div><div className="space-y-3">{draft.milestones.map((milestone, index) => <article key={milestone.id} className="rounded-2xl border border-border bg-slate-50/70 p-3 sm:p-4"><div className="flex items-center gap-2"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-[11px] font-black text-violet-700">M{index + 1}</span><input disabled={draft.readOnly} value={milestone.name} onChange={(event) => updateMilestone(milestone.id, { name: event.target.value })} className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-white px-2.5 text-sm font-bold disabled:bg-slate-100" />{!draft.readOnly && draft.milestones.length > 1 ? <button type="button" onClick={() => updateDraft({ milestones: draft.milestones.filter((item) => item.id !== milestone.id) })} className="text-xs font-semibold text-rose-600">Xóa</button> : null}</div><div className="mt-3 grid gap-2 sm:grid-cols-3"><label><span className="mb-1 block text-[11px] font-semibold text-slate-500">Số hồ sơ</span><input disabled={draft.readOnly} type="number" min="0" value={milestone.requiredDocumentCount ?? 0} onChange={(event) => updateMilestone(milestone.id, { requiredDocumentCount: Math.max(0, Number(event.target.value) || 0) })} className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm disabled:bg-slate-100" /></label><label className="sm:col-span-2"><span className="mb-1 block text-[11px] font-semibold text-slate-500">Loại hồ sơ</span><input disabled={draft.readOnly} value={milestone.requiredDocumentTypes} onChange={(event) => updateMilestone(milestone.id, { requiredDocumentTypes: event.target.value })} placeholder="BRD, FRD, SRS" className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm disabled:bg-slate-100" /></label></div><div className="mt-2 grid gap-2 sm:grid-cols-2"><label><span className="mb-1 block text-[11px] font-semibold text-slate-500">Vai trò duyệt</span><input disabled={draft.readOnly} value={milestone.reviewerRole ?? ""} onChange={(event) => updateMilestone(milestone.id, { reviewerRole: event.target.value })} className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm disabled:bg-slate-100" /></label><label className="flex items-end gap-2 pb-2 text-xs font-semibold text-slate-600"><input disabled={draft.readOnly} type="checkbox" checked={Boolean(milestone.customerConfirmationRequired)} onChange={(event) => updateMilestone(milestone.id, { customerConfirmationRequired: event.target.checked })} className="h-4 w-4 rounded border-border text-primary" /> Cần khách hàng xác nhận</label></div><label className="mt-2 block"><span className="mb-1 block text-[11px] font-semibold text-slate-500">Điều kiện mở milestone kế tiếp</span><textarea disabled={draft.readOnly} rows={2} value={milestone.unlockCriteria ?? ""} onChange={(event) => updateMilestone(milestone.id, { unlockCriteria: event.target.value })} placeholder="Ví dụ: đủ hồ sơ và PM duyệt" className="w-full resize-none rounded-lg border border-border bg-white px-2.5 py-2 text-sm disabled:bg-slate-100" /></label><div className="mt-3 border-t border-border pt-3"><div className="flex items-center justify-between"><span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">STAGE TRONG MILESTONE</span>{!draft.readOnly ? <button type="button" onClick={() => updateMilestone(milestone.id, { stages: [...milestone.stages, { id: `stage-${Date.now()}`, activity: `Stage ${milestone.stages.length + 1}`, phase: "stage" }] })} className="text-xs font-bold text-primary hover:underline">+ Thêm stage</button> : null}</div><div className="mt-2 space-y-2">{milestone.stages.map((stage, stageIndex) => <div key={stage.id} className="grid gap-2 sm:grid-cols-[28px_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center"><span className="text-[11px] font-bold text-slate-400">{stageIndex + 1}</span><input disabled={draft.readOnly} value={stage.activity} onChange={(event) => updateMilestone(milestone.id, { stages: milestone.stages.map((item) => item.id === stage.id ? { ...item, activity: event.target.value } : item) })} className="h-9 rounded-lg border border-border bg-white px-2.5 text-sm disabled:bg-slate-100" placeholder="Tên stage" /><input disabled={draft.readOnly} value={stage.criteria ?? ""} onChange={(event) => updateMilestone(milestone.id, { stages: milestone.stages.map((item) => item.id === stage.id ? { ...item, criteria: event.target.value } : item) })} className="h-9 rounded-lg border border-border bg-white px-2.5 text-sm disabled:bg-slate-100" placeholder="Tiêu chí hoàn thành" />{!draft.readOnly && milestone.stages.length > 1 ? <button type="button" onClick={() => updateMilestone(milestone.id, { stages: milestone.stages.filter((item) => item.id !== stage.id) })} className="text-xs font-semibold text-rose-600">Xóa</button> : null}</div>)}</div></div></article>)}</div></div></> : <div className="p-8 text-center text-sm text-slate-500">Bấm “Tạo template” để tạo format milestone đầu tiên.</div>}</div></div> : null}
-  </section>;
+  </section>
+  <MilestoneRulePanel templates={templates} teams={teams} onCreateTeam={onCreateTeam} onUpdate={onUpdate} />
+  </>;
 }
 
 type MilestoneGatePatch = {
   requiredDocumentCount: number;
   requiredDocumentTypes: string[];
+  evidenceMode: ProjectMilestoneEvidenceMode;
+  ownerTeamId: string;
   unlockCriteria: string;
   customerConfirmationRequired: boolean;
   reviewerRole: string;
   gateStatus: string;
 };
+
+function MilestoneRulePanel({
+  templates,
+  teams,
+  onCreateTeam,
+  onUpdate
+}: {
+  templates: ProjectMilestoneTemplateSummary[];
+  teams: WorkspaceReminderTeamOption[];
+  onCreateTeam: (input: { name: string; code?: string }) => Promise<WorkspaceReminderTeamOption | void>;
+  onUpdate: (templateId: string, input: UpdateProjectMilestoneTemplateInput) => Promise<void>;
+}) {
+  const [activeTemplateId, setActiveTemplateId] = useState("");
+  const [draft, setDraft] = useState<TemplateDraft | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [showTeamForm, setShowTeamForm] = useState(false);
+  const [teamName, setTeamName] = useState("");
+  const [teamCode, setTeamCode] = useState("");
+
+  useEffect(() => {
+    const template = templates.find((item) => item.id === activeTemplateId) ?? templates[0];
+    if (template) {
+      setActiveTemplateId(template.id);
+      setDraft(templateToDraft(template));
+    } else {
+      setDraft(null);
+    }
+  }, [activeTemplateId, templates]);
+
+  const readOnly = Boolean(draft?.readOnly);
+
+  const updateMilestone = (id: string, patch: Partial<TemplateMilestoneDraft>) => {
+    setDraft((current) => current ? {
+      ...current,
+      milestones: current.milestones.map((milestone) => milestone.id === id ? { ...milestone, ...patch } : milestone)
+    } : current);
+  };
+
+  const save = async () => {
+    if (!draft?.id || draft.readOnly || saving) return;
+    setSaving(true);
+    try {
+      const milestones: CreateProjectMilestoneInput[] = draft.milestones.map((milestone, index) => ({
+        name: milestone.name.trim(),
+        sortOrder: (index + 1) * 10,
+        requiredDocumentCount: Math.max(0, Number(milestone.requiredDocumentCount) || 0),
+        requiredDocumentTypes: milestone.requiredDocumentTypes.split(",").map((value) => value.trim()).filter(Boolean),
+        evidenceMode: milestone.evidenceMode,
+        ownerTeamId: milestone.ownerTeamId || undefined,
+        unlockCriteria: milestone.unlockCriteria?.trim() || undefined,
+        customerConfirmationRequired: Boolean(milestone.customerConfirmationRequired),
+        reviewerRole: milestone.reviewerRole?.trim() || undefined,
+        stages: milestone.stages.map((stage, stageIndex) => ({
+          stageKey: stage.stageKey || `${milestone.id}-${stageIndex + 1}`,
+          activity: stage.activity.trim(),
+          phase: stage.phase?.trim() || stage.activity.trim(),
+          criteria: stage.criteria?.trim() || undefined,
+          slaDays: stage.slaDays,
+          upbaseRole: stage.upbaseRole?.trim() || undefined,
+          customerRole: stage.customerRole?.trim() || undefined
+        }))
+      }));
+      await onUpdate(draft.id, { milestones });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const createTeam = async () => {
+    if (!teamName.trim()) return;
+    const created = await onCreateTeam({ name: teamName.trim(), code: teamCode.trim() || undefined });
+    if (created) {
+      setTeamName("");
+      setTeamCode("");
+      setShowTeamForm(false);
+      if (draft?.milestones[0]) updateMilestone(draft.milestones[0].id, { ownerTeamId: created.id });
+    }
+  };
+
+  return <section aria-labelledby="milestone-rule-title" className="grid gap-4 rounded-3xl border border-indigo-100 bg-indigo-50/30 p-4 shadow-sm sm:p-5">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <p className="text-xs font-bold uppercase tracking-[0.16em] text-indigo-700">WORKFLOW RULES</p>
+        <h3 id="milestone-rule-title" className="mt-1 text-lg font-bold tracking-tight text-slate-950">Team & điều kiện mở milestone</h3>
+        <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-600">Chỉ khi đủ số bằng chứng theo loại đã chọn, milestone mới được đánh giá để mở bước tiếp theo.</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <select value={activeTemplateId} onChange={(event) => setActiveTemplateId(event.target.value)} className="h-10 min-w-[220px] rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700">
+          {templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+        </select>
+        {!readOnly && draft ? <button type="button" disabled={saving} onClick={() => void save()} className="inline-flex h-10 items-center gap-2 rounded-xl bg-indigo-600 px-3 text-xs font-bold text-white disabled:opacity-50"><Save className="h-3.5 w-3.5" />{saving ? "Đang lưu…" : "Lưu rule"}</button> : null}
+      </div>
+    </div>
+    {draft ? <>
+      <div className="flex flex-col gap-2 rounded-2xl border border-indigo-100 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div><p className="text-sm font-bold text-slate-900">Team phụ trách</p><p className="mt-0.5 text-xs text-slate-500">Team được copy sang từng milestone khi tạo Project.</p></div>
+        {!readOnly ? <button type="button" onClick={() => setShowTeamForm((current) => !current)} className="text-xs font-bold text-indigo-700 hover:underline">+ Tạo team mới</button> : null}
+      </div>
+      {showTeamForm && !readOnly ? <div className="grid gap-2 rounded-2xl border border-indigo-100 bg-white p-3 sm:grid-cols-[minmax(0,1fr)_180px_auto]">
+        <input value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="Tên team, VD: Delivery Services" className="h-10 rounded-xl border border-border px-3 text-sm" />
+        <input value={teamCode} onChange={(event) => setTeamCode(event.target.value)} placeholder="Mã tự sinh" className="h-10 rounded-xl border border-border px-3 text-sm" />
+        <button type="button" disabled={!teamName.trim()} onClick={() => void createTeam()} className="h-10 rounded-xl bg-indigo-600 px-3 text-xs font-bold text-white disabled:opacity-50">Tạo team</button>
+      </div> : null}
+      <div className="grid gap-3 lg:grid-cols-2">
+        {draft.milestones.map((milestone, index) => <article key={milestone.id} className="rounded-2xl border border-border bg-white p-4">
+          <div className="flex items-start gap-3"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-[11px] font-black text-indigo-700">M{index + 1}</span><div className="min-w-0"><p className="truncate text-sm font-bold text-slate-900">{milestone.name}</p><p className="mt-0.5 text-[11px] text-slate-500">Rule chuyển tiếp</p></div></div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <label><span className="mb-1 block text-[11px] font-semibold text-slate-500">Số bằng chứng tối thiểu</span><input disabled={readOnly} type="number" min="0" value={milestone.requiredDocumentCount ?? 0} onChange={(event) => updateMilestone(milestone.id, { requiredDocumentCount: Math.max(0, Number(event.target.value) || 0) })} className="h-10 w-full rounded-xl border border-border px-3 text-sm font-semibold disabled:bg-slate-50" /></label>
+            <label><span className="mb-1 block text-[11px] font-semibold text-slate-500">Loại bằng chứng</span><select disabled={readOnly} value={milestone.evidenceMode ?? "file_or_link"} onChange={(event) => updateMilestone(milestone.id, { evidenceMode: event.target.value as ProjectMilestoneEvidenceMode })} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold disabled:bg-slate-50"><option value="file_or_link">File hoặc link</option><option value="file">Chỉ file tải lên</option><option value="link">Chỉ link</option></select></label>
+          </div>
+          <label className="mt-2 block"><span className="mb-1 block text-[11px] font-semibold text-slate-500">Team phụ trách</span><select disabled={readOnly} value={milestone.ownerTeamId ?? ""} onChange={(event) => updateMilestone(milestone.id, { ownerTeamId: event.target.value })} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold disabled:bg-slate-50"><option value="">Chưa gán team</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}{team.code ? ` · ${team.code}` : ""}</option>)}</select></label>
+          <label className="mt-2 block"><span className="mb-1 block text-[11px] font-semibold text-slate-500">Loại hồ sơ (tuỳ chọn)</span><input disabled={readOnly} value={milestone.requiredDocumentTypes} onChange={(event) => updateMilestone(milestone.id, { requiredDocumentTypes: event.target.value })} placeholder="BRD, FRD, SRS" className="h-10 w-full rounded-xl border border-border px-3 text-sm disabled:bg-slate-50" /></label>
+          <label className="mt-2 block"><span className="mb-1 block text-[11px] font-semibold text-slate-500">Mô tả điều kiện bổ sung</span><textarea disabled={readOnly} rows={2} value={milestone.unlockCriteria ?? ""} onChange={(event) => updateMilestone(milestone.id, { unlockCriteria: event.target.value })} placeholder="VD: PM duyệt và khách hàng xác nhận" className="w-full resize-none rounded-xl border border-border px-3 py-2.5 text-sm disabled:bg-slate-50" /></label>
+          <p className="mt-3 rounded-xl bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-800">Cần {milestone.requiredDocumentCount ?? 0} {milestone.evidenceMode === "file" ? "file" : milestone.evidenceMode === "link" ? "link" : "file/link"} để mở milestone kế tiếp.</p>
+        </article>)}
+      </div>
+    </> : <div className="rounded-2xl border border-dashed border-border bg-white p-8 text-center text-sm text-slate-500">Chưa có template để cấu hình rule.</div>}
+  </section>;
+}
 
 function MilestoneGatePanel({
   projects,
@@ -593,6 +764,8 @@ function MilestoneGatePanel({
     setDrafts(Object.fromEntries(gates.map((gate) => [gate.id, {
       requiredDocumentCount: gate.requiredDocumentCount ?? 0,
       requiredDocumentTypes: gate.requiredDocumentTypes ?? [],
+      evidenceMode: gate.evidenceMode ?? "file_or_link",
+      ownerTeamId: gate.ownerTeamId ?? "",
       unlockCriteria: gate.unlockCriteria ?? "",
       customerConfirmationRequired: Boolean(gate.customerConfirmationRequired),
       reviewerRole: gate.reviewerRole ?? "PM",

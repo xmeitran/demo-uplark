@@ -5,7 +5,9 @@ import { SubjectStatus, type Prisma } from "@prisma/client";
 import type {
   CreateProjectInput,
   CreateProjectMilestoneInput,
+  ProjectMilestoneEvidenceMode,
   CreateProjectMilestoneTemplateInput,
+  ProjectPlanPreviewInput,
   CreateProjectActivityInput,
   CreateProjectDocumentInput,
   CreateProjectDocumentVersionInput,
@@ -61,6 +63,7 @@ import {
 } from "./daily-actual-log";
 import { dateOnlyToUtcDate, getLocalDateKeysForTimeRange, lockWorkspaceDayOffDates } from "../workspace-calendar/day-off-time";
 import { isCompletedTaskStatus } from "./task-status";
+import { buildRuleBasedProjectPlan } from "./project-plan-rules";
 
 const projectInclude = {
   account: true,
@@ -126,6 +129,14 @@ const projectInclude = {
     }
   }
 };
+
+function effectiveRequiredDocumentCount(milestone: { requiredDocumentCount?: number | null; requiredDocumentTypes?: unknown }) {
+  const configuredCount = Number(milestone.requiredDocumentCount ?? 0);
+  if (Number.isFinite(configuredCount) && configuredCount > 0) return Math.floor(configuredCount);
+  return Array.isArray(milestone.requiredDocumentTypes)
+    ? milestone.requiredDocumentTypes.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).length
+    : 0;
+}
 
 function projectIncludeForPrincipal(principal: PrincipalContext) {
   return { ...projectInclude, members: { ...projectInclude.members,
@@ -448,6 +459,16 @@ function normalizeMilestoneKey(value: string) {
   return normalizeMilestoneName(value).toLocaleLowerCase("en-US");
 }
 
+const MILESTONE_EVIDENCE_MODES = new Set(["file", "link", "file_or_link"]);
+
+function normalizeMilestoneEvidenceMode(value: unknown): ProjectMilestoneEvidenceMode {
+  const mode = String(value ?? "file_or_link").trim().toLowerCase();
+  if (!MILESTONE_EVIDENCE_MODES.has(mode)) {
+    throw new BadRequestException("evidenceMode must be file, link, or file_or_link");
+  }
+  return mode as ProjectMilestoneEvidenceMode;
+}
+
 function buildLegacyMilestoneTemplate() {
   const grouped = new Map<string, { name: string; sortOrder: number; stages: any[] }>();
   for (const stage of DEFAULT_PROJECT_STAGE_TEMPLATE) {
@@ -492,6 +513,8 @@ function normalizeManualMilestones(input: unknown) {
       sortOrder: optionalInteger(milestone.sortOrder, `manualMilestones[${milestoneIndex}].sortOrder`) ?? (milestoneIndex + 1) * 10,
       requiredDocumentCount,
       requiredDocumentTypes,
+      evidenceMode: normalizeMilestoneEvidenceMode(milestone.evidenceMode),
+      ownerTeamId: optionalString(milestone.ownerTeamId, `manualMilestones[${milestoneIndex}].ownerTeamId`) ?? undefined,
       unlockCriteria: optionalString(milestone.unlockCriteria, `manualMilestones[${milestoneIndex}].unlockCriteria`) ?? undefined,
       customerConfirmationRequired: Boolean(milestone.customerConfirmationRequired),
       reviewerRole: optionalString(milestone.reviewerRole, `manualMilestones[${milestoneIndex}].reviewerRole`) ?? undefined,
@@ -896,6 +919,8 @@ function normalizeMilestoneTemplateMilestones(value: unknown): MilestoneTemplate
       sortOrder: Number.isFinite(Number(item.sortOrder)) ? Number(item.sortOrder) : (milestoneIndex + 1) * 10,
       requiredDocumentCount: Number.isFinite(Number(item.requiredDocumentCount)) ? Math.max(0, Number(item.requiredDocumentCount)) : 0,
       requiredDocumentTypes,
+      evidenceMode: normalizeMilestoneEvidenceMode(item.evidenceMode),
+      ownerTeamId: String(item.ownerTeamId ?? "").trim() || undefined,
       unlockCriteria: String(item.unlockCriteria ?? "").trim() || undefined,
       customerConfirmationRequired: Boolean(item.customerConfirmationRequired),
       reviewerRole: String(item.reviewerRole ?? "").trim() || undefined,
@@ -1050,6 +1075,46 @@ export class ProjectsService {
     return mapProjectSummary(project);
   }
 
+  async previewProjectPlan(rawInput: ProjectPlanPreviewInput, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project planning is internal");
+    const input = rawInput && typeof rawInput === "object" ? rawInput : ({} as ProjectPlanPreviewInput);
+    const name = nonEmptyString(input.name, "name");
+    const scopeSummary = optionalString(input.scopeSummary, "scopeSummary") ?? undefined;
+    const acceptanceCriteria = optionalString(input.acceptanceCriteria, "acceptanceCriteria") ?? undefined;
+    const milestoneMode = input.milestoneMode === "manual" ? "manual" : "auto";
+
+    if (milestoneMode === "manual") {
+      const milestones = normalizeManualMilestones(input.manualMilestones);
+      return buildRuleBasedProjectPlan(
+        { name, scopeSummary, acceptanceCriteria, milestoneMode, manualMilestones: milestones },
+        { key: "manual", milestones },
+        "manual"
+      );
+    }
+
+    const requestedTemplateKey = input.milestoneTemplateKey?.trim() || BUILTIN_MILESTONE_TEMPLATE_KEY;
+    if (requestedTemplateKey === BUILTIN_MILESTONE_TEMPLATE_KEY) {
+      return buildRuleBasedProjectPlan(
+        { name, scopeSummary, acceptanceCriteria, milestoneMode, milestoneTemplateKey: requestedTemplateKey },
+        { key: requestedTemplateKey, milestones: PILOT_PROJECT_MILESTONE_TEMPLATE as unknown as CreateProjectMilestoneInput[] },
+        requestedTemplateKey
+      );
+    }
+
+    const savedTemplate = await this.prisma.projectMilestoneTemplate.findFirst({
+      where: { workspaceId: principal.workspaceId, key: requestedTemplateKey, status: "active" }
+    });
+    if (!savedTemplate) {
+      throw new BadRequestException("Milestone template không tồn tại hoặc đã được lưu trữ");
+    }
+    const milestones = normalizeMilestoneTemplateMilestones(savedTemplate.milestones);
+    return buildRuleBasedProjectPlan(
+      { name, scopeSummary, acceptanceCriteria, milestoneMode, milestoneTemplateKey: requestedTemplateKey },
+      { key: requestedTemplateKey, milestones },
+      requestedTemplateKey
+    );
+  }
+
   async createProject(input: CreateProjectInput, principal: PrincipalContext, idempotencyKey?: string) {
     this.assertInternalTaskPrincipal(principal, "Only internal users can create projects");
     const requestKey = idempotencyKey?.trim();
@@ -1085,6 +1150,15 @@ export class ProjectsService {
         if (!savedTemplate) throw new BadRequestException("Milestone template không tồn tại hoặc đã được lưu trữ");
         selectedMilestoneTemplates = normalizeMilestoneTemplateMilestones(savedTemplate.milestones);
       }
+    }
+
+    const requestedTeamIds = Array.from(new Set([
+      ...selectedMilestoneTemplates.map((milestone: any) => typeof milestone.ownerTeamId === "string" ? milestone.ownerTeamId : ""),
+      ...(Array.isArray(input.manualMilestones) ? input.manualMilestones.map((milestone: any) => typeof milestone?.ownerTeamId === "string" ? milestone.ownerTeamId : "") : [])
+    ].filter(Boolean)));
+    if (requestedTeamIds.length > 0) {
+      const teamCount = await this.prisma.workspaceTeam.count({ where: { workspaceId: principal.workspaceId, active: true, id: { in: requestedTeamIds } } });
+      if (teamCount !== requestedTeamIds.length) throw new BadRequestException("Một hoặc nhiều team phụ trách không tồn tại trong workspace");
     }
 
     const response = await this.prisma.$transaction(async (tx) => {
@@ -1141,7 +1215,13 @@ export class ProjectsService {
           : manualMilestones ?? buildLegacyMilestoneTemplate();
         for (let milestoneIndex = 0; milestoneIndex < milestoneTemplates.length; milestoneIndex += 1) {
           const milestoneTemplate = milestoneTemplates[milestoneIndex];
-          const configuredGate = usePilotTemplate && Array.isArray(input.manualMilestones) ? (input.manualMilestones[milestoneIndex] as any) : undefined;
+          // Only the manual flow is allowed to override the template gate. The
+          // create modal always has a draft milestone list in memory, so using
+          // it for auto/template projects can silently replace configured
+          // requirements with zero values.
+          const configuredGate = input.milestoneMode === "manual" && Array.isArray(input.manualMilestones)
+            ? (input.manualMilestones[milestoneIndex] as any)
+            : undefined;
           const milestone = await tx.projectMilestone.create({
             data: {
               workspaceId: principal.workspaceId,
@@ -1152,7 +1232,13 @@ export class ProjectsService {
               sortOrder: milestoneTemplate.sortOrder ?? (milestoneIndex + 1) * 10,
               requiredDocumentCount: configuredGate?.requiredDocumentCount ?? milestoneTemplate.requiredDocumentCount ?? 0,
               requiredDocumentTypes: configuredGate?.requiredDocumentTypes ?? milestoneTemplate.requiredDocumentTypes ?? [],
-              unlockCriteria: (configuredGate?.unlockCriteria ?? milestoneTemplate.unlockCriteria) ? { text: configuredGate?.unlockCriteria ?? milestoneTemplate.unlockCriteria } : undefined,
+              evidenceMode: configuredGate?.evidenceMode ?? milestoneTemplate.evidenceMode ?? "file_or_link",
+              ownerTeamId: configuredGate?.ownerTeamId ?? milestoneTemplate.ownerTeamId ?? undefined,
+              unlockCriteria: (configuredGate?.unlockCriteria ?? milestoneTemplate.unlockCriteria) ? {
+                text: configuredGate?.unlockCriteria ?? milestoneTemplate.unlockCriteria,
+                evidenceMode: configuredGate?.evidenceMode ?? milestoneTemplate.evidenceMode ?? "file_or_link",
+                ownerTeamId: configuredGate?.ownerTeamId ?? milestoneTemplate.ownerTeamId ?? undefined
+              } : undefined,
               gateStatus: milestoneIndex === 0 ? "open" : "locked",
               customerConfirmationRequired: configuredGate?.customerConfirmationRequired ?? milestoneTemplate.customerConfirmationRequired ?? false,
               reviewerRole: configuredGate?.reviewerRole ?? milestoneTemplate.reviewerRole
@@ -1387,13 +1473,30 @@ export class ProjectsService {
   async getProjectHierarchy(projectId: string, principal: PrincipalContext) {
     this.assertInternalTaskPrincipal(principal, "Project hierarchy is internal");
     const project = await this.ensureProject(projectId, principal.workspaceId);
-    const milestones = await this.prisma.projectMilestone.findMany({
-      where: {
-        projectId: project.id,
-        workspaceId: principal.workspaceId
-      },
-      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }]
-    });
+    const [milestones, fileCount, linkCount] = await this.prisma.$transaction([
+      this.prisma.projectMilestone.findMany({
+        where: {
+          projectId: project.id,
+          workspaceId: principal.workspaceId
+        },
+        include: { ownerTeam: { select: { id: true, name: true } } },
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }]
+      }),
+      this.prisma.projectDocumentVersion.count({
+        where: {
+          projectId: project.id,
+          workspaceId: principal.workspaceId,
+          fileObject: { storageProvider: { in: ["local", "lark_drive"] } }
+        }
+      }),
+      this.prisma.projectDocumentVersion.count({
+        where: {
+          projectId: project.id,
+          workspaceId: principal.workspaceId,
+          fileObject: { storageProvider: "external" }
+        }
+      })
+    ]);
 
     return {
       projectId: project.id,
@@ -1405,8 +1508,12 @@ export class ProjectsService {
         normalizedKey: milestone.normalizedKey,
         sortOrder: milestone.sortOrder,
         gateStatus: milestone.gateStatus,
-        requiredDocumentCount: milestone.requiredDocumentCount,
+        requiredDocumentCount: effectiveRequiredDocumentCount(milestone),
         requiredDocumentTypes: milestone.requiredDocumentTypes,
+        evidenceMode: normalizeMilestoneEvidenceMode(milestone.evidenceMode),
+        ownerTeamId: milestone.ownerTeamId ?? undefined,
+        ownerTeamName: milestone.ownerTeam?.name ?? undefined,
+        submittedDocumentCount: milestone.evidenceMode === "file" ? fileCount : milestone.evidenceMode === "link" ? linkCount : fileCount + linkCount,
         unlockCriteria: typeof milestone.unlockCriteria === "object" && milestone.unlockCriteria && "text" in milestone.unlockCriteria
           ? String((milestone.unlockCriteria as { text?: unknown }).text ?? "")
           : undefined,
@@ -1419,12 +1526,14 @@ export class ProjectsService {
   async listProjectMilestoneGates(projectId: string, principal: PrincipalContext) {
     this.assertInternalTaskPrincipal(principal, "Project milestone gates are internal");
     const project = await this.ensureProject(projectId, principal.workspaceId);
-    const [milestones, submittedDocumentCount] = await this.prisma.$transaction([
+    const [milestones, fileCount, linkCount] = await this.prisma.$transaction([
       this.prisma.projectMilestone.findMany({
         where: { projectId: project.id, workspaceId: principal.workspaceId },
+        include: { ownerTeam: { select: { id: true, name: true } } },
         orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
       }),
-      this.prisma.projectDocumentVersion.count({ where: { projectId: project.id, workspaceId: principal.workspaceId } })
+      this.prisma.projectDocumentVersion.count({ where: { projectId: project.id, workspaceId: principal.workspaceId, fileObject: { storageProvider: { in: ["local", "lark_drive"] } } } }),
+      this.prisma.projectDocumentVersion.count({ where: { projectId: project.id, workspaceId: principal.workspaceId, fileObject: { storageProvider: "external" } } })
     ]);
     return {
       projectId: project.id,
@@ -1437,9 +1546,12 @@ export class ProjectsService {
         normalizedKey: milestone.normalizedKey,
         sortOrder: milestone.sortOrder,
         gateStatus: milestone.gateStatus,
-        requiredDocumentCount: milestone.requiredDocumentCount,
+        requiredDocumentCount: effectiveRequiredDocumentCount(milestone),
         requiredDocumentTypes: milestone.requiredDocumentTypes,
-        submittedDocumentCount,
+        evidenceMode: normalizeMilestoneEvidenceMode(milestone.evidenceMode),
+        ownerTeamId: milestone.ownerTeamId ?? undefined,
+        ownerTeamName: milestone.ownerTeam?.name ?? undefined,
+        submittedDocumentCount: milestone.evidenceMode === "file" ? fileCount : milestone.evidenceMode === "link" ? linkCount : fileCount + linkCount,
         unlockCriteria: typeof milestone.unlockCriteria === "object" && milestone.unlockCriteria && "text" in milestone.unlockCriteria
           ? String((milestone.unlockCriteria as { text?: unknown }).text ?? "")
           : "",
@@ -1463,6 +1575,14 @@ export class ProjectsService {
       : Array.isArray(input.requiredDocumentTypes)
         ? input.requiredDocumentTypes.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((value) => value.trim())
         : (() => { throw new BadRequestException("requiredDocumentTypes must be an array"); })();
+    const evidenceMode = input.evidenceMode === undefined ? existing.evidenceMode : normalizeMilestoneEvidenceMode(input.evidenceMode);
+    const ownerTeamId = input.ownerTeamId === undefined
+      ? existing.ownerTeamId
+      : optionalString(input.ownerTeamId, "ownerTeamId") ?? null;
+    if (ownerTeamId) {
+      const team = await this.prisma.workspaceTeam.findFirst({ where: { id: ownerTeamId, workspaceId: principal.workspaceId, active: true }, select: { id: true } });
+      if (!team) throw new BadRequestException("Team phụ trách không tồn tại trong workspace");
+    }
     const unlockCriteria = input.unlockCriteria === undefined ? existing.unlockCriteria : { text: optionalString(input.unlockCriteria, "unlockCriteria") ?? "" };
     const gateStatus = input.gateStatus === undefined ? existing.gateStatus : optionalString(input.gateStatus, "gateStatus");
     if (gateStatus && !["open", "locked", "pending_review", "approved", "rejected", "conditional"].includes(gateStatus)) {
@@ -1474,6 +1594,8 @@ export class ProjectsService {
         data: {
           requiredDocumentCount,
           requiredDocumentTypes,
+          evidenceMode,
+          ownerTeamId,
           unlockCriteria: unlockCriteria === null ? undefined : unlockCriteria as Prisma.InputJsonValue,
           gateStatus: gateStatus ?? existing.gateStatus,
           customerConfirmationRequired: input.customerConfirmationRequired === undefined ? existing.customerConfirmationRequired : Boolean(input.customerConfirmationRequired),
@@ -1500,9 +1622,17 @@ export class ProjectsService {
     const project = await this.ensureProject(projectId, principal.workspaceId);
     const milestone = await this.prisma.projectMilestone.findFirst({ where: { id: milestoneId, projectId: project.id, workspaceId: principal.workspaceId } });
     if (!milestone) throw new NotFoundException("Project milestone not found");
-    const submittedDocumentCount = await this.prisma.projectDocumentVersion.count({ where: { projectId: project.id, workspaceId: principal.workspaceId } });
-    const documentsSatisfied = submittedDocumentCount >= milestone.requiredDocumentCount;
-    const nextStatus = documentsSatisfied && milestone.requiredDocumentCount > 0 ? "pending_review" : documentsSatisfied ? "approved" : milestone.gateStatus;
+    const evidenceMode = normalizeMilestoneEvidenceMode(milestone.evidenceMode);
+    const submittedDocumentCount = await this.prisma.projectDocumentVersion.count({
+      where: {
+        projectId: project.id,
+        workspaceId: principal.workspaceId,
+        ...(evidenceMode === "file" ? { fileObject: { storageProvider: { in: ["local", "lark_drive"] } } } : evidenceMode === "link" ? { fileObject: { storageProvider: "external" } } : {})
+      }
+    });
+    const requiredDocumentCount = effectiveRequiredDocumentCount(milestone);
+    const documentsSatisfied = submittedDocumentCount >= requiredDocumentCount;
+    const nextStatus = documentsSatisfied && requiredDocumentCount > 0 ? "pending_review" : documentsSatisfied ? "approved" : milestone.gateStatus;
     const updated = await this.prisma.$transaction(async (tx) => {
       const result = await tx.projectMilestone.update({ where: { id: milestone.id }, data: { gateStatus: nextStatus } });
       if (nextStatus === "approved") {
@@ -1511,7 +1641,7 @@ export class ProjectsService {
       }
       return result;
     });
-    return { ...updated, submittedDocumentCount, documentsSatisfied };
+    return { ...updated, requiredDocumentCount, submittedDocumentCount, documentsSatisfied };
   }
 
   async reorderProjectHierarchy(

@@ -23,6 +23,12 @@ export class ProjectsController {
     return this.projects.createProject(body, principal, idempotencyKey);
   }
 
+  @Post("projects/plan-preview")
+  async previewProjectPlan(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Body() body: any) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.previewProjectPlan(body, principal);
+  }
+
   @Get("milestone-templates")
   async listMilestoneTemplates(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined) {
     const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);

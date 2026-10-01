@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, sep } from "node:path";
@@ -49,7 +49,7 @@ const BLOCKED_FILE_EXTENSIONS = new Set([
 
 @Injectable()
 export class ArtifactsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async listArtifacts(query: any, principal: PrincipalContext) {
     const pagination = normalizePagination({ limit: query.limit, offset: query.offset });
@@ -129,6 +129,9 @@ export class ArtifactsService {
       await this.ensureProject(input.projectId, principal.workspaceId, account.id);
     }
     const storageProvider = input.storageProvider ?? "local";
+    if (storageProvider === "external") {
+      return this.createExternalFile(input, principal, account.id);
+    }
     if (storageProvider !== "local") {
       throw new BadRequestException("Only local file storage is supported for direct uploads");
     }
@@ -195,6 +198,9 @@ export class ArtifactsService {
     }
     if (file.scanStatus !== "clean") {
       throw new BadRequestException("File scan status does not allow download");
+    }
+    if (file.storageProvider === "external") {
+      throw new BadRequestException("External file objects must be opened using externalUrl");
     }
 
     const expiresInSeconds = optionalInteger(input.expiresInSeconds, "expiresInSeconds") ?? 300;
@@ -302,6 +308,7 @@ export class ArtifactsService {
       byteSize: row.byteSize,
       checksumSha256: row.checksumSha256,
       storageProvider: row.storageProvider,
+      externalUrl: row.externalUrl ?? undefined,
       ownerType: row.ownerType,
       ownerId: row.ownerId ?? undefined,
       customerVisible: row.customerVisible,
@@ -313,6 +320,45 @@ export class ArtifactsService {
       revokedAt: toIso(row.revokedAt),
       deletedAt: toIso(row.deletedAt)
     };
+  }
+
+  private async createExternalFile(input: UploadFileInput, principal: PrincipalContext, accountId: string) {
+    const rawUrl = String(input.externalUrl ?? "").trim();
+    let externalUrl: URL;
+    try {
+      externalUrl = new URL(rawUrl);
+    } catch {
+      throw new BadRequestException("externalUrl must be a valid URL");
+    }
+    if (!['http:', 'https:'].includes(externalUrl.protocol)) {
+      throw new BadRequestException("externalUrl must use http or https");
+    }
+    const fileName = this.validateFileName(input.fileName || externalUrl.hostname);
+    const checksum = createHash("sha256").update(externalUrl.toString()).digest("hex");
+    const storageKey = `external/${principal.workspaceId}/${accountId}/${checksum}-${randomBytes(6).toString("hex")}`;
+    const file = await this.prisma.fileObject.create({
+      data: {
+        workspaceId: principal.workspaceId,
+        accountId,
+        projectId: optionalString(input.projectId, "projectId") ?? undefined,
+        fileName,
+        contentType: "text/uri-list",
+        byteSize: 0,
+        checksumSha256: checksum,
+        storageProvider: "external",
+        storageKey,
+        externalUrl: externalUrl.toString(),
+        ownerType: input.ownerType?.trim() || "project_document",
+        ownerId: optionalString(input.ownerId, "ownerId") ?? undefined,
+        customerVisible: optionalBoolean(input.customerVisible, "customerVisible") ?? false,
+        internalOnly: optionalBoolean(input.internalOnly, "internalOnly") ?? true,
+        allowedRoles: input.allowedRoles ?? [],
+        scanStatus: "clean",
+        status: "active",
+        createdByUserId: principal.subjectId
+      }
+    });
+    return this.mapFile(file);
   }
 
   private maxUploadBytes() {

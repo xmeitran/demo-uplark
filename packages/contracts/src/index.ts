@@ -534,11 +534,56 @@ export interface CreateProjectInput {
   manualMilestones?: CreateProjectMilestoneInput[];
 }
 
+export interface ProjectPlanPreviewInput {
+  name: string;
+  scopeSummary?: string;
+  acceptanceCriteria?: string;
+  milestoneMode?: ProjectMilestoneMode;
+  milestoneTemplateKey?: string;
+  manualMilestones?: CreateProjectMilestoneInput[];
+}
+
+export interface ProjectPlanTaskSuggestion {
+  id: string;
+  title: string;
+  estimateMinutes: number;
+}
+
+export interface ProjectPlanStageSuggestion {
+  id: string;
+  stageKey: string;
+  activity: string;
+  tasks: ProjectPlanTaskSuggestion[];
+}
+
+export interface ProjectPlanMilestoneSuggestion {
+  id: string;
+  name: string;
+  stages: ProjectPlanStageSuggestion[];
+}
+
+export interface ProjectPlanPreviewResponse {
+  data: {
+    source: "rule-engine";
+    templateKey: string;
+    summary: {
+      milestoneCount: number;
+      stageCount: number;
+      taskCount: number;
+    };
+    milestones: ProjectPlanMilestoneSuggestion[];
+  };
+}
+
 export type ProjectMilestoneMode = "manual" | "auto";
+
+export type ProjectMilestoneEvidenceMode = "file" | "link" | "file_or_link";
 
 export interface ProjectMilestoneConditionInput {
   requiredDocumentCount?: number;
   requiredDocumentTypes?: string[];
+  evidenceMode?: ProjectMilestoneEvidenceMode;
+  ownerTeamId?: string;
   unlockCriteria?: string;
   customerConfirmationRequired?: boolean;
   reviewerRole?: string;
@@ -1025,7 +1070,10 @@ export interface ProjectMilestoneSummary {
   gateStatus?: "open" | "locked" | "pending_review" | "approved" | "rejected" | "conditional";
   requiredDocumentCount?: number;
   requiredDocumentTypes?: string[];
+  evidenceMode?: ProjectMilestoneEvidenceMode;
+  ownerTeamId?: string;
   submittedDocumentCount?: number;
+  ownerTeamName?: string;
   unlockCriteria?: string;
   customerConfirmationRequired?: boolean;
   reviewerRole?: string;
@@ -2346,6 +2394,7 @@ export interface FileObjectSummary {
   byteSize: number;
   checksumSha256: string;
   storageProvider: string;
+  externalUrl?: string;
   ownerType: string;
   ownerId?: string;
   customerVisible: boolean;
@@ -2369,7 +2418,8 @@ export interface UploadFileInput {
   customerVisible?: boolean;
   internalOnly?: boolean;
   allowedRoles?: string[];
-  storageProvider?: "local" | "lark_drive";
+  storageProvider?: "local" | "lark_drive" | "external";
+  externalUrl?: string;
 }
 
 export interface CreateFileDownloadGrantInput {
@@ -3356,8 +3406,14 @@ export interface WorkspaceReminderRecipientOption {
 
 export interface WorkspaceReminderTeamOption {
   id: string;
+  code?: string;
   name: string;
   memberCount: number;
+}
+
+export interface CreateWorkspaceTeamInput {
+  name: string;
+  code?: string;
 }
 
 export interface WorkspaceReminderRecipientsResponse {

@@ -9,9 +9,13 @@ export async function GET(
   const { fileObjectId } = await params;
   const incomingUrl = new URL(request.url);
   const token = incomingUrl.searchParams.get("token");
+  const inline = incomingUrl.searchParams.get("inline");
   const targetUrl = new URL(buildCrmApiEndpoint(`/files/${encodeURIComponent(fileObjectId)}/download`));
   if (token) {
     targetUrl.searchParams.set("token", token);
+  }
+  if (inline === "1") {
+    targetUrl.searchParams.set("inline", "1");
   }
 
   const upstream = await fetch(targetUrl, {

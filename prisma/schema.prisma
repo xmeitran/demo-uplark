@@ -1338,6 +1338,8 @@ model ProjectMilestone {
   sortOrder                    Int
   requiredDocumentCount        Int             @default(0)
   requiredDocumentTypes        String[]        @default([])
+  evidenceMode                 String          @default("file_or_link")
+  ownerTeamId                  String?
   unlockCriteria               Json?
   gateStatus                   String          @default("open")
   customerConfirmationRequired Boolean         @default(false)
@@ -1347,10 +1349,12 @@ model ProjectMilestone {
   workspace                    TenantWorkspace @relation(fields: [workspaceId], references: [id])
   account                      Account         @relation(fields: [accountId], references: [id])
   project                      Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ownerTeam                    WorkspaceTeam?  @relation("MilestoneOwnerTeam", fields: [ownerTeamId], references: [id], onDelete: SetNull)
   stages                       ProjectStage[]
 
   @@unique([projectId, normalizedKey])
   @@index([workspaceId, projectId, sortOrder])
+  @@index([workspaceId, ownerTeamId])
   @@index([accountId])
 }
 
@@ -2665,6 +2669,7 @@ model WorkspaceTeam {
   updatedAt             DateTime                 @updatedAt
   workspace             TenantWorkspace          @relation(fields: [workspaceId], references: [id])
   members               WorkspaceTeamMember[]
+  milestoneOwners       ProjectMilestone[]      @relation("MilestoneOwnerTeam")
   primaryMemberProfiles WorkspaceMemberProfile[] @relation("WorkspaceMemberPrimaryTeam")
 
   @@unique([workspaceId, code])

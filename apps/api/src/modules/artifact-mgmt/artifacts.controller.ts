@@ -52,12 +52,14 @@ export class ArtifactsController {
   async downloadFile(
     @Param("fileObjectId") fileObjectId: string,
     @Query("token") token: string | undefined,
+    @Query("inline") inline: string | undefined,
     @Res({ passthrough: true }) response: HeaderResponse
   ) {
     const download = await this.artifacts.downloadFile(fileObjectId, token);
+    const canRenderInline = /^(application\/pdf|text\/plain|image\/(?:avif|gif|jpeg|png|webp))$/i.test(download.file.contentType);
     response.set({
       "cache-control": "private, no-store",
-      "content-disposition": `attachment; filename="${download.file.fileName.replace(/["\\\r\n]/g, "_")}"`,
+      "content-disposition": `${inline === "1" && canRenderInline ? "inline" : "attachment"}; filename="${download.file.fileName.replace(/["\\\r\n]/g, "_")}"`,
       "content-length": String(download.bytes.byteLength),
       "content-type": download.file.contentType
     });

@@ -1536,6 +1536,7 @@ function DeliveryWorkbench({ config, projectId }: Readonly<{ config: BusinessFun
                 onClose={() => setShowCreateProject(false)}
                 onSave={(payload) => createDeliveryProject(payload as DeliveryCreateProjectPayload)}
                 resourceOptions={taskAssigneeOptions}
+                principal={principal}
               />
             </Suspense>
           ) : null}
@@ -1550,6 +1551,7 @@ function DeliveryWorkbench({ config, projectId }: Readonly<{ config: BusinessFun
                 onClose={() => setEditingProjectId(null)}
                 onSave={(payload) => updateDeliveryProject(editingProject.id, payload as DeliveryUpdateProjectPayload)}
                 resourceOptions={stageOwnerOptions}
+                principal={principal}
               />
             </Suspense>
           ) : null}

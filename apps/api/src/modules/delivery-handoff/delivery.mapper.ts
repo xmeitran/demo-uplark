@@ -555,6 +555,7 @@ function mapFileObjectSummary(file: any) {
     byteSize: file.byteSize,
     checksumSha256: file.checksumSha256,
     storageProvider: file.storageProvider,
+    externalUrl: file.externalUrl ?? undefined,
     ownerType: file.ownerType,
     ownerId: file.ownerId ?? undefined,
     customerVisible: file.customerVisible,
