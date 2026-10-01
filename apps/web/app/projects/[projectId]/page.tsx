@@ -1461,7 +1461,7 @@ function ProjectIssuesPanel({
       <div className="flex flex-col gap-4 rounded-2xl border border-sky-100 bg-gradient-to-r from-sky-50 via-blue-50 to-violet-50 p-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">PROJECT CONTROL</p>
-          <h2 className="mt-1 text-2xl font-black tracking-tight text-foreground">Blocker, risk &amp; issue register</h2>
+          <h2 className="mt-1 text-2xl font-black tracking-tight text-foreground">Sổ Blocker / Risk / Issue</h2>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Tập trung các vấn đề cần xử lý trong project và làm rõ owner, mức độ ảnh hưởng cùng hành động tiếp theo.</p>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:min-w-[210px]">
@@ -1540,7 +1540,7 @@ function ProjectOverviewSignals({
           </div>
         </div>
         <button type="button" onClick={onOpenIssues} className="inline-flex shrink-0 items-center justify-center rounded-lg border border-amber-300 bg-white/80 px-3 py-2 text-xs font-semibold text-amber-800 transition hover:bg-white">
-          Mở Blocker Management →
+          Mở Sổ vấn đề →
         </button>
       </div>
 
@@ -1702,7 +1702,7 @@ const PROJECT_TAB_ITEMS: WorkspaceTabItem<Tab>[] = [
   { id: "Documents", label: "Điểm chốt & Tài liệu", ariaLabel: "Documents", description: "Hồ sơ chuyển tiếp" },
   { id: "Timeline", label: "Timeline", description: "Lịch thực hiện" },
   { id: "Activity", label: "Activity", description: "Lịch sử thay đổi" },
-  { id: "Issues", label: "Issues", description: "Sổ Blocker / Risk / Issue" }
+  { id: "Issues", label: "Sổ vấn đề", ariaLabel: "Issues", description: "Blocker / Risk / Issue" }
 ];
 
 function isProjectDetailTab(value: string | null): value is Tab {
