@@ -732,6 +732,21 @@ function colorForDocumentCategory(value: string) {
   return C.slate;
 }
 
+function inferDocumentMilestoneId(document: ProjectDoc, milestones: Milestone[]) {
+  const source = `${document.artifactType ?? ""} ${document.name}`.toLocaleLowerCase("vi");
+  const explicitNumber = source.match(/(?:milestone|mile|m)[\s_-]*(\d+)/i)?.[1];
+  if (explicitNumber) {
+    const byOrder = milestones.find((milestone) => String(milestone.order + 1) === explicitNumber || milestone.name.toLocaleLowerCase("vi").includes(`m${explicitNumber}`));
+    if (byOrder) return byOrder.id;
+  }
+  return milestones.find((milestone) => source.includes(milestone.name.toLocaleLowerCase("vi")))?.id;
+}
+
+function documentLooksRequired(document: ProjectDoc) {
+  const source = `${document.artifactType ?? ""} ${document.name}`.toLocaleLowerCase("vi");
+  return /required|mandatory|bắt buộc|handoff|gate|checkpoint/.test(source);
+}
+
 function mapStageGroupToMilestone(stages: ProjectStageSummary[]): Milestone {
   const [representative] = stages;
   const milestone = mapStageToMilestone(representative, representative.milestoneSortOrder);
@@ -1403,6 +1418,16 @@ function riskKindTone(category: RiskItem["category"]) {
       : "bg-amber-50 text-amber-700";
 }
 
+function riskSeverity(risk: RiskItem) {
+  if (risk.likelihood === "High" || risk.impact === "High") return "High";
+  if (risk.likelihood === "Medium" || risk.impact === "Medium") return "Medium";
+  return "Low";
+}
+
+function riskSeverityLabel(value: string) {
+  return value === "High" ? "Nghiêm trọng" : value === "Medium" ? "Cao" : "Vừa";
+}
+
 function ProjectIssuesPanel({
   risks,
   teamMembers,
@@ -1420,11 +1445,37 @@ function ProjectIssuesPanel({
   const [switchTrigger, setSwitchTrigger] = useState("");
   const [ownerUserId, setOwnerUserId] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [severityFilter, setSeverityFilter] = useState("all");
+  const [ownerFilter, setOwnerFilter] = useState("all");
+  const [expandedRiskId, setExpandedRiskId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const openCount = risks.filter((risk) => !["resolved", "closed", "done"].includes(risk.status.toLowerCase())).length;
   const highCount = risks.filter((risk) => risk.likelihood === "High" || risk.impact === "High").length;
-  const visibleRisks = risks.filter((risk) => statusFilter === "all" || (statusFilter === "open" ? !["resolved", "closed", "done"].includes(risk.status.toLowerCase()) : risk.status.toLowerCase() === statusFilter));
+  const visibleRisks = risks.filter((risk) => {
+    const isOpen = !["resolved", "closed", "done"].includes(risk.status.toLowerCase());
+    if (statusFilter !== "all" && (statusFilter === "open" ? !isOpen : risk.status.toLowerCase() !== statusFilter)) return false;
+    if (categoryFilter !== "all" && risk.category !== categoryFilter) return false;
+    if (severityFilter !== "all" && riskSeverity(risk) !== severityFilter) return false;
+    if (ownerFilter !== "all" && risk.owner !== ownerFilter) return false;
+    return true;
+  });
+
+  const exportVisibleRisks = () => {
+    const rows = [
+      ["Mã", "Loại", "Nội dung", "Mức độ", "Owner", "Trạng thái", "Phương án xử lý"],
+      ...visibleRisks.map((risk, index) => [`ISS-${String(index + 1).padStart(3, "0")}`, riskKindLabel(risk.category), risk.description, riskSeverityLabel(riskSeverity(risk)), risk.owner || "Chưa phân công", risk.status, risk.response || "Chưa cập nhật"])
+    ];
+    const csv = `\ufeff${rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n")}`;
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "project-issues.csv";
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1460,7 +1511,7 @@ function ProjectIssuesPanel({
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div><p className="text-[10px] font-black uppercase tracking-[0.16em] text-primary">ISSUES</p><h2 className="mt-1 text-xl font-black tracking-tight text-foreground">Sổ Blocker / Risk / Issue</h2><p className="mt-1 text-xs text-muted-foreground">Dùng làm đầu vào cho cảnh báo tiến độ và điều phối owner.</p></div>
-        <button type="button" className="inline-flex min-h-9 items-center justify-center rounded-lg bg-primary px-3 text-xs font-bold text-primary-foreground"><Plus className="mr-1.5 h-3.5 w-3.5" /> Báo vấn đề</button>
+        <button type="button" onClick={() => document.getElementById("issue-form")?.scrollIntoView({ behavior: "smooth", block: "start" })} className="inline-flex min-h-9 items-center justify-center rounded-lg bg-primary px-3 text-xs font-bold text-primary-foreground"><Plus className="mr-1.5 h-3.5 w-3.5" /> Báo vấn đề</button>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {[
@@ -1472,7 +1523,7 @@ function ProjectIssuesPanel({
         ].map((card) => <div key={card.label} className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{card.label}</p><p className={`mt-1 text-2xl font-black ${card.tone}`}>{card.value}</p><p className="mt-1 text-[11px] text-muted-foreground">{card.detail}</p></div>)}
       </div>
 
-      <form onSubmit={submit} className="order-3 rounded-2xl border border-border bg-card p-5 shadow-sm">
+      <form id="issue-form" onSubmit={submit} className="order-3 rounded-2xl border border-border bg-card p-5 shadow-sm">
         <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-bold text-foreground">Báo blocker / risk / issue</h3><p className="mt-1 text-xs text-muted-foreground">Bản ghi mới sẽ xuất hiện ngay trong danh sách điều phối của project.</p></div><AlertCircle className="h-5 w-5 text-amber-500" /></div>
         <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           <label className="lg:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Mô tả vấn đề</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="Ví dụ: Chờ dữ liệu đầu vào từ khách hàng để hoàn thành stage…" className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15" /></label>
@@ -1488,21 +1539,43 @@ function ProjectIssuesPanel({
 
       <div className="order-2 overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
         <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h3 className="text-sm font-bold text-foreground">Danh sách theo dõi</h3><p className="mt-1 text-xs text-muted-foreground">Các bản ghi được dùng làm đầu vào cho cảnh báo tiến độ và điều phối owner.</p></div><span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">{risks.length} bản ghi</span></div>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3">
-          <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Trạng thái</span>
-          {[{ value: "all", label: "Tất cả" }, { value: "open", label: "Đang mở" }, { value: "resolved", label: "Đã xử lý" }].map((filter) => (
-            <button key={filter.value} type="button" onClick={() => setStatusFilter(filter.value)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${statusFilter === filter.value ? "bg-foreground text-background" : "bg-muted/40 text-muted-foreground hover:bg-muted"}`}>
-              {filter.label}
-            </button>
-          ))}
-          </div>
-          <span className="text-xs font-semibold text-muted-foreground">{visibleRisks.length} / {risks.length} bản ghi</span>
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
+          <select aria-label="Lọc loại vấn đề" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs font-semibold"><option value="all">Loại: Tất cả</option><option value="Blocker">Blocker</option><option value="Risk">Risk</option><option value="Issue">Issue</option></select>
+          <select aria-label="Lọc mức độ" value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)} className="rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs font-semibold"><option value="all">Mức độ: Tất cả</option><option value="High">Nghiêm trọng / Cao</option><option value="Medium">Vừa</option><option value="Low">Thấp</option></select>
+          <select aria-label="Lọc owner" value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)} className="max-w-[190px] rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs font-semibold"><option value="all">Owner: Tất cả</option>{Array.from(new Set(risks.map((risk) => risk.owner).filter(Boolean))).map((owner) => <option key={owner} value={owner}>{owner}</option>)}</select>
+          <select aria-label="Lọc trạng thái" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs font-semibold"><option value="all">Trạng thái: Tất cả</option><option value="open">Đang mở</option><option value="resolved">Đã xử lý</option></select>
+          <span className="ml-auto text-xs font-semibold text-muted-foreground">{visibleRisks.length} / {risks.length} bản ghi</span>
+          <button type="button" onClick={exportVisibleRisks} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground transition hover:bg-muted"><Download className="h-3.5 w-3.5" /> Xuất Excel</button>
         </div>
-        {visibleRisks.length === 0 ? <div className="px-5 py-12 text-center"><AlertCircle className="mx-auto h-8 w-8 text-muted-foreground/50" /><p className="mt-3 text-sm font-semibold text-foreground">{risks.length === 0 ? "Chưa có Blocker, Risk hoặc Issue" : "Không có bản ghi phù hợp"}</p><p className="mt-1 text-xs text-muted-foreground">Báo vấn đề đầu tiên để project có lịch sử xử lý rõ ràng.</p></div> : <div className="divide-y divide-border">{visibleRisks.map((risk) => <div key={risk.id} className="grid gap-3 px-5 py-4 lg:grid-cols-[minmax(0,1fr)_130px_130px_180px] lg:items-center"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${riskKindTone(risk.category)}`}>{riskKindLabel(risk.category)}</span><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${risk.status.toLowerCase() === "open" ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{risk.status.toLowerCase() === "open" ? "Đang mở" : risk.status}</span></div><p className="mt-2 text-sm font-semibold text-foreground">{risk.description}</p><p className="mt-1 text-xs text-muted-foreground">Owner: {risk.owner || "Chưa phân công"}</p></div><div><p className="text-[10px] font-semibold uppercase text-muted-foreground">Khả năng</p><p className={`mt-1 text-sm font-bold ${risk.likelihood === "High" ? "text-rose-600" : risk.likelihood === "Medium" ? "text-amber-600" : "text-slate-600"}`}>{risk.likelihood === "High" ? "Cao" : risk.likelihood === "Medium" ? "Vừa" : "Thấp"}</p></div><div><p className="text-[10px] font-semibold uppercase text-muted-foreground">Tác động</p><p className={`mt-1 text-sm font-bold ${risk.impact === "High" ? "text-rose-600" : risk.impact === "Medium" ? "Vừa" : "Thấp"}`}>{risk.impact === "High" ? "Cao" : risk.impact === "Medium" ? "Vừa" : "Thấp"}</p></div><div><p className="text-[10px] font-semibold uppercase text-muted-foreground">Phương án xử lý</p><p className="mt-1 text-sm text-muted-foreground">{risk.response || "Chưa cập nhật"}</p></div></div>)}</div>}
+        {visibleRisks.length === 0 ? <div className="px-5 py-12 text-center"><AlertCircle className="mx-auto h-8 w-8 text-muted-foreground/50" /><p className="mt-3 text-sm font-semibold text-foreground">{risks.length === 0 ? "Chưa có Blocker, Risk hoặc Issue" : "Không có bản ghi phù hợp"}</p><p className="mt-1 text-xs text-muted-foreground">Báo vấn đề đầu tiên để project có lịch sử xử lý rõ ràng.</p></div> : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[980px] text-left text-sm">
+              <thead className="bg-muted/25 text-[10px] font-black uppercase tracking-wider text-muted-foreground"><tr><th className="px-4 py-3">Mã / Loại</th><th className="px-4 py-3">Nội dung</th><th className="px-4 py-3">Gắn với</th><th className="px-4 py-3">Mức độ</th><th className="px-4 py-3">Owner</th><th className="px-4 py-3">Trạng thái</th><th className="px-4 py-3">Phát hiện / Hạn</th></tr></thead>
+              <tbody className="divide-y divide-border">
+                {visibleRisks.map((risk, index) => {
+                  const isOpen = !["resolved", "closed", "done"].includes(risk.status.toLowerCase());
+                  const expanded = expandedRiskId === risk.id;
+                  const severity = riskSeverity(risk);
+                  return <React.Fragment key={risk.id}>
+                    <tr className="cursor-pointer align-top transition hover:bg-muted/15" onClick={() => setExpandedRiskId(expanded ? null : risk.id)}>
+                      <td className="px-4 py-3"><div className="flex items-center gap-2"><span className="text-xs font-black text-foreground">ISS-{String(index + 1).padStart(3, "0")}</span><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${riskKindTone(risk.category)}`}>{riskKindLabel(risk.category)}</span></div></td>
+                      <td className="max-w-[360px] px-4 py-3"><p className="line-clamp-2 font-semibold text-foreground">{risk.description}</p><p className="mt-1 text-[11px] text-muted-foreground">{risk.switch || "Chưa có điều kiện chuyển trạng thái"}</p></td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground">Chưa gắn Milestone</td>
+                      <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${severity === "High" ? "bg-rose-100 text-rose-700" : severity === "Medium" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>{riskSeverityLabel(severity)}</span></td>
+                      <td className="px-4 py-3 text-xs font-semibold text-foreground">{risk.owner || "Chưa phân công"}</td>
+                      <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${isOpen ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{isOpen ? "Đang mở" : "Đã xử lý"}</span></td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground">Chưa có hạn xử lý <span className="ml-1 text-[10px]">{expanded ? "▲" : "▼"}</span></td>
+                    </tr>
+                    {expanded && <tr className="bg-muted/10"><td colSpan={7} className="px-6 py-4"><div className="grid gap-4 md:grid-cols-2"><div className="rounded-lg border border-border bg-background p-3"><p className="text-xs font-bold text-foreground">Phương án xử lý</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{risk.response || "Chưa cập nhật"}</p><p className="mt-3 text-xs font-bold text-foreground">Điều kiện chuyển trạng thái</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{risk.switch || "Chưa cập nhật"}</p></div><div className="rounded-lg border border-border bg-background p-3"><p className="text-xs font-bold text-foreground">Nhật ký xử lý</p><p className="mt-1 text-xs leading-5 text-muted-foreground">API hiện chưa trả về lịch sử xử lý riêng cho issue này.</p></div></div></td></tr>}
+                  </React.Fragment>;
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
       <div className="order-4 grid gap-5 lg:grid-cols-2">
-        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm"><div className="flex items-center justify-between"><div><h3 className="text-sm font-bold text-foreground">Ma trận Khả năng × Tác động</h3><p className="mt-1 text-xs text-muted-foreground">Ưu tiên xử lý theo mức độ ảnh hưởng.</p></div><span className="rounded-full bg-muted px-2 py-1 text-[10px] font-bold text-muted-foreground">{risks.length} bản ghi</span></div><div className="mt-4 grid grid-cols-3 gap-1.5 text-center text-[10px] font-bold"><div className="rounded-lg bg-emerald-50 p-4 text-emerald-700">Thấp</div><div className="rounded-lg bg-amber-50 p-4 text-amber-700">Vừa</div><div className="rounded-lg bg-rose-50 p-4 text-rose-700">Cao</div><div className="col-span-3 rounded-lg border border-dashed border-border p-3 text-xs font-normal text-muted-foreground">Các blocker/risk mới sẽ được đặt vào ma trận sau khi có khả năng và tác động.</div></div></div>
+        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm"><div className="flex items-center justify-between"><div><h3 className="text-sm font-bold text-foreground">Ma trận Khả năng × Tác động</h3><p className="mt-1 text-xs text-muted-foreground">Ưu tiên xử lý theo mức độ ảnh hưởng.</p></div><span className="rounded-full bg-muted px-2 py-1 text-[10px] font-bold text-muted-foreground">{risks.length} bản ghi</span></div><div className="mt-4 grid grid-cols-4 gap-1 text-center text-[10px] font-bold"><div /><div className="rounded bg-muted p-2 text-muted-foreground">Tác động thấp</div><div className="rounded bg-muted p-2 text-muted-foreground">Tác động vừa</div><div className="rounded bg-muted p-2 text-muted-foreground">Tác động cao</div>{(["High", "Medium", "Low"] as const).map((likelihood) => <React.Fragment key={likelihood}><div className="flex items-center justify-center rounded bg-muted p-2 text-muted-foreground">Khả năng {likelihood === "High" ? "cao" : likelihood === "Medium" ? "vừa" : "thấp"}</div>{(["Low", "Medium", "High"] as const).map((impactValue) => <div key={impactValue} className={`rounded p-3 ${likelihood === "High" && impactValue === "High" ? "bg-rose-100 text-rose-700" : likelihood === "Low" && impactValue === "Low" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{risks.filter((risk) => risk.likelihood === likelihood && risk.impact === impactValue).length}</div>)}</React.Fragment>)}</div></div>
         <div className="rounded-2xl border border-border bg-card p-5 shadow-sm"><h3 className="text-sm font-bold text-foreground">Tin bot khi mở một Blocker</h3><p className="mt-1 text-xs text-muted-foreground">Preview thông báo tới owner và người phụ trách milestone.</p><div className="mt-4 rounded-xl border border-dashed border-border bg-muted/20 p-4 text-xs leading-5 text-muted-foreground">Chưa có Blocker đang mở. Khi tạo mới, hệ thống sẽ ghi nhận owner, milestone bị chặn và điều kiện chuyển trạng thái.</div></div>
       </div>
     </div>
@@ -1683,12 +1756,14 @@ function ProjectStatusSlaBar({
   const completedTasks = tasks.filter((task) => task.status === "done").length;
   const progress = tasks.length > 0 ? Math.round((completedTasks / tasks.length) * 100) : project.progress;
   const statusLabel = project.status === "Active" ? "Đang chạy" : formatProjectStatusLabel(project.status);
+  const normalizedProjectStatus = project.status.toLocaleLowerCase();
+  const slaPaused = normalizedProjectStatus.includes("hold") || normalizedProjectStatus.includes("risk") || normalizedProjectStatus.includes("cancel") || normalizedProjectStatus.includes("closed");
   return (
     <section aria-label="Trạng thái dự án và SLA" className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-sm md:grid-cols-[1.15fr_1fr_1fr_auto] md:items-center">
       <div className="min-w-0">
         <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Trạng thái dự án</p>
         <div className="mt-1 flex flex-wrap items-center gap-2">
-          <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-700">{statusLabel}</span>
+          <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${slaPaused ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{statusLabel}</span>
           <span className="text-xs text-muted-foreground">{activeMilestone?.name ?? "Chưa có milestone đang chạy"}</span>
         </div>
       </div>
@@ -1701,11 +1776,16 @@ function ProjectStatusSlaBar({
       </div>
       <div>
         <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Đồng hồ SLA</p>
-        <p className="mt-1 text-xs font-semibold text-emerald-700">Đang chạy <span className="font-normal text-muted-foreground">· theo dõi đến {project.dueDate}</span></p>
+        <p className={`mt-1 text-xs font-semibold ${slaPaused ? "text-amber-700" : "text-emerald-700"}`}>{slaPaused ? "Đang tạm dừng" : "Đang chạy"} <span className="font-normal text-muted-foreground">· theo dõi đến {project.dueDate || "TBD"}</span></p>
       </div>
       <button type="button" className="inline-flex min-h-9 items-center justify-center rounded-lg border border-border px-3 text-xs font-bold text-muted-foreground transition hover:bg-muted">Sửa trạng thái</button>
     </section>
   );
+}
+
+function milestoneIsLocked(milestones: Milestone[], milestone: Milestone) {
+  const index = milestones.findIndex((item) => item.id === milestone.id);
+  return milestone.gateStatus === "locked" || milestone.status === "upcoming" || (index > 0 && milestones[index - 1]?.status !== "done");
 }
 
 function ProjectDeliveryWireframePanels({
@@ -5096,13 +5176,14 @@ function TaskDetailsDrawer({ task, milestoneName, stageName, color, onClose, onS
 
 // ─── Task Row ─────────────────────────────────────────────────────────────────
 
-function TaskRow({ task, projectColor, onEdit, onDelete, onViewDetails, sortHandle, members = EMPTY_TEAM_MEMBERS }: {
+function TaskRow({ task, projectColor, onEdit, onDelete, onViewDetails, sortHandle, disabled = false, members = EMPTY_TEAM_MEMBERS }: {
   task: TaskItem;
   projectColor: string;
   onEdit: (task: TaskItem) => void;
   onDelete: (taskId: string) => void;
   onViewDetails: (task: TaskItem) => void;
   sortHandle?: SortHandleProps;
+  disabled?: boolean;
   members?: ProjectTeamMember[];
 }) {
   const ts = TASK_STATUS[task.status];
@@ -5179,11 +5260,12 @@ function TaskRow({ task, projectColor, onEdit, onDelete, onViewDetails, sortHand
           <button
             ref={menuButtonRef}
             aria-label={`Task actions for ${task.title}`}
+            disabled={disabled}
             onClick={() => setMenuOpen(v => !v)}
-            className="p-1 rounded hover:bg-muted text-muted-foreground opacity-0 group-hover:opacity-100 transition-all">
+            className="p-1 rounded hover:bg-muted text-muted-foreground opacity-0 group-hover:opacity-100 transition-all disabled:pointer-events-none">
             <MoreHorizontal className="w-3.5 h-3.5" />
           </button>
-          {menuOpen && <ActionMenu items={menuItems} anchorRef={menuButtonRef} onClose={() => setMenuOpen(false)} />}
+          {menuOpen && !disabled && <ActionMenu items={menuItems} anchorRef={menuButtonRef} onClose={() => setMenuOpen(false)} />}
         </div>
       </div>
     </div>
@@ -5192,7 +5274,7 @@ function TaskRow({ task, projectColor, onEdit, onDelete, onViewDetails, sortHand
 
 // ─── Stage Section ────────────────────────────────────────────────────────────
 
-function StageSection({ stage, projectColor, onAddTask, onEditTask, onDeleteTask, onEditStage, onDeleteStage, onViewTaskDetails, onReorderTasks, sortHandle, hierarchyBusy = false, members = EMPTY_TEAM_MEMBERS }: {
+function StageSection({ stage, projectColor, onAddTask, onEditTask, onDeleteTask, onEditStage, onDeleteStage, onViewTaskDetails, onReorderTasks, sortHandle, hierarchyBusy = false, locked = false, members = EMPTY_TEAM_MEMBERS }: {
   stage: StageItem; projectColor: string;
   onAddTask: (stageId: string, stageName: string) => void;
   onEditTask: (stageId: string, task: TaskItem) => void;
@@ -5203,6 +5285,7 @@ function StageSection({ stage, projectColor, onAddTask, onEditTask, onDeleteTask
   onReorderTasks: (stageId: string, orderedIds: string[]) => void;
   sortHandle?: SortHandleProps;
   hierarchyBusy?: boolean;
+  locked?: boolean;
   members?: ProjectTeamMember[];
 }) {
   const [open, setOpen] = useState(true);
@@ -5264,6 +5347,7 @@ function StageSection({ stage, projectColor, onAddTask, onEditTask, onDeleteTask
           <motion.button
             whileHover={{ scale:1.05 }} whileTap={{ scale:0.95 }}
             onClick={() => onAddTask(stage.id, stage.name)}
+            disabled={locked || hierarchyBusy}
             className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white"
             style={{ backgroundColor:projectColor }}>
             <Plus className="w-3 h-3" /> Task
@@ -5298,7 +5382,7 @@ function StageSection({ stage, projectColor, onAddTask, onEditTask, onDeleteTask
               <HierarchySortableList
                 ids={stage.tasks.map(task => task.id)}
                 hierarchyKind="task"
-                disabled={hierarchyBusy}
+                disabled={hierarchyBusy || locked}
                 label={`Tasks trong stage ${stage.name}`}
                 listClassName="divide-y divide-border/40"
                 getItemLabel={(id) => stage.tasks.find(item => item.id === id)?.title ?? id}
@@ -5306,12 +5390,13 @@ function StageSection({ stage, projectColor, onAddTask, onEditTask, onDeleteTask
                 renderItem={(taskId, taskHandle) => {
                   const task = stage.tasks.find(item => item.id === taskId);
                   return task ? (
-                    <TaskRow
+            <TaskRow
                       task={task} projectColor={projectColor}
-                      onEdit={t => onEditTask(stage.id, t)}
-                      onDelete={id => onDeleteTask(stage.id, id)}
+                      onEdit={locked ? () => undefined : t => onEditTask(stage.id, t)}
+                      onDelete={locked ? () => undefined : id => onDeleteTask(stage.id, id)}
                       onViewDetails={onViewTaskDetails}
                       sortHandle={taskHandle}
+                      disabled={locked}
                       members={members}
                     />
                   ) : null;
@@ -5329,9 +5414,10 @@ function StageSection({ stage, projectColor, onAddTask, onEditTask, onDeleteTask
                       <TaskRow
                         task={task}
                         projectColor={projectColor}
-                        onEdit={t => onEditTask(stage.id, t)}
-                        onDelete={id => onDeleteTask(stage.id, id)}
+                        onEdit={locked ? () => undefined : t => onEditTask(stage.id, t)}
+                        onDelete={locked ? () => undefined : id => onDeleteTask(stage.id, id)}
                         onViewDetails={onViewTaskDetails}
+                        disabled={locked}
                         members={members}
                       />
                     ) : null;
@@ -5342,9 +5428,9 @@ function StageSection({ stage, projectColor, onAddTask, onEditTask, onDeleteTask
               <div className="px-4 py-6 text-center">
                 <ListChecks className="w-6 h-6 text-muted-foreground/30 mx-auto mb-1.5" />
                 <p className="text-xs text-muted-foreground">No tasks yet</p>
-                <button onClick={() => onAddTask(stage.id, stage.name)}
+                <button disabled={locked || hierarchyBusy} onClick={() => onAddTask(stage.id, stage.name)}
                   className="text-[11px] font-medium mt-1 hover:underline" style={{ color:projectColor }}>
-                  Add first task
+                  {locked ? "Stage đang khóa" : "Add first task"}
                 </button>
               </div>
             )}
@@ -5357,7 +5443,7 @@ function StageSection({ stage, projectColor, onAddTask, onEditTask, onDeleteTask
 
 // ─── Milestone Section (in Tasks tab) ────────────────────────────────────────
 
-function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onAddTask, onEditTask, onDeleteTask, onEditStage, onDeleteStage, onViewTaskDetails, onEditMilestone, onDeleteMilestone, onReorderStages, onReorderTasks, sortHandle, hierarchyBusy = false, members = EMPTY_TEAM_MEMBERS }: {
+function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onAddTask, onEditTask, onDeleteTask, onEditStage, onDeleteStage, onViewTaskDetails, onEditMilestone, onDeleteMilestone, onReorderStages, onReorderTasks, sortHandle, hierarchyBusy = false, locked: lockedProp, members = EMPTY_TEAM_MEMBERS }: {
   milestone: Milestone; group: MilestoneGroup; projectColor: string;
   onAddStage: (milestoneId: string, milestoneName: string) => void;
   onAddTask: (milestoneId: string, stageId: string, stageName: string) => void;
@@ -5372,6 +5458,7 @@ function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onA
   onReorderTasks: (milestoneId: string, stageId: string, orderedIds: string[]) => void;
   sortHandle?: SortHandleProps;
   hierarchyBusy?: boolean;
+  locked?: boolean;
   members?: ProjectTeamMember[];
 }) {
   const [open, setOpen] = useState(milestone.status !== "upcoming");
@@ -5380,6 +5467,7 @@ function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onA
 
   const cfg = MILESTONE_STATUS[milestone.status];
   const visibleStages = visibleStagesForMilestone(group, milestone);
+  const locked = lockedProp ?? (milestone.gateStatus === "locked" || milestone.status === "upcoming");
 
   const totalTasks = group.stages.reduce((s, st) => s + st.tasks.length, 0);
   const doneTasks  = group.stages.reduce((s, st) => s + st.tasks.filter(t => t.status === "done").length, 0);
@@ -5454,6 +5542,7 @@ function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onA
               <motion.button
                 whileHover={{ scale:1.05 }} whileTap={{ scale:0.95 }}
                 onClick={e => { e.stopPropagation(); onAddStage(milestone.id, milestone.name); }}
+                disabled={locked}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold border"
                 style={{ borderColor:cfg.color, color:cfg.color, backgroundColor:`${cfg.color}10` }}>
                 <Plus className="w-3 h-3" /> Add Stage
@@ -5475,6 +5564,13 @@ function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onA
           </button>
         </div>
       </div>
+
+      {locked && (
+        <div className="mx-1 mt-2 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-[11px] font-semibold text-amber-800">
+          <Lock className="h-3.5 w-3.5 shrink-0" />
+          Milestone đang khóa: hoàn tất điểm chốt trước đó để mở Stage và Task.
+        </div>
+      )}
 
       {/* Stages */}
       <AnimatePresence>
@@ -5509,6 +5605,7 @@ function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onA
                       onReorderTasks={(id, ids) => onReorderTasks(milestone.id, id, ids)}
                       sortHandle={stageHandle}
                       hierarchyBusy={hierarchyBusy}
+                      locked={locked}
                       members={members}
                     />
                   ) : null;
@@ -5533,6 +5630,7 @@ function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onA
                         onDeleteStage={(id, name) => onDeleteStage(milestone.id, id, name)}
                         onViewTaskDetails={onViewTaskDetails}
                         onReorderTasks={() => undefined}
+                        locked={locked}
                         members={members}
                       />
                     ) : null;
@@ -6173,6 +6271,8 @@ export default function ProjectDetailPage() {
   const [documents, setDocuments] = useState<ProjectDoc[]>(EMPTY_PROJECT_DOCS);
   const [activityLog, setActivityLog] = useState<ActivityLogItem[]>(EMPTY_ACTIVITY_LOG);
   const [activityPage, setActivityPage] = useState(0);
+  const [activitySourceFilter, setActivitySourceFilter] = useState<"all" | "project" | "work-log">("all");
+  const [activityUserFilter, setActivityUserFilter] = useState("all");
   const [riskRegistry, setRiskRegistry] = useState<RiskItem[]>(EMPTY_RISK_REGISTRY);
   const handleCreateProjectRisk = useCallback(async (draft: ProjectRiskDraft) => {
     const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/risks`, {
@@ -6197,6 +6297,9 @@ export default function ProjectDetailPage() {
   const [showVersionHistoryForDoc, setShowVersionHistoryForDoc] = useState<ProjectDoc | null>(null);
   const [docSearchQuery, setDocSearchQuery] = useState("");
   const [docCategoryFilter, setDocCategoryFilter] = useState("All");
+  const [docMilestoneFilter, setDocMilestoneFilter] = useState("All");
+  const [docStatusFilter, setDocStatusFilter] = useState<"all" | "submitted" | "missing">("all");
+  const [requiredDocsOnly, setRequiredDocsOnly] = useState(false);
   const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
   const [documentMutationError, setDocumentMutationError] = useState<string | null>(null);
   const uploadedProjectFileCache = useRef(new WeakMap<File, FileObjectSummary>());
@@ -6810,7 +6913,15 @@ export default function ProjectDetailPage() {
     )
   );
   const workLogActivity = buildWorkLogActivityItems(allTasks);
-  const projectActivityFeed = [...activityLog, ...workLogActivity].sort(compareActivityDesc);
+  const allProjectActivityFeed = [...activityLog, ...workLogActivity].sort(compareActivityDesc);
+  const projectActivityFeed = allProjectActivityFeed.filter((item) => {
+    if (activitySourceFilter !== "all" && (item.source ?? "project") !== activitySourceFilter) return false;
+    if (activityUserFilter !== "all") {
+      const key = normalizeIdentityValue(item.userId) ?? normalizeIdentityValue(item.userName);
+      if (key !== activityUserFilter) return false;
+    }
+    return true;
+  });
   const activityTotalPages = Math.max(1, Math.ceil(projectActivityFeed.length / ACTIVITY_PAGE_SIZE));
   const safeActivityPage = Math.min(activityPage, activityTotalPages - 1);
   const pagedProjectActivityFeed = projectActivityFeed.slice(
@@ -6818,7 +6929,7 @@ export default function ProjectDetailPage() {
     safeActivityPage * ACTIVITY_PAGE_SIZE + ACTIVITY_PAGE_SIZE
   );
   const activityUserKeys = new Set(
-    projectActivityFeed
+    allProjectActivityFeed
       .map(item => normalizeIdentityValue(item.userId) ?? normalizeIdentityValue(item.userName))
       .filter((key): key is string => Boolean(key))
   );
@@ -7900,6 +8011,7 @@ export default function ProjectDetailPage() {
                               <MilestoneSectionTasks
                                 milestone={milestone}
                                 group={group}
+                                locked={milestoneIsLocked(milestones, milestone)}
                                 projectColor={project.color}
                                 onAddStage={(id, name) => setAddStageFor({ id, name })}
                                 onAddTask={(id, stageId, stageName) => setAddTaskFor({ milestoneId:id, stageId, stageName })}
@@ -7944,6 +8056,7 @@ export default function ProjectDetailPage() {
                               <MilestoneSectionTasks
                                 milestone={milestone}
                                 group={group}
+                                locked={milestoneIsLocked(milestones, milestone)}
                                 projectColor={project.color}
                                 onAddStage={(id, name) => setAddStageFor({ id, name })}
                                 onAddTask={(id, stageId, stageName) => setAddTaskFor({ milestoneId:id, stageId, stageName })}
@@ -7980,6 +8093,7 @@ export default function ProjectDetailPage() {
                               <MilestoneSectionTasks
                                 milestone={milestone}
                                 group={group}
+                                locked={false}
                                 projectColor={project.color}
                                 onAddStage={(id, name) => setAddStageFor({ id, name })}
                                 onAddTask={(id, stageId, stageName) => setAddTaskFor({ milestoneId:id, stageId, stageName })}
@@ -8030,7 +8144,15 @@ export default function ProjectDetailPage() {
 
               {/* ─── TIMELINE (Milestone → Stage Gantt Chart) ─── */}
               {tab === "Timeline" && (() => {
-                const timelineAnchor = new Date();
+                const timelineDateStrings = [
+                  project.startDate,
+                  project.dueDate,
+                  ...milestones.flatMap((milestone) => [milestone.startDate, milestone.dueDate]),
+                  ...milestoneGroups.flatMap((group) => group.stages.flatMap((stage) => [stage.startDate, stage.dueDate, ...stage.tasks.flatMap((task) => [task.startDate, task.due])]))
+                ].filter((value): value is string => Boolean(value && value !== "TBD" && value !== "Not set"));
+                const timelineDates = timelineDateStrings.map(parseUiDate).filter((date) => Number.isFinite(date.getTime()));
+                const earliestTimelineDate = timelineDates.length > 0 ? new Date(Math.min(...timelineDates.map((date) => date.getTime()))) : new Date();
+                const timelineAnchor = new Date(earliestTimelineDate);
                 const baseMonth = new Date(timelineAnchor.getFullYear(), timelineAnchor.getMonth(), 1);
                 const weekBase = new Date(timelineAnchor);
                 weekBase.setHours(0, 0, 0, 0);
@@ -8044,6 +8166,10 @@ export default function ProjectDetailPage() {
                   : new Date(viewStartDate.getFullYear(), viewStartDate.getMonth(), viewStartDate.getDate() + 6 * 7, 23, 59, 59);
 
                 const totalMs = viewEndDate.getTime() - viewStartDate.getTime();
+                const today = new Date();
+                const timelineTodayIndex = timelineScale === "month"
+                  ? Math.max(0, (today.getFullYear() - baseMonth.getFullYear()) * 12 + today.getMonth() - baseMonth.getMonth())
+                  : Math.max(0, Math.floor((today.getTime() - weekBase.getTime()) / (7 * 24 * 60 * 60 * 1000)));
 
                 // Dynamic Column Headers (6 columns)
                 const headers = Array.from({ length: 6 }).map((_, i) => {
@@ -8061,7 +8187,6 @@ export default function ProjectDetailPage() {
                 });
 
                 // Dynamic TODAY Indicator positioning
-                const today = new Date();
                 const todayVisible = today >= viewStartDate && today <= viewEndDate;
                 const todayLeft = todayVisible ? ((today.getTime() - viewStartDate.getTime()) / totalMs) * 100 : 0;
 
@@ -8088,7 +8213,7 @@ export default function ProjectDetailPage() {
                           </button>
                           <button
                             onClick={() => {
-                              setTimelineStartIdx(0);
+                              setTimelineStartIdx(timelineTodayIndex);
                             }}
                             className="px-2.5 py-1 text-[10px] font-bold rounded-md hover:bg-card text-muted-foreground hover:text-foreground transition-all"
                           >
@@ -8229,6 +8354,13 @@ export default function ProjectDetailPage() {
                                         <div key={idx} className="h-full border-l border-dashed border-border/40 first:border-l-0" />
                                       ))}
                                     </div>
+
+                                    {mVisible && milestone.gateStatus && milestone.gateStatus !== "open" && (() => {
+                                      const gateDate = dDate.getTime();
+                                      const gateLeft = ((gateDate - viewStartDate.getTime()) / totalMs) * 100;
+                                      if (gateLeft < 0 || gateLeft > 100) return null;
+                                      return <span className="absolute top-0 z-10 h-8 w-px border-l border-dashed border-amber-500/80" style={{ left: `${gateLeft}%` }} title={`Gate ${milestone.gateStatus}`}><span className="absolute -top-4 -translate-x-1/2 whitespace-nowrap rounded bg-amber-100 px-1 py-0.5 text-[8px] font-bold text-amber-700">Gate</span></span>;
+                                    })()}
 
                                     {/* Milestone Gantt Bar */}
                                     {mVisible && (
@@ -8476,6 +8608,35 @@ export default function ProjectDetailPage() {
                           </div>
                         </div>
 
+                        <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/10 px-5 py-3">
+                          <span className="mr-1 text-[10px] font-black uppercase tracking-wider text-muted-foreground">Bộ lọc</span>
+                          <select
+                            aria-label="Lọc loại hoạt động"
+                            value={activitySourceFilter}
+                            onChange={(event) => { setActivitySourceFilter(event.target.value as typeof activitySourceFilter); setActivityPage(0); }}
+                            className="rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground outline-none focus:ring-2 focus:ring-primary/20"
+                          >
+                            <option value="all">Tất cả sự kiện</option>
+                            <option value="project">Dự án</option>
+                            <option value="work-log">Ghi giờ</option>
+                          </select>
+                          <select
+                            aria-label="Lọc người thực hiện"
+                            value={activityUserFilter}
+                            onChange={(event) => { setActivityUserFilter(event.target.value); setActivityPage(0); }}
+                            className="max-w-[240px] rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground outline-none focus:ring-2 focus:ring-primary/20"
+                          >
+                            <option value="all">Tất cả người thực hiện</option>
+                            {Array.from(new Map(allProjectActivityFeed.map((item) => {
+                              const key = normalizeIdentityValue(item.userId) ?? normalizeIdentityValue(item.userName);
+                              return key ? [key, item.userName || key] as const : null;
+                            }).filter((entry): entry is readonly [string, string] => Boolean(entry))).entries()).map(([key, label]) => (
+                              <option key={key} value={key}>{label}</option>
+                            ))}
+                          </select>
+                          <span className="ml-auto text-xs font-semibold text-muted-foreground">{projectActivityFeed.length}/{allProjectActivityFeed.length} sự kiện</span>
+                        </div>
+
                         <div className="divide-y divide-border">
                           {pagedProjectActivityFeed.map((item, i) => {
                             const member = findTeamMember(teamMembers, item.userInitials, item.userName, item.userId);
@@ -8617,7 +8778,12 @@ export default function ProjectDetailPage() {
                 const filteredDocs = documents.filter(doc => {
                   const matchSearch = doc.name.toLowerCase().includes(docSearchQuery.toLowerCase());
                   const matchCategory = docCategoryFilter === "All" || doc.category === docCategoryFilter;
-                  return matchSearch && matchCategory;
+                  const milestoneId = inferDocumentMilestoneId(doc, milestones) ?? "unassigned";
+                  const matchMilestone = docMilestoneFilter === "All" || milestoneId === docMilestoneFilter;
+                  const isSubmitted = doc.versions.length > 0;
+                  const matchStatus = docStatusFilter === "all" || (docStatusFilter === "submitted" ? isSubmitted : !isSubmitted);
+                  const matchRequired = !requiredDocsOnly || documentLooksRequired(doc);
+                  return matchSearch && matchCategory && matchMilestone && matchStatus && matchRequired;
                 });
 
                 const categories = ["All", "Requirements", "Technical", "Design", "Operations", "Legal", "Other"];
@@ -8667,6 +8833,20 @@ export default function ProjectDetailPage() {
                             </button>
                           ))}
                         </div>
+                        <select aria-label="Lọc theo milestone" value={docMilestoneFilter} onChange={(event) => setDocMilestoneFilter(event.target.value)} className="rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground">
+                          <option value="All">Tất cả Milestone</option>
+                          {milestones.map((milestone) => <option key={milestone.id} value={milestone.id}>{milestone.name}</option>)}
+                          <option value="unassigned">Chưa gắn Milestone</option>
+                        </select>
+                        <select aria-label="Lọc tình trạng tài liệu" value={docStatusFilter} onChange={(event) => setDocStatusFilter(event.target.value as typeof docStatusFilter)} className="rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground">
+                          <option value="all">Tất cả tình trạng</option>
+                          <option value="submitted">Đã nộp</option>
+                          <option value="missing">Đang thiếu</option>
+                        </select>
+                        <label className="inline-flex items-center gap-2 whitespace-nowrap rounded-xl border border-border bg-background px-3 py-2 text-xs font-semibold text-foreground">
+                          <input type="checkbox" checked={requiredDocsOnly} onChange={(event) => setRequiredDocsOnly(event.target.checked)} className="accent-primary" />
+                          Chỉ bắt buộc
+                        </label>
                       </div>
                       <motion.button
                         whileHover={{ scale:1.02 }}
@@ -8718,15 +8898,28 @@ export default function ProjectDetailPage() {
                                   note: "Initial version"
                                 };
                                 const picUser = teamMembers.find(m => m.initials === latestVer.author);
+                                const milestoneId = inferDocumentMilestoneId(doc, milestones) ?? "unassigned";
+                                const milestone = milestones.find((item) => item.id === milestoneId);
+                                const previousMilestoneId = idx > 0 ? (inferDocumentMilestoneId(filteredDocs[idx - 1], milestones) ?? "unassigned") : null;
 
                                 return (
+                                  <React.Fragment key={doc.id}>
+                                    {milestoneId !== previousMilestoneId && (
+                                      <tr className="border-y border-border bg-muted/20">
+                                        <td colSpan={7} className="px-4 py-2.5">
+                                          <div className="flex items-center justify-between gap-3">
+                                            <div className="flex min-w-0 items-center gap-2"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: milestone ? project.color : "#94a3b8" }} /><span className="truncate text-xs font-black text-foreground">{milestone?.name ?? "Chưa gắn Milestone"}</span>{milestone?.gateStatus === "locked" && <Lock className="h-3.5 w-3.5 text-amber-600" />}</div>
+                                            <span className="shrink-0 text-[10px] font-semibold text-muted-foreground">{milestone ? (milestone.gateStatus === "locked" ? "Đang khóa" : "Hồ sơ điểm chốt") : "Cần gắn thủ công"}</span>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    )}
                                   <motion.tr
-                                    key={doc.id}
-                                    initial={{ opacity:0, y:6 }}
-                                    animate={{ opacity:1, y:0 }}
-                                    transition={{ delay:idx*0.03 }}
-                                    className="hover:bg-muted/10 transition-colors"
-                                  >
+                                      initial={{ opacity:0, y:6 }}
+                                      animate={{ opacity:1, y:0 }}
+                                      transition={{ delay:idx*0.03 }}
+                                      className="hover:bg-muted/10 transition-colors"
+                                    >
                                     {/* Document Icon & Name */}
                                     <td className="py-3.5 px-4 font-medium text-foreground">
                                       <div className="flex items-center gap-3">
@@ -8826,6 +9019,7 @@ export default function ProjectDetailPage() {
                                       </div>
                                     </td>
                                   </motion.tr>
+                                  </React.Fragment>
                                 );
                               })
                             ) : (
@@ -8843,7 +9037,7 @@ export default function ProjectDetailPage() {
                     </div>
                     <aside className="space-y-4">
                       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm"><div className="flex items-center justify-between gap-2"><h3 className="text-sm font-bold text-foreground">Danh mục tài liệu bắt buộc</h3><span className="rounded-full bg-muted px-2 py-1 text-[10px] font-bold text-muted-foreground">Template</span></div><div className="mt-4 space-y-3"><div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">Tổng số theo template</span><span className="font-bold text-foreground">{documents.length}</span></div><div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">Đã nộp và có version</span><span className="font-bold text-emerald-700">{documents.filter((doc) => doc.versions.length > 0).length}</span></div><div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">Đang chờ bổ sung</span><span className="font-bold text-amber-700">{documents.filter((doc) => doc.versions.length === 0).length}</span></div></div><p className="mt-4 rounded-lg bg-muted/30 px-3 py-2 text-[11px] leading-5 text-muted-foreground">Tài liệu bắt buộc và xác nhận khách hàng là điều kiện để mở milestone tiếp theo.</p></div>
-                      <div className="rounded-2xl border border-border bg-card p-4 shadow-sm"><h3 className="text-sm font-bold text-foreground">Hai cách gắn tài liệu</h3><div className="mt-3 space-y-2"><button type="button" onClick={() => setShowAddDocModal(true)} className="flex w-full items-center justify-between rounded-lg border border-border px-3 py-2 text-xs font-semibold text-foreground transition hover:bg-muted"><span>Link Lark doc</span><ChevronRight className="h-3.5 w-3.5 text-muted-foreground" /></button><button type="button" onClick={() => setShowAddDocModal(true)} className="flex w-full items-center justify-between rounded-lg border border-border px-3 py-2 text-xs font-semibold text-foreground transition hover:bg-muted"><span>Tải file lên</span><ChevronRight className="h-3.5 w-3.5 text-muted-foreground" /></button></div></div>
+                      <div className="rounded-2xl border border-border bg-card p-4 shadow-sm"><h3 className="text-sm font-bold text-foreground">Hai cách gắn tài liệu</h3><div className="mt-3 space-y-2"><button type="button" onClick={() => setDocumentMutationError("Backend hiện chỉ lưu fileObjectId; liên kết Lark doc cần bổ sung trường URL trước khi bật lưu.")} className="flex w-full items-center justify-between rounded-lg border border-dashed border-amber-300 bg-amber-50/40 px-3 py-2 text-left text-xs font-semibold text-amber-800 transition hover:bg-amber-50"><span>Link Lark doc <small className="block font-normal text-amber-700">Chưa bật lưu URL</small></span><ChevronRight className="h-3.5 w-3.5 text-amber-600" /></button><button type="button" onClick={() => setShowAddDocModal(true)} className="flex w-full items-center justify-between rounded-lg border border-border px-3 py-2 text-xs font-semibold text-foreground transition hover:bg-muted"><span>Tải file lên</span><ChevronRight className="h-3.5 w-3.5 text-muted-foreground" /></button></div></div>
                       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm"><h3 className="text-sm font-bold text-foreground">Nhật ký điểm chốt</h3><div className="mt-3 space-y-3"><div className="border-l-2 border-emerald-200 pl-3"><p className="text-xs font-semibold text-foreground">Chưa có sự kiện</p><p className="mt-0.5 text-[11px] text-muted-foreground">Lịch sử gắn link, tải file và duyệt tài liệu sẽ hiển thị tại đây.</p></div></div></div>
                     </aside>
                     </div>
