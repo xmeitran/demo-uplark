@@ -38,6 +38,7 @@ import type {
   ProjectActivitySummary,
   FileObjectSummary,
   ProjectDocumentSummary,
+  ProjectHierarchySummary,
   ProjectRiskSummary,
   ProjectStageSummary,
   ProjectSummary,
@@ -148,8 +149,13 @@ async function fetchLiveProjectById(projectId: string, signal?: AbortSignal, cac
 }
 
 async function fetchLiveProjectWorkItems(projectId: string, signal?: AbortSignal) {
-  const [stagesResponse, taskSummaries] = await Promise.all([
+  const [stagesResponse, hierarchyResponse, taskSummaries] = await Promise.all([
     fetch(`/api/projects/${encodeURIComponent(projectId)}/stages`, {
+      cache: "no-store",
+      credentials: "same-origin",
+      signal
+    }),
+    fetch(`/api/projects/${encodeURIComponent(projectId)}/hierarchy`, {
       cache: "no-store",
       credentials: "same-origin",
       signal
@@ -164,9 +170,33 @@ async function fetchLiveProjectWorkItems(projectId: string, signal?: AbortSignal
   if (!stagesResponse.ok) {
     throw new LiveProjectDetailError(`Could not load project stages: ${stagesResponse.status}`, stagesResponse.status);
   }
+  if (hierarchyResponse.status === 401) {
+    throw new LiveProjectDetailError("Unauthorized", 401);
+  }
+  if (!hierarchyResponse.ok) {
+    throw new LiveProjectDetailError(`Could not load project hierarchy: ${hierarchyResponse.status}`, hierarchyResponse.status);
+  }
 
   const stagesPayload = (await stagesResponse.json()) as ResourceListResponse<ProjectStageSummary>;
-  return mapProjectWorkItems(stagesPayload.data, taskSummaries);
+  const hierarchyPayload = (await hierarchyResponse.json()) as ProjectHierarchySummary;
+  const workItems = mapProjectWorkItems(stagesPayload.data, taskSummaries);
+  const gates = new Map(hierarchyPayload.milestones.map((milestone) => [milestone.id, milestone]));
+  return {
+    ...workItems,
+    milestones: workItems.milestones.map((milestone) => {
+      const gate = gates.get(milestone.id);
+      return gate
+        ? {
+            ...milestone,
+            gateStatus: gate.gateStatus,
+            requiredDocumentCount: gate.requiredDocumentCount,
+            submittedDocumentCount: gate.submittedDocumentCount,
+            customerConfirmationRequired: gate.customerConfirmationRequired,
+            unlockCriteria: gate.unlockCriteria
+          }
+        : milestone;
+    })
+  };
 }
 
 async function fetchAllProjectTasks(projectId: string, signal?: AbortSignal) {
@@ -476,6 +506,11 @@ interface Milestone {
   assigneeIds?: string[];
   assigneeNames?: string[];
   status: "done" | "in-progress" | "upcoming" | "at-risk";
+  gateStatus?: "open" | "locked" | "pending_review" | "approved" | "rejected" | "conditional";
+  requiredDocumentCount?: number;
+  submittedDocumentCount?: number;
+  customerConfirmationRequired?: boolean;
+  unlockCriteria?: string;
   order: number;
 }
 
@@ -1582,19 +1617,30 @@ function MilestoneOverviewBar({
             const taskCount = stages.reduce((sum, stage) => sum + stage.tasks.length, 0);
             const doneCount = stages.reduce((sum, stage) => sum + stage.tasks.filter((task) => task.status === "done").length, 0);
             const progress = taskCount > 0 ? Math.round((doneCount / taskCount) * 100) : milestone.status === "done" ? 100 : 0;
-            const locked = index > 0 && milestones[index - 1]?.status !== "done";
             const status = MILESTONE_STATUS[milestone.status];
+            const locked = milestone.gateStatus === "locked" || (index > 0 && milestones[index - 1]?.status !== "done");
+            const gateLabel = milestone.gateStatus === "pending_review"
+              ? "Chờ duyệt"
+              : milestone.gateStatus === "approved"
+                ? "Đã duyệt"
+                : milestone.gateStatus === "conditional"
+                  ? "Duyệt có điều kiện"
+                  : milestone.gateStatus === "rejected"
+                    ? "Cần làm lại"
+                    : locked
+                      ? "Đang khóa"
+                      : status.label;
             return (
               <div key={milestone.id} className="min-w-0 rounded-xl border border-border bg-background p-3">
                 <div className="flex items-start justify-between gap-2">
                   <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg" style={{ backgroundColor: `${status.color}16`, color: status.color }}>
                     {locked ? <Lock className="h-3.5 w-3.5" aria-label="Đang khóa" /> : <status.icon className="h-3.5 w-3.5" aria-hidden="true" />}
                   </span>
-                  <span className="rounded-full px-2 py-1 text-[10px] font-bold" style={{ backgroundColor: status.bg, color: status.color }}>{locked ? "Đang khóa" : status.label}</span>
+                  <span className="rounded-full px-2 py-1 text-[10px] font-bold" style={{ backgroundColor: locked ? "#f1f5f9" : status.bg, color: locked ? "#64748b" : status.color }}>{gateLabel}</span>
                 </div>
                 <p className="mt-3 truncate text-xs font-bold text-foreground" title={milestone.name}>{index + 1}. {milestone.name}</p>
                 <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span>{stages.length} stage · {taskCount} task</span>
+                  <span>{stages.length} stage · {taskCount} task · {milestone.submittedDocumentCount ?? 0}/{milestone.requiredDocumentCount ?? 0} hồ sơ</span>
                   <span className="font-semibold text-foreground">{progress}%</span>
                 </div>
                 <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted" aria-label={`Tiến độ ${progress}%`}>
