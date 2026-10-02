@@ -134,9 +134,9 @@ async function installAuthenticatedBrowser(context: BrowserContext, page: Page, 
     name: "lcrm_session",
     value: "interaction-remediation-session",
     url: origin,
-    httpOnly: false,
+    httpOnly: true,
     secure: origin.startsWith("https:"),
-    sameSite: "Strict"
+    sameSite: "Lax"
   }]);
   await page.addInitScript((user) => {
     window.localStorage.setItem("crm_auth_user", JSON.stringify(user));
@@ -166,6 +166,14 @@ async function installCoreReadMocks(page: Page, options: { usersFail?: boolean }
     summary: { totalBudgetAmount: 0, totalActualCostAmount: 0, totalRecognizedRevenueAmount: 0 },
     meta: { principal: workspaceUser.id, rowScope: "workspace" }
   }));
+  await page.route("**/api/milestone-templates**", route => fulfillJson(route, listResponse([])));
+  await page.route("**/api/workspace/users**", route => options.usersFail
+    ? fulfillJson(route, { message: "Directory unavailable" }, 503)
+    : fulfillJson(route, listResponse([workspaceUser])));
+  await page.route("**/api/projects/*/members**", route => fulfillJson(route, {
+    data: [{ userId: workspaceUser.id, displayName: workspaceUser.displayName, email: workspaceUser.email, status: "active", roleCodes: workspaceUser.roleCodes }],
+    meta: { principalUserId: workspaceUser.id, permissions: { canManage: true, canLogForOthers: true }, pagination: pagination(1) }
+  }));
   await page.route("**/api/tasks/planning-blocks**", route => fulfillJson(route, listResponse([])));
   await page.route("**/api/tasks/time-entries**", route => fulfillJson(route, listResponse([])));
   await page.route("**/api/tasks**", route => fulfillJson(route, listResponse([task])));
@@ -174,6 +182,13 @@ async function installCoreReadMocks(page: Page, options: { usersFail?: boolean }
 async function installProjectListMocks(page: Page, onCreate?: (body: Record<string, unknown>) => void) {
   await page.route("**/api/projects**", async route => {
     const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/members")) {
+      await fulfillJson(route, {
+        data: [{ userId: workspaceUser.id, displayName: workspaceUser.displayName, email: workspaceUser.email, status: "active", roleCodes: workspaceUser.roleCodes }],
+        meta: { principalUserId: workspaceUser.id, permissions: { canManage: true, canLogForOthers: true }, pagination: pagination(1) }
+      });
+      return;
+    }
     if (url.pathname === "/api/projects" && route.request().method() === "POST") {
       const body = route.request().postDataJSON() as Record<string, unknown>;
       onCreate?.(body);
@@ -276,6 +291,10 @@ async function installTaskDetailMocks(page: Page, controls: {
       await fulfillJson(route, listResponse([]));
       return;
     }
+    if (url.pathname === `/api/tasks/${task.id}/history`) {
+      await fulfillJson(route, listResponse([]));
+      return;
+    }
     if (url.pathname === `/api/tasks/${task.id}`) {
       await fulfillJson(route, canonicalTask);
       return;
@@ -300,7 +319,7 @@ async function openActualWorkModal(page: Page, completeTask: boolean) {
   const chooser = page.getByRole("dialog", { name: "Ghi nhận & Lên kế hoạch" });
   await chooser.getByRole("button", { name: /Ghi giờ thực tế/ }).click();
   if (completeTask) {
-    await page.getByLabel("Đánh dấu hoàn thành công việc này (Done)").check();
+    await page.getByLabel("Đánh dấu hoàn thành công việc này").check();
   }
   await page.getByRole("button", { name: "Ghi thời gian", exact: true }).click();
 }
@@ -480,10 +499,10 @@ test.describe("interaction audit remediation", () => {
 
     const priorityField = page.getByText("Priority", { exact: true }).locator("..");
     await priorityField.getByRole("button").click();
-    await page.getByRole("button", { name: "Critical", exact: true }).click();
-    const statusField = page.getByText("Status", { exact: true }).locator("..");
+    await page.getByRole("option", { name: "Critical", exact: true }).click();
+    const statusField = page.getByText("Trạng thái", { exact: true }).locator("..");
     await statusField.getByRole("button").click();
-    await page.getByRole("button", { name: "At Risk", exact: true }).click();
+    await page.getByRole("option", { name: "Có rủi ro", exact: true }).click();
 
     await page.getByRole("button", { name: `IQ ${workspaceUser.displayName}` }).click();
     await page.getByRole("button", { name: "Select project color #059669" }).click();

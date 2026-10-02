@@ -1,4 +1,4 @@
-import { NotFoundException } from "@nestjs/common";
+import { ForbiddenException, NotFoundException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 import { ResourceControlsService } from "./resource-controls.service";
 
@@ -162,5 +162,13 @@ describe("ResourceControlsService", () => {
       })
     }));
     expect(prisma.resourceAllocation.create).not.toHaveBeenCalled();
+  });
+
+  it("enforces the P&L cost-permission boundary for non-finance roles", async () => {
+    const prisma = { project: { findMany: vi.fn() } } as any;
+    const service = new ResourceControlsService(prisma);
+
+    await expect(service.projectPlSummary({}, { ...principal, roleCodes: ["WORKSPACE_USER"] } as any)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.project.findMany).not.toHaveBeenCalled();
   });
 });

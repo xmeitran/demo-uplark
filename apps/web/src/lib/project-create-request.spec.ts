@@ -24,4 +24,33 @@ describe("project mutation receipts and canonical people", () => {
   it("rejects failed member pages rather than exposing a partial picker", async () => {
     await expect(fetchProjectPeople("p", undefined, vi.fn().mockResolvedValue(new Response("{}", { status: 503 })))).rejects.toThrow("503");
   });
+  it("keeps safe permission defaults when a legacy member response omits permissions", async () => {
+    const response = new Response(JSON.stringify({
+      data: [],
+      meta: {
+        principalUserId: "one",
+        pagination: { offset: 0, returned: 0, hasNextPage: false }
+      }
+    }));
+    await expect(fetchProjectPeople("project", undefined, vi.fn().mockResolvedValue(response))).resolves.toMatchObject({
+      principalUserId: "one",
+      permissions: { canManage: false, canLogForOthers: false }
+    });
+  });
+  it("fails closed when a paginated member response cannot advance", async () => {
+    const response = new Response(JSON.stringify({
+      data: [],
+      meta: {
+        pagination: { offset: 0, returned: 0, hasNextPage: true }
+      }
+    }));
+    await expect(fetchProjectPeople("project", undefined, vi.fn().mockResolvedValue(response))).rejects.toThrow("pagination did not advance");
+  });
+  it("treats a null member payload as an empty, safe response", async () => {
+    await expect(fetchProjectPeople("project", undefined, vi.fn().mockResolvedValue(new Response("null")))).resolves.toEqual({
+      members: [],
+      principalUserId: "",
+      permissions: { canManage: false, canLogForOthers: false }
+    });
+  });
 });

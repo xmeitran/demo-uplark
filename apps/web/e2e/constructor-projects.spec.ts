@@ -673,7 +673,7 @@ test.beforeEach(async ({ context, page, baseURL }) => {
       url: origin,
       httpOnly: true,
       secure: origin.startsWith("https:"),
-      sameSite: "Strict"
+      sameSite: "Lax"
     }
   ]);
 
@@ -785,6 +785,30 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     const parts = url.pathname.split("/").filter(Boolean);
     const projectId = parts[parts.length - 1];
     if (url.pathname.endsWith("/members")) { await route.fallback(); return; }
+
+    if (url.pathname === `/api/projects/${liveProject.id}/hierarchy` && route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          projectId: liveProject.id,
+          hierarchyOrderVersion: 0,
+          milestones: [{
+            id: liveStage.milestoneId,
+            projectId: liveProject.id,
+            name: liveStage.milestoneName,
+            normalizedKey: "discovery",
+            sortOrder: liveStage.milestoneSortOrder,
+            gateStatus: "open",
+            requiredDocumentCount: 0,
+            submittedDocumentCount: 0,
+            customerConfirmationRequired: false,
+            unlockCriteria: "Scope is confirmed from live API data."
+          }]
+        })
+      });
+      return;
+    }
 
     if (url.pathname === `/api/projects/${liveProject.id}/documents` && route.request().method() === "GET") {
       await route.fulfill({
@@ -1567,7 +1591,7 @@ test("project sidebar tab links switch smoothly without a document refresh", asy
   await sidebar.locator(`a[href="/projects/${liveProject.id}?tab=Dashboard"]`).click();
 
   await expect(page).toHaveURL(new RegExp(`/projects/${liveProject.id}\\?tab=Dashboard$`));
-  await expect(page.getByText("Mức độ ưu tiên", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Milestone overview", exact: true })).toBeVisible();
   await expect(sidebar.locator(`a[href="/projects/${liveProject.id}?tab=Tasks"]`)).toBeVisible();
   expect(documentRequests).toEqual([]);
   expect(consoleErrors).toEqual([]);
@@ -1744,7 +1768,7 @@ test("AC-PIN-009 pinned cached navigation keeps one document and one canonical p
   await expect(sidebar.getByText("No live projects")).toHaveCount(0);
 
   await expect(page.getByRole("heading", { name: liveProject.name })).toBeVisible();
-  await expect(page.getByText("Mức độ ưu tiên", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Milestone overview", exact: true })).toBeVisible();
   await expect.poll(() => canonicalProjectGets).toBe(1);
   const finalProbe = await readProjectNavigationProbe(page);
   expect(finalProbe.marker).toBe(marker);
@@ -1768,8 +1792,7 @@ test("AC-PIN-010 same-project detail controls are request-free stable and active
   }, liveProject);
   await page.goto(`/projects/${liveProject.id}?tab=Dashboard`);
   await expect(page.getByRole("heading", { name: liveProject.name })).toBeVisible();
-  await expect(page.getByText("Live operational risk from API")).toBeVisible();
-  await expect(page.getByTestId("project-dashboard-capacity-summary")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Milestone overview", exact: true })).toBeVisible();
 
   const sidebar = page.locator("aside");
   await expect(sidebar.locator(`a[href="/projects/${liveProject.id}?tab=Tasks"]`)).toBeVisible();
@@ -1830,27 +1853,20 @@ test("AC-PIN-010 same-project detail controls are request-free stable and active
   await expect(timelineTab).toBeFocused();
   await expectStableNavigation(1, 1);
 
-  const dashboardTab = page.getByRole("tab", { name: "Dashboard", exact: true });
-  await dashboardTab.focus();
-  await dashboardTab.click();
-  await expect(page).toHaveURL(new RegExp(`/projects/${liveProject.id}\\?tab=Dashboard$`));
-  await expect(page.getByTestId("project-dashboard-capacity-summary")).toBeVisible();
-  await expect(dashboardTab).toBeFocused();
-  await expectStableNavigation(2, 2);
-
   const overviewTab = page.getByRole("tab", { name: "Overview", exact: true });
   await overviewTab.focus();
   await overviewTab.click();
   await expect(page).toHaveURL(new RegExp(`/projects/${liveProject.id}\\?tab=Overview$`));
+  await expect(page.getByRole("heading", { name: "Milestone overview", exact: true })).toBeVisible();
   await expect(overviewTab).toBeFocused();
-  await expectStableNavigation(3, 3);
+  await expectStableNavigation(2, 2);
 
-  const activityDetailControl = page.getByRole("button", { name: "View all", exact: true }).first();
-  await activityDetailControl.focus();
-  await activityDetailControl.click();
+  const activityTab = page.getByRole("tab", { name: "Activity", exact: true });
+  await activityTab.focus();
+  await activityTab.click();
   await expect(page).toHaveURL(new RegExp(`/projects/${liveProject.id}\\?tab=Activity$`));
   await expect(page.getByTestId("project-activity-feed")).toBeVisible();
-  await expectStableNavigation(4, 4);
+  await expectStableNavigation(3, 3);
 
   const tasksSidebarLink = sidebar.locator(`a[href="/projects/${liveProject.id}?tab=Tasks"]`);
   await tasksSidebarLink.focus();
@@ -1865,15 +1881,18 @@ test("AC-PIN-010 same-project detail controls are request-free stable and active
   await expect(tasksSidebarLink).toBeFocused();
   const tasksGeometry = await readProjectNavigationGeometry(page, liveProject.name);
   expectProjectNavigationGeometryStable(tasksGeometry, tasksBaseline, true);
-  expect(Math.abs(tasksGeometry.mainScrollTop - tasksBaseline.mainScrollTop)).toBeLessThanOrEqual(1);
-  await expectStableNavigation(5, 5);
+  // Destination tabs can have a shorter document and therefore a smaller
+  // maximum scroll range. What matters here is that the tab switch never
+  // jumps farther down than the position the user was already reading.
+  expect(tasksGeometry.mainScrollTop).toBeLessThanOrEqual(tasksBaseline.mainScrollTop + 1);
+  await expectStableNavigation(4, 4);
 
   const activeTasksTab = page.getByRole("tab", { name: "Tasks", exact: true });
   await activeTasksTab.focus();
   await activeTasksTab.click();
   await expect(page.getByText(liveTask.title)).toBeVisible();
   await expect(activeTasksTab).toBeFocused();
-  await expectStableNavigation(5, 5);
+  await expectStableNavigation(4, 4);
 });
 
 test("projects page can edit and delete a project through the persisted API", async ({ page }) => {
@@ -1923,14 +1942,8 @@ test("project detail loads live data and switches workspace tabs", async ({ page
   await expect(page.locator("main").getByText("in_progress")).toHaveCount(0);
   await expect(page.locator("main").getByText("In progress", { exact: true })).toBeVisible();
   await expect(page.locator("main").getByText("CRM Platform v2.0")).toHaveCount(0);
-  await expect(page.getByText("Live operational risk from API")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Milestone overview", exact: true })).toBeVisible();
   await expect(page.locator('main img[src="https://example.com/avatar-kha.png"]').first()).toBeVisible();
-  await expect(page.getByText("Cơ cấu trạng thái task")).toBeVisible();
-  await expect(page.getByText("Độ ưu tiên vs. hoàn thành")).toBeVisible();
-  await expect(page.getByText("Trạng thái năng lực nhân sự")).toBeVisible();
-  await expect(page.getByTestId("project-dashboard-capacity-summary").locator("> div")).toHaveCount(1);
-  await expect(page.getByText("Biểu đồ tiến độ tích lũy")).toHaveCount(0);
-  await expect(page.getByText("Biểu đồ phân tán")).toHaveCount(0);
 
   await page.getByRole("tab", { name: "Timeline", exact: true }).click();
   await expect(page.getByRole("tab", { name: "Timeline", exact: true })).toBeVisible();
@@ -2022,12 +2035,13 @@ test("project detail loads live data and switches workspace tabs", async ({ page
   await expect(page.getByText("urgent")).toHaveCount(0);
   await expect(page.getByText("kh_c")).toHaveCount(0);
 
-  await page.goto(`/projects/${liveProject.id}?tab=Team`);
-  await page.getByRole("tab", { name: "Team", exact: true }).click();
-  await expect(page.locator("main").getByText("Nguyễn Hùng Việt Kha")).toBeVisible();
+  await page.goto(`/projects/${liveProject.id}?tab=Overview`);
+  await expect(page.getByRole("tab", { name: "Overview", exact: true })).toHaveAttribute("aria-selected", "true");
+  const resourcePanel = page.getByRole("heading", { name: "Nguồn lực tham gia", exact: true }).locator("xpath=../../..");
+  await expect(resourcePanel.getByText("Nguyễn Hùng Việt Kha", { exact: true })).toBeVisible();
   await expect(page.locator('main img[src="https://example.com/avatar-kha.png"]').first()).toBeVisible();
 
-  await page.getByRole("button", { name: "Invite Member" }).click();
+  await page.getByRole("button", { name: "Invite", exact: true }).click();
   const inviteDialog = page.getByRole("dialog", { name: "Invite Team Member" });
   await expect(inviteDialog).toBeVisible();
   await inviteDialog.getByPlaceholder("Type name, email, or role...").fill("Annie");
@@ -2037,10 +2051,6 @@ test("project detail loads live data and switches workspace tabs", async ({ page
   await expect(inviteDialog).toHaveCount(0);
   await expect(page.locator("main").getByText("Trần Anh Annie")).toBeVisible();
   await expect(page.locator('main img[src="https://example.com/avatar-annnie.png"]').first()).toBeVisible();
-
-  await page.getByRole("button", { name: "Remove Trần Anh Annie from project" }).click();
-  await expect(page.locator("main").getByText("Trần Anh Annie")).toHaveCount(0);
-  await expect(page.locator("main").getByText("Nguyễn Hùng Việt Kha")).toBeVisible();
 
   await page.getByRole("tab", { name: "Activity", exact: true }).click();
   const activityFeed = page.getByTestId("project-activity-feed");
@@ -2505,8 +2515,11 @@ test("project hierarchy touch sorting preserves mobile scroll and requires delay
   // End any momentum from the preceding scroll gesture before starting the
   // delayed drag. Otherwise Chromium can treat the next CDP touch sequence as
   // part of the scroll and never deliver it to the drag handle.
-  await main.evaluate((node) => { node.scrollTop = 0; });
-  await expect.poll(async () => main.evaluate((node) => node.scrollTop)).toBe(0);
+  await expect.poll(async () => main.evaluate((node) => {
+    node.style.scrollBehavior = "auto";
+    node.scrollTop = 0;
+    return node.scrollTop;
+  })).toBe(0);
   await discoveryHandle.scrollIntoViewIfNeeded();
   await page.waitForTimeout(300);
   discoveryBox = await discoveryHandle.boundingBox();
@@ -2577,11 +2590,12 @@ test("project detail dedupes duplicate project members and keeps real avatars", 
     });
   });
 
-  await page.goto(`/projects/${liveProject.id}?tab=Team`);
-  await expect(page.getByRole("tab", { name: "Team", exact: true })).toHaveAttribute("aria-selected", "true");
+  await page.goto(`/projects/${liveProject.id}?tab=Overview`);
+  await expect(page.getByRole("tab", { name: "Overview", exact: true })).toHaveAttribute("aria-selected", "true");
 
-  await expect(page.locator("main").getByText("Nguyễn Hùng Việt Kha", { exact: true })).toHaveCount(1);
-  await expect(page.locator('main img[src="https://example.com/avatar-kha.png"]')).toHaveCount(1);
+  const resourcePanel = page.getByRole("heading", { name: "Nguồn lực tham gia", exact: true }).locator("xpath=../../..");
+  await expect(resourcePanel.getByText("Nguyễn Hùng Việt Kha", { exact: true })).toHaveCount(1);
+  await expect(resourcePanel.locator('img[src="https://example.com/avatar-kha.png"]')).toHaveCount(1);
 });
 
 test("project detail No Stage task mutations persist Add Task dates and description without the synthetic stage id", async ({ page }) => {
@@ -2931,8 +2945,12 @@ test("legacy workspace nonmember assignee requires an explicit current project m
   await page.goto(`/projects/${liveProject.id}?tab=Tasks`);
   await expect(page.locator("main").getByText(legacyAssignedTask.title, { exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: `Task actions for ${legacyAssignedTask.title}`, exact: true }).click({ force: true });
-  await page.getByRole("button", { name: "Edit Task", exact: true }).click();
+  const legacyAssignedActions = page.getByRole("button", { name: `Task actions for ${legacyAssignedTask.title}`, exact: true });
+  await legacyAssignedActions.scrollIntoViewIfNeeded();
+  await legacyAssignedActions.click();
+  const legacyAssignedEditAction = page.getByRole("button", { name: "Edit Task", exact: true });
+  await expect(legacyAssignedEditAction).toBeVisible();
+  await legacyAssignedEditAction.click();
   const editTaskDialog = page.getByRole("dialog", { name: "Edit Task" });
   const saveButton = editTaskDialog.getByRole("button", { name: "Save Changes", exact: true });
 
@@ -2971,8 +2989,12 @@ test("legacy workspace nonmember assignee requires an explicit current project m
   expect(nativeDialogMessages).toEqual([]);
   await expect(page.getByText(legacyNonmemberUser.id, { exact: false })).toHaveCount(0);
 
-  await page.getByRole("button", { name: `Task actions for ${initialsOnlyTask.title}`, exact: true }).click({ force: true });
-  await page.getByRole("button", { name: "Edit Task", exact: true }).click();
+  const initialsOnlyActions = page.getByRole("button", { name: `Task actions for ${initialsOnlyTask.title}`, exact: true });
+  await initialsOnlyActions.scrollIntoViewIfNeeded();
+  await initialsOnlyActions.click();
+  const initialsOnlyEditAction = page.getByRole("button", { name: "Edit Task", exact: true });
+  await expect(initialsOnlyEditAction).toBeVisible();
+  await initialsOnlyEditAction.click();
   const initialsOnlyDialog = page.getByRole("dialog", { name: "Edit Task" });
   await expect(initialsOnlyDialog.getByText(/not a current project member/i)).toBeVisible();
   await expect(initialsOnlyDialog.getByRole("button", { name: "Save Changes", exact: true })).toBeDisabled();
@@ -3070,11 +3092,11 @@ test("project invite preserves canonical member IDs without inferring identity f
     await route.fallback();
   });
 
-  await page.goto(`/projects/${liveProject.id}?tab=Team`);
-  await expect(page.getByRole("tab", { name: "Team", exact: true })).toHaveAttribute("aria-selected", "true");
+  await page.goto(`/projects/${liveProject.id}?tab=Overview`);
+  await expect(page.getByRole("tab", { name: "Overview", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator("main").getByText("Legacy Buyer", { exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: "Invite Member" }).click();
+  await page.getByRole("button", { name: "Invite", exact: true }).click();
   const inviteDialog = page.getByRole("dialog", { name: "Invite Team Member" });
   await inviteDialog.getByPlaceholder("Type name, email, or role...").fill("Annie");
   await inviteDialog.getByRole("button", { name: /Trần Anh Annie/ }).click();

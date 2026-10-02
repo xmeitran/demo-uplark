@@ -217,6 +217,7 @@ export class BrdGovernanceService {
   }
 
   async pnlReconciliation(periodId: string, principal: PrincipalContext) {
+    this.assertManager(principal);
     const period = await this.prisma.pnlPeriod.findFirst({ where: { id: periodId, workspaceId: principal.workspaceId }, include: { allocations: true } });
     if (!period) throw new NotFoundException("P&L period not found");
     const totals = period.allocations.reduce((acc, row) => { acc.logged += row.standardMinutes + row.overtimeMinutes; if (row.status === "INCLUDED") acc.included += row.standardMinutes + row.overtimeMinutes; else if (row.status === "EXCLUDED") acc.excluded += row.standardMinutes + row.overtimeMinutes; else acc.pending += row.standardMinutes + row.overtimeMinutes; return acc; }, { logged: 0, included: 0, excluded: 0, pending: 0 });

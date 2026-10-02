@@ -1076,6 +1076,7 @@ export interface ProjectMilestoneSummary {
   ownerTeamName?: string;
   unlockCriteria?: string;
   customerConfirmationRequired?: boolean;
+  customerConfirmationAt?: string;
   reviewerRole?: string;
 }
 

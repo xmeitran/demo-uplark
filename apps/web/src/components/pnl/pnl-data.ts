@@ -205,9 +205,9 @@ function normalizeApprovalStatus(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, "_");
 }
 
-function statusFromEntries(logwork: number, pnl: number, planned: number, missingProject = false): PnlProjectStatus {
+function statusFromEntries(logwork: number, pending: number, planned: number, missingProject = false): PnlProjectStatus {
   if (missingProject || (planned === 0 && logwork === 0)) return "Thiếu dữ liệu";
-  if (logwork > pnl) return "Chờ xử lý";
+  if (pending > 0) return "Chờ xử lý";
   return "Đã đối soát";
 }
 
@@ -268,26 +268,28 @@ export function adaptLivePnlProjects(
       : project?.approvedMinutes ?? summary.approvedLaborMinutes;
     const excludedMinutes = projectEntries.filter((entry) => ["rejected", "cancelled"].includes(normalizeApprovalStatus(entry.approvalStatus))).reduce((total, entry) => total + entry.minutes, 0);
     const pendingMinutes = Math.max(logworkMinutes - pnlMinutes - excludedMinutes, 0);
-    const daily = new Map<string, { minutes: number; pnlMinutes: number; entryCount: number; people: Set<string> }>();
+    const daily = new Map<string, { minutes: number; pnlMinutes: number; excludedMinutes: number; entryCount: number; people: Set<string> }>();
     projectEntries.forEach((entry) => {
       const date = localDateKey(entry.workDate);
       if (!date) return;
-      const bucket = daily.get(date) ?? { minutes: 0, pnlMinutes: 0, entryCount: 0, people: new Set<string>() };
+      const approvalStatus = normalizeApprovalStatus(entry.approvalStatus);
+      const bucket = daily.get(date) ?? { minutes: 0, pnlMinutes: 0, excludedMinutes: 0, entryCount: 0, people: new Set<string>() };
       bucket.minutes += entry.minutes;
       bucket.entryCount += 1;
       bucket.people.add(entry.userId);
-      if (normalizeApprovalStatus(entry.approvalStatus) === "approved") bucket.pnlMinutes += entry.minutes;
+      if (approvalStatus === "approved") bucket.pnlMinutes += entry.minutes;
+      if (["rejected", "cancelled"].includes(approvalStatus)) bucket.excludedMinutes += entry.minutes;
       daily.set(date, bucket);
     });
     const dateKeys = period ? periodDateKeys(period) : Array.from(daily.keys()).sort();
     const dailyPoints = dateKeys.map((date) => {
-      const bucket = daily.get(date) ?? { minutes: 0, pnlMinutes: 0, entryCount: 0, people: new Set<string>() };
+      const bucket = daily.get(date) ?? { minutes: 0, pnlMinutes: 0, excludedMinutes: 0, entryCount: 0, people: new Set<string>() };
       return {
         date,
         label: `${date.slice(8, 10)}/${date.slice(5, 7)}`,
         minutes: bucket.minutes,
         pnlMinutes: bucket.pnlMinutes,
-        pendingMinutes: Math.max(bucket.minutes - bucket.pnlMinutes, 0),
+        pendingMinutes: Math.max(bucket.minutes - bucket.pnlMinutes - bucket.excludedMinutes, 0),
         isWorkingDay: isWeekday(date),
         entryCount: bucket.entryCount,
         peopleLogged: bucket.people.size
@@ -336,7 +338,7 @@ export function adaptLivePnlProjects(
       budgetAmount: project?.budgetAmount,
       spentAmount: project?.spentAmount,
       dataSource: hasPeriodEntries ? "period" : "project",
-      status: statusFromEntries(logworkMinutes, pnlMinutes, project?.plannedMinutes ?? 0, !project),
+      status: statusFromEntries(logworkMinutes, pendingMinutes, project?.plannedMinutes ?? 0, !project),
       revenue: summary.paidRevenueAmount || summary.plannedRevenueAmount,
       planMinutes: project?.plannedMinutes ?? 0,
       logworkMinutes,

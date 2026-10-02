@@ -1518,6 +1518,7 @@ export class ProjectsService {
           ? String((milestone.unlockCriteria as { text?: unknown }).text ?? "")
           : undefined,
         customerConfirmationRequired: milestone.customerConfirmationRequired,
+        customerConfirmationAt: milestone.customerConfirmationAt?.toISOString(),
         reviewerRole: milestone.reviewerRole
       }))
     };
@@ -1556,6 +1557,7 @@ export class ProjectsService {
           ? String((milestone.unlockCriteria as { text?: unknown }).text ?? "")
           : "",
         customerConfirmationRequired: milestone.customerConfirmationRequired,
+        customerConfirmationAt: milestone.customerConfirmationAt?.toISOString(),
         reviewerRole: milestone.reviewerRole
       }))
     };
@@ -1588,6 +1590,13 @@ export class ProjectsService {
     if (gateStatus && !["open", "locked", "pending_review", "approved", "rejected", "conditional"].includes(gateStatus)) {
       throw new BadRequestException("Invalid milestone gate status");
     }
+    const confirmationRequested = input.customerConfirmationConfirmed === undefined
+      ? undefined
+      : Boolean(input.customerConfirmationConfirmed);
+    const confirmationRequired = input.customerConfirmationRequired === undefined
+      ? existing.customerConfirmationRequired
+      : Boolean(input.customerConfirmationRequired);
+    const confirmationReset = input.customerConfirmationRequired !== undefined && !confirmationRequired && confirmationRequested === undefined;
     const updated = await this.prisma.$transaction(async (tx) => {
       const result = await tx.projectMilestone.update({
         where: { id: existing.id },
@@ -1598,7 +1607,9 @@ export class ProjectsService {
           ownerTeamId,
           unlockCriteria: unlockCriteria === null ? undefined : unlockCriteria as Prisma.InputJsonValue,
           gateStatus: gateStatus ?? existing.gateStatus,
-          customerConfirmationRequired: input.customerConfirmationRequired === undefined ? existing.customerConfirmationRequired : Boolean(input.customerConfirmationRequired),
+          customerConfirmationRequired: confirmationRequired,
+          customerConfirmationAt: confirmationRequested === undefined ? confirmationReset ? null : undefined : confirmationRequested ? new Date() : null,
+          customerConfirmationByUserId: confirmationRequested === undefined ? confirmationReset ? null : undefined : confirmationRequested ? principal.subjectId : null,
           reviewerRole: input.reviewerRole === undefined ? existing.reviewerRole : optionalString(input.reviewerRole, "reviewerRole") ?? null
         }
       });
@@ -1632,7 +1643,12 @@ export class ProjectsService {
     });
     const requiredDocumentCount = effectiveRequiredDocumentCount(milestone);
     const documentsSatisfied = submittedDocumentCount >= requiredDocumentCount;
-    const nextStatus = documentsSatisfied && requiredDocumentCount > 0 ? "pending_review" : documentsSatisfied ? "approved" : milestone.gateStatus;
+    const confirmationSatisfied = !milestone.customerConfirmationRequired || Boolean(milestone.customerConfirmationAt);
+    const nextStatus = documentsSatisfied && confirmationSatisfied && requiredDocumentCount > 0
+      ? "pending_review"
+      : documentsSatisfied && confirmationSatisfied
+        ? "approved"
+        : milestone.gateStatus;
     const updated = await this.prisma.$transaction(async (tx) => {
       const result = await tx.projectMilestone.update({ where: { id: milestone.id }, data: { gateStatus: nextStatus } });
       if (nextStatus === "approved") {
@@ -1641,7 +1657,7 @@ export class ProjectsService {
       }
       return result;
     });
-    return { ...updated, requiredDocumentCount, submittedDocumentCount, documentsSatisfied };
+    return { ...updated, requiredDocumentCount, submittedDocumentCount, documentsSatisfied, confirmationSatisfied };
   }
 
   async reorderProjectHierarchy(

@@ -209,6 +209,7 @@ async function fetchLiveProjectWorkItems(projectId: string, signal?: AbortSignal
             requiredDocumentCount: gate.requiredDocumentCount,
             submittedDocumentCount: gate.submittedDocumentCount,
             customerConfirmationRequired: gate.customerConfirmationRequired,
+            customerConfirmationAt: gate.customerConfirmationAt,
             unlockCriteria: gate.unlockCriteria
           }
         : milestone;
@@ -527,6 +528,7 @@ interface Milestone {
   requiredDocumentCount?: number;
   submittedDocumentCount?: number;
   customerConfirmationRequired?: boolean;
+  customerConfirmationAt?: string;
   unlockCriteria?: string;
   order: number;
 }
@@ -1828,6 +1830,7 @@ function ProjectDeliveryWireframePanels({
   onOpenTasks,
   onOpenDocuments,
   onAdvanceMilestone,
+  onCustomerConfirmationChange,
   handoffBusy,
   handoffError
 }: {
@@ -1842,6 +1845,7 @@ function ProjectDeliveryWireframePanels({
   onOpenTasks: () => void;
   onOpenDocuments: () => void;
   onAdvanceMilestone: () => void | Promise<void>;
+  onCustomerConfirmationChange: (confirmed: boolean) => void | Promise<void>;
   handoffBusy: boolean;
   handoffError?: string | null;
 }) {
@@ -1858,7 +1862,7 @@ function ProjectDeliveryWireframePanels({
   // A milestone with no required evidence is already satisfied. Treating
   // zero as "not ready" leaves every default project locked forever.
   const documentsReady = !documentsConfigured || submittedDocuments >= requiredDocuments;
-  const confirmationReady = !activeMilestone?.customerConfirmationRequired;
+  const confirmationReady = !activeMilestone?.customerConfirmationRequired || Boolean(activeMilestone.customerConfirmationAt);
   const gateConfigured = documentsConfigured || Boolean(activeMilestone?.customerConfirmationRequired) || Boolean(activeMilestone?.unlockCriteria);
   const gateOpen = activeMilestone?.gateStatus !== "locked" && activeMilestone?.gateStatus !== "approved";
   const handoffReady = Boolean(activeMilestone) && gateOpen && gateConfigured && documentsReady && confirmationReady;
@@ -1902,7 +1906,7 @@ function ProjectDeliveryWireframePanels({
           <div className="mt-4 space-y-2.5">
             {[
               { label: "Tài liệu bắt buộc", detail: documentsConfigured ? `${submittedDocuments}/${requiredDocuments} hồ sơ` : "Không yêu cầu", ready: documentsReady, action: onOpenDocuments },
-              { label: "Xác nhận khách hàng", detail: activeMilestone?.customerConfirmationRequired ? "Chưa ghi nhận" : "Không yêu cầu", ready: confirmationReady },
+              { label: "Xác nhận khách hàng", detail: activeMilestone?.customerConfirmationRequired ? confirmationReady ? "Đã ghi nhận" : "Chưa ghi nhận" : "Không yêu cầu", ready: confirmationReady, confirmation: activeMilestone?.customerConfirmationRequired ? { checked: confirmationReady } : undefined },
               { label: "Tiêu chí chuyển trạng thái", detail: activeMilestone?.unlockCriteria || "Theo checklist milestone", ready: handoffReady }
             ].map((item) => (
               <div key={item.label} className="flex items-start gap-2.5 rounded-lg border border-border bg-background px-3 py-2.5">
@@ -1910,6 +1914,7 @@ function ProjectDeliveryWireframePanels({
                   {item.ready ? <Check className="h-3 w-3" aria-hidden="true" /> : <Clock className="h-3 w-3" aria-hidden="true" />}
                 </span>
                 <div className="min-w-0 flex-1"><p className="text-xs font-semibold text-foreground">{item.label}</p><p className="mt-0.5 truncate text-[11px] text-muted-foreground">{item.detail}</p></div>
+                {item.confirmation ? <input type="checkbox" checked={item.confirmation.checked} disabled={handoffBusy} onChange={(event) => void onCustomerConfirmationChange(event.target.checked)} aria-label="Xác nhận khách hàng" className="mt-0.5 h-4 w-4 shrink-0 accent-primary disabled:cursor-not-allowed disabled:opacity-60" /> : null}
                 {item.action ? <button type="button" onClick={item.action} className="text-[11px] font-semibold text-primary hover:underline">Mở</button> : null}
               </div>
             ))}
@@ -6287,6 +6292,40 @@ export default function ProjectDetailPage() {
     }
   }, [handoffBusy, milestones, projectId, reloadCanonicalHierarchy]);
 
+  const handleCustomerConfirmationChange = useCallback(async (confirmed: boolean) => {
+    if (handoffBusy) return;
+    const activeMilestone = milestones.find((milestone) => milestone.gateStatus === "open")
+      ?? milestones.find((milestone) => milestone.status === "in-progress" && milestone.gateStatus !== "locked" && milestone.gateStatus !== "approved")
+      ?? milestones[0];
+    if (!activeMilestone?.customerConfirmationRequired) return;
+
+    setHandoffBusy(true);
+    setHandoffError(null);
+    try {
+      const response = await fetch(
+        withProjectPrincipal(`/api/projects/${encodeURIComponent(projectId)}/milestones/${encodeURIComponent(activeMilestone.id)}/gate`),
+        {
+          method: "PATCH",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ customerConfirmationConfirmed: confirmed })
+        }
+      );
+      if (response.status === 401) {
+        window.location.assign(`/login?returnTo=${encodeURIComponent(`/projects/${projectId}?tab=Overview`)}`);
+        return;
+      }
+      const payload = await response.json().catch(() => null) as { message?: string } | null;
+      if (!response.ok) throw new Error(payload?.message || `Không thể cập nhật xác nhận khách hàng (${response.status}).`);
+      const refreshed = await reloadCanonicalHierarchy();
+      if (!refreshed) throw new Error("Không thể tải lại trạng thái milestone.");
+    } catch (error) {
+      setHandoffError(error instanceof Error ? error.message : "Không thể cập nhật xác nhận khách hàng.");
+    } finally {
+      setHandoffBusy(false);
+    }
+  }, [handoffBusy, milestones, projectId, reloadCanonicalHierarchy]);
+
   const handleHierarchyReorder = useCallback(async (
     kind: ProjectHierarchyOrderKind,
     parentId: string | null,
@@ -7482,13 +7521,6 @@ export default function ProjectDetailPage() {
               ))}
             </div>
 
-            <div className={`mt-4 flex flex-col gap-3 rounded-xl border px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${coordinationCount > 0 ? "border-amber-200 bg-amber-50/70" : "border-emerald-200 bg-emerald-50/70"}`}>
-              <div className="flex min-w-0 items-start gap-2.5">
-                {coordinationCount > 0 ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />}
-                <div><p className="text-xs font-bold text-foreground">{coordinationCount > 0 ? `${coordinationCount} tín hiệu cần điều phối` : "Project đang trong trạng thái ổn định"}</p><p className="mt-0.5 text-[11px] text-muted-foreground">{openRiskCount} vấn đề mở · {overdueTaskCount} task quá hạn · {milestones.filter((milestone) => milestone.status === "at-risk").length} milestone có rủi ro</p></div>
-              </div>
-              <button type="button" onClick={() => handleTabChange("Issues")} className="inline-flex shrink-0 items-center justify-center rounded-lg border border-amber-300 bg-white/80 px-3 py-2 text-xs font-semibold text-amber-800 transition hover:bg-white">Mở Sổ vấn đề →</button>
-            </div>
           </div>
 
           {/* Tabs */}
@@ -7550,6 +7582,7 @@ export default function ProjectDetailPage() {
                     onOpenTasks={() => handleTabChange("Tasks")}
                     onOpenDocuments={() => handleTabChange("Documents")}
                     onAdvanceMilestone={handleAdvanceMilestone}
+                    onCustomerConfirmationChange={handleCustomerConfirmationChange}
                     handoffBusy={handoffBusy}
                     handoffError={handoffError}
                   />
