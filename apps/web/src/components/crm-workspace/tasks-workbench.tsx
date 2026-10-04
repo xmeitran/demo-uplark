@@ -197,7 +197,8 @@ export function CustomDropdown({
   value,
   options,
   onChange,
-  openDirection = "down"
+  openDirection = "down",
+  disabled = false
 }: {
   id?: string;
   label: React.ReactNode;
@@ -205,6 +206,7 @@ export function CustomDropdown({
   options: TaskSelectOption[];
   onChange: (val: string) => void;
   openDirection?: "up" | "down";
+  disabled?: boolean;
 }) {
   const generatedId = useId();
   const [open, setOpen] = useState(false);
@@ -241,13 +243,17 @@ export function CustomDropdown({
       <button
         ref={triggerRef}
         aria-controls={listboxId}
+        aria-disabled={disabled}
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-labelledby={`${controlId}-label ${controlId}-value`}
         className={`w-full min-h-11 flex items-center justify-between gap-2.5 px-3 py-2 border rounded-xl bg-slate-50 hover:bg-white transition text-left cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-blue-500/25 ${
-          open ? "border-blue-500 ring-2 ring-blue-500/15 bg-white" : "border-slate-200"
+          disabled ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-500 opacity-80" : open ? "border-blue-500 ring-2 ring-blue-500/15 bg-white" : "border-slate-200"
         }`}
-        onClick={() => setOpen(!open)}
+        disabled={disabled}
+        onClick={() => {
+          if (!disabled) setOpen(!open);
+        }}
         type="button"
       >
         <span className="flex items-center gap-2 min-w-0" id={`${controlId}-value`}>
