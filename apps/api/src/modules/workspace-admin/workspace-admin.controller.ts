@@ -52,6 +52,12 @@ export class WorkspaceAdminController {
     return this.admin.alerts(principal);
   }
 
+  @Get("history")
+  async history(@Headers("authorization") authorization?: string, @Query("principal") principalFallback?: string, @Query("limit") limit?: string) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.admin.history(principal, Number(limit));
+  }
+
   @Patch("reminders")
   async updateReminders(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Body() input: UpdateWorkspaceReminderPolicyInput) {
     const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);

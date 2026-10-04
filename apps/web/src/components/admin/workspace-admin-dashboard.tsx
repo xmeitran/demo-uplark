@@ -30,6 +30,7 @@ import type {
   AdminAlertType,
   AdminAlertsResponse,
   AdminApprovalsResponse,
+  AdminHistoryResponse,
   AdminOverviewResponse,
   CreateProjectMilestoneInput,
   CreateProjectMilestoneTemplateInput,
@@ -55,7 +56,7 @@ import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-t
 import { milestoneReviewerOptions, WORKSPACE_ADMIN_REVIEWER_VALUE } from "./milestone-reviewer-options";
 
 const ADMIN_ROLES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN"]);
-type AdminSection = "overview" | "alerts" | "day-offs" | "reminders" | "milestones" | "approval" | "pnl-config";
+type AdminSection = "overview" | "alerts" | "day-offs" | "reminders" | "milestones" | "approval" | "history" | "pnl-config";
 type MilestoneView = "templates" | "project-gates";
 
 const MILESTONE_TAB_ITEMS: WorkspaceTabItem<MilestoneView>[] = [
@@ -116,6 +117,7 @@ export function WorkspaceAdminDashboard() {
   const [policy, setPolicy] = useState<WorkspaceReminderPolicy | null>(null);
   const [reminderRecipients, setReminderRecipients] = useState<WorkspaceReminderRecipientsResponse["data"]>({ users: [], teams: [] });
   const [alertDetails, setAlertDetails] = useState<AdminAlertDetailRow[]>([]);
+  const [historyEntries, setHistoryEntries] = useState<AdminHistoryResponse["data"]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
@@ -138,7 +140,7 @@ export function WorkspaceAdminDashboard() {
     setMilestoneTemplatesLoading(true);
     setError(null);
     try {
-      const [overviewResponse, policyResponse, alertsResponse, recipientsResponse, projectsResponse, templatesResponse] = await Promise.all([
+      const [overviewResponse, policyResponse, alertsResponse, recipientsResponse, projectsResponse, templatesResponse, historyResponse] = await Promise.all([
         fetch("/api/admin/overview", { cache: "no-store", credentials: "same-origin" }),
         fetch("/api/admin/reminders", { cache: "no-store", credentials: "same-origin" }),
         fetch("/api/admin/alerts", { cache: "no-store", credentials: "same-origin" }),
@@ -146,7 +148,8 @@ export function WorkspaceAdminDashboard() {
         // Keep the local admin screen usable before an auth session is created.
         // The BFF ignores this fallback when a real Lark session is present.
         fetch("/api/projects?limit=100&offset=0&principal=founder", { cache: "no-store", credentials: "same-origin" }),
-        fetch("/api/milestone-templates?principal=founder", { cache: "no-store", credentials: "same-origin" })
+        fetch("/api/milestone-templates?principal=founder", { cache: "no-store", credentials: "same-origin" }),
+        fetch("/api/admin/history?limit=12", { cache: "no-store", credentials: "same-origin" })
       ]);
       const overviewBody = await overviewResponse.json().catch(() => null);
       const policyBody = await policyResponse.json().catch(() => null);
@@ -154,16 +157,19 @@ export function WorkspaceAdminDashboard() {
       const recipientsBody = await recipientsResponse.json().catch(() => null);
       const templatesBody = await templatesResponse.json().catch(() => null);
       const projectsBody = await projectsResponse.json().catch(() => null);
+      const historyBody = await historyResponse.json().catch(() => null);
       if (!overviewResponse.ok) throw new Error(errorMessage(overviewBody, "Không tải được tổng quan admin."));
       if (!policyResponse.ok) throw new Error(errorMessage(policyBody, "Không tải được lịch nhắc Lark."));
       if (!alertsResponse.ok) throw new Error(errorMessage(alertsBody, "Không tải được chi tiết cảnh báo."));
       if (!recipientsResponse.ok) throw new Error(errorMessage(recipientsBody, "Không tải được danh sách người nhận nhắc Lark."));
       if (!templatesResponse.ok) throw new Error(errorMessage(templatesBody, "Không tải được danh sách template milestone."));
+      if (!historyResponse.ok) throw new Error(errorMessage(historyBody, "Không tải được lịch sử thao tác admin."));
       setOverview((overviewBody as AdminOverviewResponse).data);
       setPolicy((policyBody as { data: WorkspaceReminderPolicy }).data);
       setAlertDetails((alertsBody as AdminAlertsResponse).data);
       setReminderRecipients((recipientsBody as WorkspaceReminderRecipientsResponse).data);
       setMilestoneTemplates((templatesBody as { data?: ProjectMilestoneTemplateSummary[] }).data ?? []);
+      setHistoryEntries((historyBody as AdminHistoryResponse).data ?? []);
       if (projectsResponse.ok) {
         const projects = (projectsBody as { data?: ProjectSummary[] } | null)?.data ?? [];
         setProjectOptions(projects);
@@ -182,7 +188,7 @@ export function WorkspaceAdminDashboard() {
   useEffect(() => {
     const syncHash = () => {
       const hash = window.location.hash.replace(/^#/, "");
-      if (hash === "alerts" || hash === "day-offs" || hash === "reminders" || hash === "milestones") setSection(hash);
+      if (hash === "alerts" || hash === "day-offs" || hash === "reminders" || hash === "milestones" || hash === "approval" || hash === "history") setSection(hash);
       else setSection("overview");
     };
     syncHash();
@@ -307,49 +313,35 @@ export function WorkspaceAdminDashboard() {
     );
   }
 
-  const alertCount = alertDetails.filter((alert) => alert.severity !== "info").length;
-
   return (
     <AppShell activeRoute="/admin" title="Admin workspace">
       <main className="min-h-0 flex-1 overflow-y-auto bg-background p-4 sm:p-6">
         <div className="mx-auto grid max-w-[1480px] gap-5">
-          <header className="rounded-xl border border-border bg-card px-5 py-5 shadow-sm sm:px-6">
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <header className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+            <div className="flex flex-col gap-5 bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950 px-5 py-6 text-white sm:px-7 lg:flex-row lg:items-end lg:justify-between">
               <div>
-                <p className="text-xs font-semibold text-primary">ADMIN · WORKSPACE CONTROL</p>
-                <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl">Điều hành workspace</h1>
-                <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">Một nơi duy nhất để xử lý cảnh báo, khóa ngày nghỉ và điều phối nhắc Lark.</p>
+                <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-blue-200"><span className="h-2 w-2 rounded-full bg-emerald-400" /> Workspace control center</div>
+                <h1 className="!mt-2 !text-2xl !font-extrabold !tracking-tight !text-slate-100 sm:!text-3xl">Điều hành workspace</h1>
+                <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-300">Theo dõi vấn đề cần xử lý, kiểm soát các gate quan trọng và xem ai đã thay đổi cấu hình.</p>
               </div>
-              <div className="inline-flex items-center gap-2 self-start rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs font-semibold text-muted-foreground lg:self-auto"><span className="h-2 w-2 rounded-full bg-emerald-500" /> {overview?.workspace.name ?? "Workspace"} · {overview?.workspace.timezone ?? "Asia/Ho_Chi_Minh"}</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-semibold text-slate-200"><span className="h-2 w-2 rounded-full bg-emerald-400" /> {overview?.workspace.name ?? "Workspace"}</div>
+                <button type="button" onClick={() => void load()} disabled={loading} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-white px-3.5 text-sm font-bold text-slate-900 transition hover:bg-blue-50 disabled:cursor-wait disabled:opacity-70"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Làm mới</button>
+              </div>
+            </div>
+            <div className="grid gap-3 border-t border-border bg-white p-4 sm:grid-cols-3 sm:px-7">
+              <AdminHeaderMetric label="Task đang mở" value={overview?.metrics.openTasks} tone="blue" />
+              <AdminHeaderMetric label="Task quá hạn" value={overview?.metrics.overdueTasks} tone="rose" />
+              <AdminHeaderMetric label="Ngày nghỉ sắp tới" value={overview?.metrics.upcomingDayOffs} tone="amber" />
             </div>
           </header>
-
-          <div className="-mx-4 -mt-4 bg-background/95 px-4 py-1.5 sm:-mx-6 sm:-mt-6 sm:px-6">
-            <nav aria-label="Admin sections" className="mx-auto max-w-[1480px]">
-                <WorkspaceTabBar
-                  items={[
-                    { id: "overview" as AdminSection, label: "Tổng quan", description: "Sức khỏe workspace", icon: <LayoutDashboard className="h-4 w-4" /> },
-                    { id: "alerts" as AdminSection, label: "Cảnh báo", description: "Estimate & Actual", badge: alertDetails.length || undefined, icon: <TriangleAlert className="h-4 w-4" /> },
-                    { id: "day-offs" as AdminSection, label: "Ngày nghỉ", description: "Khóa ngày & loại phí", icon: <CalendarDays className="h-4 w-4" /> },
-                    { id: "reminders" as AdminSection, label: "Nhắc Lark", description: "Lịch gửi & người nhận", icon: <BellRing className="h-4 w-4" /> },
-                    { id: "milestones" as AdminSection, label: "Milestone", description: "Template & gate", icon: <LockKeyhole className="h-4 w-4" /> },
-                    { id: "approval" as AdminSection, label: "Approval", description: "Hồ sơ chờ duyệt", icon: <ShieldCheck className="h-4 w-4" /> },
-                    { id: "pnl-config" as AdminSection, label: "Thiết lập P&L", description: "Khoản mục & kỳ khóa", icon: <Settings2 className="h-4 w-4" /> }
-                  ]}
-                  value={section}
-                  onChange={selectSection}
-                  ariaLabel="Admin sections"
-                  idPrefix="admin"
-                  className="w-full"
-                />
-                {alertCount > 0 ? <div className="mt-2 flex items-center justify-end gap-1.5 px-1 text-xs font-semibold text-amber-700"><TriangleAlert className="h-3.5 w-3.5" /> {alertCount} cần xử lý</div> : null}
-            </nav>
-          </div>
 
           {error ? <div role="alert" className="flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />{error}</div> : null}
           {notice ? <div role="status" className="flex items-start gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"><Check className="mt-0.5 h-4 w-4 shrink-0" />{notice}</div> : null}
 
-          <div id="admin-content" className="scroll-mt-24">
+          <div className="grid gap-5 lg:grid-cols-[230px_minmax(0,1fr)] lg:items-start">
+            <AdminNavigation section={section} alertCount={alertDetails.length} onChange={selectSection} />
+            <div id="admin-content" className="min-w-0 scroll-mt-24">
             {section === "overview" ? <OverviewPanel overview={overview} loading={loading} onRefresh={() => void load()} onOpen={selectSection} /> : null}
             {section === "alerts" ? <AlertsPanel rows={alertDetails} loading={loading} onRefresh={() => void load()} /> : null}
             {section === "day-offs" ? <section aria-label="Quản lý ngày nghỉ"><WorkspaceDayOffSettings /></section> : null}
@@ -407,11 +399,80 @@ export function WorkspaceAdminDashboard() {
             }} />}
             </> : null}
             {section === "approval" ? <ApprovalPanel /> : null}
+            {section === "history" ? <AdminHistoryPanel entries={historyEntries} loading={loading} onRefresh={() => void load()} /> : null}
+            </div>
           </div>
         </div>
       </main>
     </AppShell>
   );
+}
+
+function AdminHeaderMetric({ label, value, tone }: { label: string; value?: number; tone: "blue" | "rose" | "amber" }) {
+  const toneClass = tone === "rose" ? "bg-rose-50 text-rose-700" : tone === "amber" ? "bg-amber-50 text-amber-700" : "bg-blue-50 text-blue-700";
+  return <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-slate-50/70 px-3.5 py-3"><span className="text-xs font-semibold text-slate-500">{label}</span><span className={`rounded-lg px-2.5 py-1 text-sm font-extrabold tabular-nums ${toneClass}`}>{value ?? "—"}</span></div>;
+}
+
+const ADMIN_NAV_GROUPS: Array<{ label: string; items: Array<{ id: AdminSection; label: string; description: string; icon: ReactNode; badge?: string | number }> }> = [
+  {
+    label: "ĐIỀU HÀNH",
+    items: [
+      { id: "overview", label: "Tổng quan", description: "Sức khỏe workspace", icon: <LayoutDashboard className="h-4 w-4" /> },
+      { id: "alerts", label: "Cảnh báo", description: "Estimate · Actual · deadline", icon: <TriangleAlert className="h-4 w-4" /> },
+      { id: "approval", label: "Approval", description: "Hồ sơ chờ duyệt", icon: <ShieldCheck className="h-4 w-4" /> }
+    ]
+  },
+  {
+    label: "CẤU HÌNH VẬN HÀNH",
+    items: [
+      { id: "milestones", label: "Milestone", description: "Template và gate", icon: <LockKeyhole className="h-4 w-4" /> },
+      { id: "day-offs", label: "Ngày nghỉ", description: "Khóa ngày và loại phí", icon: <CalendarDays className="h-4 w-4" /> },
+      { id: "reminders", label: "Nhắc Lark", description: "Lịch gửi và người nhận", icon: <BellRing className="h-4 w-4" /> }
+    ]
+  },
+  {
+    label: "KIỂM SOÁT",
+    items: [
+      { id: "history", label: "Lịch sử", description: "Ai đã thay đổi gì", icon: <Clock3 className="h-4 w-4" /> },
+      { id: "pnl-config", label: "Thiết lập P&L", description: "Khoản mục và kỳ khóa", icon: <Settings2 className="h-4 w-4" /> }
+    ]
+  }
+];
+
+function AdminNavigation({ section, alertCount, onChange }: { section: AdminSection; alertCount: number; onChange: (section: AdminSection) => void }) {
+  return <aside className="rounded-3xl border border-border bg-card p-3 shadow-sm lg:sticky lg:top-5">
+    <div className="border-b border-border px-2 pb-3"><p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary">ADMIN SPACE</p><h2 className="mt-1 text-sm font-bold text-slate-950">Điều hướng</h2><p className="mt-1 text-xs leading-relaxed text-slate-500">Chọn một khu vực để xử lý hoặc cấu hình.</p></div>
+    <nav aria-label="Admin sections" className="mt-3 space-y-4">
+      {ADMIN_NAV_GROUPS.map((group) => <div key={group.label}><p className="px-2 text-[10px] font-bold tracking-[0.14em] text-slate-400">{group.label}</p><div className="mt-1.5 space-y-1">{group.items.map((item) => {
+        const active = section === item.id;
+        const badge = item.id === "alerts" && alertCount > 0 ? alertCount : undefined;
+        return <button key={item.id} type="button" aria-current={active ? "page" : undefined} onClick={() => onChange(item.id)} className={`group flex w-full items-start gap-3 rounded-2xl border px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${active ? "border-blue-200 bg-blue-50 text-blue-800 shadow-sm" : "border-transparent text-slate-600 hover:border-border hover:bg-slate-50 hover:text-slate-950"}`}>
+          <span className={`mt-0.5 shrink-0 ${active ? "text-primary" : "text-slate-400 group-hover:text-slate-600"}`}>{item.icon}</span>
+          <span className="min-w-0 flex-1"><span className="flex items-center gap-2 text-sm font-bold"><span className="truncate">{item.label}</span>{badge ? <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${active ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-600"}`}>{badge}</span> : null}</span><span className="mt-0.5 block truncate text-[11px] leading-4 text-slate-500">{item.description}</span></span>
+        </button>;
+      })}</div></div>)}
+    </nav>
+    <div className="mt-4 rounded-2xl bg-slate-950 px-3 py-3 text-white"><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-blue-200">Gợi ý</p><p className="mt-1 text-xs leading-relaxed text-slate-300">Xử lý Cảnh báo và Approval trước, sau đó mới chỉnh cấu hình.</p></div>
+  </aside>;
+}
+
+function historyActionLabel(action: string) {
+  const labels: Record<string, string> = {
+    "project.milestone_approved": "Duyệt milestone",
+    "project.milestone_gate_updated": "Cập nhật gate milestone",
+    "workspace.reminder_policy_updated": "Cập nhật lịch nhắc Lark",
+    "workspace.day_off_created": "Tạo ngày nghỉ",
+    "workspace.day_off_updated": "Cập nhật ngày nghỉ",
+    "auth.member.role_changed": "Đổi quyền thành viên"
+  };
+  return labels[action] ?? action.replaceAll(".", " · ").replaceAll("_", " ");
+}
+
+function AdminHistoryPanel({ entries, loading, onRefresh }: { entries: AdminHistoryResponse["data"]; loading: boolean; onRefresh: () => void }) {
+  return <section aria-labelledby="admin-history-title" className="grid gap-5">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">AUDIT TIMELINE</p><h2 id="admin-history-title" className="mt-1 text-2xl font-bold tracking-tight text-slate-950">Lịch sử thao tác</h2><p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Các thay đổi đã ghi nhận trong workspace: ai thao tác, tác động vào đâu và thời điểm nào.</p></div><button type="button" onClick={onRefresh} disabled={loading} className="inline-flex min-h-10 items-center justify-center gap-2 self-start rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Làm mới</button></div>
+    <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm"><div className="flex items-center justify-between border-b border-border bg-slate-50/70 px-5 py-4"><div><h3 className="text-base font-bold text-slate-950">Hoạt động gần đây</h3><p className="mt-1 text-xs text-slate-500">Lịch sử chỉ hiển thị record thực tế, không tạo dữ liệu mẫu.</p></div><span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-bold text-slate-600">{entries.length} record</span></div>{loading && !entries.length ? <div className="p-10 text-center text-sm text-slate-500">Đang tải lịch sử…</div> : null}{!loading && !entries.length ? <div className="p-12 text-center"><Clock3 className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 text-sm font-bold text-slate-900">Chưa có lịch sử</p><p className="mt-1 text-xs text-slate-500">Các thao tác admin sau này sẽ xuất hiện tại đây.</p></div> : null}{entries.length ? <ol className="divide-y divide-border">{entries.map((entry) => <li key={entry.id} className="flex gap-3 px-5 py-4"><span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700"><Clock3 className="h-4 w-4" /></span><div className="min-w-0 flex-1"><div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"><p className="text-sm font-bold text-slate-900">{historyActionLabel(entry.action)}</p><time dateTime={entry.createdAt} className="text-[11px] font-medium text-slate-400">{new Date(entry.createdAt).toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" })}</time></div><p className="mt-1 text-xs text-slate-500">{entry.actorDisplayName ?? "Hệ thống"} · {entry.resource}{entry.resourceId ? ` · ${entry.resourceId}` : ""}</p></div></li>)}</ol> : null}</section>
+  </section>;
 }
 
 function ApprovalPanel() {

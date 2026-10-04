@@ -3425,6 +3425,22 @@ export interface AdminOverviewResponse {
   };
 }
 
+export interface AdminHistoryEntry {
+  id: string;
+  action: string;
+  resource: string;
+  resourceId?: string;
+  actorUserId?: string;
+  actorDisplayName?: string;
+  requestId: string;
+  createdAt: string;
+}
+
+export interface AdminHistoryResponse {
+  data: AdminHistoryEntry[];
+  meta: { total: number };
+}
+
 export type AdminAlertType = "delay_risk" | "over_estimate" | "waiting_task" | "missing_estimate" | "missing_actual" | "missing_deadline" | "missing_mapping";
 
 export interface AdminAlertDetailRow {

@@ -4,6 +4,7 @@ import { createHmac, randomUUID } from "node:crypto";
 import type {
   AdminAlertDetailRow,
   AdminAlertType,
+  AdminHistoryResponse,
   AdminOverviewAlert,
   CreateWorkspaceTeamInput,
   PrincipalContext,
@@ -643,6 +644,39 @@ export class WorkspaceAdminService {
     rows.sort((a, b) => severityRank[a.severity] - severityRank[b.severity] || b.affectedTaskCount - a.affectedTaskCount || a.project.name.localeCompare(b.project.name));
     const counts = rows.reduce<Partial<Record<AdminAlertType, number>>>((acc, row) => { acc[row.type] = (acc[row.type] ?? 0) + 1; return acc; }, {});
     return { data: rows, meta: { total: rows.length, generatedAt: new Date().toISOString(), counts } };
+  }
+
+  async history(principal: PrincipalContext, requestedLimit = 12): Promise<AdminHistoryResponse> {
+    assertAdmin(principal);
+    const limit = Math.min(Math.max(Math.trunc(requestedLimit) || 12, 1), 50);
+    const where = { workspaceId: principal.workspaceId };
+    const [events, total] = await Promise.all([
+      this.prisma.auditEvent.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: limit,
+        select: { id: true, action: true, resource: true, resourceId: true, actorUserId: true, requestId: true, createdAt: true }
+      }),
+      this.prisma.auditEvent.count({ where })
+    ]);
+    const actorIds = Array.from(new Set(events.map((event) => event.actorUserId).filter((id): id is string => Boolean(id))));
+    const actors = actorIds.length
+      ? await this.prisma.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, displayName: true } })
+      : [];
+    const actorNames = new Map(actors.map((actor) => [actor.id, actor.displayName]));
+    return {
+      data: events.map((event) => ({
+        id: event.id,
+        action: event.action,
+        resource: event.resource,
+        resourceId: event.resourceId ?? undefined,
+        actorUserId: event.actorUserId ?? undefined,
+        actorDisplayName: event.actorUserId ? actorNames.get(event.actorUserId) : undefined,
+        requestId: event.requestId,
+        createdAt: event.createdAt.toISOString()
+      })),
+      meta: { total }
+    };
   }
 
   async updateReminderPolicy(input: UpdateWorkspaceReminderPolicyInput, principal: PrincipalContext) {
