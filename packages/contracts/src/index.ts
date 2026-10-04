@@ -1119,6 +1119,48 @@ export interface ProjectHierarchySummary {
   milestones: ProjectMilestoneSummary[];
 }
 
+export interface AppNotificationSummary {
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  href: string;
+  entityType: string;
+  entityId: string;
+  status: "pending" | "resolved" | "read";
+  createdAt: string;
+  readAt?: string;
+  data?: {
+    projectId?: string;
+    projectCode?: string;
+    projectName?: string;
+    milestoneId?: string;
+    milestoneName?: string;
+    reviewerName?: string;
+  };
+}
+
+export interface AppNotificationsResponse {
+  data: AppNotificationSummary[];
+  meta: { unreadCount: number };
+}
+
+export interface AdminApprovalQueueItem {
+  id: string;
+  project: { id: string; code: string; name: string; href: string };
+  milestone: { id: string; name: string; sortOrder: number };
+  requesterLabel: string;
+  reviewerLabel: string;
+  reviewerMode: ProjectMilestoneReviewerMode;
+  pendingSince: string;
+  canApprove: boolean;
+}
+
+export interface AdminApprovalsResponse {
+  data: AdminApprovalQueueItem[];
+  meta: { total: number; pendingForMe: number };
+}
+
 export interface CreateProjectTaskInput {
   accountId: string;
   projectId?: string;

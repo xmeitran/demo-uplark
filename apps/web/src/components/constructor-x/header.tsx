@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Bell, ChevronDown, Moon, Search, Settings, Sun } from "lucide-react";
+import { Bell, Check, ChevronDown, ExternalLink, Loader2, Moon, Search, Settings, Sun } from "lucide-react";
+import type { AppNotificationSummary, AppNotificationsResponse } from "@b2b-crm/contracts";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
@@ -11,6 +12,22 @@ import { useTheme } from "@/lib/theme";
 
 interface HeaderProps {
   title?: string;
+}
+
+function notificationTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" });
+}
+
+function notificationApiError(body: unknown, fallback: string) {
+  if (!body || typeof body !== "object") return fallback;
+  const message = (body as { message?: unknown }).message;
+  if (typeof message === "string") return message;
+  if (message && typeof message === "object" && "message" in message && typeof (message as { message?: unknown }).message === "string") {
+    return (message as { message: string }).message;
+  }
+  return fallback;
 }
 
 export function Header({ title }: HeaderProps) {
@@ -22,6 +39,11 @@ export function Header({ title }: HeaderProps) {
   const [searchValue, setSearchValue] = useState("");
   const [activeResult, setActiveResult] = useState(0);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [notifications, setNotifications] = useState<AppNotificationSummary[]>([]);
+  const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
+  const [notificationLoading, setNotificationLoading] = useState(false);
+  const [notificationActionId, setNotificationActionId] = useState<string | null>(null);
+  const [notificationError, setNotificationError] = useState<string | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
@@ -38,6 +60,57 @@ export function Header({ title }: HeaderProps) {
   const routes = useMemo(() => getShellRoutes("constructor", navigationEnvironment), [navigationEnvironment]);
   const results = routes.filter((route) => `${route.label} ${route.href}`.toLowerCase().includes(searchValue.trim().toLowerCase()));
   const currentTitle = title || matchProductRoute(pathname)?.label || "Dashboard";
+
+  const loadNotifications = useCallback(async () => {
+    if (!user) return;
+    setNotificationLoading(true);
+    try {
+      const response = await fetch("/api/notifications", { cache: "no-store", credentials: "same-origin" });
+      const body = await response.json().catch(() => null) as AppNotificationsResponse | { message?: string } | null;
+      if (!response.ok) throw new Error((body as { message?: string } | null)?.message || "Không tải được thông báo.");
+      const payload = body as AppNotificationsResponse;
+      setNotifications(payload.data ?? []);
+      setNotificationUnreadCount(payload.meta?.unreadCount ?? 0);
+      setNotificationError(null);
+    } catch (error) {
+      setNotificationError(error instanceof Error ? error.message : "Không tải được thông báo.");
+    } finally {
+      setNotificationLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    void loadNotifications();
+    const timer = window.setInterval(() => void loadNotifications(), 30000);
+    return () => window.clearInterval(timer);
+  }, [loadNotifications]);
+
+  async function markNotificationRead(notification: AppNotificationSummary) {
+    if (notification.readAt || notification.status === "resolved") return;
+    await fetch(`/api/notifications/${encodeURIComponent(notification.id)}/read`, { method: "PATCH", credentials: "same-origin" }).catch(() => undefined);
+    setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, readAt: new Date().toISOString(), status: "read" } : item));
+    setNotificationUnreadCount((current) => Math.max(0, current - 1));
+  }
+
+  async function approveFromNotification(notification: AppNotificationSummary) {
+    const projectId = notification.data?.projectId;
+    const milestoneId = notification.data?.milestoneId;
+    if (!projectId || !milestoneId) return;
+    setNotificationActionId(notification.id);
+    setNotificationError(null);
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/milestones/${encodeURIComponent(milestoneId)}/approve`, { method: "POST", credentials: "same-origin", cache: "no-store" });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(notificationApiError(body, "Không thể duyệt milestone."));
+      setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, status: "resolved", readAt: new Date().toISOString() } : item));
+      setNotificationUnreadCount((current) => Math.max(0, current - (notification.readAt ? 0 : 1)));
+      window.dispatchEvent(new CustomEvent("crm:milestone-approved", { detail: { projectId, milestoneId } }));
+    } catch (error) {
+      setNotificationError(error instanceof Error ? error.message : "Không thể duyệt milestone.");
+    } finally {
+      setNotificationActionId(null);
+    }
+  }
 
   function closeNotifications(returnFocus = true) {
     setNotifOpen(false);
@@ -156,11 +229,24 @@ export function Header({ title }: HeaderProps) {
           {theme.isDark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-indigo-500" />}
         </button>
         <div className="relative">
-          <button ref={notificationTriggerRef} aria-controls="notification-popover" aria-expanded={notifOpen} aria-label="Notifications" onClick={() => notifOpen ? closeNotifications(false) : setNotifOpen(true)} className="relative inline-flex h-11 w-11 items-center justify-center rounded-xl hover:bg-muted text-muted-foreground transition-colors" type="button"><Bell className="w-4 h-4" /></button>
+          <button ref={notificationTriggerRef} aria-controls="notification-popover" aria-expanded={notifOpen} aria-label="Notifications" onClick={() => notifOpen ? closeNotifications(false) : (setNotifOpen(true), void loadNotifications())} className="relative inline-flex h-11 w-11 items-center justify-center rounded-xl hover:bg-muted text-muted-foreground transition-colors" type="button"><Bell className="w-4 h-4" />{notificationUnreadCount > 0 ? <span aria-label={`${notificationUnreadCount} unread notifications`} className="absolute right-1.5 top-1.5 flex min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[9px] font-bold leading-4 text-white">{notificationUnreadCount > 9 ? "9+" : notificationUnreadCount}</span> : null}</button>
           {notifOpen && (
-            <section aria-label="Notifications" className="absolute right-0 top-full mt-2 w-[min(18rem,calc(100vw-2rem))] rounded-xl border border-border bg-popover p-4 shadow-lg" id="notification-popover">
-              <div className="flex items-center justify-between"><h2 className="text-sm font-semibold text-foreground">Notifications</h2><button aria-label="Close notifications" className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted" onClick={() => closeNotifications()} type="button">Close</button></div>
-              <p className="mt-3 rounded-lg bg-muted px-3 py-4 text-center text-xs text-muted-foreground">No notifications yet.</p>
+            <section aria-label="Notifications" className="absolute right-0 top-full z-50 mt-2 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-border bg-popover shadow-lg" id="notification-popover">
+              <div className="flex items-center justify-between border-b border-border px-4 py-3"><div><h2 className="text-sm font-semibold text-foreground">Notifications</h2><p className="mt-0.5 text-[11px] text-muted-foreground">Yêu cầu duyệt và cập nhật project</p></div><button aria-label="Close notifications" className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted" onClick={() => closeNotifications()} type="button">Close</button></div>
+              {notificationError ? <p role="alert" className="border-b border-rose-100 bg-rose-50 px-4 py-2 text-xs text-rose-700">{notificationError}</p> : null}
+              <div className="max-h-[min(32rem,calc(100vh-10rem))] overflow-y-auto p-2">
+                {notificationLoading && !notifications.length ? <div className="flex items-center justify-center gap-2 px-3 py-8 text-xs text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Đang tải…</div> : null}
+                {!notificationLoading && !notifications.length ? <p className="rounded-xl bg-muted px-3 py-8 text-center text-xs text-muted-foreground">No notifications yet.</p> : null}
+                {notifications.map((notification) => {
+                  const approval = notification.kind === "milestone_approval" && notification.status !== "resolved";
+                  const projectId = notification.data?.projectId;
+                  const milestoneId = notification.data?.milestoneId;
+                  return <article key={notification.id} className={`rounded-xl border p-3 ${notification.status === "resolved" ? "border-border bg-background opacity-70" : notification.readAt ? "border-border bg-background" : "border-blue-100 bg-blue-50/50"}`}>
+                    <div className="flex items-start gap-2"><span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${notification.status === "resolved" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"}`}>{notification.status === "resolved" ? <Check className="h-3.5 w-3.5" /> : <Bell className="h-3.5 w-3.5" />}</span><div className="min-w-0 flex-1"><p className="text-xs font-bold text-foreground">{notification.title}</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{notification.body}</p><p className="mt-1 text-[10px] text-muted-foreground">{notificationTime(notification.createdAt)}{notification.status === "resolved" ? " · Đã xử lý" : ""}</p></div></div>
+                    <div className="mt-2 flex items-center justify-end gap-2"><Link href={notification.href} onClick={() => void markNotificationRead(notification)} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-primary hover:bg-primary/10"><ExternalLink className="h-3 w-3" /> Mở project</Link>{approval && projectId && milestoneId ? <button type="button" disabled={notificationActionId === notification.id} onClick={() => void approveFromNotification(notification)} className="inline-flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1.5 text-[11px] font-bold text-primary-foreground hover:opacity-90 disabled:opacity-60">{notificationActionId === notification.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Duyệt</button> : null}</div>
+                  </article>;
+                })}
+              </div>
             </section>
           )}
         </div>

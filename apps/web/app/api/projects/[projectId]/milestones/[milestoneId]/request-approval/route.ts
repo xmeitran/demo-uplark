@@ -9,7 +9,7 @@ export async function POST(
   const { projectId, milestoneId } = await params;
   return proxyCrmBffJson({
     request,
-    path: `/projects/${encodeURIComponent(projectId)}/milestones/${encodeURIComponent(milestoneId)}/approve`,
+    path: `/projects/${encodeURIComponent(projectId)}/milestones/${encodeURIComponent(milestoneId)}/request-approval`,
     method: "POST",
     principalFallback: "founder"
   });

@@ -126,6 +126,17 @@ export class ProjectsController {
     return this.projects.evaluateProjectMilestoneGate(projectId, milestoneId, principal);
   }
 
+  @Post("projects/:projectId/milestones/:milestoneId/request-approval")
+  async requestMilestoneApproval(
+    @Headers("authorization") authorization: string | undefined,
+    @Query("principal") principalFallback: string | undefined,
+    @Param("projectId") projectId: string,
+    @Param("milestoneId") milestoneId: string
+  ) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.requestProjectMilestoneApproval(projectId, milestoneId, principal);
+  }
+
   @Post("projects/:projectId/milestones/:milestoneId/approve")
   async approveMilestoneGate(
     @Headers("authorization") authorization: string | undefined,

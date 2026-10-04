@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import { activeMembershipWhere } from "../identity-access/active-membership";
 import { SubjectStatus, type Prisma } from "@prisma/client";
@@ -35,6 +35,7 @@ import type {
   UpdateProjectTaskInput
 } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import {
   buildPaginationMeta,
   nonEmptyString,
@@ -1042,7 +1043,10 @@ function mapMilestoneTemplateSummary(row: any, readOnly = false) {
 
 @Injectable()
 export class ProjectsService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Optional() @Inject(NotificationsService) private readonly notifications?: NotificationsService
+  ) {}
 
   async listProjects(query: any, principal: PrincipalContext) {
     const pagination = normalizePagination({ limit: query.limit, offset: query.offset });
@@ -1898,6 +1902,8 @@ export class ProjectsService {
       return updated;
     });
 
+    await this.notifications?.resolveMilestoneNotifications(milestoneId, principal);
+
     return {
       ...result,
       ...evaluation,
@@ -1908,6 +1914,27 @@ export class ProjectsService {
       reviewerApprovedByUserId: principal.subjectId,
       reviewerApprovalRequired: false,
       canApprove: true
+    };
+  }
+
+  async requestProjectMilestoneApproval(projectId: string, milestoneId: string, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project milestone approval is internal");
+    const evaluation = await this.evaluateProjectMilestoneGate(projectId, milestoneId, principal);
+    if (!evaluation.satisfied) {
+      throw new BadRequestException({
+        message: "Milestone requirements are not complete",
+        missingRequirements: evaluation.missingRequirements
+      });
+    }
+    if (!this.notifications) {
+      throw new BadRequestException("Approval notification service is not configured");
+    }
+    const requested = await this.notifications.createMilestoneApprovalRequest({ projectId, milestoneId, principal });
+    return {
+      ...evaluation,
+      ...requested,
+      reviewerApprovalRequired: true,
+      canApprove: evaluation.canApprove
     };
   }
 

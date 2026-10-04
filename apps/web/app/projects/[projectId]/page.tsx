@@ -6320,7 +6320,7 @@ export default function ProjectDetailPage() {
     setHandoffError(null);
     try {
       const isReviewerApproval = activeMilestone.gateStatus === "pending_review" && activeMilestone.canApprove;
-      const action = isReviewerApproval ? "approve" : "evaluate";
+      const action = isReviewerApproval ? "approve" : "request-approval";
       const response = await fetch(
         withProjectPrincipal(`/api/projects/${encodeURIComponent(projectId)}/milestones/${encodeURIComponent(activeMilestone.id)}/${action}`),
         { method: "POST", credentials: "same-origin", cache: "no-store" }
@@ -6331,7 +6331,10 @@ export default function ProjectDetailPage() {
       }
       const payload = await response.json().catch(() => null) as { message?: string; gateStatus?: string; missingRequirements?: string[] } | null;
       if (!response.ok) {
-        throw new Error(payload?.message || `Không thể đánh giá hồ sơ (${response.status}).`);
+        const message = typeof payload?.message === "string"
+          ? payload.message
+          : payload?.missingRequirements?.join(" ");
+        throw new Error(message || `Không thể gửi hồ sơ chờ duyệt (${response.status}).`);
       }
       if (!isReviewerApproval && payload?.gateStatus && !["pending_review", "approved"].includes(payload.gateStatus)) {
         throw new Error(payload.missingRequirements?.join(" ") || "Hồ sơ chưa đủ điều kiện chuyển milestone.");

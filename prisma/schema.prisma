@@ -413,6 +413,7 @@ model User {
   reminderDeliveryLogs           ReminderDeliveryLog[]
   reminderPmLogs                 ReminderDeliveryLog[]       @relation("ReminderPm")
   updatedReminderPolicies        WorkspaceReminderPolicy[]   @relation("WorkspaceReminderPolicyUpdatedBy")
+  receivedAppNotifications       AppNotification[]           @relation("AppNotificationRecipient")
 }
 
 model TenantWorkspace {
@@ -496,6 +497,7 @@ model TenantWorkspace {
   reminderDeliveryLogs       ReminderDeliveryLog[]
   reminderPolicy             WorkspaceReminderPolicy?
   projectTaskAssignees       ProjectTaskAssignee[]
+  appNotifications           AppNotification[]
 
   @@unique([tenantKey, workspaceKey])
   @@index([status])
@@ -1349,6 +1351,9 @@ model ProjectMilestone {
   reviewerUserId              String?
   reviewerApprovedAt          DateTime?
   reviewerApprovedByUserId    String?
+  approvalRequestedAt         DateTime?
+  approvalRequestedByUserId   String?
+  approvalRequestedByName     String?
   reviewerRole                 String?
   createdAt                    DateTime        @default(now())
   updatedAt                    DateTime        @updatedAt
@@ -1363,6 +1368,7 @@ model ProjectMilestone {
   @@index([workspaceId, ownerTeamId])
   @@index([workspaceId, reviewerUserId])
   @@index([workspaceId, reviewerApprovedAt])
+  @@index([workspaceId, approvalRequestedAt])
   @@index([accountId])
 }
 
@@ -1382,6 +1388,30 @@ model ProjectMilestoneTemplate {
   @@unique([workspaceId, key])
   @@index([workspaceId, status])
   @@index([workspaceId, updatedAt(sort: Desc)])
+}
+
+model AppNotification {
+  id              String          @id @default(cuid())
+  workspaceId     String
+  recipientUserId String
+  kind            String
+  title           String
+  body            String
+  href            String
+  entityType      String
+  entityId        String
+  status          String          @default("pending")
+  dedupeKey       String          @unique
+  data            Json?
+  createdAt       DateTime        @default(now())
+  readAt          DateTime?
+  actedAt         DateTime?
+  workspace       TenantWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  recipient       User            @relation("AppNotificationRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, recipientUserId, createdAt])
+  @@index([recipientUserId, readAt, createdAt])
+  @@index([workspaceId, entityType, entityId])
 }
 
 model ProjectStage {
