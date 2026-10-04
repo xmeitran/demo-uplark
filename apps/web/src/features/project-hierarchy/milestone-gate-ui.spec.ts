@@ -15,4 +15,11 @@ describe("selectActiveMilestone", () => {
       { id: "m2", status: "upcoming" }
     ])?.id).toBe("m1");
   });
+
+  it("keeps a pending review milestone active even when all of its stages are done", () => {
+    expect(selectActiveMilestone([
+      { id: "m1", status: "done", gateStatus: "pending_review" },
+      { id: "m2", status: "upcoming", gateStatus: "locked" }
+    ])?.id).toBe("m1");
+  });
 });

@@ -579,6 +579,8 @@ export type ProjectMilestoneMode = "manual" | "auto";
 
 export type ProjectMilestoneEvidenceMode = "file" | "link" | "file_or_link";
 
+export type ProjectMilestoneReviewerMode = "workspace_admin" | "specific_user";
+
 export interface ProjectMilestoneConditionInput {
   requiredDocumentCount?: number;
   requiredDocumentTypes?: string[];
@@ -586,6 +588,8 @@ export interface ProjectMilestoneConditionInput {
   ownerTeamId?: string;
   unlockCriteria?: string;
   customerConfirmationRequired?: boolean;
+  reviewerMode?: ProjectMilestoneReviewerMode;
+  reviewerUserId?: string;
   reviewerRole?: string;
 }
 
@@ -1083,6 +1087,15 @@ export interface ProjectMilestoneSummary {
   unlockCriteria?: string;
   customerConfirmationRequired?: boolean;
   customerConfirmationAt?: string;
+  reviewerMode?: ProjectMilestoneReviewerMode;
+  reviewerUserId?: string;
+  reviewerUserName?: string;
+  reviewerUserEmail?: string;
+  reviewerApprovedAt?: string;
+  reviewerApprovedByUserId?: string;
+  reviewerApprovedByUserName?: string;
+  reviewerApprovalRequired?: boolean;
+  canApprove?: boolean;
   reviewerRole?: string;
 }
 

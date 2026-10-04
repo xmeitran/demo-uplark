@@ -6,6 +6,7 @@ import type {
   CreateProjectInput,
   CreateProjectMilestoneInput,
   ProjectMilestoneEvidenceMode,
+  ProjectMilestoneReviewerMode,
   CreateProjectMilestoneTemplateInput,
   ProjectPlanPreviewInput,
   CreateProjectActivityInput,
@@ -64,6 +65,12 @@ import {
 import { dateOnlyToUtcDate, getLocalDateKeysForTimeRange, lockWorkspaceDayOffDates } from "../workspace-calendar/day-off-time";
 import { isCancelledTaskStatus, isCompletedTaskStatus } from "./task-status";
 import { evaluateMilestoneGate } from "./milestone-gate";
+import {
+  canApproveMilestoneReviewer,
+  DEFAULT_MILESTONE_REVIEWER_MODE,
+  MILESTONE_REVIEWER_MODES,
+  normalizeMilestoneReviewerMode
+} from "./milestone-reviewer";
 import { buildRuleBasedProjectPlan } from "./project-plan-rules";
 
 const projectInclude = {
@@ -470,7 +477,16 @@ function normalizeMilestoneEvidenceMode(value: unknown): ProjectMilestoneEvidenc
   return mode as ProjectMilestoneEvidenceMode;
 }
 
-function mapMilestoneGateSummary(milestone: any, fileCount: number, linkCount: number) {
+type MilestoneReviewerUser = { id: string; displayName: string; email: string };
+
+function mapMilestoneGateSummary(
+  milestone: any,
+  fileCount: number,
+  linkCount: number,
+  reviewerUser?: MilestoneReviewerUser,
+  approvedByUser?: MilestoneReviewerUser,
+  principal?: PrincipalContext
+) {
   const evidenceMode = normalizeMilestoneEvidenceMode(milestone.evidenceMode);
   const requiredDocumentCount = effectiveRequiredDocumentCount(milestone);
   const submittedDocumentCount = evidenceMode === "file"
@@ -513,6 +529,22 @@ function mapMilestoneGateSummary(milestone: any, fileCount: number, linkCount: n
       : undefined,
     customerConfirmationRequired: milestone.customerConfirmationRequired,
     customerConfirmationAt: milestone.customerConfirmationAt?.toISOString(),
+    reviewerMode: normalizeMilestoneReviewerMode(milestone.reviewerMode),
+    reviewerUserId: milestone.reviewerUserId ?? undefined,
+    reviewerUserName: reviewerUser?.displayName,
+    reviewerUserEmail: reviewerUser?.email,
+    reviewerApprovedAt: milestone.reviewerApprovedAt?.toISOString(),
+    reviewerApprovedByUserId: milestone.reviewerApprovedByUserId ?? undefined,
+    reviewerApprovedByUserName: approvedByUser?.displayName,
+    reviewerApprovalRequired: milestone.gateStatus !== "approved",
+    canApprove: principal
+      ? canApproveMilestoneReviewer({
+          reviewerMode: normalizeMilestoneReviewerMode(milestone.reviewerMode),
+          reviewerUserId: milestone.reviewerUserId,
+          principalUserId: principal.subjectId,
+          principalRoleCodes: principal.roleCodes
+        })
+      : undefined,
     reviewerRole: milestone.reviewerRole
   };
 }
@@ -556,6 +588,11 @@ function normalizeManualMilestones(input: unknown) {
     const requiredDocumentTypes = Array.isArray(milestone.requiredDocumentTypes)
       ? milestone.requiredDocumentTypes.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((value) => value.trim())
       : [];
+    const reviewerMode = normalizeMilestoneReviewerMode(milestone.reviewerMode);
+    const reviewerUserId = optionalString(milestone.reviewerUserId, `manualMilestones[${milestoneIndex}].reviewerUserId`) ?? undefined;
+    if (reviewerMode === "specific_user" && !reviewerUserId) {
+      throw new BadRequestException(`Milestone "${name}" needs a reviewerUserId when reviewerMode is specific_user`);
+    }
     return {
       name,
       sortOrder: optionalInteger(milestone.sortOrder, `manualMilestones[${milestoneIndex}].sortOrder`) ?? (milestoneIndex + 1) * 10,
@@ -565,6 +602,8 @@ function normalizeManualMilestones(input: unknown) {
       ownerTeamId: optionalString(milestone.ownerTeamId, `manualMilestones[${milestoneIndex}].ownerTeamId`) ?? undefined,
       unlockCriteria: optionalString(milestone.unlockCriteria, `manualMilestones[${milestoneIndex}].unlockCriteria`) ?? undefined,
       customerConfirmationRequired: Boolean(milestone.customerConfirmationRequired),
+      reviewerMode,
+      reviewerUserId,
       reviewerRole: optionalString(milestone.reviewerRole, `manualMilestones[${milestoneIndex}].reviewerRole`) ?? undefined,
       stages: stages.map((stageRaw, stageIndex) => {
         if (!stageRaw || typeof stageRaw !== "object") {
@@ -962,6 +1001,11 @@ function normalizeMilestoneTemplateMilestones(value: unknown): MilestoneTemplate
     const requiredDocumentTypes = Array.isArray(item.requiredDocumentTypes)
       ? item.requiredDocumentTypes.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((value) => value.trim())
       : [];
+    const reviewerMode = normalizeMilestoneReviewerMode(item.reviewerMode);
+    const reviewerUserId = String(item.reviewerUserId ?? "").trim() || undefined;
+    if (reviewerMode === "specific_user" && !reviewerUserId) {
+      throw new BadRequestException(`Milestone ${milestoneIndex + 1} needs a reviewerUserId when reviewerMode is specific_user`);
+    }
     return {
       name,
       sortOrder: Number.isFinite(Number(item.sortOrder)) ? Number(item.sortOrder) : (milestoneIndex + 1) * 10,
@@ -971,6 +1015,8 @@ function normalizeMilestoneTemplateMilestones(value: unknown): MilestoneTemplate
       ownerTeamId: String(item.ownerTeamId ?? "").trim() || undefined,
       unlockCriteria: String(item.unlockCriteria ?? "").trim() || undefined,
       customerConfirmationRequired: Boolean(item.customerConfirmationRequired),
+      reviewerMode,
+      reviewerUserId,
       reviewerRole: String(item.reviewerRole ?? "").trim() || undefined,
       stages
     };
@@ -1074,6 +1120,8 @@ export class ProjectsService {
     this.assertCanManageMilestoneTemplates(principal);
     const name = nonEmptyString(input?.name, "name");
     const milestones = normalizeMilestoneTemplateMilestones(input?.milestones);
+    const reviewerUserIds = Array.from(new Set(milestones.map((milestone: any) => milestone.reviewerMode === "specific_user" ? milestone.reviewerUserId : undefined).filter((id): id is string => Boolean(id))));
+    await this.ensureActiveWorkspaceUsers(this.prisma, principal.workspaceId, principal.tenantKey, reviewerUserIds);
     const key = milestoneTemplateKey(input?.key, milestoneTemplateKey(name, `template-${randomUUID().slice(0, 8)}`));
     if (key === BUILTIN_MILESTONE_TEMPLATE_KEY) throw new ConflictException("pilot-v1 is reserved for the system template");
     try {
@@ -1100,6 +1148,10 @@ export class ProjectsService {
     const existing = await this.prisma.projectMilestoneTemplate.findFirst({ where: { id: templateId, workspaceId: principal.workspaceId } });
     if (!existing) throw new NotFoundException("Milestone template not found");
     const milestones = input?.milestones === undefined ? undefined : normalizeMilestoneTemplateMilestones(input.milestones);
+    if (milestones) {
+      const reviewerUserIds = Array.from(new Set(milestones.map((milestone: any) => milestone.reviewerMode === "specific_user" ? milestone.reviewerUserId : undefined).filter((id): id is string => Boolean(id))));
+      await this.ensureActiveWorkspaceUsers(this.prisma, principal.workspaceId, principal.tenantKey, reviewerUserIds);
+    }
     const status = input?.status === undefined ? existing.status : optionalString(input.status, "status");
     if (status && !["active", "archived"].includes(status)) throw new BadRequestException("Invalid milestone template status");
     const updated = await this.prisma.projectMilestoneTemplate.update({
@@ -1204,6 +1256,10 @@ export class ProjectsService {
       ...selectedMilestoneTemplates.map((milestone: any) => typeof milestone.ownerTeamId === "string" ? milestone.ownerTeamId : ""),
       ...(Array.isArray(input.manualMilestones) ? input.manualMilestones.map((milestone: any) => typeof milestone?.ownerTeamId === "string" ? milestone.ownerTeamId : "") : [])
     ].filter(Boolean)));
+    const requestedReviewerUserIds = Array.from(new Set([
+      ...selectedMilestoneTemplates.map((milestone: any) => milestone.reviewerMode === "specific_user" && typeof milestone.reviewerUserId === "string" ? milestone.reviewerUserId : ""),
+      ...(Array.isArray(input.manualMilestones) ? input.manualMilestones.map((milestone: any) => milestone?.reviewerMode === "specific_user" && typeof milestone.reviewerUserId === "string" ? milestone.reviewerUserId : "") : [])
+    ].filter(Boolean)));
     if (requestedTeamIds.length > 0) {
       const teamCount = await this.prisma.workspaceTeam.count({ where: { workspaceId: principal.workspaceId, active: true, id: { in: requestedTeamIds } } });
       if (teamCount !== requestedTeamIds.length) throw new BadRequestException("Một hoặc nhiều team phụ trách không tồn tại trong workspace");
@@ -1225,7 +1281,7 @@ export class ProjectsService {
         tx,
         principal.workspaceId,
         principal.tenantKey,
-        [...memberUserIds, ownerUserId].filter((value): value is string => Boolean(value))
+        [...memberUserIds, ownerUserId, ...requestedReviewerUserIds].filter((value): value is string => Boolean(value))
       );
 
       const createdProject = await tx.project.create({
@@ -1289,6 +1345,10 @@ export class ProjectsService {
               } : undefined,
               gateStatus: milestoneIndex === 0 ? "open" : "locked",
               customerConfirmationRequired: configuredGate?.customerConfirmationRequired ?? milestoneTemplate.customerConfirmationRequired ?? false,
+              reviewerMode: configuredGate?.reviewerMode ?? milestoneTemplate.reviewerMode ?? DEFAULT_MILESTONE_REVIEWER_MODE,
+              reviewerUserId: (configuredGate?.reviewerMode ?? milestoneTemplate.reviewerMode ?? DEFAULT_MILESTONE_REVIEWER_MODE) === "specific_user"
+                ? configuredGate?.reviewerUserId ?? milestoneTemplate.reviewerUserId ?? undefined
+                : undefined,
               reviewerRole: configuredGate?.reviewerRole ?? milestoneTemplate.reviewerRole
             }
           });
@@ -1518,6 +1578,27 @@ export class ProjectsService {
     return { deleted: true, id: project.id };
   }
 
+  private async loadMilestoneReviewerUsers(milestones: readonly any[], principal: PrincipalContext) {
+    const ids = Array.from(new Set(milestones.flatMap((milestone) => [milestone.reviewerUserId, milestone.reviewerApprovedByUserId]).filter((id): id is string => typeof id === "string" && Boolean(id))));
+    const userModel = (this.prisma as any).user;
+    if (ids.length === 0 || typeof userModel?.findMany !== "function") return new Map<string, MilestoneReviewerUser>();
+    const users = await userModel.findMany({
+      where: {
+        id: { in: ids },
+        status: SubjectStatus.ACTIVE,
+        roleBindings: {
+          some: {
+            workspaceId: principal.workspaceId,
+            tenantKey: principal.tenantKey,
+            ...activeMembershipWhere()
+          }
+        }
+      },
+      select: { id: true, displayName: true, email: true }
+    });
+    return new Map<string, MilestoneReviewerUser>(users.map((user: MilestoneReviewerUser) => [user.id, user]));
+  }
+
   async getProjectHierarchy(projectId: string, principal: PrincipalContext) {
     this.assertInternalTaskPrincipal(principal, "Project hierarchy is internal");
     const project = await this.ensureProject(projectId, principal.workspaceId);
@@ -1555,11 +1636,19 @@ export class ProjectsService {
         }
       })
     ]);
+    const reviewerUsers = await this.loadMilestoneReviewerUsers(milestones, principal);
 
     return {
       projectId: project.id,
       hierarchyOrderVersion: project.hierarchyOrderVersion,
-      milestones: milestones.map((milestone) => mapMilestoneGateSummary(milestone, fileCount, linkCount))
+      milestones: milestones.map((milestone) => mapMilestoneGateSummary(
+        milestone,
+        fileCount,
+        linkCount,
+        milestone.reviewerUserId ? reviewerUsers.get(milestone.reviewerUserId) : undefined,
+        milestone.reviewerApprovedByUserId ? reviewerUsers.get(milestone.reviewerApprovedByUserId) : undefined,
+        principal
+      ))
     };
   }
 
@@ -1584,12 +1673,20 @@ export class ProjectsService {
       }),
       this.prisma.projectDocumentVersion.count({ where: { projectId: project.id, workspaceId: principal.workspaceId, fileObject: { storageProvider: { in: ["local", "lark_drive"] } } } }),
       this.prisma.projectDocumentVersion.count({ where: { projectId: project.id, workspaceId: principal.workspaceId, fileObject: { storageProvider: "external" } } })
-    ]);
+      ]);
+    const reviewerUsers = await this.loadMilestoneReviewerUsers(milestones, principal);
     return {
       projectId: project.id,
       milestoneMode: project.milestoneMode,
       milestoneTemplateKey: project.milestoneTemplateKey,
-      data: milestones.map((milestone) => mapMilestoneGateSummary(milestone, fileCount, linkCount))
+      data: milestones.map((milestone) => mapMilestoneGateSummary(
+        milestone,
+        fileCount,
+        linkCount,
+        milestone.reviewerUserId ? reviewerUsers.get(milestone.reviewerUserId) : undefined,
+        milestone.reviewerApprovedByUserId ? reviewerUsers.get(milestone.reviewerApprovedByUserId) : undefined,
+        principal
+      ))
     };
   }
 
@@ -1620,6 +1717,22 @@ export class ProjectsService {
     if (gateStatus && !["open", "locked", "pending_review", "approved", "rejected", "conditional"].includes(gateStatus)) {
       throw new BadRequestException("Invalid milestone gate status");
     }
+    if (gateStatus === "approved") {
+      throw new BadRequestException("Milestone approval must be performed by the configured reviewer");
+    }
+    const reviewerMode = (input.reviewerMode === undefined
+      ? normalizeMilestoneReviewerMode(existing.reviewerMode)
+      : input.reviewerMode) as ProjectMilestoneReviewerMode;
+    if (!MILESTONE_REVIEWER_MODES.has(reviewerMode as ProjectMilestoneReviewerMode)) {
+      throw new BadRequestException("reviewerMode must be workspace_admin or specific_user");
+    }
+    const reviewerUserId = input.reviewerUserId === undefined
+      ? existing.reviewerUserId
+      : optionalString(input.reviewerUserId, "reviewerUserId") ?? null;
+    if (reviewerMode === "specific_user") {
+      if (!reviewerUserId) throw new BadRequestException("reviewerUserId is required when reviewerMode is specific_user");
+      await this.ensureActiveWorkspaceUsers(this.prisma, principal.workspaceId, principal.tenantKey, [reviewerUserId]);
+    }
     const confirmationRequested = input.customerConfirmationConfirmed === undefined
       ? undefined
       : Boolean(input.customerConfirmationConfirmed);
@@ -1627,6 +1740,16 @@ export class ProjectsService {
       ? existing.customerConfirmationRequired
       : Boolean(input.customerConfirmationRequired);
     const confirmationReset = input.customerConfirmationRequired !== undefined && !confirmationRequired && confirmationRequested === undefined;
+    const reviewerConfigurationChanged = reviewerMode !== normalizeMilestoneReviewerMode(existing.reviewerMode) || reviewerUserId !== (existing.reviewerUserId ?? null);
+    const gateConfigurationChanged = reviewerConfigurationChanged
+      || requiredDocumentCount !== existing.requiredDocumentCount
+      || JSON.stringify(requiredDocumentTypes) !== JSON.stringify(existing.requiredDocumentTypes ?? [])
+      || evidenceMode !== existing.evidenceMode
+      || ownerTeamId !== (existing.ownerTeamId ?? null)
+      || JSON.stringify(unlockCriteria) !== JSON.stringify(existing.unlockCriteria)
+      || confirmationRequired !== existing.customerConfirmationRequired
+      || confirmationRequested !== undefined;
+    const nextGateStatus = gateStatus ?? (gateConfigurationChanged && existing.gateStatus !== "locked" ? "open" : existing.gateStatus);
     const updated = await this.prisma.$transaction(async (tx) => {
       const result = await tx.projectMilestone.update({
         where: { id: existing.id },
@@ -1636,20 +1759,24 @@ export class ProjectsService {
           evidenceMode,
           ownerTeamId,
           unlockCriteria: unlockCriteria === null ? undefined : unlockCriteria as Prisma.InputJsonValue,
-          gateStatus: gateStatus ?? existing.gateStatus,
+          gateStatus: nextGateStatus,
           customerConfirmationRequired: confirmationRequired,
           customerConfirmationAt: confirmationRequested === undefined ? confirmationReset ? null : undefined : confirmationRequested ? new Date() : null,
           customerConfirmationByUserId: confirmationRequested === undefined ? confirmationReset ? null : undefined : confirmationRequested ? principal.subjectId : null,
+          reviewerMode,
+          reviewerUserId: reviewerMode === "specific_user" ? reviewerUserId : null,
+          reviewerApprovedAt: gateConfigurationChanged ? null : undefined,
+          reviewerApprovedByUserId: gateConfigurationChanged ? null : undefined,
           reviewerRole: input.reviewerRole === undefined ? existing.reviewerRole : optionalString(input.reviewerRole, "reviewerRole") ?? null
         }
       });
-      if (result.gateStatus === "approved") {
+      if (gateConfigurationChanged && existing.gateStatus === "approved") {
         const next = await tx.projectMilestone.findFirst({
           where: { projectId: project.id, workspaceId: principal.workspaceId, sortOrder: { gt: existing.sortOrder } },
           orderBy: { sortOrder: "asc" }
         });
-        if (next && next.gateStatus === "locked") {
-          await tx.projectMilestone.update({ where: { id: next.id }, data: { gateStatus: "open" } });
+        if (next && next.gateStatus === "open") {
+          await tx.projectMilestone.update({ where: { id: next.id }, data: { gateStatus: "locked" } });
         }
       }
       await this.auditMutation(tx, principal, "project.milestone_gate_updated", "project_milestone", result.id, JSON.parse(JSON.stringify(existing)), JSON.parse(JSON.stringify(result)));
@@ -1663,6 +1790,9 @@ export class ProjectsService {
     const project = await this.ensureProject(projectId, principal.workspaceId);
     const milestone = await this.prisma.projectMilestone.findFirst({ where: { id: milestoneId, projectId: project.id, workspaceId: principal.workspaceId } });
     if (!milestone) throw new NotFoundException("Project milestone not found");
+    if (milestone.gateStatus === "locked") {
+      throw new BadRequestException("Milestone is locked until the previous milestone is approved");
+    }
     const evidenceMode = normalizeMilestoneEvidenceMode(milestone.evidenceMode);
     const submittedDocumentCount = await this.prisma.projectDocumentVersion.count({
       where: {
@@ -1690,23 +1820,94 @@ export class ProjectsService {
       customerConfirmationAt: milestone.customerConfirmationAt,
       taskStatuses: taskRows.map((task: { status: unknown }) => task.status)
     });
-    // A configured reviewer can still explicitly move a gate to pending_review.
-    // Evaluation itself must be actionable: once the visible requirements pass,
-    // the milestone is approved and the next locked milestone opens.
-    const nextStatus = evaluation.satisfied ? "approved" : milestone.gateStatus;
+    // Evaluation only proves the visible requirements. It must never impersonate
+    // the configured reviewer or unlock the next milestone by itself.
+    const nextStatus = evaluation.satisfied && milestone.gateStatus !== "approved"
+      ? "pending_review"
+      : milestone.gateStatus;
     const updated = await this.prisma.$transaction(async (tx) => {
       const result = await tx.projectMilestone.update({ where: { id: milestone.id }, data: { gateStatus: nextStatus } });
-      if (nextStatus === "approved") {
-        const next = await tx.projectMilestone.findFirst({ where: { projectId: project.id, workspaceId: principal.workspaceId, sortOrder: { gt: milestone.sortOrder } }, orderBy: { sortOrder: "asc" } });
-        if (next && next.gateStatus === "locked") await tx.projectMilestone.update({ where: { id: next.id }, data: { gateStatus: "open" } });
-      }
       return result;
     });
     return {
       ...updated,
       requiredDocumentCount,
       submittedDocumentCount,
-      ...evaluation
+      ...evaluation,
+      reviewerMode: normalizeMilestoneReviewerMode(updated.reviewerMode ?? milestone.reviewerMode),
+      reviewerUserId: updated.reviewerUserId ?? milestone.reviewerUserId ?? undefined,
+      reviewerApprovedAt: updated.reviewerApprovedAt?.toISOString?.() ?? updated.reviewerApprovedAt,
+      reviewerApprovedByUserId: updated.reviewerApprovedByUserId ?? milestone.reviewerApprovedByUserId ?? undefined,
+      reviewerApprovalRequired: updated.gateStatus !== "approved",
+      canApprove: canApproveMilestoneReviewer({
+        reviewerMode: normalizeMilestoneReviewerMode(updated.reviewerMode ?? milestone.reviewerMode),
+        reviewerUserId: updated.reviewerUserId ?? milestone.reviewerUserId,
+        principalUserId: principal.subjectId,
+        principalRoleCodes: principal.roleCodes
+      })
+    };
+  }
+
+  async approveProjectMilestone(projectId: string, milestoneId: string, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project milestone approval is internal");
+    const project = await this.ensureProject(projectId, principal.workspaceId);
+    const milestone = await this.prisma.projectMilestone.findFirst({ where: { id: milestoneId, projectId: project.id, workspaceId: principal.workspaceId } });
+    if (!milestone) throw new NotFoundException("Project milestone not found");
+    if (milestone.gateStatus !== "pending_review") {
+      throw new BadRequestException("Milestone must be evaluated and pending review before approval");
+    }
+
+    const reviewerMode = normalizeMilestoneReviewerMode(milestone.reviewerMode);
+    if (!canApproveMilestoneReviewer({
+      reviewerMode,
+      reviewerUserId: milestone.reviewerUserId,
+      principalUserId: principal.subjectId,
+      principalRoleCodes: principal.roleCodes
+    })) {
+      throw new ForbiddenException(reviewerMode === "specific_user"
+        ? "Only the selected PIC can approve this milestone"
+        : "Workspace administrator approval is required");
+    }
+
+    const evaluation = await this.evaluateProjectMilestoneGate(projectId, milestoneId, principal);
+    if (!evaluation.satisfied) {
+      throw new BadRequestException({
+        message: "Milestone requirements are not complete",
+        missingRequirements: evaluation.missingRequirements
+      });
+    }
+
+    const approvedAt = new Date();
+    const result = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.projectMilestone.update({
+        where: { id: milestone.id },
+        data: {
+          gateStatus: "approved",
+          reviewerApprovedAt: approvedAt,
+          reviewerApprovedByUserId: principal.subjectId
+        }
+      });
+      const next = await tx.projectMilestone.findFirst({
+        where: { projectId: project.id, workspaceId: principal.workspaceId, sortOrder: { gt: milestone.sortOrder } },
+        orderBy: { sortOrder: "asc" }
+      });
+      if (next && next.gateStatus === "locked") {
+        await tx.projectMilestone.update({ where: { id: next.id }, data: { gateStatus: "open" } });
+      }
+      await this.auditMutation(tx, principal, "project.milestone_approved", "project_milestone", updated.id, JSON.parse(JSON.stringify(milestone)), JSON.parse(JSON.stringify(updated)));
+      return updated;
+    });
+
+    return {
+      ...result,
+      ...evaluation,
+      gateStatus: "approved",
+      reviewerMode,
+      reviewerUserId: result.reviewerUserId ?? milestone.reviewerUserId ?? undefined,
+      reviewerApprovedAt: approvedAt.toISOString(),
+      reviewerApprovedByUserId: principal.subjectId,
+      reviewerApprovalRequired: false,
+      canApprove: true
     };
   }
 

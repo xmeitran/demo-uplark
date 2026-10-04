@@ -1345,6 +1345,10 @@ model ProjectMilestone {
   customerConfirmationRequired Boolean         @default(false)
   customerConfirmationAt      DateTime?
   customerConfirmationByUserId String?
+  reviewerMode                String          @default("workspace_admin")
+  reviewerUserId              String?
+  reviewerApprovedAt          DateTime?
+  reviewerApprovedByUserId    String?
   reviewerRole                 String?
   createdAt                    DateTime        @default(now())
   updatedAt                    DateTime        @updatedAt
@@ -1357,6 +1361,8 @@ model ProjectMilestone {
   @@unique([projectId, normalizedKey])
   @@index([workspaceId, projectId, sortOrder])
   @@index([workspaceId, ownerTeamId])
+  @@index([workspaceId, reviewerUserId])
+  @@index([workspaceId, reviewerApprovedAt])
   @@index([accountId])
 }
 

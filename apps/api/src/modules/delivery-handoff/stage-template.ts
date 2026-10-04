@@ -71,7 +71,7 @@ export const PILOT_PROJECT_MILESTONE_TEMPLATE = [
     requiredDocumentTypes: [],
     unlockCriteria: "Đã xác nhận scope, mục tiêu và lịch kick-off.",
     customerConfirmationRequired: false,
-    reviewerRole: "PM",
+    reviewerMode: "workspace_admin",
     stages: [
       { stageKey: "validate", phase: "validate", activity: "Validate scope & kick-off", sortOrder: 10, cumulativePercent: 20, activityPercent: 20, criteria: "Brief, module, PIC, proposal, scope và tiêu chí nghiệm thu được xác nhận.", upbaseRole: "PM / Dx", customerRole: "Project Sponsor" }
     ]
@@ -82,9 +82,9 @@ export const PILOT_PROJECT_MILESTONE_TEMPLATE = [
     sortOrder: 20,
     requiredDocumentCount: 3,
     requiredDocumentTypes: ["BRD", "FRD", "SRS"],
-    unlockCriteria: "Đủ BRD, FRD, SRS được PM duyệt trước khi bắt đầu build.",
+    unlockCriteria: "Đủ BRD, FRD, SRS và được người duyệt xác nhận trước khi bắt đầu build.",
     customerConfirmationRequired: true,
-    reviewerRole: "PM",
+    reviewerMode: "workspace_admin",
     stages: [
       { stageKey: "design", phase: "design", activity: "Thiết kế giải pháp", sortOrder: 10, cumulativePercent: 40, activityPercent: 20, criteria: "BRD/FRD/SRS hoàn tất và được duyệt.", upbaseRole: "Dx", customerRole: "Business Owner" },
       { stageKey: "build", phase: "build", activity: "Xây dựng & kiểm thử", sortOrder: 20, cumulativePercent: 65, activityPercent: 25, criteria: "Hệ thống đã build, có URL và test case.", upbaseRole: "Dx", customerRole: "Technical Owner" },
@@ -99,7 +99,7 @@ export const PILOT_PROJECT_MILESTONE_TEMPLATE = [
     requiredDocumentTypes: ["pilot_bug_log", "onboard_bug_log"],
     unlockCriteria: "Pilot và onboarding hoàn tất; các lỗi/blocker đã có phương án xử lý.",
     customerConfirmationRequired: true,
-    reviewerRole: "PM",
+    reviewerMode: "workspace_admin",
     stages: [
       { stageKey: "pilot", phase: "pilot", activity: "Pilot", sortOrder: 10, cumulativePercent: 82, activityPercent: 10, criteria: "Pilot bug log và đề xuất cải tiến được ghi nhận.", upbaseRole: "Dx", customerRole: "Pilot Users" },
       { stageKey: "onboard", phase: "onboard", activity: "Onboarding", sortOrder: 20, cumulativePercent: 90, activityPercent: 8, criteria: "Onboard bug log và đề xuất cải tiến được ghi nhận.", upbaseRole: "Dx / CS", customerRole: "End Users" },
@@ -114,7 +114,7 @@ export const PILOT_PROJECT_MILESTONE_TEMPLATE = [
     requiredDocumentTypes: ["handover_cs", "golive_confirmation"],
     unlockCriteria: "Đã bàn giao cho CS/CSM và ghi nhận ngày Go-live.",
     customerConfirmationRequired: false,
-    reviewerRole: "PM",
+    reviewerMode: "workspace_admin",
     stages: [
       { stageKey: "optimize", phase: "optimize", activity: "Tối ưu & hỗ trợ", sortOrder: 10, cumulativePercent: 98, activityPercent: 2, criteria: "Hồ sơ bàn giao cho CS đầy đủ.", upbaseRole: "Dx / PQA", customerRole: "CSM" },
       { stageKey: "handover", phase: "handover", activity: "Bàn giao & Go-live", sortOrder: 20, cumulativePercent: 100, activityPercent: 2, criteria: "Có xác nhận bàn giao và ngày Go-live.", upbaseRole: "BD / PM", customerRole: "CSM / Customer" }

@@ -217,7 +217,16 @@ async function fetchLiveProjectWorkItems(projectId: string, signal?: AbortSignal
             missingRequirements: gate.missingRequirements,
             customerConfirmationRequired: gate.customerConfirmationRequired,
             customerConfirmationAt: gate.customerConfirmationAt,
-            unlockCriteria: gate.unlockCriteria
+            unlockCriteria: gate.unlockCriteria,
+            reviewerMode: gate.reviewerMode,
+            reviewerUserId: gate.reviewerUserId,
+            reviewerUserName: gate.reviewerUserName,
+            reviewerUserEmail: gate.reviewerUserEmail,
+            reviewerApprovedAt: gate.reviewerApprovedAt,
+            reviewerApprovedByUserId: gate.reviewerApprovedByUserId,
+            reviewerApprovedByUserName: gate.reviewerApprovedByUserName,
+            reviewerApprovalRequired: gate.reviewerApprovalRequired,
+            canApprove: gate.canApprove
           }
         : milestone;
     })
@@ -543,6 +552,15 @@ interface Milestone {
   customerConfirmationRequired?: boolean;
   customerConfirmationAt?: string;
   unlockCriteria?: string;
+  reviewerMode?: "workspace_admin" | "specific_user";
+  reviewerUserId?: string;
+  reviewerUserName?: string;
+  reviewerUserEmail?: string;
+  reviewerApprovedAt?: string;
+  reviewerApprovedByUserId?: string;
+  reviewerApprovedByUserName?: string;
+  reviewerApprovalRequired?: boolean;
+  canApprove?: boolean;
   order: number;
 }
 
@@ -1878,14 +1896,20 @@ function ProjectDeliveryWireframePanels({
   const completedTaskCount = activeMilestone?.completedTaskCount ?? visibleCompletedTaskCount;
   const tasksReady = activeMilestone?.tasksSatisfied ?? completedTaskCount >= taskCount;
   const gateOpen = !activeMilestone?.gateStatus || ["open", "rejected", "conditional"].includes(activeMilestone.gateStatus);
-  const handoffReady = Boolean(activeMilestone) && gateOpen && documentsReady && confirmationReady && tasksReady;
+  const requirementsReady = Boolean(activeMilestone) && documentsReady && confirmationReady && tasksReady;
+  const reviewPending = activeMilestone?.gateStatus === "pending_review" && requirementsReady;
+  const handoffReady = requirementsReady && (gateOpen || reviewPending);
+  const reviewerName = activeMilestone?.reviewerMode === "specific_user"
+    ? activeMilestone.reviewerUserName || activeMilestone.reviewerUserId || "PIC đã chọn"
+    : "Admin workspace";
+  const approvedByName = activeMilestone?.reviewerApprovedByUserName || activeMilestone?.reviewerApprovedByUserId;
   const missingRequirements = activeMilestone?.missingRequirements ?? [
     ...(documentsReady ? [] : [`Còn ${Math.max(0, requiredDocuments - submittedDocuments)} hồ sơ bắt buộc.`]),
     ...(confirmationReady ? [] : ["Chưa có xác nhận khách hàng."]),
     ...(tasksReady ? [] : [`Còn ${Math.max(0, taskCount - completedTaskCount)} task chưa hoàn tất.`])
   ];
-  if (!gateOpen && activeMilestone?.gateStatus === "pending_review" && missingRequirements.length === 0) {
-    missingRequirements.push("Đang chờ người duyệt hồ sơ.");
+  if (reviewPending && missingRequirements.length === 0) {
+    missingRequirements.push(activeMilestone?.canApprove ? `Bạn là người duyệt: ${reviewerName}.` : `Đang chờ ${reviewerName} duyệt hồ sơ.`);
   }
   const openRisks = risks.filter((risk) => !["resolved", "closed", "done"].includes(risk.status.toLowerCase()));
   const previewTasks = (activeGroup?.stages ?? []).flatMap((stage) => stage.tasks.slice(0, 2).map((task) => ({ task, stageName: stage.name }))).slice(0, 5);
@@ -1916,8 +1940,8 @@ function ProjectDeliveryWireframePanels({
               <h3 className="mt-1 text-base font-black text-foreground">Hồ sơ chuyển tiếp</h3>
               <p className="mt-1 text-xs text-muted-foreground">Theo dõi điều kiện để chuyển sang milestone tiếp theo.</p>
             </div>
-            <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${handoffReady ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-              {handoffReady ? "Đủ điều kiện" : "Đang chờ"}
+            <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${handoffReady && !reviewPending ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+              {reviewPending ? "Chờ duyệt" : handoffReady ? "Đủ điều kiện" : "Đang chờ"}
             </span>
           </div>
           <div className="mt-4 rounded-xl border border-border bg-muted/20 p-3">
@@ -1929,6 +1953,7 @@ function ProjectDeliveryWireframePanels({
               { label: "Tài liệu bắt buộc", detail: documentsConfigured ? `${submittedDocuments}/${requiredDocuments} hồ sơ` : "Không yêu cầu", ready: documentsReady, action: onOpenDocuments },
               { label: "Xác nhận khách hàng", detail: activeMilestone?.customerConfirmationRequired ? confirmationReady ? "Đã ghi nhận" : "Chưa ghi nhận" : "Không yêu cầu", ready: confirmationReady, confirmation: activeMilestone?.customerConfirmationRequired ? { checked: confirmationReady } : undefined },
               { label: "Công việc bắt buộc", detail: taskCount > 0 ? `${completedTaskCount}/${taskCount} task hoàn tất` : "Không có task", ready: tasksReady },
+              { label: "Người duyệt", detail: approvedByName ? `Đã duyệt bởi ${approvedByName}` : reviewerName, ready: Boolean(approvedByName), reviewer: true },
               { label: "Mô tả điều kiện", detail: activeMilestone?.unlockCriteria || "Không có mô tả thêm", ready: true }
             ].map((item) => (
               <div key={item.label} className="flex items-start gap-2.5 rounded-lg border border-border bg-background px-3 py-2.5">
@@ -1943,8 +1968,8 @@ function ProjectDeliveryWireframePanels({
           </div>
           {!handoffReady && missingRequirements.length > 0 ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2.5 text-[11px] text-amber-800"><p className="font-semibold">Cần hoàn tất:</p><ul className="mt-1 list-disc space-y-0.5 pl-4">{missingRequirements.map((requirement) => <li key={requirement}>{requirement}</li>)}</ul></div> : null}
           {handoffError ? <p role="alert" className="mt-3 text-xs text-rose-600">{handoffError}</p> : null}
-          <button type="button" onClick={() => void onAdvanceMilestone()} disabled={!handoffReady || handoffBusy} className={`mt-4 inline-flex min-h-9 w-full items-center justify-center rounded-lg border px-3 text-xs font-semibold transition ${handoffReady ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90" : "border-border text-muted-foreground disabled:cursor-not-allowed disabled:opacity-70"}`}>
-            {handoffBusy ? "Đang đánh giá…" : handoffReady ? "Chuyển milestone" : "Chưa đủ điều kiện chuyển milestone"}
+          <button type="button" onClick={() => void onAdvanceMilestone()} disabled={!handoffReady || handoffBusy || (reviewPending && !activeMilestone?.canApprove)} className={`mt-4 inline-flex min-h-9 w-full items-center justify-center rounded-lg border px-3 text-xs font-semibold transition ${handoffReady && (!reviewPending || activeMilestone?.canApprove) ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90" : "border-border text-muted-foreground disabled:cursor-not-allowed disabled:opacity-70"}`}>
+            {handoffBusy ? "Đang xử lý…" : reviewPending && activeMilestone?.canApprove ? "Duyệt & chuyển milestone" : reviewPending ? `Chờ ${reviewerName} duyệt` : handoffReady ? "Gửi hồ sơ chờ duyệt" : "Chưa đủ điều kiện chuyển milestone"}
           </button>
         </div>
 
@@ -6294,8 +6319,10 @@ export default function ProjectDetailPage() {
     setHandoffBusy(true);
     setHandoffError(null);
     try {
+      const isReviewerApproval = activeMilestone.gateStatus === "pending_review" && activeMilestone.canApprove;
+      const action = isReviewerApproval ? "approve" : "evaluate";
       const response = await fetch(
-        withProjectPrincipal(`/api/projects/${encodeURIComponent(projectId)}/milestones/${encodeURIComponent(activeMilestone.id)}/evaluate`),
+        withProjectPrincipal(`/api/projects/${encodeURIComponent(projectId)}/milestones/${encodeURIComponent(activeMilestone.id)}/${action}`),
         { method: "POST", credentials: "same-origin", cache: "no-store" }
       );
       if (response.status === 401) {
@@ -6306,7 +6333,7 @@ export default function ProjectDetailPage() {
       if (!response.ok) {
         throw new Error(payload?.message || `Không thể đánh giá hồ sơ (${response.status}).`);
       }
-      if (payload?.gateStatus && payload.gateStatus !== "approved") {
+      if (!isReviewerApproval && payload?.gateStatus && !["pending_review", "approved"].includes(payload.gateStatus)) {
         throw new Error(payload.missingRequirements?.join(" ") || "Hồ sơ chưa đủ điều kiện chuyển milestone.");
       }
       const refreshed = await reloadCanonicalHierarchy();
