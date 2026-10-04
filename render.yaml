@@ -14,9 +14,9 @@ services:
       - key: CRM_BLOCK_PRODUCTION_WRITES
         value: "true"
       - key: CRM_STAGING_BYPASS_AUTH
-        value: "true"
+        value: "false"
       - key: NEXT_PUBLIC_STAGING_BYPASS_AUTH
-        value: "true"
+        value: "false"
       - key: WORKFORCE_ANALYTICS_GA_ENABLED
         value: "true"
       - key: CRM_API_INTERNAL_URL
@@ -69,11 +69,11 @@ services:
       - key: CRM_BLOCK_PRODUCTION_WRITES
         value: "true"
       - key: CRM_STAGING_BYPASS_AUTH
-        value: "true"
+        value: "false"
       - key: CRM_ALLOW_PRINCIPAL_FALLBACK
-        value: "true"
+        value: "false"
       - key: CRM_PUBLIC_SESSION_REQUIRED
-        value: "0"
+        value: "1"
       - key: CRM_API_CORS_ORIGINS
         value: https://demo-uplark.onrender.com
       - key: CRM_AUTH_PUBLIC_ORIGIN
@@ -102,7 +102,7 @@ services:
       - key: LARK_OAUTH_SCOPES
         value: contact:user.email:readonly contact:user.employee_id:readonly
       - key: CRM_LARK_AUTO_PROVISION
-        value: "false"
+        value: "true"
       - key: CRM_LARK_DEFAULT_ROLE_CODE
         value: SALES_OWNER
       - key: CRM_AUTH_ENCRYPTION_KEY
