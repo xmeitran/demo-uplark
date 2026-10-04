@@ -1073,6 +1073,12 @@ export interface ProjectMilestoneSummary {
   evidenceMode?: ProjectMilestoneEvidenceMode;
   ownerTeamId?: string;
   submittedDocumentCount?: number;
+  documentsSatisfied?: boolean;
+  confirmationSatisfied?: boolean;
+  taskCount?: number;
+  completedTaskCount?: number;
+  tasksSatisfied?: boolean;
+  missingRequirements?: string[];
   ownerTeamName?: string;
   unlockCriteria?: string;
   customerConfirmationRequired?: boolean;

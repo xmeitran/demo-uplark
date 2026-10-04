@@ -82,16 +82,16 @@ describe("delivery.mapper", () => {
           avatarUrl: "https://example.com/avatar.png",
           relation: "member",
           assignedTaskCount: 3,
-          doneTaskCount: 1,
-          doneTaskPercent: 33
+          doneTaskCount: 2,
+          doneTaskPercent: 67
         }
       ],
       budgetAmount: 50000,
       spentAmount: 2000,
       budgetCurrency: "USD",
-      progressPercent: 33,
+      progressPercent: 67,
       taskCount: 3,
-      completedTaskCount: 1,
+      completedTaskCount: 2,
       plannedMinutes: 360,
       loggedMinutes: 180,
       approvedMinutes: 150,
@@ -151,8 +151,8 @@ describe("delivery.mapper", () => {
 
     expect(project).toMatchObject({
       taskCount: 79,
-      completedTaskCount: 1,
-      progressPercent: 1
+      completedTaskCount: 2,
+      progressPercent: 3
     });
   });
 

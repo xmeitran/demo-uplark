@@ -2113,6 +2113,16 @@ describe("ProjectsService.transitionTask", () => {
       where: { id: "task-1" },
       data: expect.objectContaining({ status: "completed", completedAt: changedAt })
     });
+
+    await expect(service.transitionTask("task-1", {
+      status: "todo",
+      reason: "Cần làm lại"
+    }, principal, principal.subjectId)).resolves.toMatchObject({ status: "todo", completedAt: undefined });
+    expect(prisma.projectTask.update.mock.calls[1]?.[0].data).toMatchObject({
+      status: "todo",
+      completedAt: null,
+      cancelledAt: null
+    });
   });
 });
 

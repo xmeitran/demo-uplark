@@ -61,6 +61,7 @@ import {
   createHierarchyOrderCoordinator,
   isSortableTopLevelTask
 } from "@/features/project-hierarchy/hierarchy-order";
+import { selectActiveMilestone } from "@/features/project-hierarchy/milestone-gate-ui";
 import { putProjectHierarchyOrder } from "@/features/project-hierarchy/hierarchy-order-client";
 import {
   HierarchyDragHandle,
@@ -208,6 +209,12 @@ async function fetchLiveProjectWorkItems(projectId: string, signal?: AbortSignal
             gateStatus: gate.gateStatus,
             requiredDocumentCount: gate.requiredDocumentCount,
             submittedDocumentCount: gate.submittedDocumentCount,
+            documentsSatisfied: gate.documentsSatisfied,
+            confirmationSatisfied: gate.confirmationSatisfied,
+            taskCount: gate.taskCount,
+            completedTaskCount: gate.completedTaskCount,
+            tasksSatisfied: gate.tasksSatisfied,
+            missingRequirements: gate.missingRequirements,
             customerConfirmationRequired: gate.customerConfirmationRequired,
             customerConfirmationAt: gate.customerConfirmationAt,
             unlockCriteria: gate.unlockCriteria
@@ -527,6 +534,12 @@ interface Milestone {
   gateStatus?: "open" | "locked" | "pending_review" | "approved" | "rejected" | "conditional";
   requiredDocumentCount?: number;
   submittedDocumentCount?: number;
+  documentsSatisfied?: boolean;
+  confirmationSatisfied?: boolean;
+  taskCount?: number;
+  completedTaskCount?: number;
+  tasksSatisfied?: boolean;
+  missingRequirements?: string[];
   customerConfirmationRequired?: boolean;
   customerConfirmationAt?: string;
   unlockCriteria?: string;
@@ -1628,7 +1641,7 @@ function ProjectOverviewSignals({
     return Number.isFinite(due.getTime()) && due < today;
   });
   const atRiskMilestones = milestones.filter((milestone) => milestone.status === "at-risk");
-  const activeMilestone = milestones.find((milestone) => milestone.status === "in-progress") ?? milestones.find((milestone) => milestone.status === "upcoming");
+  const activeMilestone = selectActiveMilestone(milestones);
   const signalCount = openRisks.length + overdueTasks.length + atRiskMilestones.length;
 
   return (
@@ -1778,9 +1791,7 @@ function ProjectStatusSlaBar({
   tasks: TaskItem[];
   projectColor: string;
 }) {
-  const activeMilestone = milestones.find((milestone) => milestone.gateStatus === "open")
-    ?? milestones.find((milestone) => milestone.status === "in-progress" && milestone.gateStatus !== "approved")
-    ?? milestones[0];
+  const activeMilestone = selectActiveMilestone(milestones);
   const completedTasks = tasks.filter((task) => task.status === "done").length;
   const progress = tasks.length > 0 ? Math.round((completedTasks / tasks.length) * 100) : project.progress;
   const statusLabel = project.status === "Active" ? "Đang chạy" : formatProjectStatusLabel(project.status);
@@ -1852,20 +1863,30 @@ function ProjectDeliveryWireframePanels({
   // The gate is the source of truth for which milestone is currently actionable.
   // Legacy stage rows can still say `not_started` after the gate has opened, and
   // conversely a locked milestone must never be presented as a ready handoff.
-  const activeMilestone = milestones.find((milestone) => milestone.gateStatus === "open")
-    ?? milestones.find((milestone) => milestone.status === "in-progress" && milestone.gateStatus !== "locked" && milestone.gateStatus !== "approved")
-    ?? milestones[0];
+  const activeMilestone = selectActiveMilestone(milestones);
   const activeGroup = activeMilestone ? milestoneGroups.find((group) => group.milestoneId === activeMilestone.id) : undefined;
   const requiredDocuments = activeMilestone?.requiredDocumentCount ?? 0;
   const submittedDocuments = activeMilestone?.submittedDocumentCount ?? 0;
   const documentsConfigured = requiredDocuments > 0;
   // A milestone with no required evidence is already satisfied. Treating
   // zero as "not ready" leaves every default project locked forever.
-  const documentsReady = !documentsConfigured || submittedDocuments >= requiredDocuments;
-  const confirmationReady = !activeMilestone?.customerConfirmationRequired || Boolean(activeMilestone.customerConfirmationAt);
-  const gateConfigured = documentsConfigured || Boolean(activeMilestone?.customerConfirmationRequired) || Boolean(activeMilestone?.unlockCriteria);
-  const gateOpen = activeMilestone?.gateStatus !== "locked" && activeMilestone?.gateStatus !== "approved";
-  const handoffReady = Boolean(activeMilestone) && gateOpen && gateConfigured && documentsReady && confirmationReady;
+  const documentsReady = activeMilestone?.documentsSatisfied ?? (!documentsConfigured || submittedDocuments >= requiredDocuments);
+  const confirmationReady = activeMilestone?.confirmationSatisfied ?? (!activeMilestone?.customerConfirmationRequired || Boolean(activeMilestone.customerConfirmationAt));
+  const visibleTaskCount = (activeGroup?.stages ?? []).reduce((total, stage) => total + stage.tasks.length, 0);
+  const visibleCompletedTaskCount = (activeGroup?.stages ?? []).reduce((total, stage) => total + stage.tasks.filter((task) => task.status === "done").length, 0);
+  const taskCount = activeMilestone?.taskCount ?? visibleTaskCount;
+  const completedTaskCount = activeMilestone?.completedTaskCount ?? visibleCompletedTaskCount;
+  const tasksReady = activeMilestone?.tasksSatisfied ?? completedTaskCount >= taskCount;
+  const gateOpen = !activeMilestone?.gateStatus || ["open", "rejected", "conditional"].includes(activeMilestone.gateStatus);
+  const handoffReady = Boolean(activeMilestone) && gateOpen && documentsReady && confirmationReady && tasksReady;
+  const missingRequirements = activeMilestone?.missingRequirements ?? [
+    ...(documentsReady ? [] : [`Còn ${Math.max(0, requiredDocuments - submittedDocuments)} hồ sơ bắt buộc.`]),
+    ...(confirmationReady ? [] : ["Chưa có xác nhận khách hàng."]),
+    ...(tasksReady ? [] : [`Còn ${Math.max(0, taskCount - completedTaskCount)} task chưa hoàn tất.`])
+  ];
+  if (!gateOpen && activeMilestone?.gateStatus === "pending_review" && missingRequirements.length === 0) {
+    missingRequirements.push("Đang chờ người duyệt hồ sơ.");
+  }
   const openRisks = risks.filter((risk) => !["resolved", "closed", "done"].includes(risk.status.toLowerCase()));
   const previewTasks = (activeGroup?.stages ?? []).flatMap((stage) => stage.tasks.slice(0, 2).map((task) => ({ task, stageName: stage.name }))).slice(0, 5);
   const taskOwner = (task: TaskItem) => teamMembers.find((member) => member.id === task.assigneeUserId || member.initials === task.assignee);
@@ -1907,7 +1928,8 @@ function ProjectDeliveryWireframePanels({
             {[
               { label: "Tài liệu bắt buộc", detail: documentsConfigured ? `${submittedDocuments}/${requiredDocuments} hồ sơ` : "Không yêu cầu", ready: documentsReady, action: onOpenDocuments },
               { label: "Xác nhận khách hàng", detail: activeMilestone?.customerConfirmationRequired ? confirmationReady ? "Đã ghi nhận" : "Chưa ghi nhận" : "Không yêu cầu", ready: confirmationReady, confirmation: activeMilestone?.customerConfirmationRequired ? { checked: confirmationReady } : undefined },
-              { label: "Tiêu chí chuyển trạng thái", detail: activeMilestone?.unlockCriteria || "Theo checklist milestone", ready: handoffReady }
+              { label: "Công việc bắt buộc", detail: taskCount > 0 ? `${completedTaskCount}/${taskCount} task hoàn tất` : "Không có task", ready: tasksReady },
+              { label: "Mô tả điều kiện", detail: activeMilestone?.unlockCriteria || "Không có mô tả thêm", ready: true }
             ].map((item) => (
               <div key={item.label} className="flex items-start gap-2.5 rounded-lg border border-border bg-background px-3 py-2.5">
                 <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${item.ready ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
@@ -1919,8 +1941,9 @@ function ProjectDeliveryWireframePanels({
               </div>
             ))}
           </div>
+          {!handoffReady && missingRequirements.length > 0 ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2.5 text-[11px] text-amber-800"><p className="font-semibold">Cần hoàn tất:</p><ul className="mt-1 list-disc space-y-0.5 pl-4">{missingRequirements.map((requirement) => <li key={requirement}>{requirement}</li>)}</ul></div> : null}
           {handoffError ? <p role="alert" className="mt-3 text-xs text-rose-600">{handoffError}</p> : null}
-          <button type="button" onClick={() => void onAdvanceMilestone()} disabled={!handoffReady || handoffBusy} className="mt-4 inline-flex min-h-9 w-full items-center justify-center rounded-lg border border-border px-3 text-xs font-semibold text-muted-foreground disabled:cursor-not-allowed disabled:opacity-70">
+          <button type="button" onClick={() => void onAdvanceMilestone()} disabled={!handoffReady || handoffBusy} className={`mt-4 inline-flex min-h-9 w-full items-center justify-center rounded-lg border px-3 text-xs font-semibold transition ${handoffReady ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90" : "border-border text-muted-foreground disabled:cursor-not-allowed disabled:opacity-70"}`}>
             {handoffBusy ? "Đang đánh giá…" : handoffReady ? "Chuyển milestone" : "Chưa đủ điều kiện chuyển milestone"}
           </button>
         </div>
@@ -6265,7 +6288,7 @@ export default function ProjectDetailPage() {
 
   const handleAdvanceMilestone = useCallback(async () => {
     if (handoffBusy) return;
-    const activeMilestone = milestones.find((milestone) => milestone.status === "in-progress") ?? milestones[0];
+    const activeMilestone = selectActiveMilestone(milestones);
     if (!activeMilestone) return;
 
     setHandoffBusy(true);
@@ -6279,9 +6302,12 @@ export default function ProjectDetailPage() {
         window.location.assign(`/login?returnTo=${encodeURIComponent(`/projects/${projectId}?tab=Overview`)}`);
         return;
       }
-      const payload = await response.json().catch(() => null) as { message?: string } | null;
+      const payload = await response.json().catch(() => null) as { message?: string; gateStatus?: string; missingRequirements?: string[] } | null;
       if (!response.ok) {
         throw new Error(payload?.message || `Không thể đánh giá hồ sơ (${response.status}).`);
+      }
+      if (payload?.gateStatus && payload.gateStatus !== "approved") {
+        throw new Error(payload.missingRequirements?.join(" ") || "Hồ sơ chưa đủ điều kiện chuyển milestone.");
       }
       const refreshed = await reloadCanonicalHierarchy();
       if (!refreshed) throw new Error("Không thể tải lại trạng thái milestone.");
@@ -6294,9 +6320,7 @@ export default function ProjectDetailPage() {
 
   const handleCustomerConfirmationChange = useCallback(async (confirmed: boolean) => {
     if (handoffBusy) return;
-    const activeMilestone = milestones.find((milestone) => milestone.gateStatus === "open")
-      ?? milestones.find((milestone) => milestone.status === "in-progress" && milestone.gateStatus !== "locked" && milestone.gateStatus !== "approved")
-      ?? milestones[0];
+    const activeMilestone = selectActiveMilestone(milestones);
     if (!activeMilestone?.customerConfirmationRequired) return;
 
     setHandoffBusy(true);

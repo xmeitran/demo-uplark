@@ -11,6 +11,7 @@ import type {
   TaskTimeEntrySummary
 } from "@b2b-crm/contracts";
 import { toIso, toMoneyNumber } from "../../shared/http/request-context";
+import { isCompletedTaskStatus } from "./task-status";
 
 export function mapProjectSummary(project: any): ProjectSummary {
   const tasks = project.tasks ?? [];
@@ -114,10 +115,6 @@ function buildProjectMemberTaskStats(tasks: any[]) {
   }
 
   return stats;
-}
-
-function isCompletedTaskStatus(status: unknown) {
-  return String(status ?? "").toLowerCase() === "completed";
 }
 
 function projectMemberTaskStats(stats?: { assignedTaskCount: number; doneTaskCount: number }) {

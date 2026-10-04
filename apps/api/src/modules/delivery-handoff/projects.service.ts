@@ -62,7 +62,8 @@ import {
   getDailyActualLogWindow
 } from "./daily-actual-log";
 import { dateOnlyToUtcDate, getLocalDateKeysForTimeRange, lockWorkspaceDayOffDates } from "../workspace-calendar/day-off-time";
-import { isCompletedTaskStatus } from "./task-status";
+import { isCancelledTaskStatus, isCompletedTaskStatus } from "./task-status";
+import { evaluateMilestoneGate } from "./milestone-gate";
 import { buildRuleBasedProjectPlan } from "./project-plan-rules";
 
 const projectInclude = {
@@ -467,6 +468,53 @@ function normalizeMilestoneEvidenceMode(value: unknown): ProjectMilestoneEvidenc
     throw new BadRequestException("evidenceMode must be file, link, or file_or_link");
   }
   return mode as ProjectMilestoneEvidenceMode;
+}
+
+function mapMilestoneGateSummary(milestone: any, fileCount: number, linkCount: number) {
+  const evidenceMode = normalizeMilestoneEvidenceMode(milestone.evidenceMode);
+  const requiredDocumentCount = effectiveRequiredDocumentCount(milestone);
+  const submittedDocumentCount = evidenceMode === "file"
+    ? fileCount
+    : evidenceMode === "link"
+      ? linkCount
+      : fileCount + linkCount;
+  const taskStatuses = (milestone.stages ?? []).flatMap((stage: any) =>
+    (stage.tasks ?? []).map((task: any) => task.status)
+  );
+  const evaluation = evaluateMilestoneGate({
+    requiredDocumentCount,
+    submittedDocumentCount,
+    customerConfirmationRequired: Boolean(milestone.customerConfirmationRequired),
+    customerConfirmationAt: milestone.customerConfirmationAt,
+    taskStatuses
+  });
+
+  return {
+    id: milestone.id,
+    projectId: milestone.projectId,
+    name: milestone.name,
+    normalizedKey: milestone.normalizedKey,
+    sortOrder: milestone.sortOrder,
+    gateStatus: milestone.gateStatus,
+    requiredDocumentCount,
+    requiredDocumentTypes: milestone.requiredDocumentTypes,
+    evidenceMode,
+    ownerTeamId: milestone.ownerTeamId ?? undefined,
+    ownerTeamName: milestone.ownerTeam?.name ?? undefined,
+    submittedDocumentCount,
+    documentsSatisfied: evaluation.documentsSatisfied,
+    confirmationSatisfied: evaluation.confirmationSatisfied,
+    taskCount: evaluation.taskCount,
+    completedTaskCount: evaluation.completedTaskCount,
+    tasksSatisfied: evaluation.tasksSatisfied,
+    missingRequirements: evaluation.missingRequirements,
+    unlockCriteria: typeof milestone.unlockCriteria === "object" && milestone.unlockCriteria && "text" in milestone.unlockCriteria
+      ? String((milestone.unlockCriteria as { text?: unknown }).text ?? "")
+      : undefined,
+    customerConfirmationRequired: milestone.customerConfirmationRequired,
+    customerConfirmationAt: milestone.customerConfirmationAt?.toISOString(),
+    reviewerRole: milestone.reviewerRole
+  };
 }
 
 function buildLegacyMilestoneTemplate() {
@@ -1479,7 +1527,17 @@ export class ProjectsService {
           projectId: project.id,
           workspaceId: principal.workspaceId
         },
-        include: { ownerTeam: { select: { id: true, name: true } } },
+        include: {
+          ownerTeam: { select: { id: true, name: true } },
+          stages: {
+            select: {
+              tasks: {
+                where: { workspaceId: principal.workspaceId, archivedAt: null },
+                select: { status: true }
+              }
+            }
+          }
+        },
         orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }]
       }),
       this.prisma.projectDocumentVersion.count({
@@ -1501,26 +1559,7 @@ export class ProjectsService {
     return {
       projectId: project.id,
       hierarchyOrderVersion: project.hierarchyOrderVersion,
-      milestones: milestones.map((milestone) => ({
-        id: milestone.id,
-        projectId: milestone.projectId,
-        name: milestone.name,
-        normalizedKey: milestone.normalizedKey,
-        sortOrder: milestone.sortOrder,
-        gateStatus: milestone.gateStatus,
-        requiredDocumentCount: effectiveRequiredDocumentCount(milestone),
-        requiredDocumentTypes: milestone.requiredDocumentTypes,
-        evidenceMode: normalizeMilestoneEvidenceMode(milestone.evidenceMode),
-        ownerTeamId: milestone.ownerTeamId ?? undefined,
-        ownerTeamName: milestone.ownerTeam?.name ?? undefined,
-        submittedDocumentCount: milestone.evidenceMode === "file" ? fileCount : milestone.evidenceMode === "link" ? linkCount : fileCount + linkCount,
-        unlockCriteria: typeof milestone.unlockCriteria === "object" && milestone.unlockCriteria && "text" in milestone.unlockCriteria
-          ? String((milestone.unlockCriteria as { text?: unknown }).text ?? "")
-          : undefined,
-        customerConfirmationRequired: milestone.customerConfirmationRequired,
-        customerConfirmationAt: milestone.customerConfirmationAt?.toISOString(),
-        reviewerRole: milestone.reviewerRole
-      }))
+      milestones: milestones.map((milestone) => mapMilestoneGateSummary(milestone, fileCount, linkCount))
     };
   }
 
@@ -1530,7 +1569,17 @@ export class ProjectsService {
     const [milestones, fileCount, linkCount] = await this.prisma.$transaction([
       this.prisma.projectMilestone.findMany({
         where: { projectId: project.id, workspaceId: principal.workspaceId },
-        include: { ownerTeam: { select: { id: true, name: true } } },
+        include: {
+          ownerTeam: { select: { id: true, name: true } },
+          stages: {
+            select: {
+              tasks: {
+                where: { workspaceId: principal.workspaceId, archivedAt: null },
+                select: { status: true }
+              }
+            }
+          }
+        },
         orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
       }),
       this.prisma.projectDocumentVersion.count({ where: { projectId: project.id, workspaceId: principal.workspaceId, fileObject: { storageProvider: { in: ["local", "lark_drive"] } } } }),
@@ -1540,26 +1589,7 @@ export class ProjectsService {
       projectId: project.id,
       milestoneMode: project.milestoneMode,
       milestoneTemplateKey: project.milestoneTemplateKey,
-      data: milestones.map((milestone) => ({
-        id: milestone.id,
-        projectId: milestone.projectId,
-        name: milestone.name,
-        normalizedKey: milestone.normalizedKey,
-        sortOrder: milestone.sortOrder,
-        gateStatus: milestone.gateStatus,
-        requiredDocumentCount: effectiveRequiredDocumentCount(milestone),
-        requiredDocumentTypes: milestone.requiredDocumentTypes,
-        evidenceMode: normalizeMilestoneEvidenceMode(milestone.evidenceMode),
-        ownerTeamId: milestone.ownerTeamId ?? undefined,
-        ownerTeamName: milestone.ownerTeam?.name ?? undefined,
-        submittedDocumentCount: milestone.evidenceMode === "file" ? fileCount : milestone.evidenceMode === "link" ? linkCount : fileCount + linkCount,
-        unlockCriteria: typeof milestone.unlockCriteria === "object" && milestone.unlockCriteria && "text" in milestone.unlockCriteria
-          ? String((milestone.unlockCriteria as { text?: unknown }).text ?? "")
-          : "",
-        customerConfirmationRequired: milestone.customerConfirmationRequired,
-        customerConfirmationAt: milestone.customerConfirmationAt?.toISOString(),
-        reviewerRole: milestone.reviewerRole
-      }))
+      data: milestones.map((milestone) => mapMilestoneGateSummary(milestone, fileCount, linkCount))
     };
   }
 
@@ -1642,13 +1672,28 @@ export class ProjectsService {
       }
     });
     const requiredDocumentCount = effectiveRequiredDocumentCount(milestone);
-    const documentsSatisfied = submittedDocumentCount >= requiredDocumentCount;
-    const confirmationSatisfied = !milestone.customerConfirmationRequired || Boolean(milestone.customerConfirmationAt);
-    const nextStatus = documentsSatisfied && confirmationSatisfied && requiredDocumentCount > 0
-      ? "pending_review"
-      : documentsSatisfied && confirmationSatisfied
-        ? "approved"
-        : milestone.gateStatus;
+    const taskRows = typeof this.prisma.projectTask?.findMany === "function"
+      ? await this.prisma.projectTask.findMany({
+          where: {
+            projectId: project.id,
+            workspaceId: principal.workspaceId,
+            archivedAt: null,
+            stage: { milestoneId: milestone.id }
+          },
+          select: { status: true }
+        })
+      : [];
+    const evaluation = evaluateMilestoneGate({
+      requiredDocumentCount,
+      submittedDocumentCount,
+      customerConfirmationRequired: Boolean(milestone.customerConfirmationRequired),
+      customerConfirmationAt: milestone.customerConfirmationAt,
+      taskStatuses: taskRows.map((task: { status: unknown }) => task.status)
+    });
+    // A configured reviewer can still explicitly move a gate to pending_review.
+    // Evaluation itself must be actionable: once the visible requirements pass,
+    // the milestone is approved and the next locked milestone opens.
+    const nextStatus = evaluation.satisfied ? "approved" : milestone.gateStatus;
     const updated = await this.prisma.$transaction(async (tx) => {
       const result = await tx.projectMilestone.update({ where: { id: milestone.id }, data: { gateStatus: nextStatus } });
       if (nextStatus === "approved") {
@@ -1657,7 +1702,12 @@ export class ProjectsService {
       }
       return result;
     });
-    return { ...updated, requiredDocumentCount, submittedDocumentCount, documentsSatisfied, confirmationSatisfied };
+    return {
+      ...updated,
+      requiredDocumentCount,
+      submittedDocumentCount,
+      ...evaluation
+    };
   }
 
   async reorderProjectHierarchy(
@@ -2660,6 +2710,8 @@ export class ProjectsService {
       throw new BadRequestException("accountId is required");
     }
 
+    const requestedStatus = input.status?.trim() || "todo";
+    const createdStatusAt = new Date();
     const data: Prisma.ProjectTaskUncheckedCreateInput = {
       accountId: normalized.accountId,
       workspaceId: principal.workspaceId,
@@ -2673,7 +2725,7 @@ export class ProjectsService {
       taskType: input.taskType?.trim() || "implementation",
       taskTypeLayer1: input.taskTypeLayer1 ?? undefined,
       taskTypeLayer2: input.taskTypeLayer2 ?? undefined,
-      status: input.status?.trim() || "todo",
+      status: requestedStatus,
       priority: input.priority?.trim() || "medium",
       ownerUserId,
       assigneeUserId: primaryAssigneeUserId,
@@ -2682,7 +2734,10 @@ export class ProjectsService {
       dueAt: dueAt ?? undefined,
       estimateMinutes: optionalInteger(input.estimateMinutes, "estimateMinutes") ?? 0,
       customerVisible: optionalBoolean(input.customerVisible, "customerVisible") ?? false,
-      createdByUserId
+      createdByUserId,
+      startedAt: requestedStatus === "in_progress" ? createdStatusAt : undefined,
+      completedAt: isCompletedTaskStatus(requestedStatus) ? createdStatusAt : undefined,
+      cancelledAt: isCancelledTaskStatus(requestedStatus) ? createdStatusAt : undefined
     };
 
     const task = normalized.projectId && normalized.stageId && !normalized.parentTaskId
@@ -2725,6 +2780,10 @@ export class ProjectsService {
       ? await this.prisma.projectTask.findUnique({ where: { id: task.id }, include: taskInclude })
       : null;
     const taskResult = hydratedTask ?? task;
+
+    if (isCompletedTaskStatus(requestedStatus)) {
+      await this.evaluateMilestoneGateForTask(taskResult, principal);
+    }
 
     await this.prisma.auditEvent.create({
       data: {
@@ -2780,6 +2839,7 @@ export class ProjectsService {
       throw new BadRequestException("Task hierarchy parent changes require a dedicated move endpoint");
     }
     const requestedStatus = optionalString(input.status, "status");
+    const statusChangedAt = requestedStatus == null ? undefined : new Date();
     const ownerUserId = optionalString(input.ownerUserId, "ownerUserId");
     const assigneeUserId = optionalString(input.assigneeUserId, "assigneeUserId");
     const hasAssigneeList = hasInputKey(input, "assigneeUserIds");
@@ -2810,7 +2870,18 @@ export class ProjectsService {
         plannedStartAt: optionalDate(input.plannedStartAt, "plannedStartAt"),
         dueAt: optionalDate(input.dueAt, "dueAt"),
         estimateMinutes: optionalInteger(input.estimateMinutes, "estimateMinutes") ?? undefined,
-        customerVisible: optionalBoolean(input.customerVisible, "customerVisible") ?? undefined
+        customerVisible: optionalBoolean(input.customerVisible, "customerVisible") ?? undefined,
+        completedAt: requestedStatus == null
+          ? undefined
+          : isCompletedTaskStatus(requestedStatus)
+            ? existing.completedAt ?? statusChangedAt
+            : null,
+        startedAt: requestedStatus === "in_progress" && !existing.startedAt ? statusChangedAt : undefined,
+        cancelledAt: requestedStatus == null
+          ? undefined
+          : isCancelledTaskStatus(requestedStatus)
+            ? existing.cancelledAt ?? statusChangedAt
+            : null
       });
 
     const task = await this.prisma.$transaction(async (tx) => {
@@ -2961,6 +3032,9 @@ export class ProjectsService {
       }
       return updated;
     });
+    if (requestedStatus && isCompletedTaskStatus(requestedStatus)) {
+      await this.evaluateMilestoneGateForTask(task, principal);
+    }
     return mapTaskSummary(task);
   }
 
@@ -3145,13 +3219,16 @@ export class ProjectsService {
         data: {
           status: toStatus,
           startedAt: toStatus === "in_progress" && !existing.startedAt ? changedAt : undefined,
-          completedAt: isCompletedTaskStatus(toStatus) ? existing.completedAt ?? changedAt : undefined,
-          cancelledAt: toStatus === "cancelled" ? existing.cancelledAt ?? changedAt : undefined
+          completedAt: isCompletedTaskStatus(toStatus) ? existing.completedAt ?? changedAt : null,
+          cancelledAt: isCancelledTaskStatus(toStatus) ? existing.cancelledAt ?? changedAt : null
         },
         include: taskInclude
       });
     });
 
+    if (isCompletedTaskStatus(toStatus)) {
+      await this.evaluateMilestoneGateForTask(task, principal);
+    }
     return mapTaskSummary(task);
   }
 
@@ -4582,6 +4659,30 @@ export class ProjectsService {
       customerVisible: true,
       OR: grantWhere
     };
+  }
+
+  private async evaluateMilestoneGateForTask(
+    task: { projectId?: string | null; stageId?: string | null },
+    principal: PrincipalContext
+  ) {
+    if (!task.projectId || !task.stageId || typeof this.prisma.projectStage?.findFirst !== "function") return;
+
+    try {
+      const stage = await this.prisma.projectStage.findFirst({
+        where: {
+          id: task.stageId,
+          projectId: task.projectId,
+          workspaceId: principal.workspaceId
+        },
+        select: { milestoneId: true }
+      });
+      if (stage?.milestoneId) {
+        await this.evaluateProjectMilestoneGate(task.projectId, stage.milestoneId, principal);
+      }
+    } catch {
+      // Task completion is durable even if a stale/legacy hierarchy record
+      // cannot be re-evaluated. The handoff endpoint remains retryable.
+    }
   }
 
   private async ensureTaskForPrincipal(taskId: string, principal: PrincipalContext, options?: { include?: Prisma.ProjectTaskInclude }) {

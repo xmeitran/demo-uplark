@@ -286,8 +286,8 @@ export default function DeliveryCreateProjectModal({
           <div className="delivery-create-project-section delivery-milestone-config">
             <div className="delivery-create-project-section-heading">
               <div>
-                <span className="delivery-create-project-section-title">Milestone & điều kiện mở khóa</span>
-                <small>Milestone tiếp theo chỉ mở khi đủ hồ sơ chuyển tiếp và điều kiện được admin cấu hình.</small>
+                <span className="delivery-create-project-section-title">Milestone & checklist chuyển tiếp</span>
+                <small>Chọn mẫu để dùng sẵn. Hệ thống chỉ kiểm tra task, hồ sơ bắt buộc và xác nhận khách hàng; phần mô tả chỉ để tham chiếu.</small>
               </div>
               <button className="delivery-plan-action" disabled={!name.trim() || isGeneratingPlan} onClick={generatePlanPreview} type="button">
                 {isGeneratingPlan ? "Đang dựng kế hoạch..." : "Gợi ý theo mẫu"}
@@ -340,13 +340,15 @@ export default function DeliveryCreateProjectModal({
                     {milestone.stages.map((stage) => <span key={stage.id}>{stage.activity}</span>)}
                     {milestoneMode === "manual" ? <button onClick={() => setMilestones((current) => current.map((item) => item.id === milestone.id ? { ...item, stages: [...item.stages, { id: `${milestone.id}-${Date.now()}`, activity: "Stage mới" }] } : item))} type="button">+ Stage</button> : null}
                   </div>
-                  <div className="delivery-milestone-gate-grid">
-                    <FormField label="Số hồ sơ bắt buộc" min={0} onChange={(event) => updateMilestone(setMilestones, milestone.id, { requiredDocumentCount: Math.max(0, Number(event.target.value) || 0) })} type="number" value={String(milestone.requiredDocumentCount)} />
-                    <FormField label="Loại hồ sơ (phân tách bằng dấu phẩy)" onChange={(event) => updateMilestone(setMilestones, milestone.id, { requiredDocumentTypes: event.target.value })} placeholder="BRD, FRD, SRS" value={milestone.requiredDocumentTypes} />
-                    <FormField label="Vai trò duyệt" onChange={(event) => updateMilestone(setMilestones, milestone.id, { reviewerRole: event.target.value })} value={milestone.reviewerRole} />
-                  </div>
-                  <FormTextArea label="Điều kiện mở milestone tiếp theo" onChange={(event) => updateMilestone(setMilestones, milestone.id, { unlockCriteria: event.target.value })} rows={2} value={milestone.unlockCriteria} />
-                  <label className="delivery-gate-check"><input checked={milestone.customerConfirmationRequired} onChange={(event) => updateMilestone(setMilestones, milestone.id, { customerConfirmationRequired: event.target.checked })} type="checkbox" /> Cần khách hàng xác nhận trước khi mở bước tiếp theo</label>
+                  {milestoneMode === "manual" ? <>
+                    <div className="delivery-milestone-gate-grid">
+                      <FormField label="Số hồ sơ bắt buộc" min={0} onChange={(event) => updateMilestone(setMilestones, milestone.id, { requiredDocumentCount: Math.max(0, Number(event.target.value) || 0) })} type="number" value={String(milestone.requiredDocumentCount)} />
+                      <FormField label="Loại hồ sơ (phân tách bằng dấu phẩy)" onChange={(event) => updateMilestone(setMilestones, milestone.id, { requiredDocumentTypes: event.target.value })} placeholder="BRD, FRD, SRS" value={milestone.requiredDocumentTypes} />
+                      <FormField label="Vai trò duyệt (tham chiếu)" onChange={(event) => updateMilestone(setMilestones, milestone.id, { reviewerRole: event.target.value })} value={milestone.reviewerRole} />
+                    </div>
+                    <FormTextArea label="Mô tả điều kiện (tham chiếu)" onChange={(event) => updateMilestone(setMilestones, milestone.id, { unlockCriteria: event.target.value })} rows={2} value={milestone.unlockCriteria} />
+                    <label className="delivery-gate-check"><input checked={milestone.customerConfirmationRequired} onChange={(event) => updateMilestone(setMilestones, milestone.id, { customerConfirmationRequired: event.target.checked })} type="checkbox" /> Cần khách hàng xác nhận trước khi mở bước tiếp theo</label>
+                  </> : <p className="delivery-milestone-auto-note">Đang dùng checklist chuẩn của template. Bạn có thể xem số hồ sơ, task và xác nhận còn thiếu trong “Hồ sơ chuyển tiếp” sau khi tạo project.</p>}
                 </article>
               ))}
             </div>

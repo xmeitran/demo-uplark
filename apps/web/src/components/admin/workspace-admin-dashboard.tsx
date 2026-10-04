@@ -702,8 +702,8 @@ function MilestoneRulePanel({
     <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
         <p className="text-xs font-bold uppercase tracking-[0.16em] text-indigo-700">WORKFLOW RULES</p>
-        <h3 id="milestone-rule-title" className="mt-1 text-lg font-bold tracking-tight text-slate-950">Team & điều kiện mở milestone</h3>
-        <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-600">Chỉ khi đủ số bằng chứng theo loại đã chọn, milestone mới được đánh giá để mở bước tiếp theo.</p>
+        <h3 id="milestone-rule-title" className="mt-1 text-lg font-bold tracking-tight text-slate-950">Team & checklist mở milestone</h3>
+        <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-600">Gate tự động kiểm tra hồ sơ, task trong các stage và xác nhận khách hàng. Vai trò duyệt và mô tả chỉ là thông tin tham chiếu.</p>
       </div>
       <div className="flex items-center gap-2">
         <select value={activeTemplateId} onChange={(event) => setActiveTemplateId(event.target.value)} className="h-10 min-w-[220px] rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700">
