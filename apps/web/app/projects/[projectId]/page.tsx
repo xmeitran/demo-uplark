@@ -3056,10 +3056,10 @@ function AddDocModal({
           </Field>
         </div>
 
-        <Field label="Loại hồ sơ cho gate">
+        <Field label="Phân loại tài liệu (không bắt buộc)">
           {documentTypeOptions.length > 0 ? (
             <CustomDropdown
-              ariaLabel="Loại hồ sơ cho gate"
+              ariaLabel="Phân loại tài liệu"
               options={documentTypeOptions.map((value) => ({ value, label: value }))}
               value={artifactType || documentTypeOptions[0]}
               onChange={setArtifactType}
@@ -3072,7 +3072,7 @@ function AddDocModal({
               className="w-full border border-input rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none"
             />
           )}
-          <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">Chọn đúng mã loại hồ sơ đang được cấu hình trong milestone; nếu để trống hệ thống dùng nhóm tài liệu.</p>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">Chỉ dùng để phân loại và lọc tài liệu. Milestone chỉ kiểm tra đủ số lượng hồ sơ hợp lệ.</p>
         </Field>
 
         <div className="grid grid-cols-2 gap-3">
@@ -3146,13 +3146,13 @@ function AddLinkDocModal({
       <Field label="Tên tài liệu" required><input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="VD: BRD đã duyệt" className="w-full rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground focus:outline-none" /></Field>
       <Field label="URL tài liệu" required><input type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://..." className="w-full rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground focus:outline-none" /></Field>
       <Field label="Category"><CustomDropdown options={categories.map((value) => ({ value, label: value }))} value={category} onChange={setCategory} /></Field>
-      <Field label="Loại hồ sơ cho gate">
+      <Field label="Phân loại tài liệu (không bắt buộc)">
         {documentTypeOptions.length > 0 ? (
-          <CustomDropdown ariaLabel="Loại hồ sơ cho gate" options={documentTypeOptions.map((value) => ({ value, label: value }))} value={artifactType || documentTypeOptions[0]} onChange={setArtifactType} />
+          <CustomDropdown ariaLabel="Phân loại tài liệu" options={documentTypeOptions.map((value) => ({ value, label: value }))} value={artifactType || documentTypeOptions[0]} onChange={setArtifactType} />
         ) : (
           <input value={artifactType} onChange={(event) => setArtifactType(event.target.value)} placeholder="VD: BRD, FRD, SRS" className="w-full rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground focus:outline-none" />
         )}
-        <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">Chọn đúng mã loại hồ sơ trong milestone để bằng chứng được tính vào gate.</p>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">Chỉ dùng để phân loại và lọc tài liệu. Milestone chỉ kiểm tra đủ số lượng hồ sơ hợp lệ.</p>
       </Field>
       {error ? <p className="text-xs font-semibold text-red-600" role="alert">{error}</p> : null}
       <Field label="Ghi chú"><textarea value={note} onChange={(event) => setNote(event.target.value)} rows={2} className="w-full resize-none rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground focus:outline-none" /></Field>
@@ -6502,12 +6502,17 @@ export default function ProjectDetailPage() {
       const created = (await response.json()) as ProjectDocumentSummary;
       const nextDoc = mapProjectDocumentToDoc(created);
       setDocuments(prev => [...prev, nextDoc]);
+      try {
+        await reloadCanonicalHierarchy();
+      } catch (refreshError) {
+        console.error("Project milestone refresh after document upload failed", refreshError);
+      }
       return { ok: true };
     } catch (error) {
       console.error("Project document upload failed", error);
       return { ok: false, error: error instanceof Error ? error.message : "Document upload failed. Your selected file and notes are still available." };
     }
-  }, [projectId, uploadProjectFile]);
+  }, [projectId, reloadCanonicalHierarchy, uploadProjectFile]);
 
   const handleAddLinkDocument = useCallback(async (doc: { name: string; category: string; artifactType?: string; url: string }, note: string): Promise<DocumentSaveResult> => {
     try {
@@ -6554,11 +6559,16 @@ export default function ProjectDetailPage() {
       }
       const created = await response.json() as ProjectDocumentSummary;
       setDocuments((current) => [...current, mapProjectDocumentToDoc(created)]);
+      try {
+        await reloadCanonicalHierarchy();
+      } catch (refreshError) {
+        console.error("Project milestone refresh after link creation failed", refreshError);
+      }
       return { ok: true };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : "Could not save this link." };
     }
-  }, [project.accountId, projectId]);
+  }, [project.accountId, projectId, reloadCanonicalHierarchy]);
 
   const handleAddVersion = useCallback(async (docId: string, file: File, note: string): Promise<VersionSaveResult> => {
     const current = documents.find(doc => doc.id === docId);
@@ -6630,7 +6640,12 @@ export default function ProjectDetailPage() {
     }
 
     setDocuments(prev => prev.filter(doc => doc.id !== docId));
-  }, [projectId]);
+    try {
+      await reloadCanonicalHierarchy();
+    } catch (refreshError) {
+      console.error("Project milestone refresh after document deletion failed", refreshError);
+    }
+  }, [projectId, reloadCanonicalHierarchy]);
 
   useEffect(() => {
     const controller = new AbortController();
