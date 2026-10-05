@@ -168,6 +168,27 @@ describe("Lark authentication boundary", () => {
     expect(nativeAuth.completeIdentityLogin).toHaveBeenCalledWith(existingMember.id, expect.objectContaining({ workspaceId: "twk-foundation" }), { authMethod: "lark" });
   });
 
+  it("repairs a stale open-id link when the stable Lark user id resolves to another CRM member", async () => {
+    const { service, prisma, nativeAuth } = makeService();
+    const canonicalMember = { id: "usr-lark-HCM273", email: "maitns@upbase.asia", displayName: "Trần Ngô Sao Mai", status: "ACTIVE" };
+    prisma.portalIdentity.findUnique.mockResolvedValue({ user: { id: "usr-auto-provisioned", email: "tranngosaomai@gmail.com", displayName: "Trần Ngô Sao Mai", status: "ACTIVE" } });
+    prisma.portalIdentity.findFirst.mockResolvedValue({ user: canonicalMember });
+    prisma.portalIdentity.upsert.mockResolvedValue({ userId: canonicalMember.id });
+    prisma.user.update.mockResolvedValue(canonicalMember);
+    const { state } = await service.createAuthorizeUrl({ redirectUri });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, access_token: "provider-token" }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, data: { open_id: "ou_new_app_id", user_id: "HCM273", tenant_key: "tn_test", email: "tranngosaomai@gmail.com", name: "Trần Ngô Sao Mai" } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 1 }) }));
+
+    await service.completeCallback({ code: "code", state, redirectUri });
+
+    expect(nativeAuth.completeIdentityLogin).toHaveBeenCalledWith(canonicalMember.id, expect.objectContaining({ workspaceId: "twk-foundation" }), { authMethod: "lark" });
+    expect(prisma.portalIdentity.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ userId: canonicalMember.id, providerUserId: "ou_new_app_id", tenantKey: "prod" })
+    }));
+  });
+
   it("repairs an existing linked CRM user when Lark provides an enterprise email", async () => {
     const { service, prisma } = makeService();
     prisma.portalIdentity.findUnique.mockResolvedValue({

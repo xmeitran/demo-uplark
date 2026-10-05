@@ -302,6 +302,18 @@ export class LarkAuthService {
   private async resolveUserFromProfile(profile: NormalizedLarkProfile, workspace: WorkspaceContext) {
     this.assertLarkTenantAllowed(profile.tenantKey);
 
+    // `open_id` is scoped to the Lark app. If the app is recreated or the
+    // workspace switches to another app, the same person receives a new
+    // open_id. Prefer the stable directory/user_id identity before honoring
+    // an open_id that may already be linked to a duplicate auto-provisioned
+    // account from an earlier login.
+    const legacyLarkUser = await this.findUserByLarkUserId(profile.userId, workspace);
+    if (legacyLarkUser) {
+      await this.requireActiveMembership(legacyLarkUser, workspace);
+      await this.linkIdentity(legacyLarkUser.id, profile.openId, workspace.tenantKey);
+      return this.updateUserProfile(legacyLarkUser.id, profile, legacyLarkUser.email);
+    }
+
     const linkedIdentity = await this.prisma.portalIdentity.findUnique({
       where: {
         provider_providerUserId_tenantKey: {
@@ -315,18 +327,6 @@ export class LarkAuthService {
     if (linkedIdentity) {
       await this.requireActiveMembership(linkedIdentity.user, workspace);
       return this.updateUserProfile(linkedIdentity.user.id, profile, linkedIdentity.user.email);
-    }
-
-    // `open_id` is scoped to the Lark app. If the app is recreated or the
-    // workspace switches to another app, the same person receives a new
-    // open_id. Keep the directory/user_id identity as the stable bridge so
-    // we link back to the existing CRM member instead of auto-provisioning a
-    // duplicate account from the personal OAuth email.
-    const legacyLarkUser = await this.findUserByLarkUserId(profile.userId, workspace);
-    if (legacyLarkUser) {
-      await this.requireActiveMembership(legacyLarkUser, workspace);
-      await this.linkIdentity(legacyLarkUser.id, profile.openId, workspace.tenantKey);
-      return this.updateUserProfile(legacyLarkUser.id, profile, legacyLarkUser.email);
     }
 
     const matchedUser = await this.findUserByEmail(profile);
