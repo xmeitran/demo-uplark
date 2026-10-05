@@ -118,6 +118,27 @@ describe("Lark authentication boundary", () => {
     }));
   });
 
+  it("repairs an existing linked CRM user when Lark provides an enterprise email", async () => {
+    const { service, prisma } = makeService();
+    prisma.portalIdentity.findUnique.mockResolvedValue({
+      user: { id: "usr-1", email: "mai.personal@gmail.com", displayName: "Person", status: "ACTIVE" }
+    });
+    prisma.user.findFirst.mockResolvedValue(null);
+    const { state } = await service.createAuthorizeUrl({ redirectUri });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, access_token: "provider-token" }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, data: { open_id: "ou_test", user_id: "ou_test_user", tenant_key: "tn_test", email: "mai.personal@gmail.com", name: "Person" } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, tenant_access_token: "tenant-token" }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, data: { user: { enterprise_email: "mai@upbase.asia" } } }) }));
+
+    await service.completeCallback({ code: "code", state, redirectUri });
+
+    expect(prisma.user.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "usr-1" },
+      data: expect.objectContaining({ email: "mai@upbase.asia" })
+    }));
+  });
+
   it("rejects auto-provision configuration that would grant an admin role", async () => {
     vi.stubEnv("CRM_LARK_AUTO_PROVISION", "true");
     vi.stubEnv("CRM_LARK_DEFAULT_ROLE_CODE", "WORKSPACE_ADMIN");

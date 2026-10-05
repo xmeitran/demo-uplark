@@ -305,21 +305,21 @@ export class LarkAuthService {
     });
     if (linkedIdentity) {
       await this.requireActiveMembership(linkedIdentity.user, workspace);
-      return this.updateUserProfile(linkedIdentity.user.id, profile);
+      return this.updateUserProfile(linkedIdentity.user.id, profile, linkedIdentity.user.email);
     }
 
     const matchedUser = await this.findUserByEmail(profile);
     if (matchedUser) {
       await this.requireActiveMembership(matchedUser, workspace);
       await this.linkIdentity(matchedUser.id, profile.openId, workspace.tenantKey);
-      return this.updateUserProfile(matchedUser.id, profile);
+      return this.updateUserProfile(matchedUser.id, profile, matchedUser.email);
     }
 
     const bootstrapAdmin = await this.findBootstrapAdmin(profile.openId, workspace);
     if (bootstrapAdmin) {
       await this.requireActiveMembership(bootstrapAdmin, workspace);
       await this.linkIdentity(bootstrapAdmin.id, profile.openId, workspace.tenantKey);
-      return this.updateUserProfile(bootstrapAdmin.id, profile);
+      return this.updateUserProfile(bootstrapAdmin.id, profile, bootstrapAdmin.email);
     }
 
     if (process.env.CRM_LARK_AUTO_PROVISION === "true") {
@@ -377,7 +377,7 @@ export class LarkAuthService {
             tenantKey: workspace.tenantKey
           }
         });
-        return this.updateUserProfile(existingUser.id, profile);
+        return this.updateUserProfile(existingUser.id, profile, existingUser.email);
       }
 
       const role = await tx.role.findUnique({ where: { code: roleCode } });
@@ -470,10 +470,30 @@ export class LarkAuthService {
     }
   }
 
-  private async updateUserProfile(userId: string, profile: NormalizedLarkProfile) {
+  private async updateUserProfile(userId: string, profile: NormalizedLarkProfile, currentEmail?: string) {
+    const personalEmail = normalizeEmail(profile.email);
+    const enterpriseEmail = normalizeEmail(profile.enterpriseEmail);
+    const shouldSyncEnterpriseEmail = Boolean(
+      enterpriseEmail &&
+      personalEmail &&
+      currentEmail &&
+      currentEmail.toLowerCase() === personalEmail &&
+      enterpriseEmail !== personalEmail
+    );
+    let syncedEmail: string | undefined;
+    if (shouldSyncEnterpriseEmail) {
+      const existingOwner = await this.prisma.user.findFirst({ where: { email: enterpriseEmail } });
+      if (!existingOwner || existingOwner.id === userId) {
+        syncedEmail = enterpriseEmail;
+      } else {
+        this.logger.warn("Skipped Lark enterprise email sync because the address belongs to another CRM user");
+      }
+    }
+
     return this.prisma.user.update({
       where: { id: userId },
       data: {
+        email: syncedEmail,
         displayName: profile.displayName,
         avatarUrl: profile.avatarUrl ?? undefined
       }
