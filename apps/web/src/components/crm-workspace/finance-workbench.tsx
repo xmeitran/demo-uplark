@@ -723,7 +723,7 @@ function formatAllowedRoles(roles: string[]) {
     CLIENT_SPONSOR: "Sponsor khách hàng",
     FINANCE_ADMIN: "Tài chính",
     FOUNDER_GM: "Founder/GM",
-    SALES_OWNER: "Sales Owner"
+    SALES_OWNER: "Business development"
   };
   return roles.map((role) => labels[role] ?? "Nhóm được cấp quyền").join(", ");
 }

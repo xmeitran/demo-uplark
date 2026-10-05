@@ -16,6 +16,7 @@ import Link from "next/link";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { CustomDropdown, CustomDatePicker } from "@/components/constructor-x/custom-controls";
 import { ModalLayer } from "@/components/modal-layer";
+import { CrmMultiSelect, CrmSelect } from "@/components/crm-workspace/crm-select";
 import { useAuth } from "@/lib/auth";
 import {
   getPushedProjectsOwnerKey,
@@ -39,6 +40,7 @@ import {
 } from "@/lib/workspace-users";
 import { downloadCsv } from "@/lib/csv-export";
 import { uiProjectDateToIso } from "@/lib/project-date";
+import { systemRoleLabel } from "@/lib/people-roles";
 import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-tab-bar";
 import {
   ProjectSheet,
@@ -219,19 +221,19 @@ function ProjectCard({
   return (
     <Link href={`/projects/${project.id}`} className="block h-full group">
       <motion.div layout initial={{ opacity:0, scale:0.96 }} animate={{ opacity:1, scale:1 }} whileHover={{ y:-3 }}
-        className="bg-card border border-border rounded-xl p-5 shadow-sm hover:shadow-md transition-all cursor-pointer flex h-full flex-col gap-4">
+        className="min-w-0 bg-card border border-border rounded-xl p-5 shadow-sm hover:shadow-md transition-all cursor-pointer flex h-full flex-col gap-4">
         {/* Top */}
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
             <div className="w-10 h-10 rounded-xl flex items-center justify-center shadow-sm shrink-0" style={{ backgroundColor:`${project.color}20` }}>
               <Layers className="w-5 h-5" style={{ color:project.color }} />
             </div>
-            <div className="min-w-0">
-              <p className="text-sm font-bold text-foreground group-hover:text-primary transition-colors truncate">{project.name}</p>
-              <p className="text-[10px] text-muted-foreground">{project.category} · {project.client}</p>
+            <div className="min-w-0 flex-1">
+              <p title={project.name} className="line-clamp-2 break-words text-sm font-bold leading-snug text-foreground transition-colors group-hover:text-primary">{project.name}</p>
+              <p title={`${project.category} · ${project.client}`} className="mt-0.5 truncate text-[10px] text-muted-foreground">{project.category} · {project.client}</p>
             </div>
           </div>
-          <span className="text-[9px] font-bold px-2 py-0.5 rounded-lg shrink-0" style={{ backgroundColor:pc.bg, color:pc.color }}>
+          <span title={project.priority} className="max-w-[5rem] shrink-0 truncate rounded-lg px-2 py-0.5 text-[9px] font-bold" style={{ backgroundColor:pc.bg, color:pc.color }}>
             {project.priority}
           </span>
         </div>
@@ -268,9 +270,9 @@ function ProjectCard({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
           <ProjectMemberAvatarStack members={project.members} />
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
             <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md" style={{ backgroundColor:sc.bg, color:sc.color }}>
               <sc.icon className="w-3 h-3" />{formatProjectStatusLabel(project.status)}
             </span>
@@ -390,219 +392,48 @@ function ProjectUserDropdown({
   onChange: (value: string) => void;
   placeholder?: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const selected = users.find((user) => user.id === value);
-
-  useEffect(() => {
-    const handler = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
   return (
-    <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        disabled={users.length === 0}
-        onClick={() => setOpen((current) => !current)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        className="flex min-h-11 w-full items-center justify-between gap-3 rounded-xl border border-input bg-background px-3 py-2 text-left text-sm text-foreground transition-all focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
-        style={{ borderColor: open ? "var(--color-primary)" : "var(--color-input)" }}
-      >
-        {selected ? (
-          <span className="flex min-w-0 items-center gap-2">
-            <UserAvatar user={selected} size="sm" />
-            <span className="min-w-0">
-              <span className="block truncate text-xs font-semibold">{selected.name}</span>
-              <span className="block truncate text-[10px] text-muted-foreground">{selected.department || selected.role || "Workspace User"}{selected.email ? ` · ${selected.email}` : ""}</span>
-            </span>
-          </span>
-        ) : (
-          <span className="truncate text-muted-foreground/60">{users.length === 0 ? "No synced users" : placeholder}</span>
-        )}
-        <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: 8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.98 }}
-            transition={{ duration: 0.15 }}
-            className="absolute left-0 right-0 z-[70] mt-1.5 overflow-hidden rounded-xl border border-border bg-card shadow-xl"
-          >
-            <div className="border-b border-border px-3 py-2">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">PROJECT MEMBERS</span>
-            </div>
-            <div className="max-h-64 overflow-y-auto py-1">
-              <button
-                type="button"
-                onClick={() => {
-                  onChange("none");
-                  setOpen(false);
-                }}
-                className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs font-semibold transition-colors hover:bg-muted ${
-                  value === "none" ? "bg-primary/5 text-primary" : "text-muted-foreground"
-                }`}
-              >
-                Unassigned
-              </button>
-              {users.map((user) => (
-                <button
-                  key={user.id}
-                  type="button"
-                  onClick={() => {
-                    onChange(user.id);
-                    setOpen(false);
-                  }}
-                  className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-muted ${
-                    value === user.id ? "bg-primary/5" : ""
-                  }`}
-                >
-                  <UserAvatar user={user} size="sm" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-xs font-semibold text-foreground">{user.name}</span>
-                    <span className="block truncate text-[10px] text-muted-foreground">{user.role} · {user.email}</span>
-                  </span>
-                  {value === user.id && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
-                </button>
-              ))}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+    <CrmSelect
+      ariaLabel="PIC dự án"
+      disabled={users.length === 0}
+      options={[
+        { value: "none", label: users.length === 0 ? "No synced users" : "Unassigned" },
+        ...users.map((user) => ({
+          value: user.id,
+          label: user.name,
+          meta: `${user.role || "Chưa gán"} · ${systemRoleLabel(user.systemRole)}${user.email ? ` · ${user.email}` : ""}`,
+          avatarUrl: user.avatarUrl,
+          initials: user.initials,
+          color: user.color
+        }))
+      ]}
+      searchable
+      searchPlaceholder="Tìm tên, email hoặc vai trò..."
+      value={value || "none"}
+      onChange={onChange}
+      placeholder={placeholder}
+    />
   );
 }
 
-function ProjectMemberMultiSelect({
-  users,
-  selectedIds,
-  onChange,
-  placeholder = "Select project members"
-}: {
-  users: WorkspaceUserOption[];
-  selectedIds: string[];
-  onChange: (ids: string[]) => void;
-  placeholder?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const selectedUsers = selectedIds
-    .map((id) => users.find((user) => user.id === id))
-    .filter((user): user is WorkspaceUserOption => Boolean(user));
-
-  useEffect(() => {
-    const handler = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  const toggleUser = (userId: string) => {
-    onChange(
-      selectedIds.includes(userId)
-        ? selectedIds.filter((id) => id !== userId)
-        : [...selectedIds, userId]
-    );
-  };
-
+function ProjectMemberMultiSelect({ users, selectedIds, onChange, placeholder = "Select project members" }: { users: WorkspaceUserOption[]; selectedIds: string[]; onChange: (ids: string[]) => void; placeholder?: string }) {
   return (
-    <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        disabled={users.length === 0}
-        onClick={() => setOpen((current) => !current)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        className="flex min-h-11 w-full items-center justify-between gap-3 rounded-xl border border-input bg-background px-3 py-2 text-left text-sm text-foreground transition-all focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
-        style={{ borderColor: open ? "var(--color-primary)" : "var(--color-input)" }}
-      >
-        <span className="flex min-w-0 flex-1 items-center gap-2">
-          {selectedUsers.length > 0 ? (
-            <>
-              <span className="flex shrink-0 -space-x-1.5">
-                {selectedUsers.slice(0, 4).map((user) => (
-                  <UserAvatar key={user.id} user={user} size="sm" />
-                ))}
-              </span>
-              <span className="min-w-0">
-                <span className="block truncate text-xs font-semibold">
-                  {selectedUsers.length === 1 ? selectedUsers[0].name : `${selectedUsers.length} users selected`}
-                </span>
-                {selectedUsers.length === 1 ? <span className="block truncate text-[10px] text-muted-foreground">{selectedUsers[0].department || selectedUsers[0].role || selectedUsers[0].email}</span> : null}
-              </span>
-            </>
-          ) : (
-            <span className="truncate text-muted-foreground/60">{users.length === 0 ? "No synced users" : placeholder}</span>
-          )}
-        </span>
-        <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: 8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.98 }}
-            transition={{ duration: 0.15 }}
-            className="absolute left-0 right-0 z-[70] mt-1.5 overflow-hidden rounded-xl border border-border bg-card shadow-xl"
-          >
-            <div className="flex items-center justify-between border-b border-border px-3 py-2">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">PROJECT MEMBERS · {selectedUsers.length} selected</span>
-              {selectedUsers.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => onChange([])}
-                  className="rounded-md px-2 py-1 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-            <div className="max-h-64 overflow-y-auto py-1">
-              {users.map((user) => {
-                const selected = selectedIds.includes(user.id);
-                return (
-                  <button
-                    key={user.id}
-                    type="button"
-                    onClick={() => toggleUser(user.id)}
-                    className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-muted ${
-                      selected ? "bg-primary/5" : ""
-                    }`}
-                  >
-                    <UserAvatar user={user} size="sm" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-semibold text-foreground">{user.name}</span>
-                      <span className="block truncate text-[10px] text-muted-foreground">
-                        {user.department || user.role} · {user.email}
-                      </span>
-                    </span>
-                    <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${
-                      selected ? "border-primary bg-primary text-primary-foreground" : "border-border text-transparent"
-                    }`}>
-                      <Check className="h-3.5 w-3.5" />
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+    <CrmMultiSelect
+      ariaLabel="Thành viên dự án"
+      disabled={users.length === 0}
+      options={users.map((user) => ({
+        value: user.id,
+        label: user.name,
+        meta: `${user.role || "Chưa gán"} · ${systemRoleLabel(user.systemRole)} · ${user.email}`,
+        avatarUrl: user.avatarUrl,
+        initials: user.initials,
+        color: user.color
+      }))}
+      placeholder={users.length === 0 ? "No synced users" : placeholder}
+      selectedCountLabel={(count) => `${count} đã chọn`}
+      values={selectedIds}
+      onChange={onChange}
+    />
   );
 }
 
@@ -1846,7 +1677,7 @@ export default function ProjectsPage() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <label className={`flex gap-2 rounded-xl border p-3 cursor-pointer ${milestoneMode === "auto" ? "border-primary bg-primary/5" : "border-border bg-background"}`}>
                         <input type="radio" name="projects-milestone-mode" checked={milestoneMode === "auto"} onChange={() => { setMilestoneMode("auto"); const selected = milestoneTemplates.find((template) => template.key === milestoneTemplateKey) ?? milestoneTemplates.find((template) => template.key === "pilot-v1"); setProjectMilestones(selected?.milestones.map((milestone) => milestone.name) ?? PILOT_PROJECT_MILESTONES); }} />
-                        <span className="min-w-0 flex-1"><strong className="block text-xs">Theo template đã lưu</strong><small className="text-[11px] text-muted-foreground">Chọn format milestone admin đã setup</small>{milestoneMode === "auto" ? <select aria-label="Template milestone" value={milestoneTemplateKey} onChange={(event) => { const key = event.target.value; setMilestoneTemplateKey(key); const selected = milestoneTemplates.find((template) => template.key === key); if (selected) setProjectMilestones(selected.milestones.map((milestone) => milestone.name)); }} className="mt-2 h-9 w-full rounded-lg border border-input bg-background px-2 text-xs font-semibold"><option value="pilot-v1">Pilot UpLark chuẩn</option>{milestoneTemplates.filter((template) => template.key !== "pilot-v1").map((template) => <option key={template.key} value={template.key}>{template.name} · {template.milestoneCount} milestone</option>)}</select> : null}</span>
+                        <span className="min-w-0 flex-1"><strong className="block text-xs">Theo template đã lưu</strong><small className="text-[11px] text-muted-foreground">Chọn format milestone admin đã setup</small>{milestoneMode === "auto" ? <div className="mt-2"><CustomDropdown ariaLabel="Template milestone" options={[{ value: "pilot-v1", label: "Pilot UpLark chuẩn" }, ...milestoneTemplates.filter((template) => template.key !== "pilot-v1").map((template) => ({ value: template.key, label: `${template.name} · ${template.milestoneCount} milestone` }))]} value={milestoneTemplateKey} onChange={(key) => { setMilestoneTemplateKey(key); const selected = milestoneTemplates.find((template) => template.key === key); if (selected) setProjectMilestones(selected.milestones.map((milestone) => milestone.name)); }} /></div> : null}</span>
                       </label>
                       <label className={`flex gap-2 rounded-xl border p-3 cursor-pointer ${milestoneMode === "manual" ? "border-primary bg-primary/5" : "border-border bg-background"}`}>
                         <input type="radio" name="projects-milestone-mode" checked={milestoneMode === "manual"} onChange={() => setMilestoneMode("manual")} />

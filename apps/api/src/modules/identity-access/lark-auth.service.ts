@@ -13,6 +13,7 @@ import { tenantKey, workspaceKey } from "../../shared/http/request-context";
 import { TenantWorkspaceService, type WorkspaceContext } from "../tenant-workspace/tenant-workspace.service";
 import { NativeAuthService } from "./native-auth.service";
 import { PrincipalService } from "./principal.service";
+import { lockWorkspaceAuth } from "./auth-lifecycle-lock";
 
 const STATE_TTL_MS = 1000 * 60 * 10;
 const DEFAULT_AUTHORIZE_URL = "https://accounts.larksuite.com/open-apis/authen/v1/authorize";
@@ -263,7 +264,98 @@ export class LarkAuthService {
       return this.updateUserProfile(bootstrapAdmin.id, profile);
     }
 
+    if (process.env.CRM_LARK_AUTO_PROVISION === "true") {
+      return this.provisionUserFromProfile(profile, workspace);
+    }
+
     throw new ForbiddenException("Lark user is not allowed for this CRM workspace");
+  }
+
+  private async provisionUserFromProfile(profile: NormalizedLarkProfile, workspace: WorkspaceContext) {
+    const email = profile.email ?? profile.enterpriseEmail;
+    if (!email) {
+      throw new ForbiddenException("Lark account email is required for workspace access");
+    }
+
+    const roleCode = (process.env.CRM_LARK_DEFAULT_ROLE_CODE ?? "WORKSPACE_USER").trim().toUpperCase();
+    const allowedProvisioningRoles = new Set(["WORKSPACE_USER", "SALES_OWNER", "DELIVERY_LEAD", "FINANCE_ADMIN"]);
+    if (!allowedProvisioningRoles.has(roleCode)) {
+      throw new InternalServerErrorException("CRM_LARK_DEFAULT_ROLE_CODE must be a non-admin workspace role");
+    }
+
+    return this.prisma.$transaction(async tx => {
+      // Serialize first-login provisioning per workspace so two OAuth callbacks
+      // cannot create duplicate users or memberships for the same account.
+      await lockWorkspaceAuth(tx, workspace.workspaceId);
+
+      const existingUser = await tx.user.findUnique({ where: { email } });
+      if (existingUser) {
+        await this.requireActiveMembership(existingUser, workspace);
+        const existingIdentity = await tx.portalIdentity.findUnique({
+          where: {
+            provider_providerUserId_tenantKey: {
+              provider: PROVIDER,
+              providerUserId: profile.openId,
+              tenantKey: workspace.tenantKey
+            }
+          }
+        });
+        if (existingIdentity && existingIdentity.userId !== existingUser.id) {
+          throw new ForbiddenException("Lark identity is already linked to another account");
+        }
+        await tx.portalIdentity.upsert({
+          where: {
+            provider_providerUserId_tenantKey: {
+              provider: PROVIDER,
+              providerUserId: profile.openId,
+              tenantKey: workspace.tenantKey
+            }
+          },
+          update: {},
+          create: {
+            userId: existingUser.id,
+            provider: PROVIDER,
+            providerUserId: profile.openId,
+            tenantKey: workspace.tenantKey
+          }
+        });
+        return this.updateUserProfile(existingUser.id, profile);
+      }
+
+      const role = await tx.role.findUnique({ where: { code: roleCode } });
+      if (!role) {
+        throw new InternalServerErrorException(`CRM Lark role ${roleCode} is not configured`);
+      }
+
+      const user = await tx.user.create({
+        data: {
+          email,
+          displayName: profile.displayName,
+          avatarUrl: profile.avatarUrl,
+          emailVerifiedAt: new Date(),
+          subjectType: "INTERNAL_USER",
+          status: "ACTIVE"
+        }
+      });
+      await tx.portalIdentity.create({
+        data: {
+          userId: user.id,
+          provider: PROVIDER,
+          providerUserId: profile.openId,
+          tenantKey: workspace.tenantKey
+        }
+      });
+      await tx.roleBinding.create({
+        data: {
+          userId: user.id,
+          roleId: role.id,
+          tenantKey: workspace.tenantKey,
+          workspaceId: workspace.workspaceId
+        }
+      });
+
+      return user;
+    });
   }
 
   private async findUserByEmail(profile: NormalizedLarkProfile) {

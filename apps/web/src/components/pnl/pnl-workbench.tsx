@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import type { ProjectMilestoneSummary, ProjectPlSummaryItem, ProjectStageSummary, ProjectSummary, ProjectTaskSummary, ResourceListResponse, TaskTimeEntrySummary } from "@b2b-crm/contracts";
 import { AppShell } from "@/components/constructor-x/app-shell";
+import { CrmSelect } from "@/components/crm-workspace/crm-select";
 import {
   adaptLivePnlProjects,
   formatCompactVnd,
@@ -96,13 +97,7 @@ function KpiCard({ label, value, icon, tone = "blue", note }: { label: string; v
 
 function FilterSelect({ label, value, onChange, options, disabled = false }: { label: string; value: string; onChange: (value: string) => void; options: Array<{ value: string; label: string }>; disabled?: boolean }) {
   return (
-    <label className="relative block min-w-[150px]">
-      <span className="sr-only">{label}</span>
-      <select disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)} className="h-11 w-full appearance-none rounded-xl border border-border bg-card px-3 pr-9 text-sm font-medium text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:cursor-not-allowed disabled:opacity-60">
-        {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-      </select>
-      <ChevronDown className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-muted-foreground" aria-hidden="true" />
-    </label>
+    <CrmSelect ariaLabel={label} options={options} value={value} onChange={onChange} disabled={disabled} />
   );
 }
 

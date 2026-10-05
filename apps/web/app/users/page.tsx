@@ -11,15 +11,17 @@ import {
 import Link from "next/link";
 import { AdminInvitations } from "@/components/auth/admin-access-controls";
 import { AppShell } from "@/components/constructor-x/app-shell";
-import { formatDepartmentLabel } from "@/lib/department-labels";
 import { CustomDropdown } from "@/components/crm-workspace/tasks-workbench";
+import { CrmSelect } from "@/components/crm-workspace/crm-select";
 import { downloadCsv } from "@/lib/csv-export";
 import { useAuth } from "@/lib/auth";
+import type { WorkspaceSystemRole } from "@b2b-crm/contracts";
+import { BUSINESS_ROLE_OPTIONS, businessRoleFromMember, systemRoleFromCodes, SYSTEM_ROLE_LABELS, SYSTEM_ROLE_OPTIONS } from "@/lib/people-roles";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type SortDir = "asc" | "desc" | null;
-type SortKey = "name" | "role" | "department" | "status";
+type SortKey = "name" | "role" | "status";
 
 interface User {
   id: string;
@@ -29,8 +31,8 @@ interface User {
   larkOpenId?: string;
   roleCodes: string[];
   role: string;
+  systemRole: WorkspaceSystemRole;
   roleColor: string;
-  department: string;
   status: "active" | "offline";
   tasks: number;
   avatarColor: string;
@@ -48,6 +50,8 @@ interface ApiUser {
   departmentCode?: string;
   larkOpenId?: string;
   roleCodes: string[];
+  systemRole?: WorkspaceSystemRole;
+  resourceDisplayRole?: string;
   projectIds: string[];
   status: "active" | "suspended";
   createdAt: string;
@@ -69,26 +73,24 @@ const STATUS_CONFIG = {
 };
 
 const ROLE_ICONS: Record<string, typeof Shield> = {
-  FOUNDER_GM:    Shield,
-  SALES_OWNER:   BarChart2,
-  DELIVERY_LEAD: Code,
-  FINANCE_ADMIN: Globe,
-  Admin:         Shield,
-  Developer:     Code,
-  Designer:      Palette,
-  PM:            BarChart2,
-  Analyst:       BarChart2,
-  DevOps:        Globe,
+  "Customer success": Shield,
+  "Project Manager": BarChart2,
+  "DX enabler": Code,
+  "Business development": Globe,
+  "Marketing B2B": Palette,
+  "Chưa gán": Shield,
 };
 
 const ROLE_COLORS: Record<string, string> = {
-  FOUNDER_GM: "#2563eb",
-  WORKSPACE_ADMIN: "#4f46e5",
-  WORKSPACE_USER: "#64748b",
-  SALES_OWNER: "#16a34a",
-  DELIVERY_LEAD: "#7c3aed",
-  FINANCE_ADMIN: "#d97706"
+  "Customer success": "#0891b2",
+  "Project Manager": "#7c3aed",
+  "DX enabler": "#2563eb",
+  "Business development": "#16a34a",
+  "Marketing B2B": "#db2777",
+  "Chưa gán": "#64748b",
 };
+
+const SYSTEM_ROLE_CODES = new Set<WorkspaceSystemRole>(["FOUNDER_GM", "WORKSPACE_ADMIN", "WORKSPACE_USER"]);
 
 const AVATAR_COLORS = ["#2563eb", "#16a34a", "#7c3aed", "#d97706", "#db2777", "#0891b2", "#475569", "#0f766e"];
 
@@ -99,7 +101,8 @@ function initials(name: string) {
 }
 
 function mapApiUser(user: ApiUser, index: number): User {
-  const primaryRole = user.roleCodes[0] ?? "DELIVERY_LEAD";
+  const systemRole = user.systemRole ?? systemRoleFromCodes(user.roleCodes);
+  const primaryRole = businessRoleFromMember(user);
   const displayName = user.displayName || user.email;
   return {
     id: user.id,
@@ -109,8 +112,8 @@ function mapApiUser(user: ApiUser, index: number): User {
     larkOpenId: user.larkOpenId,
     roleCodes: user.roleCodes,
     role: primaryRole,
+    systemRole,
     roleColor: ROLE_COLORS[primaryRole] ?? "#64748b",
-    department: formatDepartmentLabel(user.departmentCode, "Chưa có phòng ban"),
     status: user.status === "active" ? "active" : "offline",
     tasks: 0,
     avatarColor: AVATAR_COLORS[index % AVATAR_COLORS.length],
@@ -143,6 +146,7 @@ export default function UsersPage() {
   const [sortDir, setSortDir]   = useState<SortDir>("asc");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [roleFilter, setRoleFilter]     = useState<string>("all");
+  const [systemRoleFilter, setSystemRoleFilter] = useState<string>("all");
   const [roleSavingId, setRoleSavingId] = useState<string | null>(null);
   const [roleMessage, setRoleMessage] = useState<string | null>(null);
   const [costSavingId, setCostSavingId] = useState<string | null>(null);
@@ -183,7 +187,7 @@ export default function UsersPage() {
     };
   }, []);
 
-  async function changeWorkspaceRole(target: User, roleCode: "WORKSPACE_ADMIN" | "WORKSPACE_USER") {
+  async function changeWorkspaceRole(target: User, roleCode: WorkspaceSystemRole) {
     setRoleSavingId(target.id);
     setRoleMessage(null);
     try {
@@ -197,9 +201,10 @@ export default function UsersPage() {
       if (!response.ok) throw new Error(payload.message ?? "Không thể cập nhật quyền workspace.");
       setUsers((current) => current.map((item) => {
         if (item.id !== target.id) return item;
-        return { ...item, role: roleCode, roleCodes: [roleCode], roleColor: ROLE_COLORS[roleCode] ?? "#64748b" };
+        const nextRoleCodes = item.roleCodes.filter((code) => !SYSTEM_ROLE_CODES.has(code as WorkspaceSystemRole));
+        return { ...item, systemRole: roleCode, roleCodes: [...nextRoleCodes, roleCode] };
       }));
-      setRoleMessage(`Đã cập nhật ${target.name} (${target.larkOpenId ?? target.id}) thành ${roleCode === "WORKSPACE_ADMIN" ? "Workspace Admin" : "Workspace User"}.`);
+      setRoleMessage(`Đã cập nhật ${target.name} (${target.larkOpenId ?? target.id}) thành ${SYSTEM_ROLE_LABELS[roleCode]}.`);
     } catch (err) {
       setRoleMessage(err instanceof Error ? err.message : "Không thể cập nhật quyền workspace.");
     } finally {
@@ -232,9 +237,11 @@ export default function UsersPage() {
   const filtered = useMemo(() => {
     let list = users.filter(u => {
       const q = query.toLowerCase();
-      if (q && !u.name.toLowerCase().includes(q) && !u.email.toLowerCase().includes(q) && !u.role.toLowerCase().includes(q) && !u.larkOpenId?.toLowerCase().includes(q)) return false;
+      const systemRole = SYSTEM_ROLE_LABELS[u.systemRole].toLowerCase();
+      if (q && !u.name.toLowerCase().includes(q) && !u.email.toLowerCase().includes(q) && !u.role.toLowerCase().includes(q) && !systemRole.includes(q) && !u.larkOpenId?.toLowerCase().includes(q)) return false;
       if (statusFilter !== "all" && u.status !== statusFilter) return false;
       if (roleFilter   !== "all" && u.role   !== roleFilter)   return false;
+      if (systemRoleFilter !== "all" && u.systemRole !== systemRoleFilter) return false;
       return true;
     });
 
@@ -249,15 +256,14 @@ export default function UsersPage() {
     });
 
     return list;
-  }, [query, sortKey, sortDir, statusFilter, roleFilter, users]);
+  }, [query, sortKey, sortDir, statusFilter, roleFilter, systemRoleFilter, users]);
 
-  const uniqueRoles = useMemo(() => [...new Set(users.map(u => u.role))], [users]);
   const workspaceAdminCount = useMemo(
-    () => users.filter((user) => user.roleCodes.some((role) => role === "FOUNDER_GM" || role === "WORKSPACE_ADMIN")).length,
+    () => users.filter((user) => user.systemRole === "FOUNDER_GM" || user.systemRole === "WORKSPACE_ADMIN").length,
     [users]
   );
   const workspaceUserCount = useMemo(
-    () => users.filter((user) => user.roleCodes.includes("WORKSPACE_USER")).length,
+    () => users.filter((user) => user.systemRole === "WORKSPACE_USER").length,
     [users]
   );
 
@@ -268,14 +274,38 @@ export default function UsersPage() {
   ], []);
 
   const roleOptions = useMemo(() => [
-    { value: "all", label: "Tất cả quyền hệ thống" },
-    ...uniqueRoles.map(r => ({ value: r, label: r }))
-  ], [uniqueRoles]);
+    { value: "all", label: "Tất cả vai trò" },
+    ...BUSINESS_ROLE_OPTIONS.map((role) => ({ value: role, label: role })),
+  ], []);
+
+  const systemRoleFilterOptions = useMemo(() => [
+    { value: "all", label: "Tất cả system role" },
+    ...SYSTEM_ROLE_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
+  ], []);
+  const systemRoleOptions = useMemo(() => [
+    {
+      value: "FOUNDER_GM",
+      label: "Founder/GM",
+      icon: "star",
+      subtext: "Toàn quyền workspace",
+    },
+    {
+      value: "WORKSPACE_ADMIN",
+      label: "Workspace Admin",
+      icon: "settings",
+      subtext: "Quản trị thành viên & thiết lập",
+    },
+    {
+      value: "WORKSPACE_USER",
+      label: "Workspace User",
+      icon: "person",
+      subtext: "Quyền sử dụng theo phân công",
+    },
+  ], []);
 
   const COLS: { key: SortKey; label: string }[] = [
     { key: "name",       label: "User" },
     { key: "role",       label: "Role" },
-    { key: "department", label: "Department" },
     { key: "status",     label: "Status" },
   ];
 
@@ -292,7 +322,7 @@ export default function UsersPage() {
             </div>
             <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:justify-end">
               <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
-                onClick={() => downloadCsv("uplark-users-filtered.csv", ["Name", "Email", "Role", "Department", "Status"], filtered.map((user) => [user.name, user.email, user.role, user.department, user.status]))}
+                onClick={() => downloadCsv("uplark-users-filtered.csv", ["Name", "Email", "Role", "System role", "Status"], filtered.map((user) => [user.name, user.email, user.role, SYSTEM_ROLE_LABELS[user.systemRole], user.status]))}
                 aria-label={`Export ${filtered.length} filtered users as CSV`}
                 title="Export the currently loaded and filtered users"
                 className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-border bg-card px-3.5 py-2 text-sm font-medium text-muted-foreground shadow-sm transition-colors hover:bg-muted">
@@ -339,7 +369,7 @@ export default function UsersPage() {
                 <input
                   value={query}
                   onChange={e => setQuery(e.target.value)}
-                  placeholder="Search by name, email, Lark ID or role..."
+                  placeholder="Search by name, email, Lark ID, role or system role..."
                   className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
                 />
               </div>
@@ -361,6 +391,16 @@ export default function UsersPage() {
                   options={roleOptions}
                   value={roleFilter}
                   onChange={setRoleFilter}
+                />
+              </div>
+
+              {/* System role filter */}
+              <div className="w-full shrink-0 sm:w-56">
+                <CustomDropdown
+                  label=""
+                  options={systemRoleFilterOptions}
+                  value={systemRoleFilter}
+                  onChange={setSystemRoleFilter}
                 />
               </div>
 
@@ -432,11 +472,6 @@ export default function UsersPage() {
                             </span>
                           </td>
 
-                          {/* Department */}
-                          <td className="py-3.5 px-4">
-                            <span className="text-sm text-foreground">{user.department}</span>
-                          </td>
-
                           {/* Status */}
                           <td className="py-3.5 px-4">
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold" style={{ backgroundColor: st.bg, color: st.color }}>
@@ -448,20 +483,20 @@ export default function UsersPage() {
                           {/* System role */}
                           <td className="py-3.5 px-4" onClick={(event) => event.stopPropagation()}>
                             {user.id === currentUser?.id ? (
-                              <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-700"><ShieldCheck className="h-3.5 w-3.5" /> {user.roleCodes.includes("FOUNDER_GM") ? "Founder/GM" : "Tài khoản hiện tại"}</span>
+                              <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-700"><ShieldCheck className="h-3.5 w-3.5" /> {SYSTEM_ROLE_LABELS[user.systemRole]} · tài khoản hiện tại</span>
                             ) : canManageRoles ? (
-                              <select
-                                value={user.roleCodes.includes("WORKSPACE_ADMIN") ? "WORKSPACE_ADMIN" : "WORKSPACE_USER"}
-                                disabled={roleSavingId === user.id}
-                                onChange={(event) => void changeWorkspaceRole(user, event.target.value as "WORKSPACE_ADMIN" | "WORKSPACE_USER")}
-                                aria-label={`Workspace access for ${user.name}`}
-                                className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
-                              >
-                                <option value="WORKSPACE_ADMIN">Workspace Admin</option>
-                                <option value="WORKSPACE_USER">Workspace User</option>
-                              </select>
+                              <div className="min-w-[188px]">
+                                <CustomDropdown
+                                  id={`workspace-role-${user.id}`}
+                                  label=""
+                                  options={systemRoleOptions}
+                                  value={user.systemRole}
+                                  disabled={roleSavingId === user.id}
+                                  onChange={(value) => void changeWorkspaceRole(user, value as WorkspaceSystemRole)}
+                                />
+                              </div>
                             ) : (
-                              <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600"><ShieldOff className="h-3.5 w-3.5" /> Workspace User</span>
+                              <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600"><ShieldOff className="h-3.5 w-3.5" /> {SYSTEM_ROLE_LABELS[user.systemRole]}</span>
                             )}
                             {roleSavingId === user.id && <Loader2 className="ml-2 inline h-3.5 w-3.5 animate-spin text-indigo-600" />}
                           </td>
@@ -469,14 +504,14 @@ export default function UsersPage() {
                           {/* P&L permission */}
                           <td className="py-3.5 px-4" onClick={(event) => event.stopPropagation()}>
                             {canManageRoles && user.id !== currentUser?.id ? (
-                              <select id={`pnl-permission-${user.id}`} value={user.costPermissionCodes.length === 4 ? "ALL" : user.costPermissionCodes[0] ?? "NONE"} disabled={costSavingId === user.id} onChange={(event) => void changeCostPermissions(user, event.target.value)} aria-label={`Quyền P&L của ${user.name}`} className="max-w-[170px] rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-semibold text-muted-foreground">
-                                  <option value="NONE">Chưa cấp</option>
-                                  <option value="COST_VIEW">Xem</option>
-                                  <option value="COST_EDIT">Sửa</option>
-                                  <option value="COST_APPROVE">Duyệt</option>
-                                  <option value="COST_EXPORT">Xuất</option>
-                                  <option value="ALL">Toàn quyền</option>
-                              </select>
+                              <CrmSelect
+                                ariaLabel={`Quyền P&L của ${user.name}`}
+                                className="max-w-[170px]"
+                                disabled={costSavingId === user.id}
+                                options={[{ value: "NONE", label: "Chưa cấp" }, { value: "COST_VIEW", label: "Xem" }, { value: "COST_EDIT", label: "Sửa" }, { value: "COST_APPROVE", label: "Duyệt" }, { value: "COST_EXPORT", label: "Xuất" }, { value: "ALL", label: "Toàn quyền" }]}
+                                value={user.costPermissionCodes.length === 4 ? "ALL" : user.costPermissionCodes[0] ?? "NONE"}
+                                onChange={(value) => void changeCostPermissions(user, value)}
+                              />
                             ) : <span className="text-xs text-muted-foreground">{user.costPermissionGroup}</span>}
                             {costSavingId === user.id && <Loader2 className="ml-2 inline h-3.5 w-3.5 animate-spin text-indigo-600" />}
                           </td>

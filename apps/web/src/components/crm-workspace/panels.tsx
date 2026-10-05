@@ -601,7 +601,7 @@ function formatViewerLabel(value: string) {
   const labels: Record<string, string> = {
     founder: "Founder / GM",
     "finance-admin": "Tài chính",
-    sales: "Sales Owner",
+    sales: "Business development",
     customer: "Khách hàng"
   };
   return labels[value] ?? "Người dùng hiện tại";

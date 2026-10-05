@@ -30,6 +30,7 @@ import type {
   AdminAlertType,
   AdminAlertsResponse,
   AdminApprovalsResponse,
+  AdminHistoryResponse,
   AdminOverviewResponse,
   CreateProjectMilestoneInput,
   CreateProjectMilestoneTemplateInput,
@@ -50,12 +51,14 @@ import type {
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { WorkspaceDayOffSettings } from "@/components/settings/workspace-day-off-settings";
 import { CustomDropdown, type TaskSelectOption } from "@/components/crm-workspace/tasks-workbench";
+import { CrmSelect } from "@/components/crm-workspace/crm-select";
 import { useAuth } from "@/lib/auth";
 import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-tab-bar";
+import { businessRoleFromMember, systemRoleFromCodes, systemRoleLabel } from "@/lib/people-roles";
 import { milestoneReviewerOptions, WORKSPACE_ADMIN_REVIEWER_VALUE } from "./milestone-reviewer-options";
 
 const ADMIN_ROLES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN"]);
-type AdminSection = "overview" | "alerts" | "day-offs" | "reminders" | "milestones" | "approval" | "pnl-config";
+type AdminSection = "overview" | "alerts" | "day-offs" | "reminders" | "milestones" | "approval" | "history" | "pnl-config";
 type MilestoneView = "templates" | "project-gates";
 
 const MILESTONE_TAB_ITEMS: WorkspaceTabItem<MilestoneView>[] = [
@@ -95,9 +98,9 @@ function reminderRecipientOptions(users: WorkspaceReminderRecipientsResponse["da
     const initials = parts.length > 1
       ? `${parts[0]?.[0] ?? ""}${parts[parts.length - 1]?.[0] ?? ""}`.toUpperCase()
       : (parts[0]?.slice(0, 2) || "U").toUpperCase();
-    const role = user.roleCodes?.[0]
-      ? user.roleCodes[0].toLowerCase().split("_").filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ")
-      : "Workspace User";
+    const role = user.roleCodes?.some((roleCode) => roleCode === "FOUNDER_GM" || roleCode === "WORKSPACE_ADMIN")
+      ? systemRoleLabel(systemRoleFromCodes(user.roleCodes))
+      : businessRoleFromMember(user);
     return {
       value: user.id,
       label: user.displayName,
@@ -116,6 +119,8 @@ export function WorkspaceAdminDashboard() {
   const [policy, setPolicy] = useState<WorkspaceReminderPolicy | null>(null);
   const [reminderRecipients, setReminderRecipients] = useState<WorkspaceReminderRecipientsResponse["data"]>({ users: [], teams: [] });
   const [alertDetails, setAlertDetails] = useState<AdminAlertDetailRow[]>([]);
+  const [historyEntries, setHistoryEntries] = useState<AdminHistoryResponse["data"]>([]);
+  const [approvalHistoryEntries, setApprovalHistoryEntries] = useState<AdminHistoryResponse["data"]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
@@ -138,7 +143,7 @@ export function WorkspaceAdminDashboard() {
     setMilestoneTemplatesLoading(true);
     setError(null);
     try {
-      const [overviewResponse, policyResponse, alertsResponse, recipientsResponse, projectsResponse, templatesResponse] = await Promise.all([
+      const [overviewResponse, policyResponse, alertsResponse, recipientsResponse, projectsResponse, templatesResponse, historyResponse, approvalHistoryResponse] = await Promise.all([
         fetch("/api/admin/overview", { cache: "no-store", credentials: "same-origin" }),
         fetch("/api/admin/reminders", { cache: "no-store", credentials: "same-origin" }),
         fetch("/api/admin/alerts", { cache: "no-store", credentials: "same-origin" }),
@@ -146,7 +151,9 @@ export function WorkspaceAdminDashboard() {
         // Keep the local admin screen usable before an auth session is created.
         // The BFF ignores this fallback when a real Lark session is present.
         fetch("/api/projects?limit=100&offset=0&principal=founder", { cache: "no-store", credentials: "same-origin" }),
-        fetch("/api/milestone-templates?principal=founder", { cache: "no-store", credentials: "same-origin" })
+        fetch("/api/milestone-templates?principal=founder", { cache: "no-store", credentials: "same-origin" }),
+        fetch("/api/admin/history?limit=50&scope=all", { cache: "no-store", credentials: "same-origin" }),
+        fetch("/api/admin/history?limit=12&scope=mine", { cache: "no-store", credentials: "same-origin" })
       ]);
       const overviewBody = await overviewResponse.json().catch(() => null);
       const policyBody = await policyResponse.json().catch(() => null);
@@ -154,16 +161,22 @@ export function WorkspaceAdminDashboard() {
       const recipientsBody = await recipientsResponse.json().catch(() => null);
       const templatesBody = await templatesResponse.json().catch(() => null);
       const projectsBody = await projectsResponse.json().catch(() => null);
+      const historyBody = await historyResponse.json().catch(() => null);
+      const approvalHistoryBody = await approvalHistoryResponse.json().catch(() => null);
       if (!overviewResponse.ok) throw new Error(errorMessage(overviewBody, "Không tải được tổng quan admin."));
       if (!policyResponse.ok) throw new Error(errorMessage(policyBody, "Không tải được lịch nhắc Lark."));
       if (!alertsResponse.ok) throw new Error(errorMessage(alertsBody, "Không tải được chi tiết cảnh báo."));
       if (!recipientsResponse.ok) throw new Error(errorMessage(recipientsBody, "Không tải được danh sách người nhận nhắc Lark."));
       if (!templatesResponse.ok) throw new Error(errorMessage(templatesBody, "Không tải được danh sách template milestone."));
+      if (!historyResponse.ok) throw new Error(errorMessage(historyBody, "Không tải được lịch sử thao tác admin."));
+      if (!approvalHistoryResponse.ok) throw new Error(errorMessage(approvalHistoryBody, "Không tải được lịch sử duyệt của bạn."));
       setOverview((overviewBody as AdminOverviewResponse).data);
       setPolicy((policyBody as { data: WorkspaceReminderPolicy }).data);
       setAlertDetails((alertsBody as AdminAlertsResponse).data);
       setReminderRecipients((recipientsBody as WorkspaceReminderRecipientsResponse).data);
       setMilestoneTemplates((templatesBody as { data?: ProjectMilestoneTemplateSummary[] }).data ?? []);
+      setHistoryEntries((historyBody as AdminHistoryResponse).data ?? []);
+      setApprovalHistoryEntries((approvalHistoryBody as AdminHistoryResponse).data ?? []);
       if (projectsResponse.ok) {
         const projects = (projectsBody as { data?: ProjectSummary[] } | null)?.data ?? [];
         setProjectOptions(projects);
@@ -182,7 +195,7 @@ export function WorkspaceAdminDashboard() {
   useEffect(() => {
     const syncHash = () => {
       const hash = window.location.hash.replace(/^#/, "");
-      if (hash === "alerts" || hash === "day-offs" || hash === "reminders" || hash === "milestones") setSection(hash);
+      if (hash === "alerts" || hash === "day-offs" || hash === "reminders" || hash === "milestones" || hash === "approval" || hash === "history") setSection(hash);
       else setSection("overview");
     };
     syncHash();
@@ -307,8 +320,6 @@ export function WorkspaceAdminDashboard() {
     );
   }
 
-  const alertCount = alertDetails.filter((alert) => alert.severity !== "info").length;
-
   return (
     <AppShell activeRoute="/admin" title="Admin workspace">
       <main className="min-h-0 flex-1 overflow-y-auto bg-background p-4 sm:p-6">
@@ -326,23 +337,23 @@ export function WorkspaceAdminDashboard() {
 
           <div className="-mx-4 -mt-4 bg-background/95 px-4 py-1.5 sm:-mx-6 sm:-mt-6 sm:px-6">
             <nav aria-label="Admin sections" className="mx-auto max-w-[1480px]">
-                <WorkspaceTabBar
-                  items={[
-                    { id: "overview" as AdminSection, label: "Tổng quan", description: "Sức khỏe workspace", icon: <LayoutDashboard className="h-4 w-4" /> },
-                    { id: "alerts" as AdminSection, label: "Cảnh báo", description: "Estimate & Actual", badge: alertDetails.length || undefined, icon: <TriangleAlert className="h-4 w-4" /> },
-                    { id: "day-offs" as AdminSection, label: "Ngày nghỉ", description: "Khóa ngày & loại phí", icon: <CalendarDays className="h-4 w-4" /> },
-                    { id: "reminders" as AdminSection, label: "Nhắc Lark", description: "Lịch gửi & người nhận", icon: <BellRing className="h-4 w-4" /> },
-                    { id: "milestones" as AdminSection, label: "Milestone", description: "Template & gate", icon: <LockKeyhole className="h-4 w-4" /> },
-                    { id: "approval" as AdminSection, label: "Approval", description: "Hồ sơ chờ duyệt", icon: <ShieldCheck className="h-4 w-4" /> },
-                    { id: "pnl-config" as AdminSection, label: "Thiết lập P&L", description: "Khoản mục & kỳ khóa", icon: <Settings2 className="h-4 w-4" /> }
-                  ]}
-                  value={section}
-                  onChange={selectSection}
-                  ariaLabel="Admin sections"
-                  idPrefix="admin"
-                  className="w-full"
-                />
-                {alertCount > 0 ? <div className="mt-2 flex items-center justify-end gap-1.5 px-1 text-xs font-semibold text-amber-700"><TriangleAlert className="h-3.5 w-3.5" /> {alertCount} cần xử lý</div> : null}
+              <WorkspaceTabBar
+                items={[
+                  { id: "overview" as AdminSection, label: "Tổng quan", description: "Sức khỏe workspace", icon: <LayoutDashboard className="h-4 w-4" /> },
+                  { id: "alerts" as AdminSection, label: "Cảnh báo", description: "Estimate & Actual", badge: alertDetails.length || undefined, icon: <TriangleAlert className="h-4 w-4" /> },
+                  { id: "day-offs" as AdminSection, label: "Ngày nghỉ", description: "Khóa ngày & loại phí", icon: <CalendarDays className="h-4 w-4" /> },
+                  { id: "reminders" as AdminSection, label: "Nhắc Lark", description: "Lịch gửi & người nhận", icon: <BellRing className="h-4 w-4" /> },
+                  { id: "milestones" as AdminSection, label: "Milestone", description: "Template & gate", icon: <LockKeyhole className="h-4 w-4" /> },
+                  { id: "approval" as AdminSection, label: "Approval", description: "Hồ sơ chờ duyệt", icon: <ShieldCheck className="h-4 w-4" /> },
+                  { id: "pnl-config" as AdminSection, label: "Thiết lập P&L", description: "Khoản mục & kỳ khóa", icon: <Settings2 className="h-4 w-4" /> },
+                  { id: "history" as AdminSection, label: "Lịch sử", description: "Audit hoạt động admin", icon: <Clock3 className="h-4 w-4" /> }
+                ]}
+                value={section}
+                onChange={selectSection}
+                ariaLabel="Admin sections"
+                idPrefix="admin"
+                className="w-full"
+              />
             </nav>
           </div>
 
@@ -406,7 +417,8 @@ export function WorkspaceAdminDashboard() {
               finally { setMilestonesSaving(false); }
             }} />}
             </> : null}
-            {section === "approval" ? <ApprovalPanel /> : null}
+            {section === "approval" ? <ApprovalPanel approvalHistory={approvalHistoryEntries} historyLoading={loading} onRefreshHistory={() => void load()} onApproved={() => void load()} /> : null}
+            {section === "history" ? <AdminHistoryPanel entries={historyEntries} loading={loading} onRefresh={() => void load()} scope="all" /> : null}
           </div>
         </div>
       </main>
@@ -414,12 +426,58 @@ export function WorkspaceAdminDashboard() {
   );
 }
 
-function ApprovalPanel() {
+function historyIcon(category: AdminHistoryResponse["data"][number]["category"]) {
+  if (category === "approval") return <ShieldCheck className="h-4 w-4" />;
+  if (category === "day_off") return <CalendarDays className="h-4 w-4" />;
+  if (category === "pnl") return <Settings2 className="h-4 w-4" />;
+  return <LockKeyhole className="h-4 w-4" />;
+}
+
+function historyIconTone(category: AdminHistoryResponse["data"][number]["category"]) {
+  if (category === "approval") return "bg-emerald-50 text-emerald-700";
+  if (category === "day_off") return "bg-amber-50 text-amber-700";
+  if (category === "pnl") return "bg-sky-50 text-sky-700";
+  return "bg-violet-50 text-violet-700";
+}
+
+function AdminHistoryPanel({ entries, loading, onRefresh, scope }: { entries: AdminHistoryResponse["data"]; loading: boolean; onRefresh: () => void; scope: "all" | "mine" }) {
+  const isMine = scope === "mine";
+  return <section aria-labelledby={isMine ? "admin-approval-history-title" : "admin-history-title"} className="grid gap-5">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{isMine ? "MY APPROVAL HISTORY" : "ADMIN AUDIT HISTORY"}</p>
+        <h2 id={isMine ? "admin-approval-history-title" : "admin-history-title"} className="mt-1 text-2xl font-bold tracking-tight text-slate-950">{isMine ? "Lịch sử duyệt của tôi" : "Lịch sử hoạt động"}</h2>
+        <p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">{isMine ? "Chỉ hiển thị các milestone mà tài khoản đang đăng nhập đã duyệt." : "Theo dõi người đã duyệt hoặc thay đổi cấu hình ngày nghỉ, P&L và milestone."}</p>
+      </div>
+      <button type="button" onClick={onRefresh} disabled={loading} className="inline-flex min-h-10 items-center justify-center gap-2 self-start rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Làm mới</button>
+    </div>
+    <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+      <div className="flex items-center justify-between border-b border-border bg-slate-50/70 px-5 py-4">
+        <div><h3 className="text-base font-bold text-slate-950">{isMine ? "Các milestone tôi đã duyệt" : "Các hoạt động gần đây"}</h3><p className="mt-1 text-xs text-slate-500">{isMine ? "Log này không bao gồm các thao tác cấu hình khác." : "Chỉ hiển thị các sự kiện quản trị quan trọng, không lưu thao tác xem hoặc lọc dữ liệu."}</p></div>
+        <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-bold text-slate-600">{entries.length} bản ghi</span>
+      </div>
+      {loading && !entries.length ? <div className="p-10 text-center text-sm text-slate-500">Đang tải lịch sử…</div> : null}
+      {!loading && !entries.length ? <div className="p-12 text-center"><Clock3 className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 text-sm font-bold text-slate-900">Chưa có lịch sử</p><p className="mt-1 text-xs text-slate-500">Các thao tác phù hợp sẽ xuất hiện tại đây.</p></div> : null}
+      {entries.length ? <ol className="divide-y divide-border">{entries.map((entry) => <li key={entry.id} className="flex gap-3 px-5 py-4 sm:px-6">
+        <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${historyIconTone(entry.category)}`}>{historyIcon(entry.category)}</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"><p className="text-sm font-bold text-slate-900">{entry.title}</p><time dateTime={entry.createdAt} className="text-[11px] font-medium text-slate-400">{new Date(entry.createdAt).toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" })}</time></div>
+          <p className="mt-1 text-xs leading-relaxed text-slate-600"><span className="font-semibold text-slate-800">{entry.actorDisplayName ?? "Hệ thống"}</span> · {entry.detail}</p>
+          {entry.href ? <a href={entry.href} className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-primary hover:underline"><ExternalLink className="h-3.5 w-3.5" /> Mở chi tiết</a> : null}
+        </div>
+      </li>)}</ol> : null}
+    </section>
+  </section>;
+}
+
+function ApprovalPanel({ approvalHistory, historyLoading, onRefreshHistory, onApproved }: { approvalHistory: AdminHistoryResponse["data"]; historyLoading: boolean; onRefreshHistory: () => void; onApproved?: () => void }) {
   const [rows, setRows] = useState<AdminApprovalsResponse["data"]>([]);
   const [loading, setLoading] = useState(true);
   const [actionId, setActionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const pendingForMe = rows.filter((row) => row.canApprove).length;
+  const waitingForOtherReviewer = rows.length - pendingForMe;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -448,6 +506,7 @@ function ApprovalPanel() {
       if (!response.ok) throw new Error(errorMessage(body, "Không thể duyệt milestone."));
       setNotice(`Đã duyệt ${row.milestone.name} của ${row.project.name}.`);
       await load();
+      onApproved?.();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Không thể duyệt milestone.");
     } finally {
@@ -455,13 +514,68 @@ function ApprovalPanel() {
     }
   };
 
-  return <section aria-labelledby="admin-approval-title" className="grid gap-5">
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-600">APPROVAL QUEUE</p><h2 id="admin-approval-title" className="mt-1 text-2xl font-bold tracking-tight text-slate-950">Hồ sơ chờ duyệt</h2><p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Mỗi dòng là một milestone đã đủ điều kiện và đang chờ đúng người duyệt. Duyệt xong hệ thống mới mở milestone kế tiếp.</p></div><button type="button" onClick={() => void load()} disabled={loading} className="inline-flex min-h-10 items-center justify-center gap-2 self-start rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Làm mới</button></div>
-    {error ? <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{error}</div> : null}
-    {notice ? <div role="status" className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</div> : null}
-    <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><p className="text-xs font-semibold text-amber-800">Tổng chờ duyệt</p><p className="mt-1 text-2xl font-extrabold text-amber-950">{rows.length}</p></div><div className="rounded-2xl border border-blue-200 bg-blue-50 p-4"><p className="text-xs font-semibold text-blue-800">Bạn có thể duyệt</p><p className="mt-1 text-2xl font-extrabold text-blue-950">{rows.filter((row) => row.canApprove).length}</p></div><div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs font-semibold text-slate-600">Luồng xử lý</p><p className="mt-1 text-sm font-bold text-slate-900">Gửi hồ sơ → Duyệt → Mở milestone</p></div></div>
-    <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm"><div className="border-b border-border px-5 py-4"><h3 className="text-base font-bold text-slate-950">Danh sách yêu cầu</h3><p className="mt-1 text-xs text-slate-500">Link “Mở project” luôn dẫn về đúng project và tab Overview.</p></div>{loading && !rows.length ? <div className="p-8 text-center text-sm text-muted-foreground">Đang tải hàng chờ approval…</div> : null}{!loading && !rows.length ? <div className="p-10 text-center"><CheckCircle2 className="mx-auto h-8 w-8 text-emerald-500" /><p className="mt-3 text-sm font-bold text-slate-900">Không còn hồ sơ chờ duyệt</p><p className="mt-1 text-xs text-slate-500">Khi user gửi yêu cầu, hồ sơ sẽ xuất hiện tại đây.</p></div> : null}{rows.length ? <div className="divide-y divide-border">{rows.map((row) => <div key={row.id} className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-bold text-amber-800">CHỜ DUYỆT</span><span className="text-xs text-slate-500">{row.project.code}</span></div><h4 className="mt-2 text-sm font-bold text-slate-950">{row.project.name} · {row.milestone.name}</h4><p className="mt-1 text-xs text-slate-500">Gửi bởi {row.requesterLabel} · Người duyệt: {row.reviewerLabel} · {new Date(row.pendingSince).toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" })}</p></div><div className="flex shrink-0 flex-wrap items-center gap-2"><a href={row.project.href} className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-border px-3 text-xs font-bold text-slate-700 hover:bg-slate-50"><ExternalLink className="h-3.5 w-3.5" /> Mở project</a><button type="button" disabled={!row.canApprove || actionId === row.id} onClick={() => void approve(row)} className="inline-flex min-h-9 items-center gap-1.5 rounded-xl bg-primary px-3 text-xs font-bold text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">{actionId === row.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} {row.canApprove ? "Duyệt & chuyển" : "Không thuộc quyền duyệt"}</button></div></div>)}</div> : null}</section>
-  </section>;
+  return (
+    <section aria-labelledby="admin-approval-title" className="grid gap-5">
+      <header className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+        <div className="flex flex-col gap-4 bg-gradient-to-r from-violet-50 via-white to-sky-50 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-7">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-violet-100 text-violet-700"><ShieldCheck className="h-5 w-5" /></span>
+            <div className="min-w-0">
+              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-violet-700">APPROVAL CENTER</p>
+              <h2 id="admin-approval-title" className="mt-1 text-2xl font-bold tracking-tight text-slate-950">Hồ sơ chờ duyệt</h2>
+              <p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Chỉ duyệt hồ sơ đã đủ điều kiện. Khi duyệt thành công, milestone kế tiếp sẽ được mở.</p>
+            </div>
+          </div>
+          <button type="button" onClick={() => void load()} disabled={loading} className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-600 shadow-sm hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Làm mới</button>
+        </div>
+        <div className="grid gap-3 border-t border-border bg-white p-4 sm:grid-cols-3 sm:px-7">
+          <Metric icon={<Clock3 className="h-4 w-4" />} label="Tổng hồ sơ chờ" value={rows.length} tone="amber" />
+          <Metric icon={<CheckCircle2 className="h-4 w-4" />} label="Bạn có thể duyệt" value={pendingForMe} tone="sky" />
+          <Metric icon={<ShieldAlert className="h-4 w-4" />} label="Chờ người khác" value={waitingForOtherReviewer} tone="indigo" />
+        </div>
+      </header>
+
+      {error ? <div role="alert" className="flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />{error}</div> : null}
+      {notice ? <div role="status" className="flex items-start gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />{notice}</div> : null}
+
+      <section aria-labelledby="admin-approval-queue-title" className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+        <div className="flex flex-col gap-2 border-b border-border bg-slate-50/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <div>
+            <h3 id="admin-approval-queue-title" className="text-base font-bold text-slate-950">Danh sách yêu cầu</h3>
+            <p className="mt-1 text-xs text-slate-500">Mỗi hồ sơ cho biết project, milestone, người gửi, người duyệt và quyền xử lý hiện tại.</p>
+          </div>
+          <span className="w-fit rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800">{rows.length} đang chờ</span>
+        </div>
+
+        {loading && !rows.length ? <div className="space-y-3 p-5" aria-busy="true" aria-label="Đang tải hàng chờ duyệt"><div className="h-24 animate-pulse rounded-2xl bg-slate-100" /><div className="h-24 animate-pulse rounded-2xl bg-slate-100" /></div> : null}
+        {!loading && !rows.length ? <div className="p-12 text-center"><span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600"><CheckCircle2 className="h-7 w-7" /></span><p className="mt-4 text-sm font-bold text-slate-900">Không còn hồ sơ chờ duyệt</p><p className="mt-1 text-xs text-slate-500">Khi user gửi yêu cầu, hồ sơ sẽ xuất hiện tại đây.</p></div> : null}
+        {rows.length ? <div className="divide-y divide-border">
+          {rows.map((row) => <article key={row.id} className="grid min-w-0 gap-5 p-5 transition-colors hover:bg-slate-50/60 lg:grid-cols-[minmax(0,1.25fr)_minmax(220px,0.8fr)_auto] lg:items-center lg:px-6">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700"><Clock3 className="h-5 w-5" /></span>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-800">Chờ duyệt</span><span className="text-xs font-semibold text-slate-500">{row.project.code}</span></div>
+                <h4 className="mt-2 line-clamp-2 text-sm font-bold leading-snug text-slate-950">{row.project.name} <span className="font-medium text-slate-500">· {row.milestone.name}</span></h4>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500"><span><strong className="font-semibold text-slate-700">Gửi bởi:</strong> {row.requesterLabel}</span><span><Clock3 className="mr-1 inline-block h-3.5 w-3.5 align-[-2px]" />{new Date(row.pendingSince).toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" })}</span></div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-border bg-slate-50/70 px-4 py-3">
+              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Người duyệt</p>
+              <p className="mt-1 truncate text-sm font-bold text-slate-900" title={row.reviewerLabel}>{row.reviewerLabel}</p>
+              <span className={`mt-2 inline-flex items-center rounded-full px-2 py-1 text-[10px] font-bold ${row.canApprove ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>{row.canApprove ? "Bạn có thể duyệt" : "Chờ người được chỉ định"}</span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+              <a href={row.project.href} className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-xl border border-border bg-white px-3 text-xs font-bold text-slate-700 hover:bg-slate-50"><ExternalLink className="h-3.5 w-3.5" /> Mở project</a>
+              <button type="button" disabled={!row.canApprove || actionId === row.id} onClick={() => void approve(row)} title={row.canApprove ? "Duyệt milestone và mở bước kế tiếp" : "Bạn không phải người duyệt hồ sơ này"} className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-xl bg-primary px-3 text-xs font-bold text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">{actionId === row.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}{row.canApprove ? "Duyệt & chuyển" : "Không thuộc quyền"}</button>
+            </div>
+          </article>)}
+        </div> : null}
+      </section>
+      <AdminHistoryPanel entries={approvalHistory} loading={historyLoading} onRefresh={onRefreshHistory} scope="mine" />
+    </section>
+  );
 }
 
 function OverviewPanel({ overview, loading, onRefresh, onOpen }: { overview: AdminOverviewResponse["data"] | null; loading: boolean; onRefresh: () => void; onOpen: (section: AdminSection) => void }) {
@@ -509,7 +623,7 @@ function AlertsPanel({ rows, loading, onRefresh }: { rows: AdminAlertDetailRow[]
   return <section aria-labelledby="admin-alert-detail-title" className="grid gap-5">
     <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-amber-700">OPERATIONS · ALERT CENTER</p><h2 id="admin-alert-detail-title" className="mt-1 text-2xl font-bold tracking-tight text-slate-950">Chi tiết cảnh báo</h2><p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-600">Tổng hợp theo project để đối soát Estimate Hour, Actual Hour, deadline và nguyên nhân cần xử lý. Chỉ dữ liệu đã ghi nhận mới được dùng để kết luận.</p></div><button type="button" onClick={onRefresh} className="inline-flex min-h-10 items-center justify-center gap-2 self-start rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"><RefreshCw className="h-4 w-4" /> Làm mới dữ liệu</button></div>
     <section aria-label="Alert summary" className="grid gap-3 sm:grid-cols-3"><Metric icon={<TriangleAlert className="h-4 w-4" />} label="Tổng cảnh báo" value={rows.length} tone="amber" /><Metric icon={<ShieldAlert className="h-4 w-4" />} label="Cần xử lý ngay" value={critical + warning} tone="rose" /><Metric icon={<TimerReset className="h-4 w-4" />} label="Task liên quan" value={affectedTasks} tone="indigo" /></section>
-    <section className="rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5"><div className="flex flex-col gap-3 lg:flex-row lg:items-center"><div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm theo project, mã project hoặc nguyên nhân…" className="h-10 w-full rounded-xl border border-border bg-white pl-9 pr-3 text-sm outline-none ring-primary/30 focus:ring-2" /></div><label className="inline-flex items-center gap-2 text-sm text-slate-600"><Filter className="h-4 w-4" /><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as typeof typeFilter)} className="h-10 rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700"><option value="all">Tất cả loại cảnh báo</option>{Object.entries(ALERT_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><select aria-label="Mức độ" value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value as typeof severityFilter)} className="h-10 rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700"><option value="all">Tất cả mức độ</option><option value="critical">Critical</option><option value="warning">Warning</option><option value="info">Info</option></select></div><div className="mt-3 flex items-center justify-between text-xs text-slate-500"><span>Hiển thị {filtered.length}/{rows.length} cảnh báo</span><span>{new Date().toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" })}</span></div></section>
+    <section className="rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5"><div className="flex flex-col gap-3 lg:flex-row lg:items-center"><div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm theo project, mã project hoặc nguyên nhân…" className="h-10 w-full rounded-xl border border-border bg-white pl-9 pr-3 text-sm outline-none ring-primary/30 focus:ring-2" /></div><div className="flex min-w-[190px] items-center gap-2"><Filter className="h-4 w-4 shrink-0 text-slate-400" /><CrmSelect ariaLabel="Loại cảnh báo" options={[{ value: "all", label: "Tất cả loại cảnh báo" }, ...Object.entries(ALERT_TYPE_LABELS).map(([value, label]) => ({ value, label }))]} value={typeFilter} onChange={(value) => setTypeFilter(value as typeof typeFilter)} /></div><div className="min-w-[150px]"><CrmSelect ariaLabel="Mức độ" options={[{ value: "all", label: "Tất cả mức độ" }, { value: "critical", label: "Critical" }, { value: "warning", label: "Warning" }, { value: "info", label: "Info" }]} value={severityFilter} onChange={(value) => setSeverityFilter(value as typeof severityFilter)} /></div></div><div className="mt-3 flex items-center justify-between text-xs text-slate-500"><span>Hiển thị {filtered.length}/{rows.length} cảnh báo</span><span>{new Date().toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" })}</span></div></section>
     <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm"><div className="flex flex-col gap-1 border-b border-border bg-gradient-to-r from-amber-50 via-white to-sky-50 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6"><div><h3 className="text-base font-bold text-slate-950">Estimate Hour và Actual Hour</h3><p className="mt-1 text-xs text-slate-500">Mỗi dòng là một nguyên nhân cảnh báo độc lập; một project có thể xuất hiện nhiều dòng.</p></div><span className="w-fit rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800">{rows.length} cảnh báo</span></div><div className="overflow-x-auto"><table className="w-full min-w-[1040px] text-left text-sm"><thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500"><tr><th className="px-5 py-3 font-bold">Project</th><th className="px-4 py-3 text-right font-bold">Estimate</th><th className="px-4 py-3 text-right font-bold">Actual</th><th className="px-4 py-3 text-right font-bold">Chênh lệch</th><th className="px-4 py-3 font-bold">Cảnh báo</th><th className="px-5 py-3 font-bold">Chi tiết cần xử lý</th><th className="px-4 py-3" /></tr></thead><tbody className="divide-y divide-border">{filtered.map((row) => <tr key={row.id} className="align-top transition hover:bg-slate-50/80"><td className="px-5 py-4"><a href={row.href} className="group block min-w-[220px]"><span className="block font-bold text-slate-900 group-hover:text-primary">{row.project.name}</span><span className="mt-1 block text-xs font-medium text-slate-500">{row.project.code}</span></a></td><td className="px-4 py-4 text-right font-semibold tabular-nums text-slate-700">{formatAlertHours(row.estimateMinutes)}</td><td className="px-4 py-4 text-right font-semibold tabular-nums text-slate-700">{formatAlertHours(row.actualMinutes)}</td><td className={`px-4 py-4 text-right font-bold tabular-nums ${row.varianceMinutes > 0 ? "text-rose-600" : "text-slate-500"}`}>{row.varianceMinutes > 0 ? "+" : ""}{formatAlertHours(row.varianceMinutes)}</td><td className="px-4 py-4"><span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold ${alertBadgeClass(row)}`}>{ALERT_TYPE_LABELS[row.type]}</span><span className="mt-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">{row.severity}</span></td><td className="max-w-[390px] px-5 py-4 text-xs leading-relaxed text-slate-600">{row.detail}<span className="mt-1 block font-semibold text-slate-400">{row.affectedTaskCount} task liên quan</span></td><td className="px-4 py-4"><a aria-label={`Mở project ${row.project.name}`} href={row.href} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border text-slate-500 hover:bg-slate-100 hover:text-slate-900"><ExternalLink className="h-3.5 w-3.5" /></a></td></tr>)}{loading && !rows.length ? <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-500">Đang tổng hợp cảnh báo từ task và time entry…</td></tr> : null}{!loading && !filtered.length ? <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-500">Không có cảnh báo phù hợp bộ lọc hiện tại.</td></tr> : null}</tbody></table></div></section>
     <div className="flex items-start gap-2 rounded-2xl border border-sky-100 bg-sky-50/70 px-4 py-3 text-xs leading-relaxed text-sky-800"><Info className="mt-0.5 h-4 w-4 shrink-0" /> “Thiếu dữ liệu” chỉ là tín hiệu cần bổ sung record; hệ thống không tự kết luận hiệu suất khi chưa đủ estimate, actual hoặc deadline.</div>
   </section>;
@@ -769,9 +883,7 @@ function MilestoneRulePanel({
         <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-600">Gate tự động kiểm tra hồ sơ, task trong các stage và xác nhận khách hàng. Đủ điều kiện sẽ chuyển sang chờ đúng người duyệt; chỉ sau khi duyệt mới mở milestone kế tiếp.</p>
       </div>
       <div className="flex items-center gap-2">
-        <select value={activeTemplateId} onChange={(event) => setActiveTemplateId(event.target.value)} className="h-10 min-w-[220px] rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700">
-          {templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
-        </select>
+        <CrmSelect ariaLabel="Template milestone" className="min-w-[220px]" options={templates.map((template) => ({ value: template.id, label: template.name }))} value={activeTemplateId} onChange={setActiveTemplateId} />
         {!readOnly && draft ? <button type="button" disabled={saving} onClick={() => void save()} className="inline-flex h-10 items-center gap-2 rounded-xl bg-indigo-600 px-3 text-xs font-bold text-white disabled:opacity-50"><Save className="h-3.5 w-3.5" />{saving ? "Đang lưu…" : "Lưu rule"}</button> : null}
       </div>
     </div>
@@ -790,9 +902,9 @@ function MilestoneRulePanel({
           <div className="flex items-start gap-3"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-[11px] font-black text-indigo-700">M{index + 1}</span><div className="min-w-0"><p className="truncate text-sm font-bold text-slate-900">{milestone.name}</p><p className="mt-0.5 text-[11px] text-slate-500">Rule chuyển tiếp</p></div></div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <label><span className="mb-1 block text-[11px] font-semibold text-slate-500">Số bằng chứng tối thiểu</span><input disabled={readOnly} type="number" min="0" value={milestone.requiredDocumentCount ?? 0} onChange={(event) => updateMilestone(milestone.id, { requiredDocumentCount: Math.max(0, Number(event.target.value) || 0) })} className="h-10 w-full rounded-xl border border-border px-3 text-sm font-semibold disabled:bg-slate-50" /></label>
-            <label><span className="mb-1 block text-[11px] font-semibold text-slate-500">Loại bằng chứng</span><select disabled={readOnly} value={milestone.evidenceMode ?? "file_or_link"} onChange={(event) => updateMilestone(milestone.id, { evidenceMode: event.target.value as ProjectMilestoneEvidenceMode })} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold disabled:bg-slate-50"><option value="file_or_link">File hoặc link</option><option value="file">Chỉ file tải lên</option><option value="link">Chỉ link</option></select></label>
+            <div><span className="mb-1 block text-[11px] font-semibold text-slate-500">Loại bằng chứng</span><CrmSelect disabled={readOnly} options={[{ value: "file_or_link", label: "File hoặc link" }, { value: "file", label: "Chỉ file tải lên" }, { value: "link", label: "Chỉ link" }]} value={milestone.evidenceMode ?? "file_or_link"} onChange={(value) => updateMilestone(milestone.id, { evidenceMode: value as ProjectMilestoneEvidenceMode })} /></div>
           </div>
-          <label className="mt-2 block"><span className="mb-1 block text-[11px] font-semibold text-slate-500">Team phụ trách</span><select disabled={readOnly} value={milestone.ownerTeamId ?? ""} onChange={(event) => updateMilestone(milestone.id, { ownerTeamId: event.target.value })} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold disabled:bg-slate-50"><option value="">Chưa gán team</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}{team.code ? ` · ${team.code}` : ""}</option>)}</select></label>
+          <div className="mt-2"><span className="mb-1 block text-[11px] font-semibold text-slate-500">Team phụ trách</span><CrmSelect disabled={readOnly} options={[{ value: "", label: "Chưa gán team" }, ...teams.map((team) => ({ value: team.id, label: `${team.name}${team.code ? ` · ${team.code}` : ""}` }))]} value={milestone.ownerTeamId ?? ""} onChange={(value) => updateMilestone(milestone.id, { ownerTeamId: value })} /></div>
           <label className="mt-2 block"><span className="mb-1 block text-[11px] font-semibold text-slate-500">Loại hồ sơ (tuỳ chọn)</span><input disabled={readOnly} value={milestone.requiredDocumentTypes} onChange={(event) => updateMilestone(milestone.id, { requiredDocumentTypes: event.target.value })} placeholder="BRD, FRD, SRS" className="h-10 w-full rounded-xl border border-border px-3 text-sm disabled:bg-slate-50" /></label>
           <label className="mt-2 block"><span className="mb-1 block text-[11px] font-semibold text-slate-500">Mô tả điều kiện bổ sung</span><textarea disabled={readOnly} rows={2} value={milestone.unlockCriteria ?? ""} onChange={(event) => updateMilestone(milestone.id, { unlockCriteria: event.target.value })} placeholder="VD: Admin workspace duyệt và khách hàng xác nhận" className="w-full resize-none rounded-xl border border-border px-3 py-2.5 text-sm disabled:bg-slate-50" /></label>
           <p className="mt-3 rounded-xl bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-800">Cần {milestone.requiredDocumentCount ?? 0} {milestone.evidenceMode === "file" ? "file" : milestone.evidenceMode === "link" ? "link" : "file/link"} để mở milestone kế tiếp.</p>
@@ -848,7 +960,7 @@ function MilestoneGatePanel({
   const statusClass: Record<string, string> = { open: "bg-sky-100 text-sky-800", locked: "bg-slate-100 text-slate-600", pending_review: "bg-amber-100 text-amber-800", approved: "bg-emerald-100 text-emerald-800", rejected: "bg-rose-100 text-rose-800", conditional: "bg-violet-100 text-violet-800" };
 
   return <section aria-labelledby="milestone-gate-title" className="grid gap-5">
-    <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-indigo-700">PROJECT GOVERNANCE</p><h2 id="milestone-gate-title" className="mt-1 text-2xl font-bold tracking-tight text-slate-950">Milestone & điều kiện chuyển tiếp</h2><p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Chọn một Project, chọn một milestone ở cột trái, rồi chỉnh điều kiện ở một nơi duy nhất.</p></div><label className="min-w-[280px]"><span className="mb-1.5 block text-xs font-semibold text-slate-600">Project cần cấu hình</span><select value={projectId} onChange={(event) => onProjectChange(event.target.value)} className="h-11 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700"><option value="">Chọn Project…</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.code} · {project.name}</option>)}</select></label></div>
+    <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-indigo-700">PROJECT GOVERNANCE</p><h2 id="milestone-gate-title" className="mt-1 text-2xl font-bold tracking-tight text-slate-950">Milestone & điều kiện chuyển tiếp</h2><p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Chọn một Project, chọn một milestone ở cột trái, rồi chỉnh điều kiện ở một nơi duy nhất.</p></div><div className="min-w-[280px]"><CrmSelect label={<span className="mb-1.5 block text-xs font-semibold text-slate-600">Project cần cấu hình</span>} options={[{ value: "", label: "Chọn Project…" }, ...projects.map((project) => ({ value: project.id, label: `${project.code} · ${project.name}` }))]} value={projectId} onChange={onProjectChange} /></div></div>
     {selectedProject ? <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-xs text-indigo-900"><span className="font-bold">{selectedProject.name}</span><span>·</span><span>{selectedProject.milestoneMode === "manual" ? "Tự chọn milestone" : "Mẫu pilot"}</span><span>·</span><span>{gates.length} bước chuyển tiếp</span></div> : null}
     {loading ? <div className="rounded-2xl border border-border bg-card p-8 text-center text-sm text-slate-500">Đang tải cấu hình milestone…</div> : null}
     {!loading && !projectId ? <div className="rounded-2xl border border-dashed border-border bg-card p-10 text-center text-sm text-slate-500">Chọn một Project để bắt đầu cấu hình.</div> : null}
@@ -906,11 +1018,11 @@ function ReminderPolicyPanel({
       </div>
       <div className="p-5 sm:p-7">
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-          <label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Phạm vi người nhận</span><select value={scope} onChange={(event) => { const next = event.target.value as typeof scope; setScope(next); setUserId(""); setTeamId(""); }} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700"><option value="all">Tất cả người đang active</option><option value="user">Một người</option><option value="team">Một team</option></select></label>
+          <CrmSelect label={<span className="mb-1.5 block text-xs font-semibold text-slate-600">Phạm vi người nhận</span>} options={[{ value: "all", label: "Tất cả người đang active" }, { value: "user", label: "Một người" }, { value: "team", label: "Một team" }]} value={scope} onChange={(value) => { const next = value as typeof scope; setScope(next); setUserId(""); setTeamId(""); }} />
           {scope === "user" ? <div><span className="mb-1.5 block text-xs font-semibold text-slate-600">Người nhận</span><CustomDropdown label={null} value={userId} onChange={setUserId} options={[{ value: "", label: "Chọn người nhận…" }, ...recipientOptions]} /></div> : null}
-          {scope === "team" ? <label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Team nhận</span><select value={teamId} onChange={(event) => setTeamId(event.target.value)} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700"><option value="">Chọn team…</option>{recipients.teams.map((team) => <option key={team.id} value={team.id}>{team.name} ({team.memberCount})</option>)}</select></label> : null}
+          {scope === "team" ? <div><span className="mb-1.5 block text-xs font-semibold text-slate-600">Team nhận</span><CrmSelect options={[{ value: "", label: "Chọn team…" }, ...recipients.teams.map((team) => ({ value: team.id, label: `${team.name} (${team.memberCount})` }))]} value={teamId} onChange={setTeamId} /></div> : null}
           <label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Ngày gửi</span><input type="date" value={localDate} onChange={(event) => setLocalDate(event.target.value)} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700" /></label>
-          <label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Mốc giờ</span><select value={slot} onChange={(event) => setSlot(event.target.value as WorkspaceReminderSlotCode)} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700">{(policy?.slots ?? []).map((candidate) => <option key={candidate.slot} value={candidate.slot}>{slotLabel(candidate)} · {candidate.time}</option>)}</select></label>
+          <div><span className="mb-1.5 block text-xs font-semibold text-slate-600">Mốc giờ</span><CrmSelect options={(policy?.slots ?? []).map((candidate) => ({ value: candidate.slot, label: `${slotLabel(candidate)} · ${candidate.time}` }))} value={slot} onChange={(value) => setSlot(value as WorkspaceReminderSlotCode)} /></div>
         </div>
         <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(340px,430px)] xl:items-start">
           <div className="flex flex-col gap-3 rounded-2xl border border-violet-100 bg-violet-50/50 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="text-xs leading-relaxed text-violet-900"><strong>{selectedSlot?.label ?? "Mốc nhắc"}</strong><span className="mx-1.5">·</span>{localDate || "Chưa chọn ngày"}<span className="mx-1.5">·</span>{scope === "all" ? `${recipients.users.length} người active` : scope === "user" ? (recipients.users.find((user) => user.id === userId)?.displayName || "Chưa chọn người") : (recipients.teams.find((team) => team.id === teamId)?.name || "Chưa chọn team")}</div><button type="button" disabled={sending || !localDate || (scope === "user" && !userId) || (scope === "team" && !teamId)} onClick={submitManual} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"><Send className="h-4 w-4" />{sending ? "Đang gửi…" : "Gửi ngay"}</button></div>

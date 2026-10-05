@@ -777,10 +777,10 @@ function humanize(value: string) {
 
 function formatApprovalRole(value: string) {
   const labels: Record<string, string> = {
-    DELIVERY_LEAD: "Delivery Lead",
+    DELIVERY_LEAD: "Project Manager",
     FINANCE_ADMIN: "Tài chính",
     FOUNDER_GM: "Founder/GM",
-    SALES_OWNER: "Sales Owner"
+    SALES_OWNER: "Business development"
   };
   return labels[value] ?? "Người duyệt";
 }

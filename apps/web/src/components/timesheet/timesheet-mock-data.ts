@@ -162,18 +162,18 @@ interface PersonSeed {
 }
 
 const PERSON_SEEDS: PersonSeed[] = [
-  { name: "Vũ Thu Huyền", role: "Delivery Lead", departmentId: "dep-delivery", teamName: "Delivery A", discipline: 0.95 },
-  { name: "Trịnh Thị Phương Thảo", role: "Senior Developer", departmentId: "dep-delivery", teamName: "Delivery A", discipline: 0.92 },
-  { name: "Lê Duy Anh", role: "Developer", departmentId: "dep-delivery", teamName: "Delivery A", discipline: 0.84 },
-  { name: "Trần Hữu Vinh", role: "Solution Owner", departmentId: "dep-product", teamName: "Solution", discipline: 0.72 },
-  { name: "Đặng Thúy Hiền", role: "Business Analyst", departmentId: "dep-product", teamName: "Solution", discipline: 0.78 },
+  { name: "Vũ Thu Huyền", role: "Project Manager", departmentId: "dep-delivery", teamName: "Delivery A", discipline: 0.95 },
+  { name: "Trịnh Thị Phương Thảo", role: "DX enabler", departmentId: "dep-delivery", teamName: "Delivery A", discipline: 0.92 },
+  { name: "Lê Duy Anh", role: "DX enabler", departmentId: "dep-delivery", teamName: "Delivery A", discipline: 0.84 },
+  { name: "Trần Hữu Vinh", role: "DX enabler", departmentId: "dep-product", teamName: "Solution", discipline: 0.72 },
+  { name: "Đặng Thúy Hiền", role: "DX enabler", departmentId: "dep-product", teamName: "Solution", discipline: 0.78 },
   { name: "Đoàn Thị Vân Anh", role: "Project Manager", departmentId: "dep-product", teamName: "PMO", discipline: 0.88 },
   { name: "Đinh Hoàng Phương Linh", role: "Business Analyst", departmentId: "dep-product", teamName: "PMO", discipline: 0.66 },
-  { name: "Trần Chung Tiến", role: "Developer", departmentId: "dep-delivery", teamName: "Delivery B", discipline: 0.58 },
-  { name: "Nguyễn Thùy Dương", role: "QA Engineer", departmentId: "dep-qa", teamName: "QA", discipline: 0.47, contractRatio: 0.5 },
-  { name: "Nguyễn Thanh Huyền", role: "Support Engineer", departmentId: "dep-qa", teamName: "QA", discipline: 0.35 },
-  { name: "Phạm Minh Quân", role: "Developer", departmentId: "dep-delivery", teamName: "Delivery B", discipline: 0.81 },
-  { name: "Hoàng Bảo Ngọc", role: "QA Engineer", departmentId: "dep-qa", teamName: "QA", discipline: 0.69 }
+  { name: "Trần Chung Tiến", role: "DX enabler", departmentId: "dep-delivery", teamName: "Delivery B", discipline: 0.58 },
+  { name: "Nguyễn Thùy Dương", role: "DX enabler", departmentId: "dep-qa", teamName: "QA", discipline: 0.47, contractRatio: 0.5 },
+  { name: "Nguyễn Thanh Huyền", role: "Customer success", departmentId: "dep-qa", teamName: "QA", discipline: 0.35 },
+  { name: "Phạm Minh Quân", role: "DX enabler", departmentId: "dep-delivery", teamName: "Delivery B", discipline: 0.81 },
+  { name: "Hoàng Bảo Ngọc", role: "DX enabler", departmentId: "dep-qa", teamName: "QA", discipline: 0.69 }
 ];
 
 function initialsOf(name: string): string {

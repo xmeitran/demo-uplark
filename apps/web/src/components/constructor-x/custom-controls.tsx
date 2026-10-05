@@ -3,7 +3,8 @@
 import React, { useState, useRef, useEffect, useId, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Calendar, ChevronDown, ChevronLeft, ChevronRight, Check, Info } from "lucide-react";
+import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
+import { CrmSelect } from "../crm-workspace/crm-select";
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 
@@ -46,154 +47,15 @@ interface CustomDatePickerProps {
 // ─── CUSTOM DROPDOWN COMPONENT ────────────────────────────────────────────────
 
 export function CustomDropdown({ options, value, onChange, placeholder = "Select option", className = "", ariaLabel, onOptionInfo }: CustomDropdownProps) {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const triggerId = useId();
-  const listboxId = `${triggerId}-listbox`;
-
-  const selectedOption = options.find(opt => opt.value === value);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      setOpen(false);
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [open]);
-
-  return (
-    <div className={`relative ${className}`} ref={containerRef}>
-      <button
-        aria-label={ariaLabel}
-        aria-controls={listboxId}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="w-full min-h-11 flex items-center justify-between gap-3 px-3.5 py-2.5 bg-background border border-input rounded-xl text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 text-left transition-all"
-        style={{ borderColor: open ? "#2563eb" : "var(--color-input)" }}
-      >
-        <span className="flex min-w-0 items-center gap-2.5">
-          {selectedOption ? (
-            <>
-              <DropdownOptionVisual option={selectedOption} size="trigger" />
-              <span className="min-w-0">
-                <span className="block truncate font-semibold leading-4">{selectedOption.label}</span>
-                {(selectedOption.meta || selectedOption.description) ? (
-                  <span className="block truncate text-[10px] font-normal leading-3.5 text-muted-foreground">
-                    {selectedOption.meta ?? selectedOption.description}
-                  </span>
-                ) : null}
-              </span>
-            </>
-          ) : (
-            <span className="text-muted-foreground/50">{placeholder}</span>
-          )}
-        </span>
-        <ChevronDown className={`w-4 h-4 text-muted-foreground shrink-0 transition-transform duration-250 ${open ? "rotate-180" : ""}`} />
-      </button>
-
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: 8, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.96 }}
-            transition={{ duration: 0.15 }}
-            className="absolute left-0 right-0 mt-1.5 z-50 rounded-xl border border-border bg-card shadow-xl overflow-hidden py-1"
-            style={{ maxHeight: "240px", overflowY: "auto", boxShadow: "0 8px 30px rgba(0,0,0,0.12)" }}
-            id={listboxId}
-            role="listbox"
-          >
-            {options.length === 0 ? (
-              <p className="px-3 py-3 text-center text-xs text-muted-foreground">Không có lựa chọn</p>
-            ) : options.map((opt) => (
-              <div key={opt.value} className={`flex items-stretch gap-1 px-1 ${value === opt.value ? "bg-primary/5" : ""}`}>
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={value === opt.value}
-                  onClick={() => {
-                    onChange(opt.value);
-                    setOpen(false);
-                  }}
-                  className={`flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-left text-[13px] transition-colors hover:bg-muted ${
-                    value === opt.value ? "text-primary" : "text-foreground"
-                  }`}
-                >
-                  <span className="flex min-w-0 flex-1 items-center gap-2.5">
-                    <DropdownOptionVisual option={opt} size="option" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-semibold leading-4">{opt.label}</span>
-                      {opt.meta ? <span className="mt-0.5 block truncate text-[10px] font-medium leading-3.5 text-muted-foreground">{opt.meta}</span> : null}
-                      {opt.description ? <span className="mt-0.5 block truncate text-[10px] font-normal leading-3.5 text-muted-foreground">{opt.description}</span> : null}
-                    </span>
-                    {value === opt.value && <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />}
-                  </span>
-                </button>
-                {onOptionInfo ? (
-                  <button
-                    type="button"
-                    aria-label={`Xem chi tiết ${opt.label}`}
-                    title={`Xem chi tiết ${opt.label}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setOpen(false);
-                      onOptionInfo(opt);
-                    }}
-                    className="mt-1.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
-                  >
-                    <Info className="h-3.5 w-3.5" aria-hidden />
-                  </button>
-                ) : null}
-              </div>
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-function DropdownOptionVisual({ option, size }: { option: DropdownOption; size: "trigger" | "option" }) {
-  const dimension = size === "trigger" ? "h-7 w-7 text-[9px]" : "h-8 w-8 text-[10px]";
-  const initials = option.initials || option.label.trim().split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]?.toUpperCase()).join("");
-
-  if (option.avatarUrl || option.initials) {
-    return option.avatarUrl ? (
-      <img
-        src={option.avatarUrl}
-        alt=""
-        referrerPolicy="no-referrer"
-        className={`${dimension} shrink-0 rounded-full object-cover ring-1 ring-black/5`}
-      />
-    ) : (
-      <span
-        aria-hidden
-        className={`${dimension} flex shrink-0 items-center justify-center rounded-full font-bold text-white ring-1 ring-black/5`}
-        style={{ backgroundColor: option.avatarColor ?? option.color ?? "#64748b" }}
-      >
-        {initials || "U"}
-      </span>
-    );
-  }
-
-  if (option.icon) return <option.icon className={`${size === "trigger" ? "h-4 w-4" : "h-3.5 w-3.5"} shrink-0 text-muted-foreground`} />;
-  if (option.color) return <span className={`${size === "trigger" ? "h-2.5 w-2.5" : "h-2.5 w-2.5"} shrink-0 rounded-full`} style={{ backgroundColor: option.color }} />;
-  return null;
+  return <CrmSelect
+    options={options.map((option) => ({ ...option, color: option.avatarColor ?? option.color }))}
+    value={value}
+    onChange={onChange}
+    placeholder={placeholder}
+    className={className}
+    ariaLabel={ariaLabel}
+    onOptionInfo={onOptionInfo ? (option) => onOptionInfo(option as DropdownOption) : undefined}
+  />;
 }
 
 // ─── CUSTOM DATE PICKER COMPONENT (Calendar Popover) ─────────────────────────

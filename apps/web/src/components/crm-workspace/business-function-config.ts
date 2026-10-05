@@ -66,7 +66,7 @@ export const businessFunctionConfigs: Record<BusinessFunctionKey, BusinessFuncti
         evidence: "Chi tiết cơ hội đã có checklist bàn giao và lý do khóa thao tác.",
         name: "Rà soát bàn giao",
         nextStep: "Đưa checklist bàn giao thành hàng đợi theo chủ sở hữu.",
-        owner: "Sales + Delivery Lead",
+        owner: "Business development + Project Manager",
         readiness: "Một phần",
         tone: "info"
       },
@@ -74,7 +74,7 @@ export const businessFunctionConfigs: Record<BusinessFunctionKey, BusinessFuncti
         evidence: "Mô hình stage triển khai đã được chốt ở lớp nghiệp vụ.",
         name: "Giai đoạn triển khai",
         nextStep: "Lưu trạng thái stage và lịch sử chuyển stage.",
-        owner: "Delivery Lead",
+        owner: "Project Manager",
         readiness: "Đã thiết kế",
         tone: "warning"
       },
@@ -240,7 +240,7 @@ export const businessFunctionConfigs: Record<BusinessFunctionKey, BusinessFuncti
         evidence: "Gói đề xuất đã có cấu trúc tài liệu bắt buộc.",
         name: "Gói SOW",
         nextStep: "Hoàn thiện trình tạo gói với checklist tài liệu.",
-        owner: "Sales Owner",
+        owner: "Business development",
         readiness: "Đã sẵn sàng",
         tone: "success"
       },

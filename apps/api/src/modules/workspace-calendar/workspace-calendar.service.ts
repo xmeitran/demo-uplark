@@ -8,7 +8,7 @@ import type {
   WorkspaceDayOffCategory
 } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
-import { dateOnlyToUtcDate, lockWorkspaceDayOffDates, tagTimeEntriesWithDayOffDates } from "./day-off-time";
+import { dateOnlyToUtcDate, lockWorkspaceDayOffDates, reconcileTimeEntriesWithDayOffDates } from "./day-off-time";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HCM_OFFSET_MS = 7 * 60 * 60 * 1000;
@@ -183,7 +183,7 @@ export class WorkspaceCalendarService {
           createdByUserId: principal.subjectId
         }));
         await tx.workspaceDayOff.createMany({ data: rows });
-        await tagTimeEntriesWithDayOffDates(tx, principal.workspaceId, ids);
+        await reconcileTimeEntriesWithDayOffDates(tx, principal.workspaceId);
         await tx.auditEvent.create({
           data: {
             workspaceId: principal.workspaceId,
@@ -243,7 +243,7 @@ export class WorkspaceCalendarService {
         where: { id },
         data: { date: nextDate.date, name, category, note, isActive }
       });
-      if (isActive) await tagTimeEntriesWithDayOffDates(tx, principal.workspaceId, [id]);
+      await reconcileTimeEntriesWithDayOffDates(tx, principal.workspaceId);
       await tx.auditEvent.create({
         data: {
           workspaceId: principal.workspaceId,

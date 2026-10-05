@@ -68,12 +68,40 @@ describe("Lark authentication boundary", () => {
     expect(prisma.portalIdentity.upsert).not.toHaveBeenCalled();
   });
 
-  it("does not auto-provision uninvited provider users", async () => {
-    vi.stubEnv("CRM_LARK_AUTO_PROVISION", "true");
+  it("does not auto-provision uninvited provider users when the feature is disabled", async () => {
+    vi.stubEnv("CRM_LARK_AUTO_PROVISION", "false");
     const { service, prisma } = makeService();
     prisma.user.findFirst.mockResolvedValue(null);
     const { state } = await service.createAuthorizeUrl({ redirectUri }); mockProvider();
     await expect(service.completeCallback({ code: "code", state, redirectUri })).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("auto-provisions a verified Lark user with a non-admin workspace role", async () => {
+    vi.stubEnv("CRM_LARK_AUTO_PROVISION", "true");
+    vi.stubEnv("CRM_LARK_DEFAULT_ROLE_CODE", "WORKSPACE_USER");
+    const { service, prisma, nativeAuth, tx } = makeService();
+    prisma.user.findFirst.mockResolvedValue(null);
+    tx.user.create.mockResolvedValue({ id: "usr-new", email: "person@example.com", displayName: "Person", status: "ACTIVE" });
+    const { state } = await service.createAuthorizeUrl({ redirectUri }); mockProvider();
+
+    await service.completeCallback({ code: "code", state, redirectUri });
+
+    expect(tx.user.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ email: "person@example.com", emailVerifiedAt: expect.any(Date), subjectType: "INTERNAL_USER", status: "ACTIVE" })
+    }));
+    expect(tx.roleBinding.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ roleId: "role-workspace-user", tenantKey: "prod", workspaceId: "twk-foundation" })
+    }));
+    expect(nativeAuth.completeIdentityLogin).toHaveBeenCalledWith("usr-new", expect.objectContaining({ workspaceId: "twk-foundation" }), { authMethod: "lark" });
+  });
+
+  it("rejects auto-provision configuration that would grant an admin role", async () => {
+    vi.stubEnv("CRM_LARK_AUTO_PROVISION", "true");
+    vi.stubEnv("CRM_LARK_DEFAULT_ROLE_CODE", "WORKSPACE_ADMIN");
+    const { service, prisma } = makeService();
+    prisma.user.findFirst.mockResolvedValue(null);
+    const { state } = await service.createAuthorizeUrl({ redirectUri }); mockProvider();
+    await expect(service.completeCallback({ code: "code", state, redirectUri })).rejects.toThrow("non-admin workspace role");
   });
 
   it("bounds provider calls and does not expose provider error payloads", async () => {
@@ -112,17 +140,32 @@ describe("Lark authentication boundary", () => {
 
 function makeService() {
   const user = { id: "usr-1", email: "person@example.com", displayName: "Person", status: "ACTIVE" };
+  const tx = {
+    $executeRaw: vi.fn(),
+    user: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({ id: "usr-new", email: "person@example.com", displayName: "Person", status: "ACTIVE" })
+    },
+    role: { findUnique: vi.fn().mockResolvedValue({ id: "role-workspace-user", code: "WORKSPACE_USER" }) },
+    portalIdentity: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      upsert: vi.fn().mockResolvedValue({ userId: "usr-new" }),
+      create: vi.fn().mockResolvedValue({ userId: "usr-new" })
+    },
+    roleBinding: { create: vi.fn().mockResolvedValue({}) }
+  };
   const prisma = {
     authActionToken: { create: vi.fn().mockResolvedValue({}), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     portalIdentity: { findUnique: vi.fn().mockResolvedValue(null), upsert: vi.fn().mockResolvedValue({ userId: "usr-1" }) },
     user: { findFirst: vi.fn().mockResolvedValue(user), update: vi.fn().mockResolvedValue(user) },
     roleBinding: { findFirst: vi.fn().mockResolvedValue({ id: "rb-1" }) },
-    customerAccessGrant: { findFirst: vi.fn().mockResolvedValue(null) }
+    customerAccessGrant: { findFirst: vi.fn().mockResolvedValue(null) },
+    $transaction: vi.fn(async (callback: (transaction: typeof tx) => unknown) => callback(tx))
   };
   const workspaces = { resolveWorkspace: vi.fn().mockResolvedValue({ tenantKey: "prod", workspaceId: "twk-foundation", workspaceKey: "default" }) };
   const principals = { createSessionForUser: vi.fn() };
   const nativeAuth = { acceptSsoInvitation: vi.fn().mockResolvedValue({ userId: "usr-1" }), completeIdentityLogin: vi.fn().mockResolvedValue({ token: "session-token", expiresAt: "future" }) };
-  return { service: new LarkAuthService(prisma as any, workspaces as any, principals as any, nativeAuth as any), prisma, principals, nativeAuth };
+  return { service: new LarkAuthService(prisma as any, workspaces as any, principals as any, nativeAuth as any), prisma, principals, nativeAuth, tx };
 }
 function mockProvider() {
   vi.stubGlobal("fetch", vi.fn()

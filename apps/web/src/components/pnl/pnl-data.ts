@@ -68,11 +68,11 @@ export const EXPENSE_LABELS = ["BD", "PM", "Delivery / DX", "AI / Công cụ", "
 
 const PEOPLE = [
   { id: "an", name: "An Nguyễn", role: "Project Manager", weight: 1.1 },
-  { id: "pm", name: "Phạm Minh Quân", role: "Delivery", weight: 1.25 },
-  { id: "bt", name: "Bùi Thanh", role: "Delivery", weight: 1.05 },
-  { id: "dp", name: "Đỗ Phương", role: "Business Analyst", weight: 0.82 },
-  { id: "lh", name: "Lê Hoàng", role: "Engineering", weight: 0.82 },
-  { id: "nl", name: "Nguyễn Linh", role: "QA / UAT", weight: 0.7 }
+  { id: "pm", name: "Phạm Minh Quân", role: "Project Manager", weight: 1.25 },
+  { id: "bt", name: "Bùi Thanh", role: "Project Manager", weight: 1.05 },
+  { id: "dp", name: "Đỗ Phương", role: "DX enabler", weight: 0.82 },
+  { id: "lh", name: "Lê Hoàng", role: "DX enabler", weight: 0.82 },
+  { id: "nl", name: "Nguyễn Linh", role: "DX enabler", weight: 0.7 }
 ] as const;
 
 const DEMO_DATES = [

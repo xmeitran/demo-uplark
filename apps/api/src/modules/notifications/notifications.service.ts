@@ -132,7 +132,20 @@ export class NotificationsService {
     });
     const reviewerIds = rows.map((row) => row.reviewerUserId).filter((value): value is string => Boolean(value));
     const reviewerUsers = reviewerIds.length
-      ? await this.prisma.user.findMany({ where: { id: { in: reviewerIds } }, select: { id: true, displayName: true } })
+      ? await this.prisma.user.findMany({
+          where: {
+            id: { in: reviewerIds },
+            status: "ACTIVE",
+            roleBindings: {
+              some: {
+                workspaceId: principal.workspaceId,
+                tenantKey: principal.tenantKey,
+                ...activeMembershipWhere()
+              }
+            }
+          },
+          select: { id: true, displayName: true }
+        })
       : [];
     const reviewerNames = new Map(reviewerUsers.map((user) => [user.id, user.displayName]));
     const data = rows.map((row) => {

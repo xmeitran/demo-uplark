@@ -44,6 +44,7 @@ describe("PrincipalService principal fallback policy", () => {
   it("keeps fallback principals available only for explicitly opted-in local tooling", async () => {
     vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("CRM_ALLOW_PRINCIPAL_FALLBACK", "true");
+    vi.stubEnv("CRM_PUBLIC_SESSION_REQUIRED", "0");
     const service = new PrincipalService({} as any, {} as any);
     const principal = { subjectId: "usr-founder", displayName: "Founder" };
     vi.spyOn(service, "resolveFallbackPrincipal").mockResolvedValue(principal as any);

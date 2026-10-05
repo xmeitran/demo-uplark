@@ -1139,6 +1139,18 @@ export class ProjectsService {
           createdByUserId: principal.subjectId
         }
       });
+      await this.prisma.auditEvent.create({
+        data: {
+          workspaceId: principal.workspaceId,
+          actorUserId: principal.subjectId,
+          action: "project.milestone_template_created",
+          resource: "project_milestone_template",
+          resourceId: row.id,
+          before: undefined,
+          after: { key: row.key, name: row.name, status: row.status, milestoneCount: milestones.length },
+          requestId: randomUUID()
+        }
+      });
       return { data: mapMilestoneTemplateSummary(row) };
     } catch (error) {
       if (isPrismaWriteConflict(error)) throw new ConflictException("Template key đã tồn tại trong workspace");
@@ -1165,6 +1177,18 @@ export class ProjectsService {
         description: input?.description === undefined ? undefined : optionalString(input.description, "description") ?? null,
         milestones: milestones ? milestones as unknown as Prisma.InputJsonValue : undefined,
         status: status ?? existing.status
+      }
+    });
+    await this.prisma.auditEvent.create({
+      data: {
+        workspaceId: principal.workspaceId,
+        actorUserId: principal.subjectId,
+        action: "project.milestone_template_updated",
+        resource: "project_milestone_template",
+        resourceId: updated.id,
+        before: { key: existing.key, name: existing.name, status: existing.status, milestoneCount: Array.isArray(existing.milestones) ? existing.milestones.length : undefined },
+        after: { key: updated.key, name: updated.name, status: updated.status, milestoneCount: milestones?.length ?? (Array.isArray(updated.milestones) ? updated.milestones.length : undefined) },
+        requestId: randomUUID()
       }
     });
     return { data: mapMilestoneTemplateSummary(updated) };

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ShopifyAppShell, ShopifyDataTable, ShopifyPage, ShopifySection, ShopifyStatusItem, ShopifyBanner } from "../shopify-ui";
 import { MoneyAmount } from "@/components/money-amount";
+import { CrmSelect } from "./crm-select";
 
 interface PortalDocument {
   id: string;
@@ -229,30 +230,11 @@ export function PortalFunctionPage() {
                   <div className="shopify-field-row">
                     <div>
                       <label htmlFor="portal-ticket-category" style={{ display: "block", marginBottom: "6px", fontWeight: 650 }}>Phân loại</label>
-                      <select
-                        id="portal-ticket-category"
-                        value={ticketCategory}
-                        onChange={e => setTicketCategory(e.target.value)}
-                        style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--panel)", color: "var(--text)" }}
-                      >
-                        <option value="Lỗi truy cập">Lỗi truy cập</option>
-                        <option value="Câu hỏi sử dụng Lark">Câu hỏi sử dụng Lark</option>
-                        <option value="Báo lỗi hệ thống">Báo lỗi hệ thống</option>
-                        <option value="Yêu cầu thay đổi">Yêu cầu thay đổi</option>
-                      </select>
+                      <CrmSelect id="portal-ticket-category" options={["Lỗi truy cập", "Câu hỏi sử dụng Lark", "Báo lỗi hệ thống", "Yêu cầu thay đổi"].map((value) => ({ value, label: value }))} value={ticketCategory} onChange={setTicketCategory} />
                     </div>
                     <div>
                       <label htmlFor="portal-ticket-priority" style={{ display: "block", marginBottom: "6px", fontWeight: 650 }}>Độ ưu tiên</label>
-                      <select
-                        id="portal-ticket-priority"
-                        value={ticketPriority}
-                        onChange={e => setTicketPriority(e.target.value as any)}
-                        style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--panel)", color: "var(--text)" }}
-                      >
-                        <option value="Low">Thấp</option>
-                        <option value="Medium">Vừa</option>
-                        <option value="High">Cao</option>
-                      </select>
+                      <CrmSelect id="portal-ticket-priority" options={[{ value: "Low", label: "Thấp" }, { value: "Medium", label: "Vừa" }, { value: "High", label: "Cao" }]} value={ticketPriority} onChange={(value) => setTicketPriority(value as typeof ticketPriority)} />
                     </div>
                   </div>
                   <div className="shopify-action-row end">

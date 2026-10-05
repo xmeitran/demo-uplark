@@ -2,10 +2,10 @@
 import { MoneyAmount } from "@/components/money-amount";
 import { useDialogAccessibility } from "@/hooks/use-dialog-accessibility";
 import { formatVnd } from "@/lib/currency";
-import { formatDepartmentLabel } from "@/lib/department-labels";
+import { businessRoleFromMember, systemRoleFromCodes, systemRoleLabel } from "@/lib/people-roles";
 
 
-import React, { useState, useEffect, useMemo, useRef, useId } from "react";
+import React, { useState, useEffect, useMemo, useId } from "react";
 import { createPortal } from "react-dom";
 import type {
   AdminAccessMemberSummary,
@@ -20,8 +20,8 @@ import type {
   ResourceListResponse
 } from "@b2b-crm/contracts";
 import { PolarisFallbackText, ShopifyDataTable, ShopifyIcon, ShopifySection } from "../shopify-ui";
-import type { ShopifyIconName } from "../shopify-ui";
 import { ModalLayer } from "../modal-layer";
+import { CrmSelect, type CrmSelectOption } from "./crm-select";
 
 // Formatting helpers with decimal detection
 function formatDecimalVnd(value: number) {
@@ -130,13 +130,7 @@ const ownerTeamOptions = [
   { value: "", label: "Chưa gán đội", icon: "alert", iconTone: "warning" }
 ];
 
-type AccountDropdownOption = {
-  value: string;
-  label: string;
-  icon?: string;
-  iconTone?: string;
-  meta?: string;
-};
+type AccountDropdownOption = CrmSelectOption;
 
 function getHealthFromAccountStage(stage: string) {
   if (stage === "implementation" || stage === "active") return "green";
@@ -154,22 +148,11 @@ function getAccountPicName(account: { picName?: string; ownerTeam?: string }) {
   return account.picName || account.ownerTeam || "Chưa gán PIC";
 }
 
-function getRoleLabel(roleCode: string) {
-  const labels: Record<string, string> = {
-    FOUNDER_GM: "Founder/GM",
-    SALES_OWNER: "Phụ trách bán hàng",
-    DELIVERY_LEAD: "Lead triển khai",
-    FINANCE_ADMIN: "Phụ trách tài chính",
-    CUSTOMER_SUCCESS: "Chăm sóc khách hàng"
-  };
-  return labels[roleCode] ?? "Nội bộ";
-}
-
 function getMemberPicMeta(member: AdminAccessMemberSummary) {
-  if (member.resourceDisplayRole) return member.resourceDisplayRole;
-  const roles = member.roleCodes.map(getRoleLabel).filter(Boolean);
-  if (roles.length > 0) return roles.join(", ");
-  return member.departmentCode ? formatDepartmentLabel(member.departmentCode) : member.email;
+  if (member.roleCodes.some((roleCode) => roleCode === "FOUNDER_GM" || roleCode === "WORKSPACE_ADMIN")) {
+    return systemRoleLabel(systemRoleFromCodes(member.roleCodes));
+  }
+  return businessRoleFromMember(member);
 }
 
 function getAccountPicOptions(resources: CapacitySummaryItem[], members: AdminAccessMemberSummary[] = []) {
@@ -193,7 +176,7 @@ function getAccountPicOptions(resources: CapacitySummaryItem[], members: AdminAc
         value: resource.userId,
         label: resource.userDisplayName || resource.userEmail || resource.userId,
         icon: "users",
-        meta: resource.displayRole || (resource.departmentCode ? formatDepartmentLabel(resource.departmentCode) : resource.userEmail)
+        meta: businessRoleFromMember({ resourceDisplayRole: resource.displayRole }) || resource.userEmail
       });
     });
 
@@ -275,53 +258,6 @@ function formatShortDate(value?: string) {
   return new Date(value).toLocaleDateString("vi-VN");
 }
 
-function getAccountDropdownIcon(name?: string): ShopifyIconName | null {
-  switch (name) {
-    case "alert-circle":
-    case "alert":
-      return "alert";
-    case "cash-dollar":
-      return "cash";
-    case "checkmark":
-    case "check":
-      return "check";
-    case "order":
-      return "briefcase";
-    case "person":
-      return "users";
-    case "settings":
-      return "filter";
-    case "share":
-      return "trend";
-    case "star":
-    case "spark":
-      return "spark";
-    case "box":
-      return "briefcase";
-    case "clock":
-    case "search":
-      return name;
-    default:
-      return null;
-  }
-}
-
-function getAccountDropdownIconColor(tone?: string) {
-  switch (tone) {
-    case "critical":
-      return "var(--danger)";
-    case "success":
-      return "var(--success)";
-    case "warning":
-      return "var(--warning)";
-    case "info":
-      return "var(--brand-blue)";
-    default:
-      return "var(--text-muted)";
-  }
-}
-
-// Custom Premium Dropdown Component
 function CustomDropdown({
   label,
   value,
@@ -337,190 +273,16 @@ function CustomDropdown({
   searchable?: boolean;
   searchPlaceholder?: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const selectedOpt = options.find((o) => o.value === value) ?? options[0];
-  const selectedIcon = getAccountDropdownIcon(selectedOpt?.icon);
-  const selectedIconColor = getAccountDropdownIconColor(selectedOpt?.iconTone);
-  const filteredOptions = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    if (!searchable || !normalizedQuery) return options;
-    return options.filter((option) => {
-      const haystack = `${option.label} ${option.meta ?? ""}`.toLowerCase();
-      return haystack.includes(normalizedQuery);
-    });
-  }, [options, query, searchable]);
-
-  useEffect(() => {
-    if (!open) {
-      setQuery("");
-      return;
-    }
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open]);
-
   return (
-    <div ref={rootRef} style={{ position: "relative", display: "flex", flexDirection: "column", gap: "var(--space-1)", flex: 1 }}>
-      <span style={{ fontSize: "11px", fontWeight: 400, textTransform: "none", color: "var(--text-muted)", letterSpacing: "0.05em" }}>
-        {label}
-      </span>
-      <button
-        onClick={() => setOpen(!open)}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          width: "100%",
-          padding: "var(--space-2) var(--space-3)",
-          borderRadius: "var(--radius-sm)",
-          border: `1px solid ${open ? "var(--accent)" : "var(--border)"}`,
-          background: "var(--panel-strong)",
-          color: "var(--text)",
-          fontSize: "13px",
-          fontWeight: 400,
-          cursor: "pointer",
-          textAlign: "left",
-          transition: "all 0.2s ease",
-          outline: "none"
-        }}
-        type="button"
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-          {selectedIcon && (
-            <span style={{ color: selectedIconColor, display: "inline-flex" }}>
-              <ShopifyIcon name={selectedIcon} size={14} className="accounts-dropdown-icon" />
-            </span>
-          )}
-          <span style={{ fontWeight: 600 }}>{selectedOpt?.label}</span>
-        </div>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>
-          <polyline points="6 9 12 15 18 9"></polyline>
-        </svg>
-      </button>
-
-      {open && (
-        <div style={{
-          position: "absolute",
-          top: "100%",
-          left: 0,
-          width: "100%",
-          marginTop: "var(--space-1)",
-          borderRadius: "var(--radius-sm)",
-          border: "1px solid var(--border)",
-          background: "var(--panel)",
-          boxShadow: "var(--shadow-panel)",
-          zIndex: 100,
-          maxHeight: "220px",
-          overflowY: "auto",
-          padding: "var(--space-1)",
-          animation: "shopify-section-enter 150ms ease-out"
-        }}>
-          {searchable ? (
-            <div style={{ padding: "var(--space-1)" }}>
-              <input
-                autoFocus
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    setOpen(false);
-                  }
-                }}
-                placeholder={searchPlaceholder}
-                style={{
-                  width: "100%",
-                  border: "1px solid var(--border)",
-                  borderRadius: "var(--radius-sm)",
-                  background: "var(--panel-strong)",
-                  color: "var(--text)",
-                  fontSize: "13px",
-                  outline: "none",
-                  padding: "var(--space-2) var(--space-3)"
-                }}
-              />
-            </div>
-          ) : null}
-          {filteredOptions.length > 0 ? (
-            filteredOptions.map((opt) => {
-              const optionIcon = getAccountDropdownIcon(opt.icon);
-              const optionIconColor = getAccountDropdownIconColor(opt.iconTone);
-              return (
-              <button
-                key={opt.value}
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  onChange(opt.value);
-                  setOpen(false);
-                }}
-                role="option"
-                aria-selected={opt.value === value}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-2)",
-                  width: "100%",
-                  padding: "var(--space-2) var(--space-3)",
-                  borderRadius: "var(--radius-sm)",
-                  border: "none",
-                  background: opt.value === value ? "var(--accent-soft)" : "transparent",
-                  color: opt.value === value ? "var(--accent)" : "var(--text)",
-                  fontSize: "13px",
-                  fontWeight: opt.value === value ? 600 : 400,
-                  cursor: "pointer",
-                  textAlign: "left",
-                  transition: "all 0.1s ease",
-                  outline: "none"
-                }}
-                type="button"
-              >
-                {optionIcon && (
-                  <span style={{ color: optionIconColor, display: "inline-flex" }}>
-                    <ShopifyIcon name={optionIcon} size={14} className="accounts-dropdown-icon" />
-                  </span>
-                )}
-                <span style={{ flex: 1, display: "grid", gap: "2px", minWidth: 0 }}>
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{opt.label}</span>
-                  {opt.meta ? (
-                    <small style={{ color: "var(--text-muted)", fontSize: "11px", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {opt.meta}
-                    </small>
-                  ) : null}
-                </span>
-                {opt.value === value && (
-                  <span style={{ color: "var(--success)", display: "inline-flex" }}>
-                    <ShopifyIcon name="check" size={14} />
-                  </span>
-                )}
-              </button>
-              );
-            })
-          ) : (
-            <div style={{ padding: "var(--space-3)", color: "var(--text-muted)", fontSize: "13px" }}>
-              Không tìm thấy nhân sự phù hợp.
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+    <CrmSelect
+      className="flex-1"
+      label={label}
+      options={options}
+      searchable={searchable}
+      searchPlaceholder={searchPlaceholder}
+      value={value}
+      onChange={onChange}
+    />
   );
 }
 
@@ -2269,7 +2031,7 @@ function AccountDetailPage({
   const [formNextReviewDate, setFormNextReviewDate] = useState("2026-07-15");
   const [formOwner, setFormOwner] = useState(principal === "founder" ? "Kha Nguyen" : "Đội chăm sóc khách hàng");
   
-  const [formEscalationOwner, setFormEscalationOwner] = useState("Founder");
+  const [formEscalationOwner, setFormEscalationOwner] = useState("FOUNDER_GM");
   const [formEscalationNote, setFormEscalationNote] = useState("");
 
   useEffect(() => {
@@ -2366,10 +2128,10 @@ function AccountDetailPage({
   ];
 
   const roles = [
-    { value: "Founder", label: "Founder/GM", icon: "person" as any },
-    { value: "Delivery Lead", label: "Lead triển khai", icon: "person" as any },
-    { value: "Sales Lead", label: "Lead bán hàng", icon: "person" as any },
-    { value: "Finance Admin", label: "Phụ trách tài chính", icon: "person" as any }
+    { value: "FOUNDER_GM", label: "Founder/GM", icon: "person" as any },
+    { value: "Project Manager", label: "Project Manager", icon: "person" as any },
+    { value: "Business development", label: "Business development", icon: "person" as any },
+    { value: "WORKSPACE_ADMIN", label: "Workspace Admin", icon: "person" as any }
   ];
 
   useEffect(() => {
@@ -2427,7 +2189,7 @@ function AccountDetailPage({
     setFormNextAction("");
     setFormNextReviewDate("2026-07-15");
     setFormOwner(principal === "founder" ? "Kha Nguyen" : "Đội chăm sóc khách hàng");
-    setFormEscalationOwner("Founder");
+    setFormEscalationOwner("FOUNDER_GM");
     setFormEscalationNote("");
   };
 

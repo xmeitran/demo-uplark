@@ -412,11 +412,11 @@ export default function LoginPage() {
               Login with Lark
             </motion.button> : (
               <p className="rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-center text-xs text-muted-foreground">
-                Lark SSO chưa được cấu hình cho localhost. Hãy dùng phiên founder local bên dưới.
+                Lark SSO chưa được cấu hình cho môi trường này. Hãy liên hệ quản trị workspace để bật quyền truy cập.
               </p>
             )}
 
-            {process.env.NODE_ENV !== "production" && <LocalDemoSessionButton returnTo={returnTo} />}
+            {process.env.NEXT_PUBLIC_ENABLE_LOCAL_DEMO_SESSION === "true" && <LocalDemoSessionButton returnTo={returnTo} />}
 
           </div>
 

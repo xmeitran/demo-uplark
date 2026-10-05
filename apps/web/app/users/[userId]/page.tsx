@@ -23,9 +23,10 @@ import type {
   AdminAccessMemberSummary,
   ProjectTaskSummary,
   ResourceListResponse,
+  WorkspaceSystemRole,
 } from "@b2b-crm/contracts";
 import { AppShell } from "@/components/constructor-x/app-shell";
-import { formatDepartmentLabel } from "@/lib/department-labels";
+import { businessRoleFromMember, systemRoleLabel } from "@/lib/people-roles";
 
 type ProfileTab = "Overview" | "Activity" | "Projects" | "Tasks";
 
@@ -36,17 +37,12 @@ function isProfileTab(value: string | null): value is ProfileTab {
 }
 
 const ROLE_COLORS: Record<string, string> = {
-  FOUNDER_GM: "#2563eb",
-  SALES_OWNER: "#16a34a",
-  DELIVERY_LEAD: "#db2777",
-  FINANCE_ADMIN: "#d97706",
-};
-
-const ROLE_LABELS: Record<string, string> = {
-  FOUNDER_GM: "Founder / GM",
-  SALES_OWNER: "Sales owner",
-  DELIVERY_LEAD: "Delivery lead",
-  FINANCE_ADMIN: "Finance admin",
+  "Customer success": "#0891b2",
+  "Project Manager": "#7c3aed",
+  "DX enabler": "#2563eb",
+  "Business development": "#16a34a",
+  "Marketing B2B": "#db2777",
+  "Chưa gán": "#64748b",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -82,14 +78,6 @@ function formatDateTime(value?: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
-}
-
-function labelRole(roleCode: string) {
-  return ROLE_LABELS[roleCode] ?? roleCode.replaceAll("_", " ");
-}
-
-function labelDepartment(code?: string) {
-  return formatDepartmentLabel(code, "Chưa gán phòng ban");
 }
 
 function uniquePairs(ids: string[], names: string[]) {
@@ -179,8 +167,8 @@ export default function UserProfilePage() {
     };
   }, [user?.id]);
 
-  const primaryRole = user?.roleCodes[0] ?? "DELIVERY_LEAD";
-  const workspaceRole = user?.roleCodes.includes("WORKSPACE_ADMIN") || user?.roleCodes.includes("FOUNDER_GM") ? "WORKSPACE_ADMIN" : "WORKSPACE_USER";
+  const primaryRole = businessRoleFromMember(user ?? {});
+  const workspaceRole: WorkspaceSystemRole = user?.systemRole ?? (user?.roleCodes.includes("FOUNDER_GM") ? "FOUNDER_GM" : user?.roleCodes.includes("WORKSPACE_ADMIN") ? "WORKSPACE_ADMIN" : "WORKSPACE_USER");
   const roleColor = ROLE_COLORS[primaryRole] ?? "#64748b";
   const projects = useMemo(() => uniquePairs(user?.projectIds ?? [], user?.projectNames ?? []), [user?.projectIds, user?.projectNames]);
   const accounts = useMemo(() => uniquePairs(user?.accountIds ?? [], user?.accountNames ?? []), [user?.accountIds, user?.accountNames]);
@@ -244,10 +232,10 @@ export default function UserProfilePage() {
                     <div className="min-w-0">
                       <h1 className="truncate text-2xl font-bold tracking-tight text-foreground">{user.displayName || user.email}</h1>
                       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
-                        <span className="truncate">{user.email}</span><span className="text-slate-300">·</span><span>{labelDepartment(user.departmentCode)}</span>
+                        <span className="truncate">{user.email}</span><span className="text-slate-300">·</span><span>{systemRoleLabel(workspaceRole)}</span>
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <span className="inline-flex items-center gap-1.5 rounded-md border border-indigo-100 bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700"><Shield className="h-3.5 w-3.5" /> {labelRole(primaryRole)}</span>
+                        <span className="inline-flex items-center gap-1.5 rounded-md border border-indigo-100 bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700"><Shield className="h-3.5 w-3.5" /> {primaryRole}</span>
                         <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 font-mono text-[11px] text-slate-600"><KeyRound className="h-3.5 w-3.5" /> {user.larkOpenId ?? "Internal identity"}</span>
                       </div>
                     </div>
@@ -305,7 +293,6 @@ export default function UserProfilePage() {
                       <dl className="divide-y divide-border px-5">
                         <InfoRow label="User ID nội bộ" value={user.id} mono />
                         <InfoRow label="Email" value={user.email} />
-                        <InfoRow label="Phòng ban" value={labelDepartment(user.departmentCode)} />
                         <InfoRow label="Lark User ID" value={user.larkOpenId ?? "Chưa liên kết"} mono />
                         <InfoRow label="Lark tenant" value={user.larkTenantKey ?? "Chưa liên kết"} mono />
                         <InfoRow label="Hoạt động gần nhất" value={formatDateTime(user.lastSeenAt)} />
@@ -314,9 +301,9 @@ export default function UserProfilePage() {
 
                     <section className="rounded-2xl border border-border bg-card shadow-sm">
                       <div className="border-b border-border px-5 py-4"><h2 className="text-base font-bold text-foreground">Access &amp; capacity</h2><p className="mt-0.5 text-xs text-muted-foreground">Vai trò nghiệp vụ và năng lực được dùng cho phân bổ công việc.</p></div>
-                      <div className="px-5 py-4"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Vai trò hiện tại</p><div className="mt-2 flex flex-wrap gap-2">{user.roleCodes.length ? user.roleCodes.map((role) => <span key={role} className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">{labelRole(role)}</span>) : <span className="text-sm text-muted-foreground">Chưa gán role</span>}</div></div>
+                      <div className="px-5 py-4"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Vai trò hiện tại</p><div className="mt-2 flex flex-wrap gap-2"><span className="rounded-md border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">{primaryRole}</span><span className="rounded-md border border-indigo-100 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">{systemRoleLabel(workspaceRole)}</span></div></div>
                       <dl className="divide-y divide-border border-t border-border px-5">
-                        <InfoRow label="Display role" value={user.resourceDisplayRole ?? "Chưa gán"} />
+                        <InfoRow label="Role" value={primaryRole} />
                         <InfoRow label="Weekly capacity" value={user.resourceWeeklyCapacityMinutes ? `${user.resourceWeeklyCapacityMinutes} phút` : "Chưa gán"} />
                         <InfoRow label="Billable target" value={user.resourceBillableTargetPercent ? `${user.resourceBillableTargetPercent}%` : "Chưa gán"} />
                         <InfoRow label="Time entries" value={`${user.timeEntryCount ?? 0}`} />
@@ -330,7 +317,7 @@ export default function UserProfilePage() {
                     <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
                       <div className="flex items-center justify-between"><div><h2 className="text-base font-bold text-foreground">Workspace summary</h2><p className="mt-0.5 text-xs text-muted-foreground">Phạm vi truy cập hiện tại.</p></div><span className={`h-2.5 w-2.5 rounded-full ${user.status === "active" ? "bg-emerald-500" : "bg-slate-400"}`} /></div>
                       <dl className="mt-4 divide-y divide-border border-y border-border">
-                        <InfoRow label="Workspace role" value={workspaceRole === "WORKSPACE_ADMIN" ? "Workspace Admin" : "Workspace User"} />
+                        <InfoRow label="Workspace role" value={systemRoleLabel(workspaceRole)} />
                         <InfoRow label="Project grants" value={`${projects.length}`} />
                         <InfoRow label="Assigned tasks" value={`${user.assignedTaskCount ?? tasks.length}`} />
                         <InfoRow label="Active sessions" value={`${user.activeSessionCount}`} />
