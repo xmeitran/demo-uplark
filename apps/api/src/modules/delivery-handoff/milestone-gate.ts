@@ -3,6 +3,7 @@ import { isClosedTaskStatus } from "./task-status";
 export type MilestoneGateFacts = {
   requiredDocumentCount: number;
   submittedDocumentCount: number;
+  missingDocumentTypes?: readonly string[];
   customerConfirmationRequired: boolean;
   customerConfirmationAt?: Date | string | null;
   taskStatuses: readonly unknown[];
@@ -31,7 +32,11 @@ export function evaluateMilestoneGate(facts: MilestoneGateFacts): MilestoneGateE
   const missingRequirements: string[] = [];
 
   if (!documentsSatisfied) {
-    missingRequirements.push(`Còn ${requiredDocumentCount - submittedDocumentCount} hồ sơ bắt buộc.`);
+    if (facts.missingDocumentTypes?.length) {
+      missingRequirements.push(`Thiếu loại hồ sơ: ${facts.missingDocumentTypes.join(", ")}.`);
+    } else {
+      missingRequirements.push(`Còn ${requiredDocumentCount - submittedDocumentCount} hồ sơ bắt buộc.`);
+    }
   }
   if (!confirmationSatisfied) {
     missingRequirements.push("Chưa có xác nhận khách hàng.");

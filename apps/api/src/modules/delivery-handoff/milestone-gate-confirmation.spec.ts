@@ -37,6 +37,7 @@ function createPrisma(milestone: Record<string, unknown>, taskStatuses: string[]
       })
     },
     projectTask: { findMany: vi.fn().mockResolvedValue(taskStatuses.map((status) => ({ status }))) },
+    projectArtifact: { findMany: vi.fn().mockResolvedValue([]) },
     projectDocumentVersion: { count: vi.fn().mockResolvedValue(0) },
     auditEvent: { create: vi.fn().mockResolvedValue({ id: "audit-1" }) }
   };
@@ -86,7 +87,9 @@ describe("ProjectsService milestone customer confirmation", () => {
   it("moves a document-gated milestone to review after all visible requirements pass", async () => {
     const milestone = { id: "milestone-1", projectId: "project-1", workspaceId: "workspace-1", sortOrder: 1, gateStatus: "open", requiredDocumentCount: 1, requiredDocumentTypes: ["BRD"], evidenceMode: "file_or_link", customerConfirmationRequired: true, customerConfirmationAt: new Date("2026-10-02T08:00:00.000Z") };
     const prisma = createPrisma(milestone, ["done"]);
-    prisma.projectDocumentVersion.count.mockResolvedValue(1);
+    prisma.projectArtifact.findMany.mockResolvedValue([
+      { artifactType: "BRD", versions: [{ fileObject: { storageProvider: "local", status: "active", scanStatus: "clean", deletedAt: null, revokedAt: null } }] }
+    ]);
 
     const result = await new ProjectsService(prisma as any).evaluateProjectMilestoneGate("project-1", "milestone-1", principal);
 
@@ -94,6 +97,20 @@ describe("ProjectsService milestone customer confirmation", () => {
     expect(result.documentsSatisfied).toBe(true);
     expect(result.confirmationSatisfied).toBe(true);
     expect(result.missingRequirements).toEqual([]);
+  });
+
+  it("does not count an unrelated artifact for a typed document gate", async () => {
+    const milestone = { id: "milestone-1", projectId: "project-1", workspaceId: "workspace-1", sortOrder: 1, gateStatus: "open", requiredDocumentCount: 1, requiredDocumentTypes: ["BRD"], evidenceMode: "file_or_link", customerConfirmationRequired: false, customerConfirmationAt: null };
+    const prisma = createPrisma(milestone);
+    prisma.projectArtifact.findMany.mockResolvedValue([
+      { artifactType: "FRD", versions: [{ fileObject: { storageProvider: "local", status: "active", scanStatus: "clean", deletedAt: null, revokedAt: null } }] }
+    ]);
+
+    const result = await new ProjectsService(prisma as any).evaluateProjectMilestoneGate("project-1", "milestone-1", principal);
+
+    expect(result.gateStatus).toBe("open");
+    expect(result.documentsSatisfied).toBe(false);
+    expect(result.missingRequirements).toEqual(["Thiếu loại hồ sơ: BRD."]);
   });
 
   it("opens the next milestone only after an authorized workspace admin approves", async () => {
