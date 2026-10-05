@@ -5,6 +5,7 @@ import { useTaskPeople } from "@/hooks/use-task-people";
 
 import { useRouter } from "next/navigation";
 import React, { useId, useState, useEffect, useLayoutEffect, useRef } from "react";
+import { Search as SearchIcon } from "lucide-react";
 import { createPortal } from "react-dom";
 import type {
   ResourceListResponse,
@@ -198,7 +199,9 @@ export function CustomDropdown({
   options,
   onChange,
   openDirection = "down",
-  disabled = false
+  disabled = false,
+  searchable = false,
+  searchPlaceholder = "Tìm theo tên, email hoặc vai trò…"
 }: {
   id?: string;
   label: React.ReactNode;
@@ -207,14 +210,27 @@ export function CustomDropdown({
   onChange: (val: string) => void;
   openDirection?: "up" | "down";
   disabled?: boolean;
+  searchable?: boolean;
+  searchPlaceholder?: string;
 }) {
   const generatedId = useId();
   const [open, setOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const selectedOpt = options.find((o) => o.value === value) ?? options[0];
   const controlId = id ?? `task-select-${generatedId.replace(/:/g, "")}`;
   const listboxId = `${controlId}-listbox`;
   const isPersonList = options.some((option) => Boolean(option.avatarUrl || option.initials) && Boolean(option.subtext));
+  const normalizedSearchQuery = searchQuery.trim().toLocaleLowerCase();
+  const visibleOptions = searchable && normalizedSearchQuery
+    ? options.filter((option) => `${option.label} ${option.subtext ?? ""}`.toLocaleLowerCase().includes(normalizedSearchQuery))
+    : options;
+
+  useEffect(() => {
+    if (!open || !searchable) return;
+    requestAnimationFrame(() => searchInputRef.current?.focus());
+  }, [open, searchable]);
 
   const handleBlur = (event: React.FocusEvent<HTMLDivElement>) => {
     const nextFocus = event.relatedTarget as Node | null;
@@ -252,7 +268,10 @@ export function CustomDropdown({
         }`}
         disabled={disabled}
         onClick={() => {
-          if (!disabled) setOpen(!open);
+          if (!disabled) {
+            setSearchQuery("");
+            setOpen(!open);
+          }
         }}
         type="button"
       >
@@ -306,12 +325,32 @@ export function CustomDropdown({
           id={listboxId}
           role="listbox"
         >
+          {searchable ? (
+            <div className="border-b border-slate-100 p-2">
+              <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 focus-within:border-blue-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-500/15">
+                <SearchIcon className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                <input
+                  ref={searchInputRef}
+                  aria-label={typeof label === "string" ? `Tìm ${label}` : "Tìm kiếm lựa chọn"}
+                  className="h-9 min-w-0 flex-1 bg-transparent text-xs text-slate-800 outline-none placeholder:text-slate-400"
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  placeholder={searchPlaceholder}
+                  type="search"
+                  value={searchQuery}
+                />
+              </div>
+            </div>
+          ) : null}
           {isPersonList ? (
             <div className="border-b border-slate-100 px-2.5 py-1.5">
               <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">PROJECT MEMBERS</span>
             </div>
           ) : null}
-          {options.map((opt) => {
+          {visibleOptions.length === 0 ? (
+            <div className="px-3 py-5 text-center text-xs text-slate-400" role="status">Không tìm thấy người phù hợp</div>
+          ) : null}
+          {visibleOptions.map((opt) => {
             const isSelected = opt.value === value;
             const isUnassigned = opt.value === "none" || opt.value === "unassigned" || opt.value === "";
             return (
@@ -325,6 +364,7 @@ export function CustomDropdown({
                 key={opt.value}
                 onClick={() => {
                   onChange(opt.value);
+                  setSearchQuery("");
                   setOpen(false);
                 }}
                 role="option"

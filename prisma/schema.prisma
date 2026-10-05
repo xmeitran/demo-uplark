@@ -1362,6 +1362,7 @@ model ProjectMilestone {
   project                      Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
   ownerTeam                    WorkspaceTeam?  @relation("MilestoneOwnerTeam", fields: [ownerTeamId], references: [id], onDelete: SetNull)
   stages                       ProjectStage[]
+  artifacts                    ProjectArtifact[]
 
   @@unique([projectId, normalizedKey])
   @@index([workspaceId, projectId, sortOrder])
@@ -1716,6 +1717,7 @@ model ProjectArtifact {
   workspaceId             String                   @default("twk-foundation")
   accountId               String
   projectId               String?
+  milestoneId             String?
   code                    String                   @unique
   name                    String
   artifactType            String
@@ -1729,11 +1731,13 @@ model ProjectArtifact {
   workspace               TenantWorkspace          @relation(fields: [workspaceId], references: [id])
   account                 Account                  @relation(fields: [accountId], references: [id])
   project                 Project?                 @relation(fields: [projectId], references: [id])
+  milestone               ProjectMilestone?        @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
   versions                ProjectDocumentVersion[]
 
   @@index([workspaceId, artifactType])
   @@index([accountId, artifactType])
   @@index([projectId])
+  @@index([projectId, milestoneId])
   @@index([customerVisible])
 }
 

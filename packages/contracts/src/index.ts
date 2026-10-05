@@ -736,6 +736,8 @@ export interface ProjectDocumentSummary {
   accountName: string;
   projectId: string;
   projectName: string;
+  milestoneId?: string;
+  milestoneName?: string;
   code: string;
   name: string;
   artifactType: string;
@@ -766,6 +768,7 @@ export interface CreateProjectDocumentInput {
   name: string;
   artifactType?: string;
   fileObjectId: string;
+  milestoneId?: string;
   note?: string;
   customerVisible?: boolean;
   internalOnly?: boolean;
@@ -776,6 +779,7 @@ export interface CreateProjectDocumentInput {
 export interface UpdateProjectDocumentInput {
   name?: string;
   artifactType?: string;
+  milestoneId?: string | null;
   customerVisible?: boolean;
   internalOnly?: boolean;
   allowedRoles?: string[];

@@ -648,6 +648,8 @@ interface ProjectDoc {
   color: string;
   category: string; // Requirements, Technical, Design, Operations, Legal, Other
   artifactType?: string;
+  milestoneId?: string;
+  milestoneName?: string;
   storageKey?: string;
   versions: DocVersion[];
 }
@@ -662,6 +664,8 @@ function mapProjectDocumentToDoc(document: ProjectDocumentSummary): ProjectDoc {
     color: colorForDocumentCategory(category),
     category,
     artifactType: document.artifactType,
+    milestoneId: document.milestoneId,
+    milestoneName: document.milestoneName,
     storageKey: document.storageKey,
     versions: (document.versions ?? []).map((version) => ({
       version: version.version,
@@ -790,18 +794,14 @@ function colorForDocumentCategory(value: string) {
   return C.slate;
 }
 
-function inferDocumentMilestoneId(document: ProjectDoc, milestones: Milestone[]) {
-  const source = `${document.artifactType ?? ""} ${document.name}`.toLocaleLowerCase("vi");
-  const matchingConfiguredType = milestones.find((milestone) =>
-    (milestone.requiredDocumentTypes ?? []).some((type) => source.includes(String(type).trim().toLocaleLowerCase("vi")))
-  );
-  if (matchingConfiguredType) return matchingConfiguredType.id;
-  const explicitNumber = source.match(/(?:milestone|mile|m)[\s_-]*(\d+)/i)?.[1];
-  if (explicitNumber) {
-    const byOrder = milestones.find((milestone) => String(milestone.order + 1) === explicitNumber || milestone.name.toLocaleLowerCase("vi").includes(`m${explicitNumber}`));
-    if (byOrder) return byOrder.id;
-  }
-  return milestones.find((milestone) => source.includes(milestone.name.toLocaleLowerCase("vi")))?.id;
+function getDocumentMilestoneId(document: ProjectDoc) {
+  return document.milestoneId ?? "unassigned";
+}
+
+function defaultDocumentMilestoneId(milestones: Milestone[]) {
+  return [...milestones]
+    .sort((left, right) => left.order - right.order)
+    .find((milestone) => milestone.gateStatus !== "approved")?.id ?? milestones[0]?.id ?? "";
 }
 
 function documentLooksRequired(document: ProjectDoc, milestones: Milestone[] = []) {
@@ -2923,11 +2923,13 @@ type DocumentSaveResult =
 
 function AddDocModal({
   projectColor,
+  milestones,
   documentTypeOptions,
   onClose,
   onAdd,
 }: {
   projectColor: string;
+  milestones: Milestone[];
   documentTypeOptions: string[];
   onClose: () => void;
   onAdd: (doc: Omit<ProjectDoc, "id">, file: File, note: string) => Promise<DocumentSaveResult>;
@@ -2935,6 +2937,7 @@ function AddDocModal({
   const [name, setName] = useState("");
   const [category, setCategory] = useState("Requirements");
   const [artifactType, setArtifactType] = useState(documentTypeOptions[0] ?? "");
+  const [milestoneId, setMilestoneId] = useState(defaultDocumentMilestoneId(milestones));
   const [type, setType] = useState("PDF");
   const [size, setSize] = useState("1.0 MB");
   const [note, setNote] = useState("Initial upload note");
@@ -3000,6 +3003,7 @@ function AddDocModal({
                     color: finalColor,
                     category,
                     artifactType: artifactType.trim() || documentTypeOptions[0] || artifactTypeFromCategory(category),
+                    milestoneId: milestoneId || undefined,
                     versions: [],
                   },
                   selectedFile,
@@ -3056,10 +3060,10 @@ function AddDocModal({
           </Field>
         </div>
 
-        <Field label="Loại hồ sơ cho gate">
+        <Field label="Phân loại tài liệu (không bắt buộc)">
           {documentTypeOptions.length > 0 ? (
             <CustomDropdown
-              ariaLabel="Loại hồ sơ cho gate"
+              ariaLabel="Phân loại tài liệu"
               options={documentTypeOptions.map((value) => ({ value, label: value }))}
               value={artifactType || documentTypeOptions[0]}
               onChange={setArtifactType}
@@ -3072,7 +3076,21 @@ function AddDocModal({
               className="w-full border border-input rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none"
             />
           )}
-          <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">Chọn đúng mã loại hồ sơ đang được cấu hình trong milestone; nếu để trống hệ thống dùng nhóm tài liệu.</p>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">Chỉ dùng để phân loại và lọc tài liệu. Milestone chỉ kiểm tra đủ số lượng hồ sơ hợp lệ.</p>
+        </Field>
+
+        <Field label="Gán vào milestone" required={milestones.length > 0}>
+          {milestones.length > 0 ? (
+            <CustomDropdown
+              ariaLabel="Gán tài liệu vào milestone"
+              options={milestones.map((milestone) => ({ value: milestone.id, label: `${milestone.order}. ${milestone.name}` }))}
+              value={milestoneId}
+              onChange={setMilestoneId}
+            />
+          ) : (
+            <p className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">Project chưa có milestone. Tài liệu vẫn được lưu và bạn có thể gán sau.</p>
+          )}
+          {milestones.length > 0 ? <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">Tài liệu sẽ được tính vào số lượng hồ sơ của milestone này.</p> : null}
         </Field>
 
         <div className="grid grid-cols-2 gap-3">
@@ -3112,19 +3130,22 @@ function AddDocModal({
 
 function AddLinkDocModal({
   projectColor,
+  milestones,
   documentTypeOptions,
   onClose,
   onAdd
 }: {
   projectColor: string;
+  milestones: Milestone[];
   documentTypeOptions: string[];
   onClose: () => void;
-  onAdd: (doc: { name: string; category: string; artifactType?: string; url: string }, note: string) => Promise<DocumentSaveResult>;
+  onAdd: (doc: { name: string; category: string; artifactType?: string; milestoneId?: string; url: string }, note: string) => Promise<DocumentSaveResult>;
 }) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [category, setCategory] = useState("Requirements");
   const [artifactType, setArtifactType] = useState(documentTypeOptions[0] ?? "");
+  const [milestoneId, setMilestoneId] = useState(defaultDocumentMilestoneId(milestones));
   const [note, setNote] = useState("Initial link");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -3136,7 +3157,7 @@ function AddLinkDocModal({
       <button type="button" disabled={!name.trim() || !url.trim() || saving} onClick={async () => {
         setSaving(true);
         setError(null);
-        const result = await onAdd({ name, category, artifactType: artifactType.trim() || documentTypeOptions[0] || artifactTypeFromCategory(category), url }, note.trim() || "Initial link");
+        const result = await onAdd({ name, category, artifactType: artifactType.trim() || documentTypeOptions[0] || artifactTypeFromCategory(category), milestoneId: milestoneId || undefined, url }, note.trim() || "Initial link");
         setSaving(false);
         if (result.ok) onClose(); else setError(result.error);
       }} className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white shadow-sm disabled:opacity-40" style={{ backgroundColor: projectColor }}>
@@ -3146,19 +3167,93 @@ function AddLinkDocModal({
       <Field label="Tên tài liệu" required><input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="VD: BRD đã duyệt" className="w-full rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground focus:outline-none" /></Field>
       <Field label="URL tài liệu" required><input type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://..." className="w-full rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground focus:outline-none" /></Field>
       <Field label="Category"><CustomDropdown options={categories.map((value) => ({ value, label: value }))} value={category} onChange={setCategory} /></Field>
-      <Field label="Loại hồ sơ cho gate">
+      <Field label="Phân loại tài liệu (không bắt buộc)">
         {documentTypeOptions.length > 0 ? (
-          <CustomDropdown ariaLabel="Loại hồ sơ cho gate" options={documentTypeOptions.map((value) => ({ value, label: value }))} value={artifactType || documentTypeOptions[0]} onChange={setArtifactType} />
+          <CustomDropdown ariaLabel="Phân loại tài liệu" options={documentTypeOptions.map((value) => ({ value, label: value }))} value={artifactType || documentTypeOptions[0]} onChange={setArtifactType} />
         ) : (
           <input value={artifactType} onChange={(event) => setArtifactType(event.target.value)} placeholder="VD: BRD, FRD, SRS" className="w-full rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground focus:outline-none" />
         )}
-        <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">Chọn đúng mã loại hồ sơ trong milestone để bằng chứng được tính vào gate.</p>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">Chỉ dùng để phân loại và lọc tài liệu. Milestone chỉ kiểm tra đủ số lượng hồ sơ hợp lệ.</p>
+      </Field>
+      <Field label="Gán vào milestone" required={milestones.length > 0}>
+        {milestones.length > 0 ? (
+          <CustomDropdown ariaLabel="Gán link vào milestone" options={milestones.map((milestone) => ({ value: milestone.id, label: `${milestone.order}. ${milestone.name}` }))} value={milestoneId} onChange={setMilestoneId} />
+        ) : (
+          <p className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">Project chưa có milestone. Bạn có thể gán sau.</p>
+        )}
+        {milestones.length > 0 ? <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">Link cũng được tính vào số lượng hồ sơ của milestone.</p> : null}
       </Field>
       {error ? <p className="text-xs font-semibold text-red-600" role="alert">{error}</p> : null}
       <Field label="Ghi chú"><textarea value={note} onChange={(event) => setNote(event.target.value)} rows={2} className="w-full resize-none rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground focus:outline-none" /></Field>
       <p className="rounded-xl border border-sky-100 bg-sky-50/70 px-3 py-2 text-xs leading-relaxed text-sky-800">Link được lưu như một bằng chứng của Project và được tính vào rule “Link” hoặc “File hoặc link”.</p>
-    </ModalShell>
+  </ModalShell>
   </AnimatePresence>;
+}
+
+type DocumentAssignmentResult = { ok: true } | { ok: false; error: string };
+
+function AssignDocumentModal({
+  doc,
+  milestones,
+  projectColor,
+  onClose,
+  onAssign
+}: {
+  doc: ProjectDoc;
+  milestones: Milestone[];
+  projectColor: string;
+  onClose: () => void;
+  onAssign: (documentId: string, milestoneId: string) => Promise<DocumentAssignmentResult>;
+}) {
+  const [milestoneId, setMilestoneId] = useState(doc.milestoneId ?? defaultDocumentMilestoneId(milestones));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <AnimatePresence>
+      <ModalShell
+        title="Gán tài liệu vào milestone"
+        icon={Target}
+        iconColor={projectColor}
+        onClose={onClose}
+        footer={
+          <>
+            <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-muted">Hủy</button>
+            <button
+              type="button"
+              disabled={!milestoneId || saving}
+              onClick={async () => {
+                setSaving(true);
+                setError(null);
+                const result = await onAssign(doc.id, milestoneId);
+                setSaving(false);
+                if (result.ok) onClose(); else setError(result.error);
+              }}
+              className="rounded-xl px-5 py-2.5 text-sm font-semibold text-white shadow-sm disabled:opacity-40"
+              style={{ backgroundColor: projectColor }}
+            >
+              {saving ? "Đang lưu…" : "Lưu milestone"}
+            </button>
+          </>
+        }
+      >
+        <div className="rounded-xl border border-border bg-muted/30 px-3.5 py-3">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Tài liệu</p>
+          <p className="mt-1 text-sm font-bold text-foreground">{doc.name}</p>
+          <p className="mt-1 text-xs text-muted-foreground">Sau khi lưu, hồ sơ sẽ được tính vào rule số lượng của milestone đã chọn.</p>
+        </div>
+        <Field label="Milestone" required>
+          <CustomDropdown
+            ariaLabel="Chọn milestone cho tài liệu"
+            options={milestones.map((milestone) => ({ value: milestone.id, label: `${milestone.order}. ${milestone.name}` }))}
+            value={milestoneId}
+            onChange={setMilestoneId}
+          />
+        </Field>
+        {error ? <p className="text-xs font-semibold text-red-600" role="alert">{error}</p> : null}
+      </ModalShell>
+    </AnimatePresence>
+  );
 }
 
 type VersionSaveResult = { ok: true } | { ok: false; error: string };
@@ -6376,6 +6471,7 @@ export default function ProjectDetailPage() {
   }, [projectId]);
   const [showAddDocModal, setShowAddDocModal] = useState(false);
   const [showAddLinkModal, setShowAddLinkModal] = useState(false);
+  const [assignDocumentFor, setAssignDocumentFor] = useState<ProjectDoc | null>(null);
   const [addVersionForDoc, setAddVersionForDoc] = useState<ProjectDoc | null>(null);
   const [showVersionHistoryForDoc, setShowVersionHistoryForDoc] = useState<ProjectDoc | null>(null);
   const [docSearchQuery, setDocSearchQuery] = useState("");
@@ -6482,6 +6578,7 @@ export default function ProjectDetailPage() {
         body: JSON.stringify({
           name: doc.name,
           artifactType: doc.artifactType || artifactTypeFromCategory(doc.category),
+          milestoneId: doc.milestoneId || undefined,
           fileObjectId: uploaded.id,
           note,
           internalOnly: true,
@@ -6502,14 +6599,19 @@ export default function ProjectDetailPage() {
       const created = (await response.json()) as ProjectDocumentSummary;
       const nextDoc = mapProjectDocumentToDoc(created);
       setDocuments(prev => [...prev, nextDoc]);
+      try {
+        await reloadCanonicalHierarchy();
+      } catch (refreshError) {
+        console.error("Project milestone refresh after document upload failed", refreshError);
+      }
       return { ok: true };
     } catch (error) {
       console.error("Project document upload failed", error);
       return { ok: false, error: error instanceof Error ? error.message : "Document upload failed. Your selected file and notes are still available." };
     }
-  }, [projectId, uploadProjectFile]);
+  }, [projectId, reloadCanonicalHierarchy, uploadProjectFile]);
 
-  const handleAddLinkDocument = useCallback(async (doc: { name: string; category: string; artifactType?: string; url: string }, note: string): Promise<DocumentSaveResult> => {
+  const handleAddLinkDocument = useCallback(async (doc: { name: string; category: string; artifactType?: string; milestoneId?: string; url: string }, note: string): Promise<DocumentSaveResult> => {
     try {
       const fileResponse = await fetch("/api/files", {
         method: "POST",
@@ -6541,6 +6643,7 @@ export default function ProjectDetailPage() {
         body: JSON.stringify({
           name: doc.name.trim(),
           artifactType: doc.artifactType || artifactTypeFromCategory(doc.category),
+          milestoneId: doc.milestoneId || undefined,
           fileObjectId: uploaded.id,
           note,
           internalOnly: true,
@@ -6554,11 +6657,42 @@ export default function ProjectDetailPage() {
       }
       const created = await response.json() as ProjectDocumentSummary;
       setDocuments((current) => [...current, mapProjectDocumentToDoc(created)]);
+      try {
+        await reloadCanonicalHierarchy();
+      } catch (refreshError) {
+        console.error("Project milestone refresh after link creation failed", refreshError);
+      }
       return { ok: true };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : "Could not save this link." };
     }
-  }, [project.accountId, projectId]);
+  }, [project.accountId, projectId, reloadCanonicalHierarchy]);
+
+  const handleAssignDocument = useCallback(async (documentId: string, milestoneId: string): Promise<DocumentAssignmentResult> => {
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(documentId)}`, {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ milestoneId })
+      });
+      if (response.status === 401) {
+        window.location.assign(`/login?returnTo=${encodeURIComponent(`/projects/${projectId}?tab=Documents`)}`);
+        return { ok: false, error: "Phiên đăng nhập đã hết. Vui lòng đăng nhập lại." };
+      }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { message?: string } | null;
+        return { ok: false, error: payload?.message || `Không thể gán milestone (${response.status}).` };
+      }
+      const updated = await response.json() as ProjectDocumentSummary;
+      setDocuments((current) => current.map((doc) => doc.id === documentId ? mapProjectDocumentToDoc(updated) : doc));
+      await reloadCanonicalHierarchy();
+      setDocumentMutationError(null);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Không thể gán milestone cho tài liệu." };
+    }
+  }, [projectId, reloadCanonicalHierarchy]);
 
   const handleAddVersion = useCallback(async (docId: string, file: File, note: string): Promise<VersionSaveResult> => {
     const current = documents.find(doc => doc.id === docId);
@@ -6630,7 +6764,12 @@ export default function ProjectDetailPage() {
     }
 
     setDocuments(prev => prev.filter(doc => doc.id !== docId));
-  }, [projectId]);
+    try {
+      await reloadCanonicalHierarchy();
+    } catch (refreshError) {
+      console.error("Project milestone refresh after document deletion failed", refreshError);
+    }
+  }, [projectId, reloadCanonicalHierarchy]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -7191,6 +7330,7 @@ export default function ProjectDetailPage() {
       {showAddDocModal && (
         <AddDocModal
           projectColor={project.color}
+          milestones={milestones}
           documentTypeOptions={Array.from(new Set(milestones.flatMap((milestone) => milestone.requiredDocumentTypes ?? []))).filter(Boolean)}
           onClose={() => setShowAddDocModal(false)}
           onAdd={handleAddDocument}
@@ -7199,9 +7339,19 @@ export default function ProjectDetailPage() {
       {showAddLinkModal && (
         <AddLinkDocModal
           projectColor={project.color}
+          milestones={milestones}
           documentTypeOptions={Array.from(new Set(milestones.flatMap((milestone) => milestone.requiredDocumentTypes ?? []))).filter(Boolean)}
           onClose={() => setShowAddLinkModal(false)}
           onAdd={handleAddLinkDocument}
+        />
+      )}
+      {assignDocumentFor && (
+        <AssignDocumentModal
+          doc={assignDocumentFor}
+          milestones={milestones}
+          projectColor={project.color}
+          onClose={() => setAssignDocumentFor(null)}
+          onAssign={handleAssignDocument}
         />
       )}
       {addVersionForDoc && (
@@ -8934,15 +9084,22 @@ export default function ProjectDetailPage() {
                 const filteredDocs = documents.filter(doc => {
                   const matchSearch = doc.name.toLowerCase().includes(docSearchQuery.toLowerCase());
                   const matchCategory = docCategoryFilter === "All" || doc.category === docCategoryFilter;
-                  const milestoneId = inferDocumentMilestoneId(doc, milestones) ?? "unassigned";
+                  const milestoneId = getDocumentMilestoneId(doc);
                   const matchMilestone = docMilestoneFilter === "All" || milestoneId === docMilestoneFilter;
                   const isSubmitted = doc.versions.length > 0;
                   const matchStatus = docStatusFilter === "all" || (docStatusFilter === "submitted" ? isSubmitted : !isSubmitted);
                   const matchRequired = !requiredDocsOnly || documentLooksRequired(doc, milestones);
                   return matchSearch && matchCategory && matchMilestone && matchStatus && matchRequired;
+                }).sort((left, right) => {
+                  const leftId = getDocumentMilestoneId(left);
+                  const rightId = getDocumentMilestoneId(right);
+                  const leftOrder = milestones.find((milestone) => milestone.id === leftId)?.order ?? Number.MAX_SAFE_INTEGER;
+                  const rightOrder = milestones.find((milestone) => milestone.id === rightId)?.order ?? Number.MAX_SAFE_INTEGER;
+                  return leftOrder - rightOrder || left.name.localeCompare(right.name, "vi");
                 });
 
                 const categories = ["All", "Requirements", "Technical", "Design", "Operations", "Legal", "Other"];
+                const unassignedDocumentCount = documents.filter((doc) => getDocumentMilestoneId(doc) === "unassigned").length;
 
                 return (
                   <div className="space-y-4">
@@ -8959,6 +9116,12 @@ export default function ProjectDetailPage() {
                       <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Đã nộp &amp; có version</p><p className="mt-1 text-xl font-black text-emerald-700">{documents.filter((doc) => doc.versions.length > 0).length}</p><p className="mt-1 text-[11px] text-muted-foreground">Có thể mở lịch sử</p></div>
                       <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Đang chờ bổ sung</p><p className="mt-1 text-xl font-black text-amber-700">{documents.filter((doc) => doc.versions.length === 0).length}</p><p className="mt-1 text-[11px] text-muted-foreground">Cần gắn link hoặc tải file</p></div>
                     </div>
+                    {unassignedDocumentCount > 0 ? (
+                      <div className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex items-start gap-2.5"><Target className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" /><p><span className="font-bold">{unassignedDocumentCount} tài liệu chưa gán milestone.</span> Gán để hồ sơ được tính vào điều kiện mở điểm chốt.</p></div>
+                        <button type="button" onClick={() => setDocMilestoneFilter("unassigned")} className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-bold text-amber-800 hover:bg-amber-100">Xem tài liệu cần gán</button>
+                      </div>
+                    ) : null}
                     {/* Control Bar */}
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-4 bg-card border border-border rounded-2xl shadow-sm">
                       <div className="flex flex-1 flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
@@ -9046,9 +9209,9 @@ export default function ProjectDetailPage() {
                                   note: "Initial version"
                                 };
                                 const picUser = teamMembers.find(m => m.initials === latestVer.author);
-                                const milestoneId = inferDocumentMilestoneId(doc, milestones) ?? "unassigned";
+                                const milestoneId = getDocumentMilestoneId(doc);
                                 const milestone = milestones.find((item) => item.id === milestoneId);
-                                const previousMilestoneId = idx > 0 ? (inferDocumentMilestoneId(filteredDocs[idx - 1], milestones) ?? "unassigned") : null;
+                                const previousMilestoneId = idx > 0 ? getDocumentMilestoneId(filteredDocs[idx - 1]) : null;
 
                                 return (
                                   <React.Fragment key={doc.id}>
@@ -9095,6 +9258,22 @@ export default function ProjectDetailPage() {
                                           ) : (
                                             <p className="font-semibold text-sm">{doc.name}</p>
                                           )}
+                                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                            {milestone ? (
+                                              <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                                                <Target className="h-3 w-3" /> {milestone.name}
+                                                <button type="button" onClick={() => setAssignDocumentFor(doc)} className="ml-1 font-bold text-blue-800 underline underline-offset-2 hover:text-blue-950">Đổi</button>
+                                              </span>
+                                            ) : (
+                                              <button
+                                                type="button"
+                                                onClick={() => setAssignDocumentFor(doc)}
+                                                className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800 transition hover:bg-amber-100"
+                                              >
+                                                <Target className="h-3 w-3" /> Gán milestone
+                                              </button>
+                                            )}
+                                          </div>
                                           <p className="text-[10px] text-muted-foreground sm:hidden">
                                             {doc.type} • {latestVer.size}
                                           </p>

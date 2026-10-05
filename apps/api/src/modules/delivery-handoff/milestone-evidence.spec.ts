@@ -6,7 +6,7 @@ import {
 } from "./milestone-evidence";
 
 describe("countMilestoneEvidence", () => {
-  it("counts only the configured document types", () => {
+  it("counts every usable project document toward the configured quantity", () => {
     expect(countMilestoneEvidence(
       { requiredDocumentTypes: ["BRD", "FRD", "SRS"] },
       [
@@ -15,13 +15,9 @@ describe("countMilestoneEvidence", () => {
         { artifactType: "random_note", latestStorageProvider: "local" }
       ]
     )).toMatchObject({
-      fileCount: 1,
+      fileCount: 2,
       linkCount: 1,
-      requiredTypeCount: 3,
-      satisfiedTypeCount: 2,
-      fileSatisfiedTypeCount: 1,
-      linkSatisfiedTypeCount: 1,
-      missingRequiredTypes: ["SRS"]
+      missingRequiredTypes: []
     });
   });
 
@@ -35,26 +31,26 @@ describe("countMilestoneEvidence", () => {
     )).toMatchObject({
       fileCount: 1,
       linkCount: 0,
-      requiredTypeCount: 0,
-      satisfiedTypeCount: 0,
       missingRequiredTypes: []
     });
   });
 
-  it("matches document types case-insensitively", () => {
+  it("uses the explicit quantity instead of treating document types as separate slots", () => {
     expect(countMilestoneEvidence(
       { requiredDocumentTypes: ["brd"] },
       [{ artifactType: " BRD ", latestStorageProvider: "local" }]
     )).toMatchObject({
       fileCount: 1,
       linkCount: 0,
-      requiredTypeCount: 1,
-      satisfiedTypeCount: 1,
       missingRequiredTypes: []
     });
+    expect(effectiveMilestoneRequiredDocumentCount({
+      requiredDocumentCount: 1,
+      requiredDocumentTypes: ["BRD", "FRD", "SRS"]
+    })).toBe(1);
   });
 
-  it("requires each configured type instead of counting duplicate evidence", () => {
+  it("counts duplicate document types as separate submitted documents", () => {
     const counts = countMilestoneEvidence(
       { requiredDocumentTypes: ["BRD", "FRD", "SRS"] },
       [
@@ -66,15 +62,12 @@ describe("countMilestoneEvidence", () => {
     expect(counts).toMatchObject({
       fileCount: 1,
       linkCount: 1,
-      requiredTypeCount: 3,
-      satisfiedTypeCount: 1,
-      missingRequiredTypes: ["FRD", "SRS"]
+      missingRequiredTypes: []
     });
-    expect(submittedMilestoneEvidenceCount(counts, "file_or_link")).toBe(1);
-    expect(effectiveMilestoneRequiredDocumentCount({ requiredDocumentCount: 1, requiredDocumentTypes: ["BRD", "FRD", "SRS"] })).toBe(3);
+    expect(submittedMilestoneEvidenceCount(counts, "file_or_link")).toBe(2);
   });
 
-  it("counts one satisfied slot per type for the selected evidence mode", () => {
+  it("respects the selected file or link evidence mode", () => {
     const counts = countMilestoneEvidence(
       { requiredDocumentTypes: ["BRD", "FRD"] },
       [
@@ -86,6 +79,6 @@ describe("countMilestoneEvidence", () => {
 
     expect(submittedMilestoneEvidenceCount(counts, "file")).toBe(1);
     expect(submittedMilestoneEvidenceCount(counts, "link")).toBe(2);
-    expect(submittedMilestoneEvidenceCount(counts, "file_or_link")).toBe(2);
+    expect(submittedMilestoneEvidenceCount(counts, "file_or_link")).toBe(3);
   });
 });

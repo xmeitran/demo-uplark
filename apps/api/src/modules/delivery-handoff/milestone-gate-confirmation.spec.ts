@@ -99,7 +99,7 @@ describe("ProjectsService milestone customer confirmation", () => {
     expect(result.missingRequirements).toEqual([]);
   });
 
-  it("does not count an unrelated artifact for a typed document gate", async () => {
+  it("counts a usable artifact regardless of its document type", async () => {
     const milestone = { id: "milestone-1", projectId: "project-1", workspaceId: "workspace-1", sortOrder: 1, gateStatus: "open", requiredDocumentCount: 1, requiredDocumentTypes: ["BRD"], evidenceMode: "file_or_link", customerConfirmationRequired: false, customerConfirmationAt: null };
     const prisma = createPrisma(milestone);
     prisma.projectArtifact.findMany.mockResolvedValue([
@@ -108,9 +108,9 @@ describe("ProjectsService milestone customer confirmation", () => {
 
     const result = await new ProjectsService(prisma as any).evaluateProjectMilestoneGate("project-1", "milestone-1", principal);
 
-    expect(result.gateStatus).toBe("open");
-    expect(result.documentsSatisfied).toBe(false);
-    expect(result.missingRequirements).toEqual(["Thiếu loại hồ sơ: BRD."]);
+    expect(result.gateStatus).toBe("pending_review");
+    expect(result.documentsSatisfied).toBe(true);
+    expect(result.missingRequirements).toEqual([]);
   });
 
   it("opens the next milestone only after an authorized workspace admin approves", async () => {

@@ -169,6 +169,7 @@ const stageInclude = {
 const projectDocumentInclude = {
   account: true,
   project: true,
+  milestone: { select: { id: true, name: true, sortOrder: true, gateStatus: true } },
   versions: {
     include: { fileObject: true, createdBy: true },
     orderBy: { version: "asc" as const }
@@ -1632,9 +1633,9 @@ export class ProjectsService {
     return new Map<string, MilestoneReviewerUser>(users.map((user: MilestoneReviewerUser) => [user.id, user]));
   }
 
-  private async loadProjectMilestoneEvidence(projectId: string, workspaceId: string): Promise<MilestoneEvidenceDocument[]> {
+  private async loadProjectMilestoneEvidence(projectId: string, milestoneId: string, workspaceId: string): Promise<MilestoneEvidenceDocument[]> {
     const artifacts = await this.prisma.projectArtifact.findMany({
-      where: { projectId, workspaceId },
+      where: { projectId, workspaceId, milestoneId },
       select: {
         artifactType: true,
         versions: {
@@ -1690,15 +1691,23 @@ export class ProjectsService {
       },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }]
     });
-    const documentEvidence = await this.loadProjectMilestoneEvidence(project.id, principal.workspaceId);
     const reviewerUsers = await this.loadMilestoneReviewerUsers(milestones, principal);
+    const documentEvidenceByMilestone = new Map(
+      await Promise.all(milestones.map(async (milestone) => [
+        milestone.id,
+        await this.loadProjectMilestoneEvidence(project.id, milestone.id, principal.workspaceId)
+      ] as const))
+    );
 
     return {
       projectId: project.id,
       hierarchyOrderVersion: project.hierarchyOrderVersion,
       milestones: milestones.map((milestone) => mapMilestoneGateSummary(
         milestone,
-        countMilestoneEvidence(milestone, documentEvidence),
+        countMilestoneEvidence(
+          milestone,
+          documentEvidenceByMilestone.get(milestone.id) ?? []
+        ),
         milestone.reviewerUserId ? reviewerUsers.get(milestone.reviewerUserId) : undefined,
         milestone.reviewerApprovedByUserId ? reviewerUsers.get(milestone.reviewerApprovedByUserId) : undefined,
         principal
@@ -1724,15 +1733,23 @@ export class ProjectsService {
       },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
     });
-    const documentEvidence = await this.loadProjectMilestoneEvidence(project.id, principal.workspaceId);
     const reviewerUsers = await this.loadMilestoneReviewerUsers(milestones, principal);
+    const documentEvidenceByMilestone = new Map(
+      await Promise.all(milestones.map(async (milestone) => [
+        milestone.id,
+        await this.loadProjectMilestoneEvidence(project.id, milestone.id, principal.workspaceId)
+      ] as const))
+    );
     return {
       projectId: project.id,
       milestoneMode: project.milestoneMode,
       milestoneTemplateKey: project.milestoneTemplateKey,
       data: milestones.map((milestone) => mapMilestoneGateSummary(
         milestone,
-        countMilestoneEvidence(milestone, documentEvidence),
+        countMilestoneEvidence(
+          milestone,
+          documentEvidenceByMilestone.get(milestone.id) ?? []
+        ),
         milestone.reviewerUserId ? reviewerUsers.get(milestone.reviewerUserId) : undefined,
         milestone.reviewerApprovedByUserId ? reviewerUsers.get(milestone.reviewerApprovedByUserId) : undefined,
         principal
@@ -1848,7 +1865,7 @@ export class ProjectsService {
       throw new BadRequestException("Milestone is locked until the previous milestone is approved");
     }
     const evidenceMode = normalizeMilestoneEvidenceMode(milestone.evidenceMode);
-    const documentEvidence = await this.loadProjectMilestoneEvidence(project.id, principal.workspaceId);
+    const documentEvidence = await this.loadProjectMilestoneEvidence(project.id, milestone.id, principal.workspaceId);
     const evidenceCounts = countMilestoneEvidence(milestone, documentEvidence);
     const submittedDocumentCount = submittedMilestoneEvidenceCount(evidenceCounts, evidenceMode);
     const requiredDocumentCount = effectiveMilestoneRequiredDocumentCount(milestone);
@@ -2510,6 +2527,8 @@ export class ProjectsService {
     const artifactType = input.artifactType?.trim() || "project_document";
     const code = input.code?.trim() || `${project.code}-DOC-${Date.now().toString(36).toUpperCase()}`;
     const fileObjectId = nonEmptyString(input.fileObjectId, "fileObjectId");
+    const milestoneId = optionalString(input.milestoneId, "milestoneId");
+    if (milestoneId) await this.ensureProjectMilestone(project.id, milestoneId, principal.workspaceId);
     const note = optionalString(input.note, "note") ?? undefined;
     const customerVisible = optionalBoolean(input.customerVisible, "customerVisible") ?? false;
     const internalOnly = optionalBoolean(input.internalOnly, "internalOnly") ?? true;
@@ -2525,6 +2544,7 @@ export class ProjectsService {
           workspaceId: principal.workspaceId,
           accountId: project.accountId,
           projectId: project.id,
+          milestoneId: milestoneId ?? undefined,
           code,
           name,
           artifactType,
@@ -2568,13 +2588,20 @@ export class ProjectsService {
   }
 
   async updateProjectDocument(projectId: string, documentId: string, input: UpdateProjectDocumentInput, principal: PrincipalContext) {
+    const project = await this.ensureProject(projectId, principal.workspaceId);
     await this.ensureProjectDocument(projectId, documentId, principal.workspaceId);
+    let milestoneId: string | null | undefined;
+    if (input.milestoneId !== undefined) {
+      milestoneId = optionalString(input.milestoneId, "milestoneId") ?? null;
+      if (milestoneId) await this.ensureProjectMilestone(project.id, milestoneId, principal.workspaceId);
+    }
 
     const document = await this.prisma.projectArtifact.update({
       where: { id: documentId },
       data: {
         name: optionalString(input.name, "name") ?? undefined,
         artifactType: optionalString(input.artifactType, "artifactType") ?? undefined,
+        milestoneId,
         customerVisible: optionalBoolean(input.customerVisible, "customerVisible") ?? undefined,
         internalOnly: optionalBoolean(input.internalOnly, "internalOnly") ?? undefined,
         allowedRoles: input.allowedRoles === undefined ? undefined : stringArray(input.allowedRoles),
@@ -4867,6 +4894,15 @@ export class ProjectsService {
     }
 
     return document;
+  }
+
+  private async ensureProjectMilestone(projectId: string, milestoneId: string, workspaceId: string) {
+    const milestone = await this.prisma.projectMilestone.findFirst({
+      where: { id: milestoneId, projectId, workspaceId },
+      select: { id: true }
+    });
+    if (!milestone) throw new BadRequestException("Milestone does not belong to this project");
+    return milestone;
   }
 
   private async ensureProjectDocumentFile(
