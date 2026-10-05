@@ -1885,6 +1885,7 @@ function ProjectDeliveryWireframePanels({
   // conversely a locked milestone must never be presented as a ready handoff.
   const activeMilestone = selectActiveMilestone(milestones);
   const allMilestonesComplete = milestones.length > 0 && milestones.every((milestone) => milestone.gateStatus === "approved" || (!milestone.gateStatus && milestone.status === "done"));
+  const handoffDisplayMilestone = activeMilestone ?? (allMilestonesComplete ? milestones[milestones.length - 1] : undefined);
   const activeGroup = activeMilestone ? milestoneGroups.find((group) => group.milestoneId === activeMilestone.id) : undefined;
   const requiredDocuments = activeMilestone?.requiredDocumentCount ?? 0;
   const submittedDocuments = activeMilestone?.submittedDocumentCount ?? 0;
@@ -1941,15 +1942,15 @@ function ProjectDeliveryWireframePanels({
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Handoff dossier</p>
               <h3 className="mt-1 text-base font-black text-foreground">Hồ sơ chuyển tiếp</h3>
-              <p className="mt-1 text-xs text-muted-foreground">Theo dõi điều kiện để chuyển sang milestone tiếp theo.</p>
+              <p className="mt-1 text-xs text-muted-foreground">{allMilestonesComplete ? "Delivery plan đã hoàn tất." : "Theo dõi điều kiện để chuyển sang milestone tiếp theo."}</p>
             </div>
             <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${allMilestonesComplete || (handoffReady && !reviewPending) ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
               {allMilestonesComplete ? "Đã hoàn tất" : reviewPending ? "Chờ duyệt" : handoffReady ? "Đủ điều kiện" : "Đang chờ"}
             </span>
           </div>
           <div className="mt-4 rounded-xl border border-border bg-muted/20 p-3">
-            <p className="text-xs font-bold text-foreground">{allMilestonesComplete ? "Đã hoàn tất toàn bộ milestone" : activeMilestone?.name ?? "Chưa có milestone đang chạy"}</p>
-            <p className="mt-1 text-[11px] text-muted-foreground">{allMilestonesComplete ? "Không còn bước chuyển tiếp cần xử lý." : activeMilestone ? `${activeMilestone.startDate || "TBD"} → ${activeMilestone.dueDate || "TBD"}` : "Bổ sung delivery plan để tạo hồ sơ"}</p>
+            <p className="text-xs font-bold text-foreground">{handoffDisplayMilestone?.name ?? "Chưa có milestone đang chạy"}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">{allMilestonesComplete ? "Milestone cuối cùng đã được duyệt — không còn bước chuyển tiếp cần xử lý." : handoffDisplayMilestone ? `${handoffDisplayMilestone.startDate || "TBD"} → ${handoffDisplayMilestone.dueDate || "TBD"}` : "Bổ sung delivery plan để tạo hồ sơ"}</p>
           </div>
           {!allMilestonesComplete ? <div className="mt-4 space-y-2.5">
             {[
