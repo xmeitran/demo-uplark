@@ -189,6 +189,30 @@ describe("Lark authentication boundary", () => {
     }));
   });
 
+  it("moves a stable Lark identity from a personal-email duplicate to the enterprise user", async () => {
+    vi.stubEnv("CRM_LARK_ENTERPRISE_EMAIL_OVERRIDES", "HCM273=maitns@upbase.asia");
+    const { service, prisma, nativeAuth } = makeService();
+    const enterpriseMember = { id: "usr-lark-HCM273", email: "maitns@upbase.asia", displayName: "Trần Ngô Sao Mai", status: "ACTIVE" };
+    prisma.user.findUnique.mockResolvedValue(enterpriseMember);
+    prisma.portalIdentity.findFirst.mockResolvedValue({ user: { id: "usr-personal", email: "tranngosaomai@gmail.com", displayName: "Trần Ngô Sao Mai", status: "ACTIVE" } });
+    prisma.portalIdentity.upsert.mockResolvedValue({ userId: enterpriseMember.id });
+    prisma.user.update.mockResolvedValue(enterpriseMember);
+    const { state } = await service.createAuthorizeUrl({ redirectUri });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, access_token: "provider-token" }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, data: { open_id: "ou_new_app_id", user_id: "HCM273", tenant_key: "tn_test", email: "tranngosaomai@gmail.com", name: "Trần Ngô Sao Mai" } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 1 }) }));
+
+    await service.completeCallback({ code: "code", state, redirectUri });
+
+    expect(prisma.portalIdentity.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { provider_providerUserId_tenantKey: { provider: "lark_user_id", providerUserId: "HCM273", tenantKey: "prod" } },
+      update: { userId: enterpriseMember.id },
+      create: expect.objectContaining({ userId: enterpriseMember.id, provider: "lark_user_id", providerUserId: "HCM273" })
+    }));
+    expect(nativeAuth.completeIdentityLogin).toHaveBeenCalledWith(enterpriseMember.id, expect.anything(), { authMethod: "lark" });
+  });
+
   it("repairs an existing linked CRM user when Lark provides an enterprise email", async () => {
     const { service, prisma } = makeService();
     prisma.portalIdentity.findUnique.mockResolvedValue({
@@ -272,7 +296,7 @@ function makeService() {
   const prisma = {
     authActionToken: { create: vi.fn().mockResolvedValue({}), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     portalIdentity: { findUnique: vi.fn().mockResolvedValue(null), findFirst: vi.fn().mockResolvedValue(null), upsert: vi.fn().mockResolvedValue({ userId: "usr-1" }) },
-    user: { findFirst: vi.fn().mockResolvedValue(user), findMany: vi.fn().mockResolvedValue([user]), update: vi.fn().mockResolvedValue(user) },
+    user: { findFirst: vi.fn().mockResolvedValue(user), findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([user]), update: vi.fn().mockResolvedValue(user) },
     roleBinding: { findFirst: vi.fn().mockResolvedValue({ id: "rb-1" }) },
     customerAccessGrant: { findFirst: vi.fn().mockResolvedValue(null) },
     $transaction: vi.fn(async (callback: (transaction: typeof tx) => unknown) => callback(tx))

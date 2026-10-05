@@ -317,6 +317,20 @@ export class LarkAuthService {
   private async resolveUserFromProfile(profile: NormalizedLarkProfile, workspace: WorkspaceContext) {
     this.assertLarkTenantAllowed(profile.tenantKey);
 
+    // If production previously auto-provisioned this person with their
+    // personal email, prefer the existing enterprise-email account before
+    // following the stable Lark identity. This repairs the duplicate-user
+    // state instead of preserving a wrong CRM identity forever.
+    const enterpriseUser = profile.enterpriseEmail
+      ? await this.prisma.user.findUnique({ where: { email: profile.enterpriseEmail } })
+      : undefined;
+    if (enterpriseUser) {
+      await this.requireActiveMembership(enterpriseUser, workspace);
+      if (profile.userId) await this.linkStableIdentity(enterpriseUser.id, profile.userId, workspace.tenantKey);
+      await this.linkIdentity(enterpriseUser.id, profile.openId, workspace.tenantKey, true);
+      return this.updateUserProfile(enterpriseUser.id, profile, enterpriseUser.email);
+    }
+
     // `open_id` is scoped to the Lark app. If the app is recreated or the
     // workspace switches to another app, the same person receives a new
     // open_id. Prefer the stable directory/user_id identity before honoring
@@ -572,6 +586,25 @@ export class LarkAuthService {
     });
     if (identity.userId !== userId) throw new ForbiddenException("Lark identity is already linked to another account");
     return identity;
+  }
+
+  private async linkStableIdentity(userId: string, larkUserId: string, crmTenantKey: string) {
+    return this.prisma.portalIdentity.upsert({
+      where: {
+        provider_providerUserId_tenantKey: {
+          provider: "lark_user_id",
+          providerUserId: larkUserId,
+          tenantKey: crmTenantKey
+        }
+      },
+      update: { userId },
+      create: {
+        userId,
+        provider: "lark_user_id",
+        providerUserId: larkUserId,
+        tenantKey: crmTenantKey
+      }
+    });
   }
 
   private assertLarkTenantAllowed(larkTenantKey?: string) {
