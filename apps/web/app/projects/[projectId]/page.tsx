@@ -1884,6 +1884,7 @@ function ProjectDeliveryWireframePanels({
   // Legacy stage rows can still say `not_started` after the gate has opened, and
   // conversely a locked milestone must never be presented as a ready handoff.
   const activeMilestone = selectActiveMilestone(milestones);
+  const allMilestonesComplete = milestones.length > 0 && milestones.every((milestone) => milestone.gateStatus === "approved" || (!milestone.gateStatus && milestone.status === "done"));
   const activeGroup = activeMilestone ? milestoneGroups.find((group) => group.milestoneId === activeMilestone.id) : undefined;
   const requiredDocuments = activeMilestone?.requiredDocumentCount ?? 0;
   const submittedDocuments = activeMilestone?.submittedDocumentCount ?? 0;
@@ -1942,15 +1943,15 @@ function ProjectDeliveryWireframePanels({
               <h3 className="mt-1 text-base font-black text-foreground">Hồ sơ chuyển tiếp</h3>
               <p className="mt-1 text-xs text-muted-foreground">Theo dõi điều kiện để chuyển sang milestone tiếp theo.</p>
             </div>
-            <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${handoffReady && !reviewPending ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-              {reviewPending ? "Chờ duyệt" : handoffReady ? "Đủ điều kiện" : "Đang chờ"}
+            <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${allMilestonesComplete || (handoffReady && !reviewPending) ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+              {allMilestonesComplete ? "Đã hoàn tất" : reviewPending ? "Chờ duyệt" : handoffReady ? "Đủ điều kiện" : "Đang chờ"}
             </span>
           </div>
           <div className="mt-4 rounded-xl border border-border bg-muted/20 p-3">
-            <p className="text-xs font-bold text-foreground">{activeMilestone?.name ?? "Chưa có milestone đang chạy"}</p>
-            <p className="mt-1 text-[11px] text-muted-foreground">{activeMilestone ? `${activeMilestone.startDate || "TBD"} → ${activeMilestone.dueDate || "TBD"}` : "Bổ sung delivery plan để tạo hồ sơ"}</p>
+            <p className="text-xs font-bold text-foreground">{allMilestonesComplete ? "Đã hoàn tất toàn bộ milestone" : activeMilestone?.name ?? "Chưa có milestone đang chạy"}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">{allMilestonesComplete ? "Không còn bước chuyển tiếp cần xử lý." : activeMilestone ? `${activeMilestone.startDate || "TBD"} → ${activeMilestone.dueDate || "TBD"}` : "Bổ sung delivery plan để tạo hồ sơ"}</p>
           </div>
-          <div className="mt-4 space-y-2.5">
+          {!allMilestonesComplete ? <div className="mt-4 space-y-2.5">
             {[
               { label: "Tài liệu bắt buộc", detail: documentsConfigured ? `${submittedDocuments}/${requiredDocuments} hồ sơ` : "Không yêu cầu", ready: documentsReady, action: onOpenDocuments },
               { label: "Xác nhận khách hàng", detail: activeMilestone?.customerConfirmationRequired ? confirmationReady ? "Đã ghi nhận" : "Chưa ghi nhận" : "Không yêu cầu", ready: confirmationReady, confirmation: activeMilestone?.customerConfirmationRequired ? { checked: confirmationReady } : undefined },
@@ -1967,12 +1968,12 @@ function ProjectDeliveryWireframePanels({
                 {item.action ? <button type="button" onClick={item.action} className="text-[11px] font-semibold text-primary hover:underline">Mở</button> : null}
               </div>
             ))}
-          </div>
-          {!handoffReady && missingRequirements.length > 0 ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2.5 text-[11px] text-amber-800"><p className="font-semibold">Cần hoàn tất:</p><ul className="mt-1 list-disc space-y-0.5 pl-4">{missingRequirements.map((requirement) => <li key={requirement}>{requirement}</li>)}</ul></div> : null}
-          {handoffError ? <p role="alert" className="mt-3 text-xs text-rose-600">{handoffError}</p> : null}
-          <button type="button" onClick={() => void onAdvanceMilestone()} disabled={!handoffReady || handoffBusy || (reviewPending && !activeMilestone?.canApprove)} className={`mt-4 inline-flex min-h-9 w-full items-center justify-center rounded-lg border px-3 text-xs font-semibold transition ${handoffReady && (!reviewPending || activeMilestone?.canApprove) ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90" : "border-border text-muted-foreground disabled:cursor-not-allowed disabled:opacity-70"}`}>
-            {handoffBusy ? "Đang xử lý…" : reviewPending && activeMilestone?.canApprove ? "Duyệt & chuyển milestone" : reviewPending ? `Chờ ${reviewerName} duyệt` : handoffReady ? "Gửi hồ sơ chờ duyệt" : "Chưa đủ điều kiện chuyển milestone"}
-          </button>
+          </div> : <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2.5 text-[11px] text-emerald-800"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /><p>Hồ sơ chuyển tiếp đã hoàn tất. Các milestone trong kế hoạch đều đã được hoàn thành.</p></div>}
+          {!allMilestonesComplete && !handoffReady && missingRequirements.length > 0 ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2.5 text-[11px] text-amber-800"><p className="font-semibold">Cần hoàn tất:</p><ul className="mt-1 list-disc space-y-0.5 pl-4">{missingRequirements.map((requirement) => <li key={requirement}>{requirement}</li>)}</ul></div> : null}
+          {!allMilestonesComplete && handoffError ? <p role="alert" className="mt-3 text-xs text-rose-600">{handoffError}</p> : null}
+          {!allMilestonesComplete ? <button type="button" onClick={() => void onAdvanceMilestone()} disabled={!handoffReady || handoffBusy || (reviewPending && !activeMilestone?.canApprove)} className={`mt-4 inline-flex min-h-9 w-full items-center justify-center rounded-lg border px-3 text-xs font-semibold transition ${handoffReady && (!reviewPending || activeMilestone?.canApprove) ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90" : "border-border text-muted-foreground disabled:cursor-not-allowed disabled:opacity-70"}`}>
+            {handoffBusy ? "Đang xử lý…" : reviewPending && activeMilestone?.canApprove ? "Duyệt & chuyển milestone" : reviewPending ? `Chờ ${reviewerName} duyệt` : handoffReady ? "Gửi hồ sơ chờ duyệt" : activeMilestone ? "Chưa đủ điều kiện chuyển milestone" : "Chưa có milestone đang mở"}
+          </button> : null}
         </div>
 
         <div className="rounded-2xl border border-border bg-card shadow-sm">

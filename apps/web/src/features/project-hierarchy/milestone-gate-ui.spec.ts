@@ -22,4 +22,18 @@ describe("selectActiveMilestone", () => {
       { id: "m2", status: "upcoming", gateStatus: "locked" }
     ])?.id).toBe("m1");
   });
+
+  it("does not reopen the first milestone after every gate is approved", () => {
+    expect(selectActiveMilestone([
+      { id: "m1", status: "done", gateStatus: "approved" },
+      { id: "m2", status: "done", gateStatus: "approved" }
+    ])).toBeUndefined();
+  });
+
+  it("treats a legacy plan with every milestone done as complete", () => {
+    expect(selectActiveMilestone([
+      { id: "m1", status: "done" },
+      { id: "m2", status: "done" }
+    ])).toBeUndefined();
+  });
 });
