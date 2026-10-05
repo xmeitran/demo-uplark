@@ -211,6 +211,7 @@ async function fetchLiveProjectWorkItems(projectId: string, signal?: AbortSignal
                 : milestone.status,
             gateStatus: gate.gateStatus,
             requiredDocumentCount: gate.requiredDocumentCount,
+            requiredDocumentTypes: gate.requiredDocumentTypes,
             submittedDocumentCount: gate.submittedDocumentCount,
             documentsSatisfied: gate.documentsSatisfied,
             confirmationSatisfied: gate.confirmationSatisfied,
@@ -544,6 +545,7 @@ interface Milestone {
   status: "done" | "in-progress" | "upcoming" | "at-risk";
   gateStatus?: "open" | "locked" | "pending_review" | "approved" | "rejected" | "conditional";
   requiredDocumentCount?: number;
+  requiredDocumentTypes?: string[];
   submittedDocumentCount?: number;
   documentsSatisfied?: boolean;
   confirmationSatisfied?: boolean;
@@ -765,6 +767,8 @@ function mapProjectRiskToRiskItem(risk: ProjectRiskSummary): RiskItem {
 
 function categoryFromArtifactType(value: string) {
   const normalized = value.toLowerCase();
+  if (/\b(brd|frd|srs)\b/.test(normalized)) return "Requirements";
+  if (normalized.includes("bug_log") || normalized.includes("pilot") || normalized.includes("onboard") || normalized.includes("golive") || normalized.includes("handover")) return "Operations";
   if (normalized.includes("requirement") || normalized.includes("scope")) return "Requirements";
   if (normalized.includes("technical") || normalized.includes("architecture")) return "Technical";
   if (normalized.includes("design")) return "Design";
@@ -788,6 +792,10 @@ function colorForDocumentCategory(value: string) {
 
 function inferDocumentMilestoneId(document: ProjectDoc, milestones: Milestone[]) {
   const source = `${document.artifactType ?? ""} ${document.name}`.toLocaleLowerCase("vi");
+  const matchingConfiguredType = milestones.find((milestone) =>
+    (milestone.requiredDocumentTypes ?? []).some((type) => source.includes(String(type).trim().toLocaleLowerCase("vi")))
+  );
+  if (matchingConfiguredType) return matchingConfiguredType.id;
   const explicitNumber = source.match(/(?:milestone|mile|m)[\s_-]*(\d+)/i)?.[1];
   if (explicitNumber) {
     const byOrder = milestones.find((milestone) => String(milestone.order + 1) === explicitNumber || milestone.name.toLocaleLowerCase("vi").includes(`m${explicitNumber}`));
@@ -796,9 +804,10 @@ function inferDocumentMilestoneId(document: ProjectDoc, milestones: Milestone[])
   return milestones.find((milestone) => source.includes(milestone.name.toLocaleLowerCase("vi")))?.id;
 }
 
-function documentLooksRequired(document: ProjectDoc) {
+function documentLooksRequired(document: ProjectDoc, milestones: Milestone[] = []) {
   const source = `${document.artifactType ?? ""} ${document.name}`.toLocaleLowerCase("vi");
-  return /required|mandatory|bắt buộc|handoff|gate|checkpoint/.test(source);
+  return /required|mandatory|bắt buộc|handoff|gate|checkpoint/.test(source)
+    || milestones.some((milestone) => (milestone.requiredDocumentTypes ?? []).some((type) => source.includes(String(type).trim().toLocaleLowerCase("vi"))));
 }
 
 function mapStageGroupToMilestone(stages: ProjectStageSummary[]): Milestone {
@@ -1653,6 +1662,7 @@ function ProjectOverviewSignals({
   onOpenIssues: () => void;
   onOpenDocuments: () => void;
 }) {
+  const orderedMilestones = [...milestones].sort((left, right) => left.order - right.order);
   const today = new Date();
   const openRisks = risks.filter((risk) => !["resolved", "closed", "done"].includes(risk.status.toLowerCase()));
   const overdueTasks = tasks.filter((task) => {
@@ -1661,7 +1671,9 @@ function ProjectOverviewSignals({
     return Number.isFinite(due.getTime()) && due < today;
   });
   const atRiskMilestones = milestones.filter((milestone) => milestone.status === "at-risk");
-  const activeMilestone = selectActiveMilestone(milestones);
+  const activeMilestone = selectActiveMilestone(orderedMilestones);
+  const deliveryPlanComplete = orderedMilestones.length > 0 && orderedMilestones.every((milestone) => milestone.gateStatus === "approved" || (!milestone.gateStatus && milestone.status === "done"));
+  const displayMilestone = activeMilestone ?? (deliveryPlanComplete ? orderedMilestones.at(-1) : undefined);
   const signalCount = openRisks.length + overdueTasks.length + atRiskMilestones.length;
 
   return (
@@ -1697,13 +1709,13 @@ function ProjectOverviewSignals({
         <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Milestone đang chạy</p>
-              <p className="mt-1 text-sm font-bold text-foreground">{activeMilestone?.name ?? "Chưa có milestone đang chạy"}</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">{deliveryPlanComplete ? "Delivery plan" : "Milestone đang chạy"}</p>
+              <p className="mt-1 text-sm font-bold text-foreground">{displayMilestone?.name ?? "Chưa có milestone đang chạy"}</p>
             </div>
-            <span className="rounded-full px-2.5 py-1 text-[10px] font-bold" style={{ backgroundColor: `${projectColor}15`, color: projectColor }}>{activeMilestone ? "Đang theo dõi" : "Chưa cấu hình"}</span>
+            <span className="rounded-full px-2.5 py-1 text-[10px] font-bold" style={{ backgroundColor: deliveryPlanComplete ? "#dcfce7" : `${projectColor}15`, color: deliveryPlanComplete ? "#15803d" : projectColor }}>{deliveryPlanComplete ? "Đã hoàn tất" : activeMilestone ? "Đang theo dõi" : "Chưa cấu hình"}</span>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span>{activeMilestone ? `${activeMilestone.startDate || "TBD"} → ${activeMilestone.dueDate || "TBD"}` : "Bổ sung kế hoạch để xác định điểm chốt"}</span>
+            <span>{displayMilestone ? `${displayMilestone.startDate || "TBD"} → ${displayMilestone.dueDate || "TBD"}` : "Bổ sung kế hoạch để xác định điểm chốt"}</span>
             <span aria-hidden="true">·</span>
             <span>{documents.length > 0 ? `${documents.length} tài liệu đã liên kết` : "Chưa có hồ sơ chuyển tiếp"}</span>
           </div>
@@ -1734,6 +1746,7 @@ function MilestoneOverviewBar({
   projectColor: string;
   onOpenProjectSheet: () => void;
 }) {
+  const orderedMilestones = [...milestones].sort((left, right) => left.order - right.order);
   return (
     <section aria-label="Tổng quan milestone" className="rounded-2xl border border-border bg-card p-4 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1744,16 +1757,18 @@ function MilestoneOverviewBar({
         </div>
         <button type="button" onClick={onOpenProjectSheet} className="text-xs font-semibold text-primary hover:underline">Mở Project Sheet →</button>
       </div>
-      {milestones.length === 0 ? (
+      {orderedMilestones.length === 0 ? (
         <div className="mt-4 rounded-xl border border-dashed border-border bg-muted/20 px-4 py-5 text-center text-xs text-muted-foreground">Chưa có milestone trong kế hoạch giao hàng.</div>
       ) : (
         <>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {milestones.slice(0, 4).map((milestone, index) => {
+          {orderedMilestones.slice(0, 4).map((milestone, index) => {
             const group = milestoneGroups.find((item) => item.milestoneId === milestone.id);
             const stages = group?.stages ?? [];
-            const taskCount = stages.reduce((sum, stage) => sum + stage.tasks.length, 0);
-            const doneCount = stages.reduce((sum, stage) => sum + stage.tasks.filter((task) => task.status === "done").length, 0);
+            const stageTaskCount = stages.reduce((sum, stage) => sum + stage.tasks.length, 0);
+            const stageDoneCount = stages.reduce((sum, stage) => sum + stage.tasks.filter((task) => task.status === "done").length, 0);
+            const taskCount = milestone.taskCount ?? stageTaskCount;
+            const doneCount = milestone.completedTaskCount ?? stageDoneCount;
             const progress = taskCount > 0 ? Math.round((doneCount / taskCount) * 100) : milestone.status === "done" ? 100 : 0;
             const status = MILESTONE_STATUS[milestone.status];
             // When a gate exists, its persisted status is authoritative. Do not
@@ -1761,7 +1776,7 @@ function MilestoneOverviewBar({
             // still says `not_started`.
             const locked = milestone.gateStatus
               ? milestone.gateStatus === "locked"
-              : index > 0 && milestones[index - 1]?.status !== "done";
+              : index > 0 && orderedMilestones[index - 1]?.status !== "done";
             const gateLabel = milestone.gateStatus === "pending_review"
               ? "Chờ duyệt"
               : milestone.gateStatus === "approved"
@@ -1793,7 +1808,7 @@ function MilestoneOverviewBar({
             );
           })}
         </div>
-        {milestones.length > 4 ? <p className="mt-3 text-right text-[11px] font-semibold text-primary">+ {milestones.length - 4} milestone khác trong Project Sheet →</p> : null}
+        {orderedMilestones.length > 4 ? <p className="mt-3 text-right text-[11px] font-semibold text-primary">+ {orderedMilestones.length - 4} milestone khác trong Project Sheet →</p> : null}
         </>
       )}
     </section>
@@ -1811,10 +1826,12 @@ function ProjectStatusSlaBar({
   tasks: TaskItem[];
   projectColor: string;
 }) {
-  const activeMilestone = selectActiveMilestone(milestones);
+  const orderedMilestones = [...milestones].sort((left, right) => left.order - right.order);
+  const activeMilestone = selectActiveMilestone(orderedMilestones);
+  const deliveryPlanComplete = orderedMilestones.length > 0 && orderedMilestones.every((milestone) => milestone.gateStatus === "approved" || (!milestone.gateStatus && milestone.status === "done"));
   const completedTasks = tasks.filter((task) => task.status === "done").length;
   const progress = tasks.length > 0 ? Math.round((completedTasks / tasks.length) * 100) : project.progress;
-  const statusLabel = project.status === "Active" ? "Đang chạy" : formatProjectStatusLabel(project.status);
+  const statusLabel = deliveryPlanComplete ? "Delivery plan hoàn tất" : project.status === "Active" ? "Đang chạy" : formatProjectStatusLabel(project.status);
   const normalizedProjectStatus = project.status.toLocaleLowerCase();
   const slaPaused = normalizedProjectStatus.includes("hold") || normalizedProjectStatus.includes("risk") || normalizedProjectStatus.includes("cancel") || normalizedProjectStatus.includes("closed");
   return (
@@ -1823,7 +1840,7 @@ function ProjectStatusSlaBar({
         <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Trạng thái dự án</p>
         <div className="mt-1 flex flex-wrap items-center gap-2">
           <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${slaPaused ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{statusLabel}</span>
-          <span className="text-xs text-muted-foreground">{activeMilestone?.name ?? "Chưa có milestone đang chạy"}</span>
+          <span className="text-xs text-muted-foreground">{activeMilestone?.name ?? (deliveryPlanComplete ? `Milestone cuối: ${orderedMilestones.at(-1)?.name}` : "Chưa có milestone đang chạy")}</span>
         </div>
       </div>
       <div>
@@ -1883,9 +1900,10 @@ function ProjectDeliveryWireframePanels({
   // The gate is the source of truth for which milestone is currently actionable.
   // Legacy stage rows can still say `not_started` after the gate has opened, and
   // conversely a locked milestone must never be presented as a ready handoff.
-  const activeMilestone = selectActiveMilestone(milestones);
-  const allMilestonesComplete = milestones.length > 0 && milestones.every((milestone) => milestone.gateStatus === "approved" || (!milestone.gateStatus && milestone.status === "done"));
-  const handoffDisplayMilestone = activeMilestone ?? (allMilestonesComplete ? milestones[milestones.length - 1] : undefined);
+  const orderedMilestones = [...milestones].sort((left, right) => left.order - right.order);
+  const activeMilestone = selectActiveMilestone(orderedMilestones);
+  const allMilestonesComplete = orderedMilestones.length > 0 && orderedMilestones.every((milestone) => milestone.gateStatus === "approved" || (!milestone.gateStatus && milestone.status === "done"));
+  const handoffDisplayMilestone = activeMilestone ?? (allMilestonesComplete ? orderedMilestones.at(-1) : undefined);
   const activeGroup = activeMilestone ? milestoneGroups.find((group) => group.milestoneId === activeMilestone.id) : undefined;
   const requiredDocuments = activeMilestone?.requiredDocumentCount ?? 0;
   const submittedDocuments = activeMilestone?.submittedDocumentCount ?? 0;
@@ -2905,15 +2923,18 @@ type DocumentSaveResult =
 
 function AddDocModal({
   projectColor,
+  documentTypeOptions,
   onClose,
   onAdd,
 }: {
   projectColor: string;
+  documentTypeOptions: string[];
   onClose: () => void;
   onAdd: (doc: Omit<ProjectDoc, "id">, file: File, note: string) => Promise<DocumentSaveResult>;
 }) {
   const [name, setName] = useState("");
   const [category, setCategory] = useState("Requirements");
+  const [artifactType, setArtifactType] = useState(documentTypeOptions[0] ?? "");
   const [type, setType] = useState("PDF");
   const [size, setSize] = useState("1.0 MB");
   const [note, setNote] = useState("Initial upload note");
@@ -2978,6 +2999,7 @@ function AddDocModal({
                     type,
                     color: finalColor,
                     category,
+                    artifactType: artifactType.trim() || documentTypeOptions[0] || artifactTypeFromCategory(category),
                     versions: [],
                   },
                   selectedFile,
@@ -3034,6 +3056,25 @@ function AddDocModal({
           </Field>
         </div>
 
+        <Field label="Loại hồ sơ cho gate">
+          {documentTypeOptions.length > 0 ? (
+            <CustomDropdown
+              ariaLabel="Loại hồ sơ cho gate"
+              options={documentTypeOptions.map((value) => ({ value, label: value }))}
+              value={artifactType || documentTypeOptions[0]}
+              onChange={setArtifactType}
+            />
+          ) : (
+            <input
+              value={artifactType}
+              onChange={(event) => setArtifactType(event.target.value)}
+              placeholder="VD: BRD, FRD, SRS"
+              className="w-full border border-input rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none"
+            />
+          )}
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">Chọn đúng mã loại hồ sơ đang được cấu hình trong milestone; nếu để trống hệ thống dùng nhóm tài liệu.</p>
+        </Field>
+
         <div className="grid grid-cols-2 gap-3">
           <Field label="File Size">
             <input
@@ -3071,16 +3112,19 @@ function AddDocModal({
 
 function AddLinkDocModal({
   projectColor,
+  documentTypeOptions,
   onClose,
   onAdd
 }: {
   projectColor: string;
+  documentTypeOptions: string[];
   onClose: () => void;
-  onAdd: (doc: { name: string; category: string; url: string }, note: string) => Promise<DocumentSaveResult>;
+  onAdd: (doc: { name: string; category: string; artifactType?: string; url: string }, note: string) => Promise<DocumentSaveResult>;
 }) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [category, setCategory] = useState("Requirements");
+  const [artifactType, setArtifactType] = useState(documentTypeOptions[0] ?? "");
   const [note, setNote] = useState("Initial link");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -3092,7 +3136,7 @@ function AddLinkDocModal({
       <button type="button" disabled={!name.trim() || !url.trim() || saving} onClick={async () => {
         setSaving(true);
         setError(null);
-        const result = await onAdd({ name, category, url }, note.trim() || "Initial link");
+        const result = await onAdd({ name, category, artifactType: artifactType.trim() || documentTypeOptions[0] || artifactTypeFromCategory(category), url }, note.trim() || "Initial link");
         setSaving(false);
         if (result.ok) onClose(); else setError(result.error);
       }} className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white shadow-sm disabled:opacity-40" style={{ backgroundColor: projectColor }}>
@@ -3102,6 +3146,14 @@ function AddLinkDocModal({
       <Field label="Tên tài liệu" required><input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="VD: BRD đã duyệt" className="w-full rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground focus:outline-none" /></Field>
       <Field label="URL tài liệu" required><input type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://..." className="w-full rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground focus:outline-none" /></Field>
       <Field label="Category"><CustomDropdown options={categories.map((value) => ({ value, label: value }))} value={category} onChange={setCategory} /></Field>
+      <Field label="Loại hồ sơ cho gate">
+        {documentTypeOptions.length > 0 ? (
+          <CustomDropdown ariaLabel="Loại hồ sơ cho gate" options={documentTypeOptions.map((value) => ({ value, label: value }))} value={artifactType || documentTypeOptions[0]} onChange={setArtifactType} />
+        ) : (
+          <input value={artifactType} onChange={(event) => setArtifactType(event.target.value)} placeholder="VD: BRD, FRD, SRS" className="w-full rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground focus:outline-none" />
+        )}
+        <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">Chọn đúng mã loại hồ sơ trong milestone để bằng chứng được tính vào gate.</p>
+      </Field>
       {error ? <p className="text-xs font-semibold text-red-600" role="alert">{error}</p> : null}
       <Field label="Ghi chú"><textarea value={note} onChange={(event) => setNote(event.target.value)} rows={2} className="w-full resize-none rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground focus:outline-none" /></Field>
       <p className="rounded-xl border border-sky-100 bg-sky-50/70 px-3 py-2 text-xs leading-relaxed text-sky-800">Link được lưu như một bằng chứng của Project và được tính vào rule “Link” hoặc “File hoặc link”.</p>
@@ -6429,7 +6481,7 @@ export default function ProjectDetailPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           name: doc.name,
-          artifactType: artifactTypeFromCategory(doc.category),
+          artifactType: doc.artifactType || artifactTypeFromCategory(doc.category),
           fileObjectId: uploaded.id,
           note,
           internalOnly: true,
@@ -6457,7 +6509,7 @@ export default function ProjectDetailPage() {
     }
   }, [projectId, uploadProjectFile]);
 
-  const handleAddLinkDocument = useCallback(async (doc: { name: string; category: string; url: string }, note: string): Promise<DocumentSaveResult> => {
+  const handleAddLinkDocument = useCallback(async (doc: { name: string; category: string; artifactType?: string; url: string }, note: string): Promise<DocumentSaveResult> => {
     try {
       const fileResponse = await fetch("/api/files", {
         method: "POST",
@@ -6488,7 +6540,7 @@ export default function ProjectDetailPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           name: doc.name.trim(),
-          artifactType: artifactTypeFromCategory(doc.category),
+          artifactType: doc.artifactType || artifactTypeFromCategory(doc.category),
           fileObjectId: uploaded.id,
           note,
           internalOnly: true,
@@ -7139,6 +7191,7 @@ export default function ProjectDetailPage() {
       {showAddDocModal && (
         <AddDocModal
           projectColor={project.color}
+          documentTypeOptions={Array.from(new Set(milestones.flatMap((milestone) => milestone.requiredDocumentTypes ?? []))).filter(Boolean)}
           onClose={() => setShowAddDocModal(false)}
           onAdd={handleAddDocument}
         />
@@ -7146,6 +7199,7 @@ export default function ProjectDetailPage() {
       {showAddLinkModal && (
         <AddLinkDocModal
           projectColor={project.color}
+          documentTypeOptions={Array.from(new Set(milestones.flatMap((milestone) => milestone.requiredDocumentTypes ?? []))).filter(Boolean)}
           onClose={() => setShowAddLinkModal(false)}
           onAdd={handleAddLinkDocument}
         />
@@ -8884,7 +8938,7 @@ export default function ProjectDetailPage() {
                   const matchMilestone = docMilestoneFilter === "All" || milestoneId === docMilestoneFilter;
                   const isSubmitted = doc.versions.length > 0;
                   const matchStatus = docStatusFilter === "all" || (docStatusFilter === "submitted" ? isSubmitted : !isSubmitted);
-                  const matchRequired = !requiredDocsOnly || documentLooksRequired(doc);
+                  const matchRequired = !requiredDocsOnly || documentLooksRequired(doc, milestones);
                   return matchSearch && matchCategory && matchMilestone && matchStatus && matchRequired;
                 });
 

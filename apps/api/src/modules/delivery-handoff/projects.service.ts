@@ -67,6 +67,13 @@ import { dateOnlyToUtcDate, getLocalDateKeysForTimeRange, lockWorkspaceDayOffDat
 import { isCancelledTaskStatus, isCompletedTaskStatus } from "./task-status";
 import { evaluateMilestoneGate } from "./milestone-gate";
 import {
+  countMilestoneEvidence,
+  effectiveMilestoneRequiredDocumentCount,
+  submittedMilestoneEvidenceCount,
+  type MilestoneEvidenceDocument,
+  type MilestoneEvidenceCounts
+} from "./milestone-evidence";
+import {
   canApproveMilestoneReviewer,
   DEFAULT_MILESTONE_REVIEWER_MODE,
   MILESTONE_REVIEWER_MODES,
@@ -138,14 +145,6 @@ const projectInclude = {
     }
   }
 };
-
-function effectiveRequiredDocumentCount(milestone: { requiredDocumentCount?: number | null; requiredDocumentTypes?: unknown }) {
-  const configuredCount = Number(milestone.requiredDocumentCount ?? 0);
-  if (Number.isFinite(configuredCount) && configuredCount > 0) return Math.floor(configuredCount);
-  return Array.isArray(milestone.requiredDocumentTypes)
-    ? milestone.requiredDocumentTypes.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).length
-    : 0;
-}
 
 function projectIncludeForPrincipal(principal: PrincipalContext) {
   return { ...projectInclude, members: { ...projectInclude.members,
@@ -482,25 +481,21 @@ type MilestoneReviewerUser = { id: string; displayName: string; email: string };
 
 function mapMilestoneGateSummary(
   milestone: any,
-  fileCount: number,
-  linkCount: number,
+  evidenceCounts: MilestoneEvidenceCounts,
   reviewerUser?: MilestoneReviewerUser,
   approvedByUser?: MilestoneReviewerUser,
   principal?: PrincipalContext
 ) {
   const evidenceMode = normalizeMilestoneEvidenceMode(milestone.evidenceMode);
-  const requiredDocumentCount = effectiveRequiredDocumentCount(milestone);
-  const submittedDocumentCount = evidenceMode === "file"
-    ? fileCount
-    : evidenceMode === "link"
-      ? linkCount
-      : fileCount + linkCount;
+  const requiredDocumentCount = effectiveMilestoneRequiredDocumentCount(milestone);
+  const submittedDocumentCount = submittedMilestoneEvidenceCount(evidenceCounts, evidenceMode);
   const taskStatuses = (milestone.stages ?? []).flatMap((stage: any) =>
     (stage.tasks ?? []).map((task: any) => task.status)
   );
   const evaluation = evaluateMilestoneGate({
     requiredDocumentCount,
     submittedDocumentCount,
+    missingDocumentTypes: evidenceCounts.missingRequiredTypes,
     customerConfirmationRequired: Boolean(milestone.customerConfirmationRequired),
     customerConfirmationAt: milestone.customerConfirmationAt,
     taskStatuses
@@ -582,13 +577,17 @@ function normalizeManualMilestones(input: unknown) {
     if (!Array.isArray(stages) || stages.length === 0) {
       throw new BadRequestException(`Milestone "${name}" must contain at least one stage`);
     }
-    const requiredDocumentCount = optionalInteger(milestone.requiredDocumentCount, `manualMilestones[${milestoneIndex}].requiredDocumentCount`) ?? 0;
-    if (requiredDocumentCount < 0) {
-      throw new BadRequestException("requiredDocumentCount must be non-negative");
-    }
     const requiredDocumentTypes = Array.isArray(milestone.requiredDocumentTypes)
       ? milestone.requiredDocumentTypes.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((value) => value.trim())
       : [];
+    const configuredRequiredDocumentCount = optionalInteger(milestone.requiredDocumentCount, `manualMilestones[${milestoneIndex}].requiredDocumentCount`) ?? 0;
+    if (configuredRequiredDocumentCount < 0) {
+      throw new BadRequestException("requiredDocumentCount must be non-negative");
+    }
+    const requiredDocumentCount = effectiveMilestoneRequiredDocumentCount({
+      requiredDocumentCount: configuredRequiredDocumentCount,
+      requiredDocumentTypes
+    });
     const reviewerMode = normalizeMilestoneReviewerMode(milestone.reviewerMode);
     const reviewerUserId = optionalString(milestone.reviewerUserId, `manualMilestones[${milestoneIndex}].reviewerUserId`) ?? undefined;
     if (reviewerMode === "specific_user" && !reviewerUserId) {
@@ -1010,7 +1009,10 @@ function normalizeMilestoneTemplateMilestones(value: unknown): MilestoneTemplate
     return {
       name,
       sortOrder: Number.isFinite(Number(item.sortOrder)) ? Number(item.sortOrder) : (milestoneIndex + 1) * 10,
-      requiredDocumentCount: Number.isFinite(Number(item.requiredDocumentCount)) ? Math.max(0, Number(item.requiredDocumentCount)) : 0,
+      requiredDocumentCount: effectiveMilestoneRequiredDocumentCount({
+        requiredDocumentCount: Number.isFinite(Number(item.requiredDocumentCount)) ? Math.max(0, Number(item.requiredDocumentCount)) : 0,
+        requiredDocumentTypes
+      }),
       requiredDocumentTypes,
       evidenceMode: normalizeMilestoneEvidenceMode(item.evidenceMode),
       ownerTeamId: String(item.ownerTeamId ?? "").trim() || undefined,
@@ -1362,7 +1364,10 @@ export class ProjectsService {
               name: milestoneTemplate.name,
               normalizedKey: normalizeMilestoneKey(milestoneTemplate.name),
               sortOrder: milestoneTemplate.sortOrder ?? (milestoneIndex + 1) * 10,
-              requiredDocumentCount: configuredGate?.requiredDocumentCount ?? milestoneTemplate.requiredDocumentCount ?? 0,
+              requiredDocumentCount: effectiveMilestoneRequiredDocumentCount({
+                requiredDocumentCount: configuredGate?.requiredDocumentCount ?? milestoneTemplate.requiredDocumentCount ?? 0,
+                requiredDocumentTypes: configuredGate?.requiredDocumentTypes ?? milestoneTemplate.requiredDocumentTypes ?? []
+              }),
               requiredDocumentTypes: configuredGate?.requiredDocumentTypes ?? milestoneTemplate.requiredDocumentTypes ?? [],
               evidenceMode: configuredGate?.evidenceMode ?? milestoneTemplate.evidenceMode ?? "file_or_link",
               ownerTeamId: configuredGate?.ownerTeamId ?? milestoneTemplate.ownerTeamId ?? undefined,
@@ -1627,43 +1632,65 @@ export class ProjectsService {
     return new Map<string, MilestoneReviewerUser>(users.map((user: MilestoneReviewerUser) => [user.id, user]));
   }
 
-  async getProjectHierarchy(projectId: string, principal: PrincipalContext) {
-    this.assertInternalTaskPrincipal(principal, "Project hierarchy is internal");
-    const project = await this.ensureProject(projectId, principal.workspaceId);
-    const [milestones, fileCount, linkCount] = await this.prisma.$transaction([
-      this.prisma.projectMilestone.findMany({
-        where: {
-          projectId: project.id,
-          workspaceId: principal.workspaceId
-        },
-        include: {
-          ownerTeam: { select: { id: true, name: true } },
-          stages: {
-            select: {
-              tasks: {
-                where: { workspaceId: principal.workspaceId, archivedAt: null },
-                select: { status: true }
+  private async loadProjectMilestoneEvidence(projectId: string, workspaceId: string): Promise<MilestoneEvidenceDocument[]> {
+    const artifacts = await this.prisma.projectArtifact.findMany({
+      where: { projectId, workspaceId },
+      select: {
+        artifactType: true,
+        versions: {
+          orderBy: { version: "desc" },
+          take: 1,
+          select: {
+            fileObject: {
+              select: {
+                storageProvider: true,
+                status: true,
+                scanStatus: true,
+                deletedAt: true,
+                revokedAt: true
               }
             }
           }
-        },
-        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }]
-      }),
-      this.prisma.projectDocumentVersion.count({
-        where: {
-          projectId: project.id,
-          workspaceId: principal.workspaceId,
-          fileObject: { storageProvider: { in: ["local", "lark_drive"] } }
         }
-      }),
-      this.prisma.projectDocumentVersion.count({
-        where: {
-          projectId: project.id,
-          workspaceId: principal.workspaceId,
-          fileObject: { storageProvider: "external" }
+      }
+    });
+
+    return artifacts.map((artifact: any) => {
+      const fileObject = artifact.versions[0]?.fileObject;
+      const latestVersionIsUsable = fileObject
+        && fileObject.status === "active"
+        && fileObject.scanStatus === "clean"
+        && fileObject.deletedAt === null
+        && fileObject.revokedAt === null;
+      return {
+        artifactType: artifact.artifactType,
+        latestStorageProvider: latestVersionIsUsable ? fileObject.storageProvider : null
+      };
+    });
+  }
+
+  async getProjectHierarchy(projectId: string, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project hierarchy is internal");
+    const project = await this.ensureProject(projectId, principal.workspaceId);
+    const milestones = await this.prisma.projectMilestone.findMany({
+      where: {
+        projectId: project.id,
+        workspaceId: principal.workspaceId
+      },
+      include: {
+        ownerTeam: { select: { id: true, name: true } },
+        stages: {
+          select: {
+            tasks: {
+              where: { workspaceId: principal.workspaceId, archivedAt: null },
+              select: { status: true }
+            }
+          }
         }
-      })
-    ]);
+      },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }]
+    });
+    const documentEvidence = await this.loadProjectMilestoneEvidence(project.id, principal.workspaceId);
     const reviewerUsers = await this.loadMilestoneReviewerUsers(milestones, principal);
 
     return {
@@ -1671,8 +1698,7 @@ export class ProjectsService {
       hierarchyOrderVersion: project.hierarchyOrderVersion,
       milestones: milestones.map((milestone) => mapMilestoneGateSummary(
         milestone,
-        fileCount,
-        linkCount,
+        countMilestoneEvidence(milestone, documentEvidence),
         milestone.reviewerUserId ? reviewerUsers.get(milestone.reviewerUserId) : undefined,
         milestone.reviewerApprovedByUserId ? reviewerUsers.get(milestone.reviewerApprovedByUserId) : undefined,
         principal
@@ -1683,25 +1709,22 @@ export class ProjectsService {
   async listProjectMilestoneGates(projectId: string, principal: PrincipalContext) {
     this.assertInternalTaskPrincipal(principal, "Project milestone gates are internal");
     const project = await this.ensureProject(projectId, principal.workspaceId);
-    const [milestones, fileCount, linkCount] = await this.prisma.$transaction([
-      this.prisma.projectMilestone.findMany({
-        where: { projectId: project.id, workspaceId: principal.workspaceId },
-        include: {
-          ownerTeam: { select: { id: true, name: true } },
-          stages: {
-            select: {
-              tasks: {
-                where: { workspaceId: principal.workspaceId, archivedAt: null },
-                select: { status: true }
-              }
+    const milestones = await this.prisma.projectMilestone.findMany({
+      where: { projectId: project.id, workspaceId: principal.workspaceId },
+      include: {
+        ownerTeam: { select: { id: true, name: true } },
+        stages: {
+          select: {
+            tasks: {
+              where: { workspaceId: principal.workspaceId, archivedAt: null },
+              select: { status: true }
             }
           }
-        },
-        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
-      }),
-      this.prisma.projectDocumentVersion.count({ where: { projectId: project.id, workspaceId: principal.workspaceId, fileObject: { storageProvider: { in: ["local", "lark_drive"] } } } }),
-      this.prisma.projectDocumentVersion.count({ where: { projectId: project.id, workspaceId: principal.workspaceId, fileObject: { storageProvider: "external" } } })
-      ]);
+        }
+      },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
+    });
+    const documentEvidence = await this.loadProjectMilestoneEvidence(project.id, principal.workspaceId);
     const reviewerUsers = await this.loadMilestoneReviewerUsers(milestones, principal);
     return {
       projectId: project.id,
@@ -1709,8 +1732,7 @@ export class ProjectsService {
       milestoneTemplateKey: project.milestoneTemplateKey,
       data: milestones.map((milestone) => mapMilestoneGateSummary(
         milestone,
-        fileCount,
-        linkCount,
+        countMilestoneEvidence(milestone, documentEvidence),
         milestone.reviewerUserId ? reviewerUsers.get(milestone.reviewerUserId) : undefined,
         milestone.reviewerApprovedByUserId ? reviewerUsers.get(milestone.reviewerApprovedByUserId) : undefined,
         principal
@@ -1723,15 +1745,19 @@ export class ProjectsService {
     const project = await this.ensureProject(projectId, principal.workspaceId);
     const existing = await this.prisma.projectMilestone.findFirst({ where: { id: milestoneId, projectId: project.id, workspaceId: principal.workspaceId } });
     if (!existing) throw new NotFoundException("Project milestone not found");
-    const requiredDocumentCount = input.requiredDocumentCount === undefined
-      ? existing.requiredDocumentCount
-      : optionalInteger(input.requiredDocumentCount, "requiredDocumentCount") ?? existing.requiredDocumentCount;
-    if (requiredDocumentCount < 0) throw new BadRequestException("requiredDocumentCount must be non-negative");
     const requiredDocumentTypes = input.requiredDocumentTypes === undefined
       ? existing.requiredDocumentTypes
       : Array.isArray(input.requiredDocumentTypes)
         ? input.requiredDocumentTypes.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((value) => value.trim())
         : (() => { throw new BadRequestException("requiredDocumentTypes must be an array"); })();
+    const configuredRequiredDocumentCount = input.requiredDocumentCount === undefined
+        ? existing.requiredDocumentCount
+        : optionalInteger(input.requiredDocumentCount, "requiredDocumentCount") ?? existing.requiredDocumentCount;
+    if (configuredRequiredDocumentCount < 0) throw new BadRequestException("requiredDocumentCount must be non-negative");
+    const requiredDocumentCount = effectiveMilestoneRequiredDocumentCount({
+      requiredDocumentCount: configuredRequiredDocumentCount,
+      requiredDocumentTypes
+    });
     const evidenceMode = input.evidenceMode === undefined ? existing.evidenceMode : normalizeMilestoneEvidenceMode(input.evidenceMode);
     const ownerTeamId = input.ownerTeamId === undefined
       ? existing.ownerTeamId
@@ -1822,14 +1848,10 @@ export class ProjectsService {
       throw new BadRequestException("Milestone is locked until the previous milestone is approved");
     }
     const evidenceMode = normalizeMilestoneEvidenceMode(milestone.evidenceMode);
-    const submittedDocumentCount = await this.prisma.projectDocumentVersion.count({
-      where: {
-        projectId: project.id,
-        workspaceId: principal.workspaceId,
-        ...(evidenceMode === "file" ? { fileObject: { storageProvider: { in: ["local", "lark_drive"] } } } : evidenceMode === "link" ? { fileObject: { storageProvider: "external" } } : {})
-      }
-    });
-    const requiredDocumentCount = effectiveRequiredDocumentCount(milestone);
+    const documentEvidence = await this.loadProjectMilestoneEvidence(project.id, principal.workspaceId);
+    const evidenceCounts = countMilestoneEvidence(milestone, documentEvidence);
+    const submittedDocumentCount = submittedMilestoneEvidenceCount(evidenceCounts, evidenceMode);
+    const requiredDocumentCount = effectiveMilestoneRequiredDocumentCount(milestone);
     const taskRows = typeof this.prisma.projectTask?.findMany === "function"
       ? await this.prisma.projectTask.findMany({
           where: {
@@ -1844,6 +1866,7 @@ export class ProjectsService {
     const evaluation = evaluateMilestoneGate({
       requiredDocumentCount,
       submittedDocumentCount,
+      missingDocumentTypes: evidenceCounts.missingRequiredTypes,
       customerConfirmationRequired: Boolean(milestone.customerConfirmationRequired),
       customerConfirmationAt: milestone.customerConfirmationAt,
       taskStatuses: taskRows.map((task: { status: unknown }) => task.status)
