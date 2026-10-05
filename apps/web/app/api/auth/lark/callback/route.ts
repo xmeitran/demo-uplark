@@ -28,13 +28,29 @@ export async function GET(request: Request) {
   }
 
   const redirectUri = new URL("/api/auth/lark/callback", publicOrigin).toString();
-  const response = await fetch(buildCrmApiEndpoint("/auth/lark/callback"), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ code, state, redirectUri, invitationToken }),
-    cache: "no-store"
-  });
-  const body = (await response.json()) as LarkOAuthCallbackResponse | { message?: string; mfaRequired?: boolean; challengeToken?: string; returnTo?: string };
+  let response: Response;
+  let body: LarkOAuthCallbackResponse | { message?: string; mfaRequired?: boolean; challengeToken?: string; returnTo?: string };
+  try {
+    response = await fetch(buildCrmApiEndpoint("/auth/lark/callback"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code, state, redirectUri, invitationToken }),
+      cache: "no-store"
+    });
+    const rawBody = await response.text();
+    try {
+      body = JSON.parse(rawBody) as typeof body;
+    } catch {
+      body = {};
+    }
+  } catch (callbackError) {
+    console.error("[lark-callback] API request failed", {
+      message: callbackError instanceof Error ? callbackError.message : "unknown error"
+    });
+    const failure = redirectWithError(publicOrigin, "lark_callback_failed");
+    clearTransientAuthCookies(failure);
+    return failure;
+  }
 
   if (response.ok && "mfaRequired" in body && body.mfaRequired && body.challengeToken) {
     const target = new URL("/login", publicOrigin);
@@ -48,6 +64,10 @@ export async function GET(request: Request) {
 
   if (!response.ok || !("token" in body)) {
     const errorMessage = "message" in body ? body.message : undefined;
+    console.error("[lark-callback] API rejected callback", {
+      status: response.status,
+      message: errorMessage
+    });
     const nextResponse = redirectWithError(
       publicOrigin,
       invitationToken && errorMessage === "invitation_review_required"
