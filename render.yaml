@@ -106,7 +106,7 @@ services:
       - key: CRM_LARK_AUTO_PROVISION
         value: "true"
       - key: CRM_LARK_DEFAULT_ROLE_CODE
-        value: SALES_OWNER
+        value: WORKSPACE_USER
       - key: CRM_LARK_ENTERPRISE_EMAIL_OVERRIDES
         value: HCM273=maitns@upbase.asia
       - key: CRM_AUTH_ENCRYPTION_KEY
