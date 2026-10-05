@@ -63,6 +63,11 @@ export class BrdGovernanceController {
     return this.principal(auth, fallback).then((p) => this.governance.upsertPnlPeriod(body, p));
   }
 
+  @Get("pnl-periods")
+  getPnlPeriod(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Query("periodKey") periodKey = "") {
+    return this.principal(auth, fallback).then((p) => this.governance.getPnlPeriod(periodKey, p));
+  }
+
   @Get("pnl-configurations")
   getPnlConfiguration(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Query("periodKey") periodKey = "2026-09") {
     return this.principal(auth, fallback).then((p) => this.governance.getPnlConfiguration(periodKey, p));

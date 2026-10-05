@@ -402,7 +402,7 @@ export function TimesheetWorkbench() {
             <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
             {scope === "self"
               ? "Đang xem ở phạm vi cá nhân — chỉ hiển thị dữ liệu của chính người dùng đăng nhập."
-              : "Đang xem ở phạm vi Delivery Lead / PM — chỉ hiển thị các dự án người dùng quản lý."}
+              : "Đang xem ở phạm vi Project Manager / PM — chỉ hiển thị các dự án người dùng quản lý."}
           </p>
         ) : null}
       </section>

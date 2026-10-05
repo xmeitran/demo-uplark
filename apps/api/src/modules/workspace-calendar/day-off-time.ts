@@ -35,20 +35,26 @@ export async function lockWorkspaceDayOffDates(
   }
 }
 
-export async function tagTimeEntriesWithDayOffDates(
+export async function reconcileTimeEntriesWithDayOffDates(
   tx: Prisma.TransactionClient,
-  workspaceId: string,
-  dayOffIds: readonly string[]
+  workspaceId: string
 ) {
-  if (dayOffIds.length === 0) return;
+  // A day-off can be edited or deactivated after time entries have already
+  // been tagged. Clear first, then derive the tag from the current active
+  // calendar. This prevents stale exclusions after an admin unlocks or moves
+  // a day-off record.
+  await tx.$executeRaw(Prisma.sql`
+    UPDATE "TaskTimeEntry"
+    SET "dayOffId" = NULL
+    WHERE "workspaceId" = ${workspaceId}
+  `);
   await tx.$executeRaw(Prisma.sql`
     UPDATE "TaskTimeEntry" AS te
     SET "dayOffId" = dayOff."id"
     FROM "WorkspaceDayOff" AS dayOff
     WHERE dayOff."workspaceId" = ${workspaceId}
-      AND dayOff."id" IN (${Prisma.join(dayOffIds)})
+      AND dayOff."isActive" = true
       AND te."workspaceId" = dayOff."workspaceId"
-      AND te."dayOffId" IS NULL
       AND (
         (
           te."startAt" IS NOT NULL

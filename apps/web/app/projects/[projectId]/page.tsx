@@ -20,6 +20,7 @@ import { AppShell } from "@/components/constructor-x/app-shell";
 import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-tab-bar";
 import { CustomDropdown, CustomDatePicker } from "@/components/constructor-x/custom-controls";
 import { ModalLayer } from "@/components/modal-layer";
+import { CrmMultiSelect, CrmSelect } from "@/components/crm-workspace/crm-select";
 import { useAuth } from "@/lib/auth";
 import type { Project } from "../data";
 import {
@@ -44,7 +45,8 @@ import type {
   ProjectSummary,
   ProjectTaskSummary,
   ResourceListResponse,
-  TaskTimeEntrySummary
+  TaskTimeEntrySummary,
+  WorkspaceSystemRole
 } from "@b2b-crm/contracts";
 import {
   fetchWorkspaceUserOptions,
@@ -53,6 +55,7 @@ import {
 } from "@/lib/workspace-users";
 import { formatVietnamTime, VIETNAM_TIME_ZONE, VIETNAM_TIME_ZONE_LABEL } from "@/lib/vietnam-time";
 import { hasAnyAuthRole } from "@/lib/auth-role";
+import { systemRoleLabel } from "@/lib/people-roles";
 import { formatProjectDateRange } from "@/lib/project-date";
 import { isCompletedTaskStatus } from "@/components/crm-workspace/task-display-helpers";
 import {
@@ -314,7 +317,7 @@ type ProjectTeamMember = {
   name: string;
   email: string;
   role: string;
-  department?: string;
+  systemRole?: WorkspaceSystemRole;
   color: string;
   tasks: number;
   done: number;
@@ -346,6 +349,7 @@ function toProjectTeamMemberFromProjectMember(member: Project["members"][number]
     name: member.name || member.email || member.initials,
     email: member.email || "",
     role: "Project member",
+    systemRole: "WORKSPACE_USER",
     color: member.color,
     tasks: member.assignedTaskCount ?? 0,
     done: member.doneTaskCount ?? 0,
@@ -361,7 +365,7 @@ function toProjectTeamMember(user: WorkspaceUserOption): ProjectTeamMember {
     name: user.name,
     email: user.email,
     role: user.role,
-    department: user.department,
+    systemRole: user.systemRole,
     color: user.color,
     tasks: 0,
     done: 0,
@@ -386,7 +390,6 @@ function mergeTeamMembers(projectMembers: ProjectTeamMember[], workspaceMembers:
           name: workspaceMember.name || projectMember.name,
           email: workspaceMember.email || projectMember.email,
           role: workspaceMember.role || projectMember.role,
-          department: workspaceMember.department || projectMember.department,
           tasks: projectMember.tasks,
           done: projectMember.done,
           avatarUrl: projectMember.avatarUrl || workspaceMember.avatarUrl,
@@ -440,7 +443,6 @@ function mergeTeamMemberRecords(existing: ProjectTeamMember, incoming: ProjectTe
     name: existing.name || incoming.name,
     email: existing.email || incoming.email,
     role: preferredProjectRole(existing.role, incoming.role),
-    department: existing.department || incoming.department,
     color: existing.color || incoming.color,
     tasks: existing.tasks + incoming.tasks,
     done: existing.done + incoming.done,
@@ -1177,7 +1179,7 @@ function ProjectSheetPanel({
           </div>
           <div className="grid gap-2 sm:grid-cols-3 xl:w-[620px]">
             <label className="flex items-center gap-2 rounded-xl border border-input bg-background px-3 py-2.5 sm:col-span-1"><Search className="h-4 w-4 shrink-0 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm task, người thực hiện..." className="min-w-0 flex-1 bg-transparent text-sm outline-none" /></label>
-            <select aria-label="Lọc trạng thái" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)} className="rounded-xl border border-input bg-background px-3 py-2.5 text-sm font-medium text-foreground outline-none focus:ring-2 focus:ring-primary/20"><option value="all">Tất cả trạng thái</option><option value="done">Hoàn tất</option><option value="in-progress">Đang thực hiện</option><option value="todo">Chưa bắt đầu</option></select>
+            <CustomDropdown ariaLabel="Lọc trạng thái" options={[{ value: "all", label: "Tất cả trạng thái" }, { value: "done", label: "Hoàn tất" }, { value: "in-progress", label: "Đang thực hiện" }, { value: "todo", label: "Chưa bắt đầu" }]} value={statusFilter} onChange={(value) => setStatusFilter(value as typeof statusFilter)} />
             <div className="min-w-0" aria-label="Lọc người thực hiện"><TeamMemberSingleSelect members={teamMembers} value={memberFilter === "all" ? undefined : teamMembers.find((member) => member.id === memberFilter)} onChange={(member) => setMemberFilter(member?.id ?? "all")} placeholder="Tất cả người thực hiện" /></div>
           </div>
         </div>
@@ -1579,10 +1581,10 @@ function ProjectIssuesPanel({
         <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-bold text-foreground">Báo blocker / risk / issue</h3><p className="mt-1 text-xs text-muted-foreground">Bản ghi mới sẽ xuất hiện ngay trong danh sách điều phối của project.</p></div><AlertCircle className="h-5 w-5 text-amber-500" /></div>
         <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           <label className="lg:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Mô tả vấn đề</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="Ví dụ: Chờ dữ liệu đầu vào từ khách hàng để hoàn thành stage…" className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15" /></label>
-          <label><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Loại bản ghi</span><select value={category} onChange={(event) => setCategory(event.target.value as RiskItem["category"])} className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm"><option value="Blocker">Blocker — đang chặn</option><option value="Risk">Risk — nguy cơ</option><option value="Issue">Issue — đã phát sinh</option></select></label>
+          <div><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Loại bản ghi</span><CustomDropdown options={[{ value: "Blocker", label: "Blocker — đang chặn" }, { value: "Risk", label: "Risk — nguy cơ" }, { value: "Issue", label: "Issue — đã phát sinh" }]} value={category} onChange={(value) => setCategory(value as RiskItem["category"])} /></div>
           <div><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Owner</span><TeamMemberSingleSelect members={teamMembers} value={teamMembers.find((member) => member.id === ownerUserId)} onChange={(member) => setOwnerUserId(member?.id ?? "")} placeholder="Chưa phân công" /></div>
-          <label><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Khả năng</span><select value={likelihood} onChange={(event) => setLikelihood(event.target.value as RiskItem["likelihood"])} className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm"><option value="Low">Thấp</option><option value="Medium">Vừa</option><option value="High">Cao</option></select></label>
-          <label><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Tác động</span><select value={impact} onChange={(event) => setImpact(event.target.value as RiskItem["impact"])} className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm"><option value="Low">Thấp</option><option value="Medium">Vừa</option><option value="High">Cao</option></select></label>
+          <div><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Khả năng</span><CustomDropdown options={[{ value: "Low", label: "Thấp" }, { value: "Medium", label: "Vừa" }, { value: "High", label: "Cao" }]} value={likelihood} onChange={(value) => setLikelihood(value as RiskItem["likelihood"])} /></div>
+          <div><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Tác động</span><CustomDropdown options={[{ value: "Low", label: "Thấp" }, { value: "Medium", label: "Vừa" }, { value: "High", label: "Cao" }]} value={impact} onChange={(value) => setImpact(value as RiskItem["impact"])} /></div>
           <label className="lg:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Phương án xử lý</span><input value={response} onChange={(event) => setResponse(event.target.value)} placeholder="Giảm thiểu, chờ phê duyệt, cập nhật dữ liệu…" className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-primary" /></label>
           <label className="lg:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Điều kiện chuyển trạng thái</span><input value={switchTrigger} onChange={(event) => setSwitchTrigger(event.target.value)} placeholder="Ví dụ: Khách hàng xác nhận trước 17:00" className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-primary" /></label>
         </div>
@@ -1592,10 +1594,10 @@ function ProjectIssuesPanel({
       <div className="order-2 overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
         <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h3 className="text-sm font-bold text-foreground">Danh sách theo dõi</h3><p className="mt-1 text-xs text-muted-foreground">Các bản ghi được dùng làm đầu vào cho cảnh báo tiến độ và điều phối owner.</p></div><span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">{risks.length} bản ghi</span></div>
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
-          <select aria-label="Lọc loại vấn đề" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs font-semibold"><option value="all">Loại: Tất cả</option><option value="Blocker">Blocker</option><option value="Risk">Risk</option><option value="Issue">Issue</option></select>
-          <select aria-label="Lọc mức độ" value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)} className="rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs font-semibold"><option value="all">Mức độ: Tất cả</option><option value="High">Nghiêm trọng / Cao</option><option value="Medium">Vừa</option><option value="Low">Thấp</option></select>
-          <select aria-label="Lọc owner" value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)} className="max-w-[190px] rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs font-semibold"><option value="all">Owner: Tất cả</option>{Array.from(new Set(risks.map((risk) => risk.owner).filter(Boolean))).map((owner) => <option key={owner} value={owner}>{owner}</option>)}</select>
-          <select aria-label="Lọc trạng thái" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs font-semibold"><option value="all">Trạng thái: Tất cả</option><option value="open">Đang mở</option><option value="resolved">Đã xử lý</option></select>
+          <CustomDropdown ariaLabel="Lọc loại vấn đề" options={[{ value: "all", label: "Loại: Tất cả" }, { value: "Blocker", label: "Blocker" }, { value: "Risk", label: "Risk" }, { value: "Issue", label: "Issue" }]} value={categoryFilter} onChange={setCategoryFilter} />
+          <CustomDropdown ariaLabel="Lọc mức độ" options={[{ value: "all", label: "Mức độ: Tất cả" }, { value: "High", label: "Nghiêm trọng / Cao" }, { value: "Medium", label: "Vừa" }, { value: "Low", label: "Thấp" }]} value={severityFilter} onChange={setSeverityFilter} />
+          <CustomDropdown ariaLabel="Lọc owner" options={[{ value: "all", label: "Owner: Tất cả" }, ...Array.from(new Set(risks.map((risk) => risk.owner).filter(Boolean))).map((owner) => ({ value: owner, label: owner }))]} value={ownerFilter} onChange={setOwnerFilter} />
+          <CustomDropdown ariaLabel="Lọc trạng thái" options={[{ value: "all", label: "Trạng thái: Tất cả" }, { value: "open", label: "Đang mở" }, { value: "resolved", label: "Đã xử lý" }]} value={statusFilter} onChange={setStatusFilter} />
           <span className="ml-auto text-xs font-semibold text-muted-foreground">{visibleRisks.length} / {risks.length} bản ghi</span>
           <button type="button" onClick={exportVisibleRisks} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground transition hover:bg-muted"><Download className="h-3.5 w-3.5" /> Xuất Excel</button>
         </div>
@@ -2217,141 +2219,28 @@ function ProjectIdentityAvatar({
   return <TeamMemberAvatar member={fallbackMember} size={size} />;
 }
 
-function TeamMemberMultiSelect({
-  members,
-  selectedIds,
-  onChange,
-  placeholder = "Select users"
-}: {
-  members: ProjectTeamMember[];
-  selectedIds: string[];
-  onChange: (ids: string[]) => void;
-  placeholder?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const selectedMembers = selectedIds
-    .map((id) => members.find((member) => member.id === id))
-    .filter((member): member is ProjectTeamMember => Boolean(member));
-
-  useEffect(() => {
-    const handler = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  const toggleMember = (memberId: string) => {
-    // Keep at least one assignee selected when toggling an existing sole member.
-    // Use the explicit Clear action when an empty assignment is intentional.
-    if (selectedIds.includes(memberId) && selectedIds.length === 1) return;
-    onChange(
-      selectedIds.includes(memberId)
-        ? selectedIds.filter((id) => id !== memberId)
-        : [...selectedIds, memberId]
-    );
-  };
-
+function TeamMemberMultiSelect({ members, selectedIds, onChange, placeholder = "Select users" }: { members: ProjectTeamMember[]; selectedIds: string[]; onChange: (ids: string[]) => void; placeholder?: string }) {
   return (
-    <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        disabled={members.length === 0}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        onClick={() => setOpen((current) => !current)}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") setOpen(false);
-        }}
-        className="flex min-h-11 w-full items-center justify-between gap-3 rounded-xl border border-input bg-background px-3 py-2 text-left text-sm text-foreground transition-all focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
-        style={{ borderColor: open ? "var(--color-primary)" : "var(--color-input)" }}
-      >
-        <span className="flex min-w-0 flex-1 items-center gap-2">
-          {selectedMembers.length > 0 ? (
-            <>
-              <span className="flex shrink-0 -space-x-1.5">
-                {selectedMembers.slice(0, 4).map((member) => (
-                  <TeamMemberAvatar key={member.id} member={member} size="sm" />
-                ))}
-              </span>
-              <span className="min-w-0">
-                <span className="block truncate text-xs font-semibold">
-                  {selectedMembers.length === 1 ? selectedMembers[0].name : `${selectedMembers.length} users selected`}
-                </span>
-                {selectedMembers.length === 1 ? <span className="block truncate text-[10px] text-muted-foreground">{selectedMembers[0].department || selectedMembers[0].role || selectedMembers[0].email}</span> : null}
-              </span>
-            </>
-          ) : (
-            <span className="truncate text-muted-foreground/60">{members.length === 0 ? "No project members" : placeholder}</span>
-          )}
-        </span>
-        <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: 8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.98 }}
-            transition={{ duration: 0.15 }}
-            className="absolute left-0 right-0 z-[70] mt-1.5 overflow-hidden rounded-xl border border-border bg-card shadow-xl"
-            role="listbox"
-            aria-label="Project members"
-            aria-multiselectable="true"
-            style={{ boxShadow: "0 16px 40px rgba(15,23,42,0.16)" }}
-          >
-            <div className="flex items-center justify-between border-b border-border px-3 py-2">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                PROJECT MEMBERS · {selectedMembers.length} selected
-              </span>
-              {selectedMembers.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => onChange([])}
-                  className="rounded-md px-2 py-1 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-            <div className="max-h-64 overflow-y-auto py-1">
-              {members.map((member) => {
-                const selected = selectedIds.includes(member.id);
-                return (
-                  <button
-                    key={member.id}
-                    type="button"
-                    role="option"
-                    aria-selected={selected}
-                    onClick={() => toggleMember(member.id)}
-                    className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-muted ${
-                      selected ? "bg-primary/5" : ""
-                    }`}
-                  >
-                    <TeamMemberAvatar member={member} size="sm" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-semibold text-foreground">{member.name}</span>
-                      <span className="block truncate text-[10px] text-muted-foreground">
-                        {member.department || member.role} · {member.email}
-                      </span>
-                    </span>
-                    <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${
-                      selected ? "border-primary bg-primary text-primary-foreground" : "border-border text-transparent"
-                    }`}>
-                      <Check className="h-3.5 w-3.5" />
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+    <CrmMultiSelect
+      ariaLabel="Thành viên project"
+      disabled={members.length === 0}
+      options={members.map((member) => ({
+        value: member.id,
+        label: member.name,
+        meta: `${member.role || "Chưa gán"} · ${systemRoleLabel(member.systemRole)} · ${member.email}`,
+        avatarUrl: member.avatarUrl,
+        initials: member.initials,
+        color: member.color
+      }))}
+      placeholder={members.length === 0 ? "No project members" : placeholder}
+      selectedCountLabel={(count) => `${count} đã chọn`}
+      values={selectedIds}
+      onChange={(nextIds) => {
+        if (selectedIds.length === 1 && nextIds.length === 0) return;
+        onChange(nextIds);
+      }}
+      onClear={() => onChange([])}
+    />
   );
 }
 
@@ -2366,101 +2255,29 @@ function TeamMemberSingleSelect({
   onChange: (member: ProjectTeamMember | undefined) => void;
   placeholder?: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
   const selectedMember = value ? members.find((member) => member.id === value.id) ?? value : undefined;
 
-  useEffect(() => {
-    const handler = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
   return (
-    <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        disabled={members.length === 0}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        onClick={() => setOpen((current) => !current)}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") setOpen(false);
-        }}
-        className="flex min-h-11 w-full items-center justify-between gap-3 rounded-xl border border-input bg-background px-3 py-2 text-left text-sm text-foreground transition-all focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
-        style={{ borderColor: open ? "var(--color-primary)" : "var(--color-input)" }}
-      >
-        <span className="flex min-w-0 flex-1 items-center gap-2">
-          {selectedMember ? (
-            <>
-              <TeamMemberAvatar member={selectedMember} size="sm" />
-              <span className="min-w-0">
-                <span className="block truncate text-xs font-semibold">{selectedMember.name}</span>
-                <span className="block truncate text-[10px] text-muted-foreground">
-                  {selectedMember.department || selectedMember.role || selectedMember.email}
-                </span>
-              </span>
-            </>
-          ) : (
-            <span className="truncate text-muted-foreground/60">{members.length === 0 ? "No project members" : placeholder}</span>
-          )}
-        </span>
-        <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: 8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.98 }}
-            transition={{ duration: 0.15 }}
-            className="absolute left-0 right-0 z-[70] mt-1.5 overflow-hidden rounded-xl border border-border bg-card shadow-xl"
-            role="listbox"
-            style={{ boxShadow: "0 16px 40px rgba(15,23,42,0.16)" }}
-          >
-            <div className="border-b border-border px-3 py-2">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                PROJECT MEMBERS
-              </span>
-            </div>
-            <div className="max-h-64 overflow-y-auto py-1">
-              {members.map((member) => {
-                const selected = selectedMember?.id === member.id;
-                return (
-                  <button
-                    key={member.id}
-                    type="button"
-                    aria-selected={selected}
-                    onClick={() => {
-                      onChange(member);
-                      setOpen(false);
-                    }}
-                    className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-muted ${
-                      selected ? "bg-primary/5" : ""
-                    }`}
-                    role="option"
-                  >
-                    <TeamMemberAvatar member={member} size="sm" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-semibold text-foreground">{member.name}</span>
-                      <span className="block truncate text-[10px] text-muted-foreground">
-                        {member.department || member.role} · {member.email}
-                      </span>
-                    </span>
-                    {selected && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
-                  </button>
-                );
-              })}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+    <CrmSelect
+      ariaLabel="Chọn người phụ trách"
+      disabled={members.length === 0}
+      options={[
+        { value: "", label: members.length === 0 ? "No project members" : placeholder },
+        ...members.map((member) => ({
+          value: member.id,
+          label: member.name,
+          meta: `${member.role || "Chưa gán"} · ${systemRoleLabel(member.systemRole)} · ${member.email}`,
+          avatarUrl: member.avatarUrl,
+          initials: member.initials,
+          color: member.color
+        }))
+      ]}
+      searchable
+      searchPlaceholder="Tìm tên, email hoặc vai trò..."
+      value={selectedMember?.id ?? ""}
+      onChange={(memberId) => onChange(members.find((member) => member.id === memberId))}
+      placeholder={placeholder}
+    />
   );
 }
 
@@ -2959,12 +2776,12 @@ function InviteMemberModal({ color, onClose, onInvite, teamMembers, workspaceUse
               </div>
               <div>
                 <p className="text-xs font-bold text-foreground">{selectedUser.name}</p>
-                <p className="text-[10px] text-muted-foreground">{selectedUser.role} • {selectedUser.department ?? "Workspace"}</p>
+                <p className="text-[10px] text-muted-foreground">{selectedUser.role} • {systemRoleLabel(selectedUser.systemRole)}</p>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2 text-[10px] text-muted-foreground pt-1.5 border-t border-border/40">
               <div>Email: <span className="font-medium text-foreground">{selectedUser.email}</span></div>
-              <div>Department: <span className="font-medium text-foreground">{selectedUser.department ?? "Workspace"}</span></div>
+              <div>System role: <span className="font-medium text-foreground">{systemRoleLabel(selectedUser.systemRole)}</span></div>
             </div>
           </motion.div>
         )}
@@ -8915,30 +8732,8 @@ export default function ProjectDetailPage() {
 
                         <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/10 px-5 py-3">
                           <span className="mr-1 text-[10px] font-black uppercase tracking-wider text-muted-foreground">Bộ lọc</span>
-                          <select
-                            aria-label="Lọc loại hoạt động"
-                            value={activitySourceFilter}
-                            onChange={(event) => { setActivitySourceFilter(event.target.value as typeof activitySourceFilter); setActivityPage(0); }}
-                            className="rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground outline-none focus:ring-2 focus:ring-primary/20"
-                          >
-                            <option value="all">Tất cả sự kiện</option>
-                            <option value="project">Dự án</option>
-                            <option value="work-log">Ghi giờ</option>
-                          </select>
-                          <select
-                            aria-label="Lọc người thực hiện"
-                            value={activityUserFilter}
-                            onChange={(event) => { setActivityUserFilter(event.target.value); setActivityPage(0); }}
-                            className="max-w-[240px] rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground outline-none focus:ring-2 focus:ring-primary/20"
-                          >
-                            <option value="all">Tất cả người thực hiện</option>
-                            {Array.from(new Map(allProjectActivityFeed.map((item) => {
-                              const key = normalizeIdentityValue(item.userId) ?? normalizeIdentityValue(item.userName);
-                              return key ? [key, item.userName || key] as const : null;
-                            }).filter((entry): entry is readonly [string, string] => Boolean(entry))).entries()).map(([key, label]) => (
-                              <option key={key} value={key}>{label}</option>
-                            ))}
-                          </select>
+                          <CustomDropdown ariaLabel="Lọc loại hoạt động" options={[{ value: "all", label: "Tất cả sự kiện" }, { value: "project", label: "Dự án" }, { value: "work-log", label: "Ghi giờ" }]} value={activitySourceFilter} onChange={(value) => { setActivitySourceFilter(value as typeof activitySourceFilter); setActivityPage(0); }} />
+                          <CustomDropdown ariaLabel="Lọc người thực hiện" options={[{ value: "all", label: "Tất cả người thực hiện" }, ...Array.from(new Map(allProjectActivityFeed.map((item) => { const key = normalizeIdentityValue(item.userId) ?? normalizeIdentityValue(item.userName); return key ? [key, item.userName || key] as const : null; }).filter((entry): entry is readonly [string, string] => Boolean(entry))).entries()).map(([value, label]) => ({ value, label }))]} value={activityUserFilter} onChange={(value) => { setActivityUserFilter(value); setActivityPage(0); }} />
                           <span className="ml-auto text-xs font-semibold text-muted-foreground">{projectActivityFeed.length}/{allProjectActivityFeed.length} sự kiện</span>
                         </div>
 
@@ -9138,16 +8933,8 @@ export default function ProjectDetailPage() {
                             </button>
                           ))}
                         </div>
-                        <select aria-label="Lọc theo milestone" value={docMilestoneFilter} onChange={(event) => setDocMilestoneFilter(event.target.value)} className="rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground">
-                          <option value="All">Tất cả Milestone</option>
-                          {milestones.map((milestone) => <option key={milestone.id} value={milestone.id}>{milestone.name}</option>)}
-                          <option value="unassigned">Chưa gắn Milestone</option>
-                        </select>
-                        <select aria-label="Lọc tình trạng tài liệu" value={docStatusFilter} onChange={(event) => setDocStatusFilter(event.target.value as typeof docStatusFilter)} className="rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground">
-                          <option value="all">Tất cả tình trạng</option>
-                          <option value="submitted">Đã nộp</option>
-                          <option value="missing">Đang thiếu</option>
-                        </select>
+                        <CustomDropdown ariaLabel="Lọc theo milestone" options={[{ value: "All", label: "Tất cả Milestone" }, ...milestones.map((milestone) => ({ value: milestone.id, label: milestone.name })), { value: "unassigned", label: "Chưa gắn Milestone" }]} value={docMilestoneFilter} onChange={setDocMilestoneFilter} />
+                        <CustomDropdown ariaLabel="Lọc tình trạng tài liệu" options={[{ value: "all", label: "Tất cả tình trạng" }, { value: "submitted", label: "Đã nộp" }, { value: "missing", label: "Đang thiếu" }]} value={docStatusFilter} onChange={(value) => setDocStatusFilter(value as typeof docStatusFilter)} />
                         <label className="inline-flex items-center gap-2 whitespace-nowrap rounded-xl border border-border bg-background px-3 py-2 text-xs font-semibold text-foreground">
                           <input type="checkbox" checked={requiredDocsOnly} onChange={(event) => setRequiredDocsOnly(event.target.checked)} className="accent-primary" />
                           Chỉ bắt buộc

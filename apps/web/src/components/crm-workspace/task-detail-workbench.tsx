@@ -159,8 +159,8 @@ function getTaskDetailIconName(taskType?: string): ShopifyIconName {
 function formatAssigneeName(userId?: string, displayName?: string) {
   if (displayName) return displayName;
   if (userId === "founder" || userId === "usr-founder" || userId === "usr-kha-founder") return "Nguyễn Hùng Việt Kha";
-  if (userId === "sales-owner") return "Sales Owner";
-  if (userId === "delivery-lead") return "Delivery Lead";
+  if (userId === "sales-owner") return "Business development";
+  if (userId === "delivery-lead") return "Project Manager";
   return userId || "Chưa phân công";
 }
 
@@ -1048,9 +1048,9 @@ export function TaskDetailWorkbench({
         value === "founder"
           ? "Kha Nguyen (Founder)"
           : value === "sales-owner"
-          ? "Sales Owner"
+          ? "Business development"
           : value === "delivery-lead"
-          ? "Delivery Lead"
+          ? "Project Manager"
           : "Deliverer Team";
     }
 
@@ -2689,8 +2689,8 @@ export function TaskDetailWorkbench({
                           const authorId = comment.createdByUserId;
                           const author = authorId === "founder" || authorId === "usr-founder" || authorId === "usr-kha-founder"
                             ? "Nguyễn Hùng Việt Kha"
-                            : authorId === "sales-owner" ? "Sales Owner"
-                            : authorId === "delivery-lead" ? "Delivery Lead"
+                            : authorId === "sales-owner" ? "Business development"
+                            : authorId === "delivery-lead" ? "Project Manager"
                             : authorId || "Thành viên";
                           const avatarBg = ["bg-indigo-100 text-indigo-700","bg-violet-100 text-violet-700","bg-emerald-100 text-emerald-700","bg-amber-100 text-amber-700"];
                           const ci = author.charCodeAt(0) % avatarBg.length;

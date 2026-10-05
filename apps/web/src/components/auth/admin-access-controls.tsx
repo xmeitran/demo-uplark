@@ -4,12 +4,12 @@ import { useAuth } from "@/lib/auth";
 import { authRequest } from "@/lib/native-auth-client";
 import { CustomDropdown } from "@/components/crm-workspace/tasks-workbench";
 import { AuthField, authButton, authInput } from "./account-form";
-const invitationRoles = [{value:"DELIVERY_LEAD",label:"Delivery Lead"},{value:"SALES_OWNER",label:"Sales Owner"},{value:"FINANCE_ADMIN",label:"Finance Admin"},{value:"FOUNDER_GM",label:"Founder / General Manager"}];
-const workspaceRoles = [{value:"WORKSPACE_ADMIN",label:"Workspace Admin"},{value:"WORKSPACE_USER",label:"Workspace User"}];
+const invitationRoles = [{value:"WORKSPACE_USER",label:"Workspace User"},{value:"WORKSPACE_ADMIN",label:"Workspace Admin"},{value:"FOUNDER_GM",label:"Founder/GM"}];
+const workspaceRoles = [{value:"FOUNDER_GM",label:"Founder/GM"},{value:"WORKSPACE_ADMIN",label:"Workspace Admin"},{value:"WORKSPACE_USER",label:"Workspace User"}];
 type Invitation = {id:string;email:string;displayName?:string;roleCode:string;status:string;expiresAt:string};
 export function AdminInvitations() {
   const {user} = useAuth(); const [open,setOpen] = useState(false); const [rows,setRows] = useState<Invitation[]>([]);
-  const [email,setEmail] = useState(""); const [displayName,setName] = useState(""); const [roleCode,setRole] = useState("DELIVERY_LEAD");
+  const [email,setEmail] = useState(""); const [displayName,setName] = useState(""); const [roleCode,setRole] = useState("WORKSPACE_USER");
   const [busy,setBusy] = useState(false); const [error,setError] = useState(""); const [message,setMessage] = useState("");
   const allowed = user?.role === "FOUNDER_GM";
   async function load(){ const r = await authRequest<{data:Invitation[]}>("admin/invitations"); setRows(r.data); }
@@ -60,7 +60,7 @@ export function AdminMemberControls({userId,status,currentRole}:{userId:string;s
     </div>
     <button disabled={busy} className="mt-2 min-h-10 w-full rounded-xl px-3 text-xs font-semibold text-slate-500 transition hover:bg-slate-50 hover:text-red-600" onClick={()=>setConfirm("revoke-sessions")}>Thu hồi tất cả session</button>
     <p className="mt-4 rounded-xl border border-blue-100 bg-blue-50/70 p-3 text-xs leading-5 text-blue-800">Hệ thống luôn giữ lại ít nhất một Founder/GM và không cho phép tài khoản đang đăng nhập tự hạ quyền.</p>
-    {confirm&&<div role="alert" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-sm font-medium text-amber-900">Xác nhận {confirm==="role"?`đổi thành ${roleCode === "WORKSPACE_ADMIN" ? "Workspace Admin" : "Workspace User"}`:confirm.replaceAll("-"," ")}?</p><div className="mt-3 flex gap-2"><button disabled={busy} className={authButton} onClick={()=>void execute()}>Xác nhận</button><button className="min-h-11 px-3 text-sm font-semibold text-slate-600" onClick={()=>setConfirm(null)}>Hủy</button></div></div>}
+    {confirm&&<div role="alert" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-sm font-medium text-amber-900">Xác nhận {confirm==="role"?`đổi thành ${roleCode === "FOUNDER_GM" ? "Founder/GM" : roleCode === "WORKSPACE_ADMIN" ? "Workspace Admin" : "Workspace User"}`:confirm.replaceAll("-"," ")}?</p><div className="mt-3 flex gap-2"><button disabled={busy} className={authButton} onClick={()=>void execute()}>Xác nhận</button><button className="min-h-11 px-3 text-sm font-semibold text-slate-600" onClick={()=>setConfirm(null)}>Hủy</button></div></div>}
     {error&&<p role="alert" className="mt-3 text-sm text-red-600">{error}</p>}
   </section>;
 }

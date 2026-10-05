@@ -16,7 +16,8 @@ import type { AdminAccessMemberSummary } from "@b2b-crm/contracts";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { useAuth } from "@/lib/auth";
 import { downloadCsv } from "@/lib/csv-export";
-import { formatDepartmentLabel } from "@/lib/department-labels";
+import { BUSINESS_ROLE_OPTIONS, businessRoleFromMember, systemRoleFromCodes, systemRoleLabel, SYSTEM_ROLE_OPTIONS } from "@/lib/people-roles";
+import { CustomDropdown } from "@/components/crm-workspace/tasks-workbench";
 import {
   type PeopleProfile,
   formatHours,
@@ -43,7 +44,7 @@ function workStatusLabel(status: PeopleProfile["status"]) {
 
 function mapLiveProfile(member: AdminAccessMemberSummary, minutesByUser: Map<string, number>): PeopleProfile {
   const name = member.displayName || member.email || member.id;
-  const role = member.resourceDisplayRole || "Chưa gán chức danh";
+  const role = businessRoleFromMember(member);
   const actualHours = (minutesByUser.get(member.id) ?? 0) / 60;
   return {
     id: member.id,
@@ -52,7 +53,7 @@ function mapLiveProfile(member: AdminAccessMemberSummary, minutesByUser: Map<str
     avatarUrl: member.avatarUrl,
     color: colorForId(member.id),
     role,
-    department: formatDepartmentLabel(member.departmentCode),
+    systemRole: member.systemRole ?? systemRoleFromCodes(member.roleCodes),
     level: "L3",
     employmentType: "Full-time",
     manager: "—",
@@ -111,7 +112,8 @@ export default function PeoplePage() {
   // implicit full access; all other roles need an explicit COST_* binding.
   const canViewFinancials = Boolean(user?.roleCodes?.some((role) => ["FOUNDER_GM", "COST_VIEW", "COST_EDIT", "COST_APPROVE", "COST_EXPORT"].includes(role)));
   const [query, setQuery] = useState("");
-  const [department, setDepartment] = useState("all");
+  const [roleFilter, setRoleFilter] = useState("all");
+  const [systemRoleFilter, setSystemRoleFilter] = useState("all");
   const [status, setStatus] = useState("all");
   const [selectedId, setSelectedId] = useState("");
   const [profiles, setProfiles] = useState<PeopleProfile[]>([]);
@@ -143,16 +145,16 @@ export default function PeoplePage() {
     return () => { active = false; };
   }, []);
 
-  const departments = useMemo(() => [...new Set(profiles.map((person) => person.department))], [profiles]);
   const filtered = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase("vi");
     return profiles.filter((person) => {
-      const searchable = [person.name, person.userId, person.role, person.department].join(" ").toLocaleLowerCase("vi");
+      const searchable = [person.name, person.userId, person.role, systemRoleLabel(person.systemRole)].join(" ").toLocaleLowerCase("vi");
       return (!normalized || searchable.includes(normalized))
-        && (department === "all" || person.department === department)
+        && (roleFilter === "all" || person.role === roleFilter)
+        && (systemRoleFilter === "all" || person.systemRole === systemRoleFilter)
         && (status === "all" || person.status === status);
     });
-  }, [department, profiles, query, status]);
+  }, [profiles, query, roleFilter, systemRoleFilter, status]);
 
   const selected = filtered.find((person) => person.id === selectedId) ?? filtered[0];
   const activeCount = profiles.filter((person) => person.status === "Active").length;
@@ -182,21 +184,13 @@ export default function PeoplePage() {
           <section className="flex flex-col gap-3 rounded-xl border border-border bg-card p-3 shadow-sm xl:flex-row xl:items-center">
             <label className="relative block min-w-0 flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm theo tên, User ID, vai trò..." className="h-10 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm theo tên, User ID, vai trò hoặc system role..." className="h-10 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100" />
             </label>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <select value={department} onChange={(event) => setDepartment(event.target.value)} aria-label="Lọc theo phòng ban" className="h-10 min-w-[175px] rounded-xl border border-border bg-background px-3 text-sm text-slate-700 outline-none focus:border-blue-400">
-                <option value="all">Tất cả phòng ban</option>
-                {departments.map((item) => <option key={item} value={item}>{item}</option>)}
-              </select>
-              <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Lọc theo trạng thái" className="h-10 min-w-[145px] rounded-xl border border-border bg-background px-3 text-sm text-slate-700 outline-none focus:border-blue-400">
-                <option value="all">Tất cả trạng thái</option>
-                <option value="Active">Đang làm</option>
-                <option value="On leave">Tạm nghỉ</option>
-                <option value="On Hold">Tạm dừng</option>
-                <option value="Inactive">Đã nghỉ việc</option>
-              </select>
-              <button type="button" onClick={() => downloadCsv("uplark-ho-so-nhan-su.csv", canViewFinancials ? ["Họ tên", "User ID", "Vai trò", "Phòng ban", "Level", "Trạng thái", "Cost rate", "Hiệu lực", "Time log"] : ["Họ tên", "User ID", "Vai trò", "Phòng ban", "Level", "Trạng thái", "Time log"], filtered.map((person) => canViewFinancials ? [person.name, person.userId, person.role, person.department, person.level, person.status, person.hourlyCostRate, person.effectiveFrom, person.actualHours] : [person.name, person.userId, person.role, person.department, person.level, person.status, person.actualHours]))} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-border px-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50">
+              <CustomDropdown label="" options={[{ value: "all", label: "Tất cả vai trò" }, ...BUSINESS_ROLE_OPTIONS.map((item) => ({ value: item, label: item }))]} value={roleFilter} onChange={setRoleFilter} />
+              <CustomDropdown label="" options={[{ value: "all", label: "Tất cả system role" }, ...SYSTEM_ROLE_OPTIONS.map((item) => ({ value: item.value, label: item.label }))]} value={systemRoleFilter} onChange={setSystemRoleFilter} />
+              <CustomDropdown label="" options={[{ value: "all", label: "Tất cả trạng thái" }, { value: "Active", label: "Đang làm" }, { value: "On leave", label: "Tạm nghỉ" }, { value: "On Hold", label: "Tạm dừng" }, { value: "Inactive", label: "Đã nghỉ việc" }]} value={status} onChange={setStatus} />
+              <button type="button" onClick={() => downloadCsv("uplark-ho-so-nhan-su.csv", canViewFinancials ? ["Họ tên", "User ID", "Vai trò", "System role", "Level", "Trạng thái", "Cost rate", "Hiệu lực", "Time log"] : ["Họ tên", "User ID", "Vai trò", "System role", "Level", "Trạng thái", "Time log"], filtered.map((person) => canViewFinancials ? [person.name, person.userId, person.role, systemRoleLabel(person.systemRole), person.level, person.status, person.hourlyCostRate, person.effectiveFrom, person.actualHours] : [person.name, person.userId, person.role, systemRoleLabel(person.systemRole), person.level, person.status, person.actualHours]))} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-border px-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50">
                 <Download className="h-4 w-4" /> Xuất CSV
               </button>
             </div>
@@ -218,14 +212,14 @@ export default function PeoplePage() {
                 <table className="w-full min-w-[940px] text-left text-sm">
                   <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                     <tr>
-                      <th className="px-5 py-3">Nhân sự / User ID</th><th className="px-3 py-3">Vai trò · Phòng ban</th><th className="px-3 py-3">Level</th><th className="px-3 py-3">Trạng thái</th>{canViewFinancials && <><th className="px-3 py-3">Cost Rate</th><th className="px-3 py-3">Hiệu lực</th></>}<th className="px-5 py-3 text-right">Logwork</th>
+                      <th className="px-5 py-3">Nhân sự / User ID</th><th className="px-3 py-3">Vai trò · System role</th><th className="px-3 py-3">Level</th><th className="px-3 py-3">Trạng thái</th>{canViewFinancials && <><th className="px-3 py-3">Cost Rate</th><th className="px-3 py-3">Hiệu lực</th></>}<th className="px-5 py-3 text-right">Logwork</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
                     {filtered.map((person) => (
                       <tr key={person.id} onClick={() => setSelectedId(person.id)} className={`cursor-pointer transition-colors hover:bg-blue-50/50 ${selected?.id === person.id ? "bg-blue-50/70" : "bg-card"}`}>
                         <td className="px-5 py-3.5"><div className="flex items-center gap-3"><Avatar initials={person.initials} avatarUrl={person.avatarUrl} color={person.color} small /><div><Link onClick={(event) => event.stopPropagation()} href={`/people/${person.id}`} className="font-semibold text-slate-900 hover:text-blue-600">{person.name}</Link><p className="mt-0.5 text-xs text-muted-foreground">{person.userId}</p></div></div></td>
-                        <td className="px-3 py-3.5"><p className="font-medium text-slate-800">{person.role}</p><p className="mt-0.5 text-xs text-muted-foreground">{person.department}</p></td>
+                        <td className="px-3 py-3.5"><p className="font-medium text-slate-800">{person.role}</p><p className="mt-0.5 text-xs text-muted-foreground">{systemRoleLabel(person.systemRole)}</p></td>
                         <td className="px-3 py-3.5"><span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">{person.level}</span></td>
                         <td className="px-3 py-3.5"><span className={`rounded-full px-2 py-1 text-xs font-medium ${statusClass(person.status)}`}>{workStatusLabel(person.status)}</span></td>
                         {canViewFinancials && <><td className="px-3 py-3.5 font-semibold text-slate-800">{person.hourlyCostRate > 0 ? formatVnd(person.hourlyCostRate) : <span className="font-medium text-amber-700">Chưa cấu hình</span>}<span className="block pt-0.5 text-[11px] font-normal text-muted-foreground">{person.hourlyCostRate > 0 ? "/ giờ" : "Cost Rate"}</span></td><td className="px-3 py-3.5 text-slate-600">{person.effectiveFrom}</td></>}
@@ -240,7 +234,7 @@ export default function PeoplePage() {
 
             {selected && <aside className="h-fit rounded-xl border border-border bg-card p-5 shadow-sm xl:sticky xl:top-4">
               <p className="text-[11px] font-semibold tracking-[0.14em] text-blue-600">HỒ SƠ ĐANG CHỌN</p>
-              <div className="mt-4 flex items-center gap-3"><Avatar initials={selected.initials} avatarUrl={selected.avatarUrl} color={selected.color} /><div><h2 className="font-semibold text-slate-900">{selected.name}</h2><p className="mt-0.5 text-sm text-muted-foreground">{selected.role} · {selected.department}</p></div></div>
+              <div className="mt-4 flex items-center gap-3"><Avatar initials={selected.initials} avatarUrl={selected.avatarUrl} color={selected.color} /><div><h2 className="font-semibold text-slate-900">{selected.name}</h2><p className="mt-0.5 text-sm text-muted-foreground">{selected.role} · {systemRoleLabel(selected.systemRole)}</p></div></div>
               <div className="mt-4 flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-xs font-medium ${statusClass(selected.status)}`}>{workStatusLabel(selected.status)}</span><span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">{selected.userId}</span><span className="rounded-md bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">{selected.level}</span></div>
               {canViewFinancials && <div className="mt-5 rounded-xl border border-amber-100 bg-amber-50/70 p-4"><p className="text-xs font-medium text-amber-700">Cost Rate hiện tại</p><p className="mt-1 text-xl font-semibold tracking-tight text-slate-900">{selected.hourlyCostRate > 0 ? `${formatVnd(selected.hourlyCostRate)} / giờ` : "Chưa cấu hình"}</p><p className="mt-2 text-xs text-slate-600">{selected.hourlyCostRate > 0 ? `Hiệu lực từ ${selected.effectiveFrom}` : "Không hiển thị chi phí giả định khi chưa có cấu hình"} · {selected.rateCategory}</p></div>}
               <div className="mt-4 grid grid-cols-3 gap-2 text-center"><div className="rounded-lg bg-slate-50 p-2"><p className="text-xs text-muted-foreground">Plan</p><p className="mt-1 text-sm font-semibold">{formatHours(selected.planHours)}</p></div><div className="rounded-lg bg-slate-50 p-2"><p className="text-xs text-muted-foreground">Actual</p><p className="mt-1 text-sm font-semibold">{formatHours(selected.actualHours)}</p></div><div className="rounded-lg bg-slate-50 p-2"><p className="text-xs text-muted-foreground">P&amp;L</p><p className="mt-1 text-sm font-semibold">{formatHours(selected.pnlHours)}</p></div></div>

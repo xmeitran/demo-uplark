@@ -4,6 +4,7 @@ import { MoneyAmount } from "@/components/money-amount";
 import { useEffect, useState } from "react";
 import type { CreateTaskTimeEntryResponse, ProjectPlSummaryItem, ProjectPlSummaryResponse, ProjectTaskSummary, ResourceListResponse, TaskTimeEntrySummary } from "@b2b-crm/contracts";
 import { ShopifyAppShell, ShopifyBanner, ShopifyDataTable, ShopifyPage, ShopifySection } from "../shopify-ui";
+import { CrmSelect } from "./crm-select";
 
 import { useAuth } from "../../lib/auth";
 import {
@@ -225,20 +226,12 @@ export function ProjectControlsFunctionPage() {
                 <form onSubmit={handleCreateTimeEntry} className="shopify-form-stack">
                   <div>
                     <label htmlFor="time-entry-project" style={fieldLabelStyle}>Dự án</label>
-                    <select id="time-entry-project" value={inputProject} onChange={(event) => { setInputProject(event.target.value); setInputTaskId(""); }} style={fieldStyle}>
-                      {projects.length === 0 ? <option value="">Chưa có dự án</option> : null}
-                      {projects.map((project) => (
-                        <option key={project.id} value={project.id}>{project.name}</option>
-                      ))}
-                    </select>
+                    <CrmSelect id="time-entry-project" options={projects.length === 0 ? [{ value: "", label: "Chưa có dự án" }] : projects.map((project) => ({ value: project.id, label: project.name }))} value={inputProject} onChange={(value) => { setInputProject(value); setInputTaskId(""); }} />
                   </div>
                   <div className="shopify-field-row">
                     <div>
                       <label htmlFor="time-entry-task" style={fieldLabelStyle}>Công việc</label>
-                      <select id="time-entry-task" value={inputTaskId} onChange={(event) => setInputTaskId(event.target.value)} style={fieldStyle}>
-                        <option value="">Chọn công việc</option>
-                        {tasks.filter((task) => !inputProject || task.projectId === inputProject).map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}
-                      </select>
+                      <CrmSelect id="time-entry-task" options={[{ value: "", label: "Chọn công việc" }, ...tasks.filter((task) => !inputProject || task.projectId === inputProject).map((task) => ({ value: task.id, label: task.title }))]} value={inputTaskId} onChange={setInputTaskId} />
                     </div>
                     <div>
                       <label htmlFor="time-entry-hours" style={fieldLabelStyle}>Số giờ</label>
@@ -247,14 +240,7 @@ export function ProjectControlsFunctionPage() {
                   </div>
                   <div>
                     <label htmlFor="time-entry-work-type" style={fieldLabelStyle}>Loại công việc</label>
-                    <select id="time-entry-work-type" value={inputWorkType} onChange={(event) => setInputWorkType(event.target.value)} style={fieldStyle}>
-                      <option value="Billable Delivery">Triển khai tính phí</option>
-                      <option value="Non-billable Delivery">Triển khai không tính phí</option>
-                      <option value="Rework">Làm lại</option>
-                      <option value="Support">Hỗ trợ</option>
-                      <option value="Change Request">Yêu cầu thay đổi</option>
-                      <option value="Internal/Admin">Nội bộ / hành chính</option>
-                    </select>
+                    <CrmSelect id="time-entry-work-type" options={[{ value: "Billable Delivery", label: "Triển khai tính phí" }, { value: "Non-billable Delivery", label: "Triển khai không tính phí" }, { value: "Rework", label: "Làm lại" }, { value: "Support", label: "Hỗ trợ" }, { value: "Change Request", label: "Yêu cầu thay đổi" }, { value: "Internal/Admin", label: "Nội bộ / hành chính" }]} value={inputWorkType} onChange={setInputWorkType} />
                   </div>
                   <div>
                     <label htmlFor="time-entry-note" style={fieldLabelStyle}>Ghi chú công việc</label>
@@ -358,7 +344,7 @@ export function ProjectControlsFunctionPage() {
 
             {roleMode === "delivery_lead" && (
               <p className="shopify-muted" style={{ padding: "8px 12px", background: "var(--panel-strong)", borderRadius: "8px" }}>
-                <strong>Chi phí đang được ẩn:</strong> Lead triển khai chỉ xem giờ làm và cảnh báo vận hành. Chi tiết chi phí và biên lợi nhuận chỉ dành cho Founder/Tài chính.
+                <strong>Chi phí đang được ẩn:</strong> Project Manager chỉ xem giờ làm và cảnh báo vận hành. Chi tiết chi phí và biên lợi nhuận chỉ dành cho Founder/Tài chính.
               </p>
             )}
 
@@ -467,7 +453,7 @@ function derivePlState(
 function formatRoleMode(role: "founder" | "delivery_lead" | "consultant") {
   const labels = {
     founder: "Founder / Tài chính",
-    delivery_lead: "Lead triển khai",
+    delivery_lead: "Project Manager",
     consultant: "Consultant"
   };
   return labels[role];

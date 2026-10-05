@@ -9,6 +9,7 @@ import { ModalLayer } from "../modal-layer";
 import { activityTypes, stageOptions } from "./constants";
 import type { OpportunityWorkbench } from "./use-opportunity-workbench";
 import { formatForecastCategory, formatNumber, formatStageLabel, formatStaleReason, formatTaxonomyLabel, formatVndInput, parseVndInput, stageTone } from "./utils";
+import { CrmSelect, type CrmSelectOption } from "../crm-workspace/crm-select";
 
 const VISIBLE_PIPELINE_STAGES = ["lead", "discovery", "proposal", "negotiation", "contracting", "won"];
 
@@ -1156,7 +1157,7 @@ function InlineMetricShell({
   );
 }
 
-type SelectOption = { label: string; value: string; [key: string]: unknown };
+type SelectOption = CrmSelectOption & Record<string, unknown>;
 
 function CustomDropdown({
   disabled = false,
@@ -1175,89 +1176,17 @@ function CustomDropdown({
   renderOption?: (opt: SelectOption) => ReactNode;
   visuallyHiddenLabel?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const wrapperRef = useRef<HTMLDivElement | null>(null);
-  const listboxId = toStableControlId("opportunity-select", label);
-  const selectedOpt = options.find((o) => o.value === value);
-
-  useEffect(() => {
-    if (!open) return;
-
-    function closeOnOutside(event: MouseEvent) {
-      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    }
-
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
-    }
-
-    document.addEventListener("mousedown", closeOnOutside);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("mousedown", closeOnOutside);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [open]);
-
   return (
-    <div className="opportunity-custom-field" data-open={open} ref={wrapperRef}>
-      <span className={visuallyHiddenLabel ? "sr-only" : "opportunity-field-label"}>{label}</span>
-      <button
-        aria-controls={listboxId}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        aria-label={`${label}: ${selectedOpt?.label ?? "Chưa chọn"}`}
-        className="opportunity-select-trigger"
-        disabled={disabled}
-        data-open={open}
-        onClick={() => {
-          if (!disabled) {
-            setOpen((current) => !current);
-          }
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            setOpen(false);
-          }
-        }}
-        type="button"
-      >
-        <span>
-          {selectedOpt ? (renderOption ? renderOption(selectedOpt) : selectedOpt.label) : "Chưa chọn"}
-        </span>
-        <ShopifyIcon
-          name="chevron-down"
-          size={14}
-          className={open ? "opportunity-dropdown-icon open" : "opportunity-dropdown-icon"}
-        />
-      </button>
-
-      {open && !disabled && (
-        <div className="opportunity-select-menu" id={listboxId} role="listbox">
-          {options.map((opt) => (
-            <button
-              aria-selected={opt.value === value}
-              className="opportunity-select-option"
-              data-selected={opt.value === value}
-              key={opt.value}
-              onClick={() => {
-                onChange(opt.value);
-                setOpen(false);
-              }}
-              role="option"
-              type="button"
-            >
-              <span>{renderOption ? renderOption(opt) : opt.label}</span>
-              {opt.value === value ? <ShopifyIcon name="check" size={14} /> : null}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <CrmSelect
+      ariaLabel={`${label}: ${options.find((option) => option.value === value)?.label ?? "Chưa chọn"}`}
+      className={visuallyHiddenLabel ? "[&_.task-field-label]:sr-only" : ""}
+      disabled={disabled}
+      label={label}
+      options={options}
+      renderOption={renderOption ? (option) => renderOption(option) : undefined}
+      value={value}
+      onChange={onChange}
+    />
   );
 }
 
@@ -1472,7 +1401,7 @@ function getOpportunityOwner(selected: NonNullable<OpportunityWorkbench["state"]
     .sort((a, b) => new Date(b.changedAt).getTime() - new Date(a.changedAt).getTime())
     .find((item) => item.changedByUserDisplayName);
 
-  return latestNamedHistory?.changedByUserDisplayName ?? "Sales Owner";
+  return latestNamedHistory?.changedByUserDisplayName ?? "Business development";
 }
 
 function toStableControlId(prefix: string, label: string) {

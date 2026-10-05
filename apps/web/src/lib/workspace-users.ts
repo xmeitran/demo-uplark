@@ -1,10 +1,10 @@
-import type { AdminAccessMemberSummary } from "@b2b-crm/contracts";
-import { formatDepartmentLabel } from "./department-labels";
+import type { AdminAccessMemberSummary, WorkspaceSystemRole } from "@b2b-crm/contracts";
+import { businessRoleFromMember, systemRoleFromCodes } from "./people-roles";
 
 const WORKSPACE_USERS_ENDPOINT = "/api/workspace/users";
 const USER_COLORS = ["#2563eb", "#059669", "#7c3aed", "#db2777", "#d97706", "#dc2626", "#0891b2", "#64748b"];
 
-type WorkspaceDirectoryMember = Pick<AdminAccessMemberSummary, "id" | "email" | "displayName" | "avatarUrl" | "roleCodes" | "status" | "departmentCode"> & { resourceDisplayRole?: string };
+type WorkspaceDirectoryMember = Pick<AdminAccessMemberSummary, "id" | "email" | "displayName" | "avatarUrl" | "roleCodes" | "status"> & { resourceDisplayRole?: string };
 
 export interface WorkspaceUserOption {
   id: string;
@@ -14,7 +14,7 @@ export interface WorkspaceUserOption {
   color: string;
   avatarUrl?: string;
   role: string;
-  department?: string;
+  systemRole: WorkspaceSystemRole;
   status: AdminAccessMemberSummary["status"];
 }
 
@@ -48,24 +48,14 @@ export function mapWorkspaceUserToOption(user: WorkspaceDirectoryMember): Worksp
     initials: initialsFor(user.displayName || user.email),
     color: colorForId(user.id || user.email),
     avatarUrl: user.avatarUrl,
-    role: user.resourceDisplayRole || formatRole(user.roleCodes[0]) || "Team member",
-    department: user.departmentCode ? formatDepartmentLabel(user.departmentCode) : undefined,
+    role: businessRoleFromMember(user),
+    systemRole: systemRoleFromCodes(user.roleCodes),
     status: user.status
   };
 }
 
 export function isUnauthorizedWorkspaceUsersError(error: unknown) {
   return error instanceof WorkspaceUsersError && error.status === 401;
-}
-
-function formatRole(roleCode?: string) {
-  if (!roleCode) return "";
-  return roleCode
-    .toLowerCase()
-    .split("_")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 }
 
 function initialsFor(value: string) {

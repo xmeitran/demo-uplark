@@ -17,6 +17,7 @@ import type {
   WorkspaceReminderSlotCode
 } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
+import { activeMembershipWhere } from "../identity-access/active-membership";
 
 const ADMIN_ROLES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN"]);
 const SLOT_LABELS: Record<WorkspaceReminderSlot["slot"], string> = {
@@ -32,6 +33,45 @@ const DEFAULT_SLOTS: WorkspaceReminderSlot[] = [
 const TERMINAL_TASK_STATUSES = ["completed", "done", "cancelled", "closed"];
 const WAITING_TASK_STATUSES = new Set(["blocked", "waiting", "on_hold", "on-hold"]);
 const ACTUAL_ENTRY_STATUSES = new Set(["approved", "submitted"]);
+const ADMIN_HISTORY_ACTIONS = [
+  "project.milestone_approved",
+  "project.milestone_gate_updated",
+  "project.milestone_template_created",
+  "project.milestone_template_updated",
+  "workspace.day_off_created",
+  "workspace.day_off_updated",
+  "pnl.resource_monthly_cost_changed",
+  "pnl.configuration_changed",
+  "pnl.period_changed",
+  "pnl.period_locked",
+  "pnl.period_reopened"
+] as const;
+
+const ADMIN_HISTORY_ACTION_META: Record<string, { category: "approval" | "day_off" | "pnl" | "milestone"; title: string }> = {
+  "project.milestone_approved": { category: "approval", title: "Duyệt milestone" },
+  "project.milestone_gate_updated": { category: "milestone", title: "Cập nhật điều kiện milestone" },
+  "project.milestone_template_created": { category: "milestone", title: "Tạo template milestone" },
+  "project.milestone_template_updated": { category: "milestone", title: "Cập nhật template milestone" },
+  "workspace.day_off_created": { category: "day_off", title: "Tạo ngày nghỉ" },
+  "workspace.day_off_updated": { category: "day_off", title: "Cập nhật ngày nghỉ" },
+  "pnl.resource_monthly_cost_changed": { category: "pnl", title: "Cập nhật chi phí nhân sự P&L" },
+  "pnl.configuration_changed": { category: "pnl", title: "Cập nhật cấu hình P&L" },
+  "pnl.period_changed": { category: "pnl", title: "Cập nhật kỳ P&L" },
+  "pnl.period_locked": { category: "pnl", title: "Khóa kỳ P&L" },
+  "pnl.period_reopened": { category: "pnl", title: "Mở lại kỳ P&L" }
+};
+
+function jsonObject(value: Prisma.JsonValue | null | undefined): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function jsonString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function jsonStringArray(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())) : [];
+}
 
 function assertAdmin(principal: PrincipalContext) {
   if (principal.subjectType !== "internal_user" || !principal.roleCodes.some((role) => ADMIN_ROLES.has(role))) {
@@ -306,15 +346,26 @@ export class WorkspaceAdminService {
         orderBy: { name: "asc" }
       }),
       this.prisma.user.findMany({
-        where: { status: "ACTIVE", subjectType: "INTERNAL_USER" },
+        where: {
+          status: "ACTIVE",
+          subjectType: "INTERNAL_USER",
+          roleBindings: {
+            some: {
+              workspaceId: principal.workspaceId,
+              tenantKey: principal.tenantKey,
+              ...activeMembershipWhere()
+            }
+          }
+        },
         select: {
           id: true,
           email: true,
           displayName: true,
           avatarUrl: true,
           departmentCode: true,
+          resourceProfile: { select: { displayRole: true } },
           roleBindings: {
-            where: { endsAt: null },
+            where: { workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, ...activeMembershipWhere() },
             select: { role: { select: { code: true } } }
           },
           workspaceTeamMemberships: { where: { workspaceId: principal.workspaceId, effectiveTo: null }, select: { teamId: true } }
@@ -330,6 +381,7 @@ export class WorkspaceAdminService {
           email: user.email,
           avatarUrl: user.avatarUrl ?? undefined,
           departmentCode: user.departmentCode ?? undefined,
+          resourceDisplayRole: user.resourceProfile?.displayRole ?? undefined,
           roleCodes: user.roleBindings.map((binding) => binding.role.code),
           teamIds: user.workspaceTeamMemberships.map((membership) => membership.teamId)
         })),
@@ -379,7 +431,21 @@ export class WorkspaceAdminService {
 
     let scopedUserIds: string[] | undefined;
     if (input.userId) {
-      const selected = await this.prisma.user.findFirst({ where: { id: input.userId, status: "ACTIVE", subjectType: "INTERNAL_USER" }, select: { id: true } });
+      const selected = await this.prisma.user.findFirst({
+        where: {
+          id: input.userId,
+          status: "ACTIVE",
+          subjectType: "INTERNAL_USER",
+          roleBindings: {
+            some: {
+              workspaceId: principal.workspaceId,
+              tenantKey: principal.tenantKey,
+              ...activeMembershipWhere()
+            }
+          }
+        },
+        select: { id: true }
+      });
       if (!selected) throw new BadRequestException("Người nhận không tồn tại hoặc đã bị khóa.");
       scopedUserIds = [selected.id];
     } else if (input.teamId) {
@@ -396,6 +462,13 @@ export class WorkspaceAdminService {
       where: {
         status: "ACTIVE",
         subjectType: "INTERNAL_USER",
+        roleBindings: {
+          some: {
+            workspaceId: principal.workspaceId,
+            tenantKey: principal.tenantKey,
+            ...activeMembershipWhere()
+          }
+        },
         ...(scopedUserIds ? { id: { in: scopedUserIds } } : {}),
         projectMembers: { some: { workspaceId: principal.workspaceId, project: { status: { notIn: ["completed", "cancelled", "closed", "archived"] } } } }
       },
@@ -646,35 +719,105 @@ export class WorkspaceAdminService {
     return { data: rows, meta: { total: rows.length, generatedAt: new Date().toISOString(), counts } };
   }
 
-  async history(principal: PrincipalContext, requestedLimit = 12): Promise<AdminHistoryResponse> {
+  async history(principal: PrincipalContext, requestedLimit = 12, scope: "all" | "mine" = "all"): Promise<AdminHistoryResponse> {
     assertAdmin(principal);
     const limit = Math.min(Math.max(Math.trunc(requestedLimit) || 12, 1), 50);
-    const where = { workspaceId: principal.workspaceId };
+    const where: Prisma.AuditEventWhereInput = scope === "mine"
+      ? { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "project.milestone_approved" }
+      : { workspaceId: principal.workspaceId, action: { in: [...ADMIN_HISTORY_ACTIONS] } };
     const [events, total] = await Promise.all([
       this.prisma.auditEvent.findMany({
         where,
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take: limit,
-        select: { id: true, action: true, resource: true, resourceId: true, actorUserId: true, requestId: true, createdAt: true }
+        select: { id: true, action: true, resource: true, resourceId: true, actorUserId: true, requestId: true, before: true, after: true, createdAt: true }
       }),
       this.prisma.auditEvent.count({ where })
     ]);
+    const milestoneIds = Array.from(new Set(events.filter((event) => event.resource === "project_milestone").map((event) => event.resourceId).filter((id): id is string => Boolean(id))));
+    const templateIds = Array.from(new Set(events.filter((event) => event.resource === "project_milestone_template").map((event) => event.resourceId).filter((id): id is string => Boolean(id))));
+    const dayOffIds = Array.from(new Set(events.filter((event) => event.resource === "workspace_day_off").map((event) => event.resourceId).filter((id): id is string => Boolean(id))));
+    const pnlPeriodIds = Array.from(new Set(events.filter((event) => event.resource === "pnl_period").map((event) => event.resourceId).filter((id): id is string => Boolean(id))));
+    const [milestones, templates, dayOffs, pnlPeriods] = await Promise.all([
+      milestoneIds.length
+        ? this.prisma.projectMilestone.findMany({ where: { workspaceId: principal.workspaceId, id: { in: milestoneIds } }, select: { id: true, name: true, project: { select: { id: true, code: true, name: true } } } })
+        : [],
+      templateIds.length
+        ? this.prisma.projectMilestoneTemplate.findMany({ where: { workspaceId: principal.workspaceId, id: { in: templateIds } }, select: { id: true, name: true, key: true } })
+        : [],
+      dayOffIds.length
+        ? this.prisma.workspaceDayOff.findMany({ where: { workspaceId: principal.workspaceId, id: { in: dayOffIds } }, select: { id: true, date: true, name: true } })
+        : [],
+      pnlPeriodIds.length
+        ? this.prisma.pnlPeriod.findMany({ where: { workspaceId: principal.workspaceId, id: { in: pnlPeriodIds } }, select: { id: true, periodKey: true, project: { select: { id: true, code: true, name: true } } } })
+        : []
+    ]);
+    const milestoneById = new Map(milestones.map((milestone) => [milestone.id, milestone]));
+    const templateById = new Map(templates.map((template) => [template.id, template]));
+    const dayOffById = new Map(dayOffs.map((dayOff) => [dayOff.id, dayOff]));
+    const pnlPeriodById = new Map(pnlPeriods.map((period) => [period.id, period]));
     const actorIds = Array.from(new Set(events.map((event) => event.actorUserId).filter((id): id is string => Boolean(id))));
     const actors = actorIds.length
       ? await this.prisma.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, displayName: true } })
       : [];
     const actorNames = new Map(actors.map((actor) => [actor.id, actor.displayName]));
+
     return {
-      data: events.map((event) => ({
-        id: event.id,
-        action: event.action,
-        resource: event.resource,
-        resourceId: event.resourceId ?? undefined,
-        actorUserId: event.actorUserId ?? undefined,
-        actorDisplayName: event.actorUserId ? actorNames.get(event.actorUserId) : undefined,
-        requestId: event.requestId,
-        createdAt: event.createdAt.toISOString()
-      })),
+      data: events.map((event) => {
+        const meta = ADMIN_HISTORY_ACTION_META[event.action] ?? { category: "milestone" as const, title: event.action };
+        const after = jsonObject(event.after);
+        const milestone = event.resourceId ? milestoneById.get(event.resourceId) : undefined;
+        const template = event.resourceId ? templateById.get(event.resourceId) : undefined;
+        const dayOff = event.resourceId ? dayOffById.get(event.resourceId) : undefined;
+        const pnlPeriod = event.resourceId ? pnlPeriodById.get(event.resourceId) : undefined;
+        let detail = "Đã cập nhật cấu hình workspace.";
+        let href: string | undefined;
+        let projectId: string | undefined;
+        let projectCode: string | undefined;
+        let projectName: string | undefined;
+        let milestoneName: string | undefined;
+
+        if (milestone) {
+          milestoneName = milestone.name;
+          projectId = milestone.project.id;
+          projectCode = milestone.project.code;
+          projectName = milestone.project.name;
+          href = `/projects/${encodeURIComponent(projectId)}?tab=Overview`;
+          detail = `${meta.title}: ${milestone.name} · ${milestone.project.code} · ${milestone.project.name}`;
+        } else if (template) {
+          href = "/admin#milestones";
+          detail = `${meta.title}: ${template.name} · ${template.key}`;
+        } else if (event.action.startsWith("workspace.day_off_")) {
+          href = "/admin#day-offs";
+          const dates = jsonStringArray(after.dates);
+          const dateLabel = dates.length ? dates.join(", ") : dayOff?.date.toISOString().slice(0, 10);
+          detail = `${meta.title}: ${jsonString(after.name) ?? dayOff?.name ?? "Ngày nghỉ"}${dateLabel ? ` · ${dateLabel}` : ""}`;
+        } else if (event.action.startsWith("pnl.")) {
+          href = "/pnl/config";
+          const periodKey = jsonString(after.periodKey) ?? pnlPeriod?.periodKey;
+          const target = pnlPeriod?.project ? ` · ${pnlPeriod.project.code} · ${pnlPeriod.project.name}` : "";
+          detail = `${meta.title}${periodKey ? ` · ${periodKey}` : ""}${target}`;
+        }
+
+        return {
+          id: event.id,
+          action: event.action,
+          category: meta.category,
+          title: meta.title,
+          detail,
+          resource: event.resource,
+          resourceId: event.resourceId ?? undefined,
+          milestoneName,
+          projectId,
+          projectCode,
+          projectName,
+          href,
+          actorUserId: event.actorUserId ?? undefined,
+          actorDisplayName: event.actorUserId ? actorNames.get(event.actorUserId) : undefined,
+          requestId: event.requestId,
+          createdAt: event.createdAt.toISOString()
+        };
+      }),
       meta: { total }
     };
   }

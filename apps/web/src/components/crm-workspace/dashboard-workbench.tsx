@@ -49,6 +49,7 @@ import { formatStageLabel } from "../sales-pipeline/utils";
 import { ShopifyModal } from "../shopify-modal";
 import { ShopifyBanner, ShopifyDataTable, ShopifyIcon } from "../shopify-ui";
 import { WorkspaceTabBar } from "@/components/workspace-tab-bar";
+import { CrmSelect } from "./crm-select";
 
 type SalesTimeRange = "all" | "month" | "quarter" | "year";
 
@@ -1117,11 +1118,7 @@ function OverviewActionModal({
               </label>
               <label>
                 Owner
-                <select defaultValue="founder">
-                  <option value="founder">Founder</option>
-                  <option value="sales">Sales owner</option>
-                  <option value="delivery">Delivery lead</option>
-                </select>
+              <CrmSelect options={[{ value: "founder", label: "Founder/GM" }, { value: "sales", label: "Business development" }, { value: "delivery", label: "Project Manager" }]} value="founder" onChange={() => undefined} />
               </label>
             </div>
             <label>
@@ -1161,11 +1158,7 @@ function OverviewActionModal({
             </div>
             <label>
               Dự án ưu tiên
-              <select defaultValue={projects[0]?.name}>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.name}>{project.name}</option>
-                ))}
-              </select>
+              <CrmSelect options={projects.map((project) => ({ value: project.name, label: project.name }))} value={projects[0]?.name ?? ""} onChange={() => undefined} />
             </label>
             <label>
               Ghi chú điều phối
@@ -1880,7 +1873,7 @@ function createDashboardConsultant(item: CapacitySummaryItem): Consultant {
 function formatDashboardResourceRole(role: string) {
   const labels: Record<string, string> = {
     consultant: "Consultant",
-    delivery_lead: "Delivery Lead",
+    delivery_lead: "Project Manager",
     project_manager: "Project Manager",
     solution_architect: "Solution Architect",
     technical_lead: "Technical Lead"
@@ -2823,40 +2816,16 @@ export function DashboardWorkbench({
               </s-paragraph>
               <div>
                 <label style={{ display: "block", marginBottom: "6px", fontWeight: 650 }}>Chọn nhân sự</label>
-                <select
-                  value={selectedConsultant}
-                  onChange={e => setSelectedConsultant(e.target.value)}
-                  style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid var(--border)" }}
-                >
-                  {consultants.map(c => (
-                    <option key={c.id} value={c.id}>{c.name} ({c.role})</option>
-                  ))}
-                </select>
+                <CrmSelect options={consultants.map((consultant) => ({ value: consultant.id, label: consultant.name, meta: consultant.role }))} value={selectedConsultant} onChange={setSelectedConsultant} />
               </div>
               <div>
                 <label style={{ display: "block", marginBottom: "6px", fontWeight: 650 }}>Dự án</label>
-                <select
-                  value={selectedProject}
-                  onChange={e => setSelectedProject(e.target.value)}
-                  style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid var(--border)" }}
-                >
-                  {availableProjects.map(p => (
-                    <option key={p} value={p}>{p}</option>
-                  ))}
-                </select>
+                <CrmSelect options={availableProjects.map((project) => ({ value: project, label: project }))} value={selectedProject} onChange={setSelectedProject} />
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                 <div>
                   <label style={{ display: "block", marginBottom: "6px", fontWeight: 650 }}>Tuần làm việc</label>
-                  <select
-                    value={selectedWeek}
-                    onChange={e => setSelectedWeek(e.target.value)}
-                    style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid var(--border)" }}
-                  >
-                    {weeksList.map(w => (
-                      <option key={w} value={w}>{w}</option>
-                    ))}
-                  </select>
+                  <CrmSelect options={weeksList.map((week) => ({ value: week, label: week }))} value={selectedWeek} onChange={setSelectedWeek} />
                 </div>
                 <div>
                   <label style={{ display: "block", marginBottom: "6px", fontWeight: 650 }}>Số ngày phân bổ (PD)</label>
@@ -2926,7 +2895,7 @@ export function DashboardWorkbench({
             <div className="dashboard-role-switcher" aria-label="Góc nhìn dữ liệu">
               <span>Góc nhìn dữ liệu</span>
               <s-button onClick={() => setRoleMode("founder")} variant={roleMode === "founder" ? "primary" : undefined}>Founder / Finance</s-button>
-              <s-button onClick={() => setRoleMode("delivery_lead")} variant={roleMode === "delivery_lead" ? "primary" : undefined}>Delivery Lead</s-button>
+              <s-button onClick={() => setRoleMode("delivery_lead")} variant={roleMode === "delivery_lead" ? "primary" : undefined}>Project Manager</s-button>
               <s-button onClick={() => setRoleMode("consultant")} variant={roleMode === "consultant" ? "primary" : undefined}>Consultant</s-button>
             </div>
           </section>
@@ -3176,7 +3145,7 @@ export function DashboardWorkbench({
 
                 {roleMode === "delivery_lead" && (
                   <p className="finance-privacy-note">
-                    <ShopifyIcon name="info" size={14} /> <strong>Bảo mật phân quyền:</strong> Chi phí nhân sự, tổng chi phí thực tế và biên lợi nhuận được ẩn đối với Delivery Lead.
+                    <ShopifyIcon name="info" size={14} /> <strong>Bảo mật phân quyền:</strong> Chi phí nhân sự, tổng chi phí thực tế và biên lợi nhuận được ẩn đối với Project Manager.
                   </p>
                 )}
 

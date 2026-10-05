@@ -290,7 +290,7 @@ export class NativeAuthService {
     const { user: actor, principal } = await this.requireAdmin(authorization);
     await this.security.limit("invite", actor.id, 30);
     const email = emailInput(body?.email), roleCode = stringInput(body?.roleCode, "roleCode");
-    const allowed = ["FOUNDER_GM", "SALES_OWNER", "DELIVERY_LEAD", "FINANCE_ADMIN"];
+    const allowed = ["FOUNDER_GM", "WORKSPACE_ADMIN", "WORKSPACE_USER"];
     if (!allowed.includes(roleCode)) throw new BadRequestException("Invalid invitation role");
     if (!principal.workspaceId) throw new ForbiddenException("Workspace required");
     const token = randomAuthToken(); const expiresAt = new Date(Date.now() + 48 * 3600000);
@@ -344,7 +344,7 @@ export class NativeAuthService {
       const activeMembership = await tx.roleBinding.findFirst({ where: { userId: user.id, workspaceId: invitation.workspaceId, startsAt: { lte: new Date() }, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] } });
       if (suspendedMembership && !activeMembership) throw new ForbiddenException("Suspended membership requires administrator reactivation");
       const role = await tx.role.findUnique({ where: { code: invitation.roleCode } });
-      if (!role || !["FOUNDER_GM", "SALES_OWNER", "DELIVERY_LEAD", "FINANCE_ADMIN"].includes(role.code)) throw new BadRequestException("Invitation role unavailable");
+      if (!role || !["FOUNDER_GM", "WORKSPACE_ADMIN", "WORKSPACE_USER"].includes(role.code)) throw new BadRequestException("Invitation role unavailable");
       const previous = await tx.roleBinding.findUnique({ where: { userId_roleId_tenantKey_workspaceId: { userId: user.id, roleId: role.id, tenantKey: invitation.tenantKey, workspaceId: invitation.workspaceId } } });
       if (previous?.endsAt && previous.endsAt <= new Date()) throw new ForbiddenException("Suspended membership requires administrator reactivation");
       if (!previous) await tx.roleBinding.create({ data: { userId: user.id, roleId: role.id, workspaceId: invitation.workspaceId, tenantKey: invitation.tenantKey } });
@@ -383,7 +383,7 @@ export class NativeAuthService {
       }
       if (!linked) await tx.portalIdentity.create({ data: { userId: user.id, provider: "lark", providerUserId: profile.openId, tenantKey: workspace.tenantKey } });
       const role = await tx.role.findUnique({ where: { code: invitation.roleCode } });
-      if (!role || !["FOUNDER_GM", "SALES_OWNER", "DELIVERY_LEAD", "FINANCE_ADMIN"].includes(role.code)) throw new BadRequestException("Invitation role unavailable");
+      if (!role || !["FOUNDER_GM", "WORKSPACE_ADMIN", "WORKSPACE_USER"].includes(role.code)) throw new BadRequestException("Invitation role unavailable");
       const priorRole = await tx.roleBinding.findUnique({ where: { userId_roleId_tenantKey_workspaceId: { userId: user.id, roleId: role.id, tenantKey: workspace.tenantKey, workspaceId: workspace.workspaceId } } });
       if (priorRole?.endsAt && priorRole.endsAt <= new Date()) throw new ForbiddenException("Suspended role requires administrator reactivation");
       await tx.roleBinding.upsert({ where: { userId_roleId_tenantKey_workspaceId: { userId: user.id, roleId: role.id, tenantKey: workspace.tenantKey, workspaceId: workspace.workspaceId } }, update: {}, create: { userId: user.id, roleId: role.id, tenantKey: workspace.tenantKey, workspaceId: workspace.workspaceId } });

@@ -6,6 +6,7 @@ import { CheckCircle2, LogOut, Palette, Shield, User } from "lucide-react";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { useTheme } from "@/lib/theme";
 import { useAuth } from "@/lib/auth";
+import { systemRoleFromCodes, systemRoleLabel } from "@/lib/people-roles";
 
 export default function SettingsPage() {
   const theme = useTheme();
@@ -49,7 +50,7 @@ export default function SettingsPage() {
                 <div className="grid flex-1 gap-3 sm:grid-cols-2">
                   <ReadOnlyField label="Full name" value={user?.name} />
                   <ReadOnlyField label="Email" value={user?.email} />
-                  <ReadOnlyField label="Role" value={user?.role} />
+                  <ReadOnlyField label="System role" value={user?.roleCodes ? systemRoleLabel(systemRoleFromCodes(user.roleCodes)) : undefined} />
                   <ReadOnlyField label="User ID" value={user?.id} />
                 </div>
               </div>

@@ -9,7 +9,6 @@ describe("workspace user options", () => {
       email: "khanhv@upbase.asia",
       displayName: "Nguyễn Hùng Việt Kha",
       avatarUrl: "https://avatar.example/kha.png",
-      departmentCode: "CDS",
       larkOpenId: "ou_123",
       larkTenantKey: "prod",
       hasResourceProfile: true,
@@ -33,8 +32,8 @@ describe("workspace user options", () => {
       name: "Nguyễn Hùng Việt Kha",
       initials: "NK",
       avatarUrl: "https://avatar.example/kha.png",
-      role: "Founder",
-      department: "Chuyển đổi số",
+      role: "Chưa gán",
+      systemRole: "FOUNDER_GM",
       status: "active"
     });
   });
@@ -58,7 +57,7 @@ describe("workspace user options", () => {
       createdAt: "2026-07-01T00:00:00.000Z"
     };
 
-    expect(mapWorkspaceUserToOption(user).role).toBe("Delivery Lead");
+    expect(mapWorkspaceUserToOption(user).role).toBe("Project Manager");
   });
 });
 
@@ -72,6 +71,6 @@ describe("workspace directory fetch", () => {
     const result = await fetchWorkspaceUserOptions();
     expect(fetcher).toHaveBeenCalledWith("/api/workspace/users",expect.objectContaining({credentials:"same-origin",cache:"no-store"}));
     expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({id:"member",role:"Sales Owner"});
+    expect(result[0]).toMatchObject({id:"member",role:"Business development"});
   });
 });

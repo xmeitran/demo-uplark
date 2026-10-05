@@ -23,6 +23,7 @@ const manager: PrincipalContext = {
 const member = { ...manager, subjectId: "usr-member", roleCodes: ["WORKSPACE_USER"] };
 
 function createPrismaMock(overrides: Record<string, any> = {}) {
+  let pnlPeriodStatus = "OPEN";
   const task = {
     id: "task-1",
     workspaceId: "workspace-1",
@@ -63,14 +64,20 @@ function createPrismaMock(overrides: Record<string, any> = {}) {
       findUnique: vi.fn().mockResolvedValue(null),
       upsert: vi.fn().mockImplementation(async ({ create }: any) => ({ id: "cost-1", status: "DRAFT", ...create }))
     },
+    user: {
+      findFirst: vi.fn().mockResolvedValue({ id: "usr-member" })
+    },
+    project: {
+      findFirst: vi.fn().mockResolvedValue({ id: "project-1" })
+    },
     pnlConfiguration: {
       findUnique: vi.fn().mockResolvedValue(null),
       upsert: vi.fn().mockImplementation(async ({ create }: any) => ({ id: "config-1", ...create }))
     },
     pnlPeriod: {
-      findFirst: vi.fn().mockResolvedValue({ id: "period-1", workspaceId: "workspace-1", projectId: "project-1", periodKey: "2026-09", status: "OPEN", periodStart: new Date("2026-09-01T00:00:00.000Z"), periodEnd: new Date("2026-09-30T00:00:00.000Z"), revenueAmount: 0, allocations: [] }),
+      findFirst: vi.fn().mockImplementation(async () => ({ id: "period-1", workspaceId: "workspace-1", projectId: "project-1", periodKey: "2026-09", status: pnlPeriodStatus, periodStart: new Date("2026-09-01T00:00:00.000Z"), periodEnd: new Date("2026-09-30T00:00:00.000Z"), revenueAmount: 0, allocations: [] })),
       create: vi.fn().mockImplementation(async ({ data }: any) => ({ id: "period-1", status: "OPEN", ...data })),
-      update: vi.fn().mockImplementation(async ({ data }: any) => ({ id: "period-1", status: data.status ?? "OPEN", ...data }))
+      update: vi.fn().mockImplementation(async ({ data }: any) => { pnlPeriodStatus = data.status ?? pnlPeriodStatus; return { id: "period-1", status: pnlPeriodStatus, ...data }; })
     },
     taskTimeEntry: {
       findMany: vi.fn().mockResolvedValue([]),

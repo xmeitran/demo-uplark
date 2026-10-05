@@ -10,6 +10,7 @@ import type {
   WorkspaceDayOffSummary
 } from "@b2b-crm/contracts";
 import { toVietnamDateKey } from "@/lib/vietnam-time";
+import { CrmSelect } from "@/components/crm-workspace/crm-select";
 
 const CATEGORY_OPTIONS: Array<{ value: WorkspaceDayOffCategory; label: string }> = [
   { value: "national_holiday", label: "Ngày lễ nhà nước" },
@@ -225,12 +226,7 @@ export function WorkspaceDayOffSettings() {
               Tên ngày nghỉ
               <input required maxLength={120} value={name} onChange={(event) => setName(event.target.value)} placeholder="Ví dụ: Nghỉ lễ Quốc khánh" className="h-10 rounded-lg border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground/70" />
             </label>
-            <label className="grid gap-1 text-xs font-medium text-muted-foreground sm:col-span-2 lg:col-span-2">
-              Phân loại
-              <select value={category} onChange={(event) => setCategory(event.target.value as WorkspaceDayOffCategory)} className="h-10 rounded-lg border border-border bg-background px-3 text-sm text-foreground">
-                {CATEGORY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-            </label>
+            <div className="grid gap-1 text-xs font-medium text-muted-foreground sm:col-span-2 lg:col-span-2"><span>Phân loại</span><CrmSelect options={CATEGORY_OPTIONS} value={category} onChange={(value) => setCategory(value as WorkspaceDayOffCategory)} /></div>
             <label className="grid gap-1 text-xs font-medium text-muted-foreground sm:col-span-2 lg:col-span-6">
               Ghi chú <span className="font-normal">(không bắt buộc)</span>
               <input maxLength={500} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ghi chú nội bộ hoặc căn cứ ngày nghỉ" className="h-10 rounded-lg border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground/70" />

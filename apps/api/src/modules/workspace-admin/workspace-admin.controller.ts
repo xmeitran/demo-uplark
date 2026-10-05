@@ -53,9 +53,9 @@ export class WorkspaceAdminController {
   }
 
   @Get("history")
-  async history(@Headers("authorization") authorization?: string, @Query("principal") principalFallback?: string, @Query("limit") limit?: string) {
+  async history(@Headers("authorization") authorization?: string, @Query("principal") principalFallback?: string, @Query("limit") limit?: string, @Query("scope") scope?: string) {
     const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
-    return this.admin.history(principal, Number(limit));
+    return this.admin.history(principal, Number(limit), scope === "mine" ? "mine" : "all");
   }
 
   @Patch("reminders")

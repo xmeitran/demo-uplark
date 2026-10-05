@@ -14,16 +14,19 @@ import type {
   CreateInternalUserResponse,
   CreatePortalInvitationResponse,
   InternalRoleCode,
+  BusinessRole,
   ProjectSummary,
   ResourceListResponse,
   SalesOwnerSummary
 } from "@b2b-crm/contracts";
+import { BUSINESS_ROLE_OPTIONS } from "@b2b-crm/contracts";
 import { ConfirmActionDialog } from "./confirm-action-dialog";
 import { ModalLayer } from "../modal-layer";
-import { formatDepartmentLabel } from "@/lib/department-labels";
+import { CrmSelect } from "./crm-select";
+import { businessRoleFromMember, systemRoleFromCodes, systemRoleLabel } from "@/lib/people-roles";
 
 type AdminMode = "internal" | "portal";
-type RoleCode = InternalRoleCode;
+type RoleCode = Extract<InternalRoleCode, "FOUNDER_GM" | "WORKSPACE_ADMIN" | "WORKSPACE_USER">;
 type MemberStatus = "active" | "pending" | "review_required" | "accepted" | "revoked" | "expired" | "rejected" | "suspended";
 type MemberType = "internal" | "portal";
 
@@ -33,7 +36,6 @@ type MemberRow = {
   accountId?: string;
   accountName: string;
   avatarUrl?: string;
-  departmentCode?: string;
   email: string;
   filterText: string;
   hasResourceProfile?: boolean;
@@ -45,32 +47,32 @@ type MemberRow = {
   name: string;
   projectId?: string;
   projectName: string;
+  businessRoleLabel?: BusinessRole;
   roleCode: string;
   roleLabel: string;
   source: "api" | "fallback" | "local";
   status: MemberStatus;
 };
 
-const roleOptions: Array<{ code: RoleCode; label: string; resourceRole: string }> = [
-  { code: "DELIVERY_LEAD", label: "Delivery Lead", resourceRole: "Implementation consultant" },
-  { code: "SALES_OWNER", label: "Sales Owner", resourceRole: "Sales owner" },
-  { code: "FINANCE_ADMIN", label: "Finance Admin", resourceRole: "Finance owner" },
-  { code: "FOUNDER_GM", label: "Founder/GM", resourceRole: "Management" }
+const roleOptions: Array<{ code: RoleCode; label: string; resourceRole: BusinessRole }> = [
+  { code: "FOUNDER_GM", label: "Founder/GM", resourceRole: "Chưa gán" },
+  { code: "WORKSPACE_ADMIN", label: "Workspace Admin", resourceRole: "Chưa gán" },
+  { code: "WORKSPACE_USER", label: "Workspace User", resourceRole: "Chưa gán" }
 ];
 
 const portalRole = { code: "CUSTOMER_SPONSOR", label: "Customer Sponsor" };
 const memberPageSize = 10;
 
 function toApiMemberRow(member: AdminAccessMemberSummary): MemberRow {
-  const roleCode = member.roleCodes[0] ?? "MEMBER";
-  const roleLabel = roleOptions.find((role) => role.code === roleCode)?.label ?? roleCode.replaceAll("_", " ");
+  const systemRole = member.systemRole ?? systemRoleFromCodes(member.roleCodes);
+  const roleCode = member.subjectType === "internal" ? systemRole : member.roleCodes[0] ?? "MEMBER";
+  const roleLabel = member.subjectType === "internal" ? systemRoleLabel(systemRole) : roleCode.replaceAll("_", " ");
   return withFilterText({
     id: member.id,
     activeSessionCount: member.activeSessionCount,
     accountId: member.accountIds[0],
     accountName: member.accountNames[0] ?? "Toàn hệ thống",
     avatarUrl: member.avatarUrl,
-    departmentCode: member.departmentCode,
     email: member.email,
     filterText: "",
     hasResourceProfile: member.hasResourceProfile,
@@ -81,6 +83,7 @@ function toApiMemberRow(member: AdminAccessMemberSummary): MemberRow {
     name: member.displayName,
     projectId: member.projectIds[0],
     projectName: member.projectNames[0] ?? "Tất cả dự án",
+    businessRoleLabel: member.subjectType === "internal" ? businessRoleFromMember(member) : undefined,
     roleCode,
     roleLabel,
     source: "api",
@@ -143,12 +146,11 @@ export function PolicyAccessAdmin({
   const [internalForm, setInternalForm] = useState({
     email: "",
     displayName: "",
-    roleCode: "DELIVERY_LEAD" as RoleCode,
-    departmentCode: "delivery",
+    roleCode: "WORKSPACE_USER" as RoleCode,
     accountId: firstAccountId,
     projectId: firstProjectId,
     createResourceProfile: true,
-    displayRole: "Implementation consultant",
+    displayRole: "Chưa gán",
     weeklyHours: "40",
     billableTargetPercent: "70",
     skills: "lark, implementation"
@@ -323,7 +325,6 @@ export function PolicyAccessAdmin({
           displayName: internalForm.displayName,
           roleCode: internalForm.roleCode,
           tenantKey: "pilot",
-          departmentCode: internalForm.departmentCode || undefined,
           accountId: internalForm.accountId || undefined,
           projectId: internalForm.projectId || undefined
         })
@@ -352,7 +353,7 @@ export function PolicyAccessAdmin({
         }
       }
 
-      const row = buildLocalInternalMember(user, selectedRole.label, selectedInternalAccount, selectedInternalProject);
+      const row = buildLocalInternalMember(user, selectedRole.code, selectedRole.label, internalForm.displayRole as BusinessRole, selectedInternalAccount, selectedInternalProject);
       setLocalMembers((current) => [row, ...current.filter((member) => member.id !== row.id)]);
       setCreatedUser(user);
       await loadAccessAdminData(true);
@@ -467,11 +468,9 @@ export function PolicyAccessAdmin({
   }
 
   function updateRole(roleCode: RoleCode) {
-    const role = roleOptions.find((item) => item.code === roleCode) ?? roleOptions[0];
     setInternalForm((current) => ({
       ...current,
-      roleCode,
-      displayRole: current.displayRole || role.resourceRole
+      roleCode
     }));
   }
 
@@ -525,13 +524,13 @@ export function PolicyAccessAdmin({
           <span>Tìm member</span>
           <input
             className="task-text-input"
-            placeholder="Tên, email, role hoặc scope"
+          placeholder="Tên, email, system role, business role hoặc scope"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
         <FilterChips
-          label="Role"
+          label="System role"
           options={[
             { label: "Tất cả", value: "all" },
             ...roleOptions.map((role) => ({ label: role.label, value: role.code })),
@@ -557,7 +556,7 @@ export function PolicyAccessAdmin({
           <thead>
             <tr>
               <th>Member</th>
-              <th>Role</th>
+              <th>System role</th>
               <th>Scope</th>
               <th>Status</th>
               <th>Hành động</th>
@@ -581,7 +580,7 @@ export function PolicyAccessAdmin({
                 <td>
                   <span className="policy-member-role">{member.roleLabel}</span>
                   <small className="policy-member-muted">
-                    {member.kind === "portal" ? "Portal" : "Nội bộ"}{member.departmentCode ? ` · ${formatDepartment(member.departmentCode)}` : ""}
+                    {member.kind === "portal" ? "Portal" : member.businessRoleLabel ?? "Chưa gán"}
                   </small>
                 </td>
                 <td>
@@ -801,7 +800,6 @@ function InviteInternalForm({
     accountId: string;
     billableTargetPercent: string;
     createResourceProfile: boolean;
-    departmentCode: string;
     displayName: string;
     displayRole: string;
     email: string;
@@ -816,7 +814,7 @@ function InviteInternalForm({
   projects: ProjectSummary[];
   selectedAccount?: AccountSummary;
   selectedProject?: ProjectSummary;
-  selectedRole: { code: RoleCode; label: string; resourceRole: string };
+  selectedRole: { code: RoleCode; label: string; resourceRole: BusinessRole };
 }) {
   return (
     <form className="policy-invite-form" onSubmit={onSubmit}>
@@ -846,20 +844,12 @@ function InviteInternalForm({
                   onChange={(event) => onChange((current) => ({ ...current, displayName: event.target.value }))}
                 />
               </label>
-              <label>
-                <span>Phòng ban</span>
-                <input
-                  className="task-text-input"
-                  value={form.departmentCode}
-                  onChange={(event) => onChange((current) => ({ ...current, departmentCode: event.target.value }))}
-                />
-              </label>
             </div>
           </section>
 
           <section className="policy-invite-section">
-            <h4>Role & scope</h4>
-            <div className="policy-role-picker" aria-label="Role nội bộ">
+            <h4>System role & scope</h4>
+            <div className="policy-role-picker" aria-label="System role nội bộ">
               {roleOptions.map((role) => (
                 <button className={form.roleCode === role.code ? "active" : ""} key={role.code} type="button" onClick={() => onUpdateRole(role.code)}>
                   {role.label}
@@ -899,14 +889,15 @@ function InviteInternalForm({
             </label>
             {form.createResourceProfile ? (
               <div className="policy-invite-grid">
-                <label>
-                  <span>Vai trò nguồn lực</span>
-                  <input
-                    className="task-text-input"
+                <div>
+                  <span>Business role</span>
+                  <CrmSelect
+                    className="mt-1"
+                    options={BUSINESS_ROLE_OPTIONS.map((role) => ({ value: role, label: role }))}
                     value={form.displayRole || selectedRole.resourceRole}
-                    onChange={(event) => onChange((current) => ({ ...current, displayRole: event.target.value }))}
+                    onChange={(value) => onChange((current) => ({ ...current, displayRole: value as BusinessRole }))}
                   />
-                </label>
+                </div>
                 <label>
                   <span>Giờ chuẩn/tuần</span>
                   <input
@@ -937,7 +928,8 @@ function InviteInternalForm({
           title="Member nội bộ"
           rows={[
             ["Email", form.email || "Chưa nhập"],
-            ["Role", selectedRole.label],
+            ["System role", selectedRole.label],
+            ["Business role", form.displayRole || selectedRole.resourceRole],
             ["Account", selectedAccount?.name ?? "Chưa gắn"],
             ["Dự án", selectedProject?.name ?? "Chưa gắn"],
             ["Nguồn lực", form.createResourceProfile ? `${form.weeklyHours || 0} giờ/tuần` : "Không tạo"]
@@ -1208,10 +1200,11 @@ function MemberPagination({
 }
 
 function buildFallbackMember(owner: SalesOwnerSummary, account?: AccountSummary, project?: ProjectSummary): MemberRow {
-  const roleCode = owner.roleCodes[0] ?? "SALES_OWNER";
-  const roleLabel = roleOptions.find((role) => role.code === roleCode)?.label ?? roleCode.replaceAll("_", " ");
-  const accountName = roleCode === "FOUNDER_GM" ? "Toàn hệ thống" : account?.name ?? "Theo quyền CRM";
-  const projectName = roleCode === "FOUNDER_GM" ? "Tất cả dự án" : project?.name ?? "Theo phạm vi role";
+  const systemRole = systemRoleFromCodes(owner.roleCodes);
+  const roleCode = systemRole;
+  const roleLabel = systemRoleLabel(systemRole);
+  const accountName = systemRole === "FOUNDER_GM" ? "Toàn hệ thống" : account?.name ?? "Theo quyền CRM";
+  const projectName = systemRole === "FOUNDER_GM" ? "Tất cả dự án" : project?.name ?? "Theo phạm vi role";
   return withFilterText({
     id: owner.id,
     accountId: account?.id,
@@ -1222,6 +1215,7 @@ function buildFallbackMember(owner: SalesOwnerSummary, account?: AccountSummary,
     name: owner.displayName,
     projectId: project?.id,
     projectName,
+    businessRoleLabel: businessRoleFromMember({ roleCodes: owner.roleCodes }),
     roleCode,
     roleLabel,
     source: "fallback",
@@ -1231,7 +1225,9 @@ function buildFallbackMember(owner: SalesOwnerSummary, account?: AccountSummary,
 
 function buildLocalInternalMember(
   user: CreateInternalUserResponse,
+  roleCode: RoleCode,
   roleLabel: string,
+  businessRoleLabel: BusinessRole,
   account?: AccountSummary,
   project?: ProjectSummary
 ): MemberRow {
@@ -1245,7 +1241,8 @@ function buildLocalInternalMember(
     name: user.displayName,
     projectId: project?.id,
     projectName: project?.name ?? "Chưa gắn project",
-    roleCode: user.roleCode,
+    businessRoleLabel,
+    roleCode,
     roleLabel,
     source: "local",
     status: "active"
@@ -1331,10 +1328,6 @@ function PolicyMemberAvatar({ member }: { member: MemberRow }) {
 function initialsFor(value: string) {
   const words = value.trim().split(/\s+/).filter(Boolean);
   return (words[0]?.[0] ?? "U").toUpperCase() + (words[1]?.[0] ?? "").toUpperCase();
-}
-
-function formatDepartment(departmentCode: string) {
-  return formatDepartmentLabel(departmentCode);
 }
 
 function formatDateTime(value: string) {

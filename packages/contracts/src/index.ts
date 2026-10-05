@@ -2640,6 +2640,58 @@ export interface AdminRevokeSessionsResponse {
 
 export type AdminAccessMemberStatus = "active" | "suspended";
 export type AdminAccessMemberType = "internal" | "portal";
+export type WorkspaceSystemRole = "FOUNDER_GM" | "WORKSPACE_ADMIN" | "WORKSPACE_USER";
+export const BUSINESS_ROLE_OPTIONS = [
+  "Customer success",
+  "Project Manager",
+  "DX enabler",
+  "Business development",
+  "Marketing B2B",
+  "Chưa gán",
+] as const;
+export type BusinessRole = (typeof BUSINESS_ROLE_OPTIONS)[number];
+
+const BUSINESS_ROLE_ALIASES: Record<string, BusinessRole> = {
+  CUSTOMER_SUCCESS: "Customer success",
+  "CUSTOMER SUCCESS": "Customer success",
+  "CUSTOMER-SUCCESS": "Customer success",
+  PROJECT_MANAGEMENT: "Project Manager",
+  "PROJECT MANAGEMENT": "Project Manager",
+  PROJECT_MANAGER: "Project Manager",
+  "PROJECT MANAGER": "Project Manager",
+  PM: "Project Manager",
+  DELIVERY_LEAD: "Project Manager",
+  "DELIVERY LEAD": "Project Manager",
+  "IMPLEMENTATION CONSULTANT": "Project Manager",
+  "DELIVERY RESOURCE": "Project Manager",
+  "TECHNICAL IMPLEMENTER": "Project Manager",
+  "LARK CONSULTANT": "Project Manager",
+  DX_ENABLER: "DX enabler",
+  "DX ENABLER": "DX enabler",
+  CDS_DX_ENABLER: "DX enabler",
+  BUSINESS_DEVELOPMENT: "Business development",
+  "BUSINESS DEVELOPMENT": "Business development",
+  CDS_BUSINESS_DEVELOPMENT: "Business development",
+  SALES_OWNER: "Business development",
+  "SALES OWNER": "Business development",
+  SALES_LEAD: "Business development",
+  "SALES LEAD": "Business development",
+  MARKETING_B2B: "Marketing B2B",
+  "MARKETING B2B": "Marketing B2B",
+  CDS_MARKETING_B2B: "Marketing B2B",
+  WORKSPACE_ADMIN: "Chưa gán",
+  WORKSPACE_USER: "Chưa gán",
+  FOUNDER_GM: "Chưa gán",
+  FINANCE_ADMIN: "Chưa gán",
+};
+
+export function normalizeBusinessRole(value?: string | null): BusinessRole {
+  const raw = value?.trim();
+  if (!raw) return "Chưa gán";
+  const exact = BUSINESS_ROLE_OPTIONS.find((option) => option.toLocaleLowerCase("vi") === raw.toLocaleLowerCase("vi"));
+  return exact ?? BUSINESS_ROLE_ALIASES[raw.toUpperCase()] ?? "Chưa gán";
+}
+
 export type CostPermissionCode = "COST_VIEW" | "COST_EDIT" | "COST_APPROVE" | "COST_EXPORT";
 export type EmploymentStatus = "ACTIVE" | "ON_LEAVE" | "INACTIVE";
 
@@ -2661,6 +2713,7 @@ export interface AdminAccessMemberSummary {
   tenantKey: string;
   workspaceId?: string;
   roleCodes: string[];
+  systemRole?: WorkspaceSystemRole;
   costPermissionCodes?: CostPermissionCode[];
   employmentStatus?: EmploymentStatus;
   accountIds: string[];
@@ -3428,8 +3481,16 @@ export interface AdminOverviewResponse {
 export interface AdminHistoryEntry {
   id: string;
   action: string;
+  category: "approval" | "day_off" | "pnl" | "milestone";
+  title: string;
+  detail: string;
   resource: string;
   resourceId?: string;
+  milestoneName?: string;
+  projectId?: string;
+  projectCode?: string;
+  projectName?: string;
+  href?: string;
   actorUserId?: string;
   actorDisplayName?: string;
   requestId: string;
@@ -3478,6 +3539,7 @@ export interface WorkspaceReminderRecipientOption {
   email?: string;
   avatarUrl?: string;
   departmentCode?: string;
+  resourceDisplayRole?: string;
   roleCodes?: string[];
   teamIds: string[];
 }

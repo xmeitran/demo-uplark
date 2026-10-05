@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
   CapacitySummaryItem,
   CapacitySummaryResponse,
@@ -11,7 +11,8 @@ import type {
 import { ShopifyAppShell, ShopifyBanner, ShopifyDataTable, ShopifyIcon, ShopifyPage, ShopifySection } from "../shopify-ui";
 import { ShopifyModal } from "../shopify-modal";
 import { ConfirmActionDialog } from "./confirm-action-dialog";
-import { formatDepartmentLabel } from "@/lib/department-labels";
+import { CrmSelect, type CrmSelectOption } from "./crm-select";
+import { businessRoleFromMember } from "@/lib/people-roles";
 
 type AllocationStatus = ResourceAllocationStatus | "blocked" | "completed";
 
@@ -60,7 +61,7 @@ const resourcePageSize = 12;
 
 const fallbackProjects: ProjectOption[] = [];
 
-type CustomDropdownOption = { value: string; label: string; icon?: "users" | "briefcase" | "calendar"; iconTone?: string };
+type CustomDropdownOption = CrmSelectOption;
 
 function CustomDropdown({
   id,
@@ -77,87 +78,15 @@ function CustomDropdown({
   onChange: (val: string) => void;
   openDirection?: "up" | "down";
 }) {
-  const generatedId = useId();
-  const [open, setOpen] = useState(false);
-  const selectedOpt = options.find((o) => o.value === value) ?? options[0];
-  const controlId = id ?? `resource-select-${generatedId.replace(/:/g, "")}`;
-
-  const handleBlur = (event: React.FocusEvent<HTMLDivElement>) => {
-    const nextFocus = event.relatedTarget as Node | null;
-    if (!nextFocus || !event.currentTarget.contains(nextFocus)) {
-      setOpen(false);
-    }
-  };
-
   return (
-    <div className="task-select-control" onBlur={handleBlur} style={{ position: "relative" }}>
-      <span className="task-field-label" id={`${controlId}-label`}>
-        {label}
-      </span>
-      <button
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        aria-labelledby={`${controlId}-label ${controlId}-value`}
-        className="task-select-trigger"
-        data-open={open ? "true" : "false"}
-        onClick={() => setOpen(!open)}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") setOpen(false);
-        }}
-        type="button"
-        style={{ fontFamily: "var(--font-sans)" }}
-      >
-        <span className="task-select-current" id={`${controlId}-value`}>
-          {selectedOpt?.icon && (
-            <ShopifyIcon
-              className={`task-select-icon tone-${selectedOpt.iconTone ?? "neutral"}`}
-              name={selectedOpt.icon}
-              size={15}
-            />
-          )}
-          <span className="task-select-value">{selectedOpt?.label}</span>
-        </span>
-        <ShopifyIcon className="task-select-chevron" name="chevron-down" size={14} />
-      </button>
-
-      {open && (
-        <div
-          aria-labelledby={`${controlId}-label`}
-          className="task-select-menu"
-          data-direction={openDirection}
-          role="listbox"
-          style={{ width: "100%" }}
-        >
-          {options.map((opt) => (
-            <button
-              aria-selected={opt.value === value}
-              className="task-select-option"
-              data-selected={opt.value === value ? "true" : "false"}
-              key={opt.value}
-              onClick={() => {
-                onChange(opt.value);
-                setOpen(false);
-              }}
-              role="option"
-              type="button"
-              style={{ fontFamily: "var(--font-sans)" }}
-            >
-              {opt.icon && (
-                <ShopifyIcon
-                  className={`task-select-icon tone-${opt.iconTone ?? "neutral"}`}
-                  name={opt.icon}
-                  size={15}
-                />
-              )}
-              <span className="task-select-option-label">{opt.label}</span>
-              {opt.value === value && (
-                <ShopifyIcon className="task-select-check" name="check" size={15} />
-              )}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <CrmSelect
+      id={id}
+      label={label}
+      openDirection={openDirection}
+      options={options}
+      value={value}
+      onChange={onChange}
+    />
   );
 }
 
@@ -458,7 +387,7 @@ export function ResourceMgmtFunctionPage({
                           <s-badge tone={utilization.tone}>{utilization.statusText}</s-badge>
                         </div>
                         <span>{consultant.role}</span>
-                        <small>{consultant.departmentCode ? formatDepartment(consultant.departmentCode) : "Chưa có phòng ban"} · {consultant.email ?? "Chưa có email"}</small>
+                        <small>{consultant.email ?? "Chưa có email"}</small>
                         <div className="resource-member-tags">
                           <span>{consultant.larkOpenId ? "Đã đồng bộ" : "Chưa có định danh"}</span>
                           <span>{formatDays(utilization.allocated)}d / {formatDays(utilization.available)}d</span>
@@ -517,7 +446,7 @@ export function ResourceMgmtFunctionPage({
                       <div>
                         <strong>{consultant.name}</strong>
                         <span>{consultant.role}</span>
-                        <small>{consultant.departmentCode ? formatDepartment(consultant.departmentCode) : "Chưa có phòng ban"} · {consultant.email ?? "Chưa có email"}</small>
+                        <small>{consultant.email ?? "Chưa có email"}</small>
                       </div>
                     </div>
                   ),
@@ -754,7 +683,7 @@ function createConsultant(item: CapacitySummaryItem): Consultant {
     larkOpenId: item.larkOpenId,
     larkTenantKey: item.larkTenantKey,
     name: item.userDisplayName,
-    role: item.displayRole ? formatResourceRole(item.displayRole) : "Nguồn lực triển khai",
+    role: businessRoleFromMember({ resourceDisplayRole: item.displayRole }),
     skills: item.skills.length > 0 ? item.skills.map(formatResourceSkill) : ["Triển khai"],
     capacityMinutesByWeek: {},
     allocations: []
@@ -840,15 +769,6 @@ function formatAllocationStatus(status: AllocationStatus) {
   return labels[status] ?? status;
 }
 
-function formatResourceRole(role: string) {
-  const labels: Record<string, string> = {
-    "Delivery resource": "Nguồn lực triển khai",
-    "Technical Implementer": "Chuyên viên triển khai",
-    "Lark Consultant": "Consultant Lark"
-  };
-  return labels[role] ?? role;
-}
-
 function formatResourceSkill(skill: string) {
   const labels: Record<string, string> = {
     "Integration/API": "Tích hợp Lark",
@@ -862,10 +782,6 @@ function formatResourceSkill(skill: string) {
     lark: "Lark"
   };
   return labels[skill] ?? skill;
-}
-
-function formatDepartment(departmentCode: string) {
-  return formatDepartmentLabel(departmentCode);
 }
 
 function buildWeekWindows(): WeekWindow[] {

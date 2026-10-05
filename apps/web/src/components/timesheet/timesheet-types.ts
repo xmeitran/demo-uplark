@@ -210,6 +210,6 @@ export type ViewerScope = "workspace" | "managed_projects" | "self";
 
 export const VIEWER_SCOPE_LABELS: Record<ViewerScope, string> = {
   workspace: "Toàn workspace (Founder/GM)",
-  managed_projects: "Dự án tôi quản lý (Delivery Lead / PM)",
+  managed_projects: "Dự án tôi quản lý (Project Manager / PM)",
   self: "Chỉ dữ liệu của tôi (Member)"
 };

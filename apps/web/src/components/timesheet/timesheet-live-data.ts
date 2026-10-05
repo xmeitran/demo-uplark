@@ -14,6 +14,7 @@ import type {
   WorkGroup
 } from "./timesheet-types";
 import { formatDepartmentLabel } from "@/lib/department-labels";
+import { businessRoleFromMember } from "@/lib/people-roles";
 import { normalizeNodeStatus } from "./timesheet-status";
 export { normalizeNodeStatus } from "./timesheet-status";
 
@@ -270,7 +271,7 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
       initials: initials(name),
       avatarUrl: user?.avatarUrl,
       avatarColor: avatarColor(id),
-      role: user?.resourceDisplayRole || user?.roleCodes?.[0] || "Workspace user",
+      role: businessRoleFromMember(user ?? {}),
       departmentId,
       teamName: departmentId,
       standardMinutesPerDay: 480,

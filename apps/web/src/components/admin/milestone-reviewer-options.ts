@@ -1,16 +1,15 @@
 import type { WorkspaceReminderRecipientOption } from "@b2b-crm/contracts";
 import type { TaskSelectOption } from "@/components/crm-workspace/tasks-workbench";
+import { businessRoleFromMember, systemRoleFromCodes, systemRoleLabel } from "@/lib/people-roles";
 
 export const WORKSPACE_ADMIN_REVIEWER_VALUE = "workspace_admin";
 
-function formatRole(roleCode?: string) {
-  if (!roleCode) return "Workspace User";
-  return roleCode
-    .toLowerCase()
-    .split("_")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+function formatRole(user: WorkspaceReminderRecipientOption) {
+  const systemRole = systemRoleFromCodes(user.roleCodes);
+  if (user.roleCodes?.some((roleCode) => roleCode === "FOUNDER_GM" || roleCode === "WORKSPACE_ADMIN")) {
+    return systemRoleLabel(systemRole);
+  }
+  return businessRoleFromMember(user);
 }
 
 export function milestoneReviewerOptions(
@@ -28,7 +27,7 @@ export function milestoneReviewerOptions(
     ...users.map((user) => ({
       value: user.id,
       label: user.displayName,
-      subtext: `${formatRole(user.roleCodes?.[0])}${user.email ? ` · ${user.email}` : ""}`,
+      subtext: `${formatRole(user)}${user.email ? ` · ${user.email}` : ""}`,
       avatarUrl: user.avatarUrl,
       initials: initialsFor(user.displayName),
       color: colorForId(user.id)
