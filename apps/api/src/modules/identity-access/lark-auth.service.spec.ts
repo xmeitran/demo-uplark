@@ -185,6 +185,7 @@ describe("Lark authentication boundary", () => {
 
     expect(nativeAuth.completeIdentityLogin).toHaveBeenCalledWith(canonicalMember.id, expect.objectContaining({ workspaceId: "twk-foundation" }), { authMethod: "lark" });
     expect(prisma.portalIdentity.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: { userId: canonicalMember.id },
       create: expect.objectContaining({ userId: canonicalMember.id, providerUserId: "ou_new_app_id", tenantKey: "prod" })
     }));
   });

@@ -310,7 +310,10 @@ export class LarkAuthService {
     const legacyLarkUser = await this.findUserByLarkUserId(profile.userId, workspace);
     if (legacyLarkUser) {
       await this.requireActiveMembership(legacyLarkUser, workspace);
-      await this.linkIdentity(legacyLarkUser.id, profile.openId, workspace.tenantKey);
+      // A previous app version may have attached this app-scoped open_id to a
+      // duplicate auto-provisioned account. The stable directory user_id is
+      // the trusted identity, so repair that stale link explicitly here.
+      await this.linkIdentity(legacyLarkUser.id, profile.openId, workspace.tenantKey, true);
       return this.updateUserProfile(legacyLarkUser.id, profile, legacyLarkUser.email);
     }
 
@@ -535,7 +538,7 @@ export class LarkAuthService {
     });
   }
 
-  private async linkIdentity(userId: string, openId: string, crmTenantKey: string) {
+  private async linkIdentity(userId: string, openId: string, crmTenantKey: string, allowRelink = false) {
     const identity = await this.prisma.portalIdentity.upsert({
       where: {
         provider_providerUserId_tenantKey: {
@@ -544,7 +547,7 @@ export class LarkAuthService {
           tenantKey: crmTenantKey
         }
       },
-      update: {},
+      update: allowRelink ? { userId } : {},
       create: {
         userId,
         provider: PROVIDER,
