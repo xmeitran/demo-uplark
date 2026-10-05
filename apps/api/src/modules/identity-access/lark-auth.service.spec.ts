@@ -118,6 +118,28 @@ describe("Lark authentication boundary", () => {
     }));
   });
 
+  it("reuses the existing CRM member through stable Lark user id after an app change", async () => {
+    vi.stubEnv("CRM_LARK_AUTO_PROVISION", "true");
+    const { service, prisma, nativeAuth } = makeService();
+    const existingMember = { id: "usr-lark-HCM273", email: "maitns@upbase.asia", displayName: "Trần Ngô Sao Mai", status: "ACTIVE" };
+    prisma.portalIdentity.findUnique.mockResolvedValue(null);
+    prisma.portalIdentity.findFirst.mockResolvedValue({ user: existingMember });
+    prisma.portalIdentity.upsert.mockResolvedValue({ userId: existingMember.id });
+    prisma.user.update.mockResolvedValue(existingMember);
+    const { state } = await service.createAuthorizeUrl({ redirectUri });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, access_token: "provider-token" }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, data: { open_id: "ou_new_app_id", user_id: "HCM273", tenant_key: "tn_test", email: "tranngosaomai@gmail.com", name: "Trần Ngô Sao Mai" } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 1 }) }));
+
+    await service.completeCallback({ code: "code", state, redirectUri });
+
+    expect(prisma.portalIdentity.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ userId: "usr-lark-HCM273", providerUserId: "ou_new_app_id", tenantKey: "prod" })
+    }));
+    expect(nativeAuth.completeIdentityLogin).toHaveBeenCalledWith("usr-lark-HCM273", expect.objectContaining({ workspaceId: "twk-foundation" }), { authMethod: "lark" });
+  });
+
   it("repairs an existing linked CRM user when Lark provides an enterprise email", async () => {
     const { service, prisma } = makeService();
     prisma.portalIdentity.findUnique.mockResolvedValue({
@@ -201,7 +223,7 @@ function makeService() {
   };
   const prisma = {
     authActionToken: { create: vi.fn().mockResolvedValue({}), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
-    portalIdentity: { findUnique: vi.fn().mockResolvedValue(null), upsert: vi.fn().mockResolvedValue({ userId: "usr-1" }) },
+    portalIdentity: { findUnique: vi.fn().mockResolvedValue(null), findFirst: vi.fn().mockResolvedValue(null), upsert: vi.fn().mockResolvedValue({ userId: "usr-1" }) },
     user: { findFirst: vi.fn().mockResolvedValue(user), findMany: vi.fn().mockResolvedValue([user]), update: vi.fn().mockResolvedValue(user) },
     roleBinding: { findFirst: vi.fn().mockResolvedValue({ id: "rb-1" }) },
     customerAccessGrant: { findFirst: vi.fn().mockResolvedValue(null) },

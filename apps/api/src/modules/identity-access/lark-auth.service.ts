@@ -308,6 +308,18 @@ export class LarkAuthService {
       return this.updateUserProfile(linkedIdentity.user.id, profile, linkedIdentity.user.email);
     }
 
+    // `open_id` is scoped to the Lark app. If the app is recreated or the
+    // workspace switches to another app, the same person receives a new
+    // open_id. Keep the directory/user_id identity as the stable bridge so
+    // we link back to the existing CRM member instead of auto-provisioning a
+    // duplicate account from the personal OAuth email.
+    const legacyLarkUser = await this.findUserByLarkUserId(profile.userId, workspace);
+    if (legacyLarkUser) {
+      await this.requireActiveMembership(legacyLarkUser, workspace);
+      await this.linkIdentity(legacyLarkUser.id, profile.openId, workspace.tenantKey);
+      return this.updateUserProfile(legacyLarkUser.id, profile, legacyLarkUser.email);
+    }
+
     const matchedUser = await this.findUserByEmail(profile);
     if (matchedUser) {
       await this.requireActiveMembership(matchedUser, workspace);
@@ -427,6 +439,20 @@ export class LarkAuthService {
       orderBy: { createdAt: "asc" }
     });
     return users.find((user) => user.email === profile.enterpriseEmail) ?? users[0];
+  }
+
+  private async findUserByLarkUserId(userId: string | undefined, workspace: WorkspaceContext) {
+    if (!userId) return undefined;
+
+    const identity = await this.prisma.portalIdentity.findFirst({
+      where: {
+        provider: "lark_user_id",
+        providerUserId: userId,
+        tenantKey: workspace.tenantKey
+      },
+      include: { user: true }
+    });
+    return identity?.user;
   }
 
   private async findBootstrapAdmin(openId: string, workspace: WorkspaceContext) {
