@@ -5,6 +5,7 @@ services:
     name: demo-uplark
     runtime: node
     plan: free
+    autoDeploy: true
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build:frontend
     startCommand: pnpm --filter @b2b-crm/web exec next start -p $PORT
     healthCheckPath: /login
@@ -53,6 +54,7 @@ services:
     name: demo-uplark-api
     runtime: node
     plan: free
+    autoDeploy: true
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm db:generate && pnpm --filter @b2b-crm/contracts build && pnpm --filter @b2b-crm/api build
     # Render free web services do not support preDeployCommand. Run the
     # isolated staging migrations before the API process starts instead.
