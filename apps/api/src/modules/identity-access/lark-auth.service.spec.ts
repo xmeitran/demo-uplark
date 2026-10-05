@@ -72,6 +72,7 @@ describe("Lark authentication boundary", () => {
     vi.stubEnv("CRM_LARK_AUTO_PROVISION", "false");
     const { service, prisma } = makeService();
     prisma.user.findFirst.mockResolvedValue(null);
+    prisma.user.findMany.mockResolvedValue([]);
     const { state } = await service.createAuthorizeUrl({ redirectUri }); mockProvider();
     await expect(service.completeCallback({ code: "code", state, redirectUri })).rejects.toBeInstanceOf(ForbiddenException);
   });
@@ -81,6 +82,7 @@ describe("Lark authentication boundary", () => {
     vi.stubEnv("CRM_LARK_DEFAULT_ROLE_CODE", "WORKSPACE_USER");
     const { service, prisma, nativeAuth, tx } = makeService();
     prisma.user.findFirst.mockResolvedValue(null);
+    prisma.user.findMany.mockResolvedValue([]);
     tx.user.create.mockResolvedValue({ id: "usr-new", email: "person@example.com", displayName: "Person", status: "ACTIVE" });
     const { state } = await service.createAuthorizeUrl({ redirectUri }); mockProvider();
 
@@ -95,11 +97,33 @@ describe("Lark authentication boundary", () => {
     expect(nativeAuth.completeIdentityLogin).toHaveBeenCalledWith("usr-new", expect.objectContaining({ workspaceId: "twk-foundation" }), { authMethod: "lark" });
   });
 
+  it("prefers the Lark enterprise email when OAuth also returns a personal email", async () => {
+    vi.stubEnv("CRM_LARK_AUTO_PROVISION", "true");
+    vi.stubEnv("CRM_LARK_DEFAULT_ROLE_CODE", "WORKSPACE_USER");
+    const { service, prisma, tx } = makeService();
+    prisma.user.findFirst.mockResolvedValue(null);
+    prisma.user.findMany.mockResolvedValue([]);
+    tx.user.create.mockResolvedValue({ id: "usr-new", email: "mai@upbase.asia", displayName: "Person", status: "ACTIVE" });
+    const { state } = await service.createAuthorizeUrl({ redirectUri });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, access_token: "provider-token" }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, data: { open_id: "ou_test", user_id: "ou_test_user", tenant_key: "tn_test", email: "mai.personal@gmail.com", name: "Person" } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, tenant_access_token: "tenant-token" }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, data: { user: { enterprise_email: "mai@upbase.asia" } } }) }));
+
+    await service.completeCallback({ code: "code", state, redirectUri });
+
+    expect(tx.user.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ email: "mai@upbase.asia" })
+    }));
+  });
+
   it("rejects auto-provision configuration that would grant an admin role", async () => {
     vi.stubEnv("CRM_LARK_AUTO_PROVISION", "true");
     vi.stubEnv("CRM_LARK_DEFAULT_ROLE_CODE", "WORKSPACE_ADMIN");
     const { service, prisma } = makeService();
     prisma.user.findFirst.mockResolvedValue(null);
+    prisma.user.findMany.mockResolvedValue([]);
     const { state } = await service.createAuthorizeUrl({ redirectUri }); mockProvider();
     await expect(service.completeCallback({ code: "code", state, redirectUri })).rejects.toThrow("non-admin workspace role");
   });
@@ -157,7 +181,7 @@ function makeService() {
   const prisma = {
     authActionToken: { create: vi.fn().mockResolvedValue({}), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     portalIdentity: { findUnique: vi.fn().mockResolvedValue(null), upsert: vi.fn().mockResolvedValue({ userId: "usr-1" }) },
-    user: { findFirst: vi.fn().mockResolvedValue(user), update: vi.fn().mockResolvedValue(user) },
+    user: { findFirst: vi.fn().mockResolvedValue(user), findMany: vi.fn().mockResolvedValue([user]), update: vi.fn().mockResolvedValue(user) },
     roleBinding: { findFirst: vi.fn().mockResolvedValue({ id: "rb-1" }) },
     customerAccessGrant: { findFirst: vi.fn().mockResolvedValue(null) },
     $transaction: vi.fn(async (callback: (transaction: typeof tx) => unknown) => callback(tx))
@@ -170,5 +194,6 @@ function makeService() {
 function mockProvider() {
   vi.stubGlobal("fetch", vi.fn()
     .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, access_token: "provider-token" }) })
-    .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, data: { open_id: "ou_test", tenant_key: "tn_test", email: "person@example.com", name: "Person" } }) }));
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, data: { open_id: "ou_test", tenant_key: "tn_test", email: "person@example.com", name: "Person" } }) })
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 1 }) }));
 }

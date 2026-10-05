@@ -20,6 +20,7 @@ const STATE_TTL_MS = 1000 * 60 * 10;
 const DEFAULT_AUTHORIZE_URL = "https://accounts.larksuite.com/open-apis/authen/v1/authorize";
 const DEFAULT_TOKEN_URL = "https://open.larksuite.com/open-apis/authen/v2/oauth/token";
 const DEFAULT_USER_INFO_URL = "https://open.larksuite.com/open-apis/authen/v1/user_info";
+const DEFAULT_TENANT_TOKEN_URL = "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal";
 const PROVIDER = "lark";
 
 interface LarkStatePayload {
@@ -58,6 +59,16 @@ interface LarkUserInfoResponse {
     enterprise_email?: string;
     user_id?: string;
     tenant_key?: string;
+  };
+}
+
+interface LarkDirectoryUserResponse {
+  code?: number;
+  data?: {
+    user?: {
+      email?: string;
+      enterprise_email?: string;
+    };
   };
 }
 
@@ -232,8 +243,13 @@ export class LarkAuthService {
       throw new BadGatewayException("Lark user information could not be verified");
     }
 
+    // The OAuth user_info response can expose the account's personal email.
+    // Resolve the directory record as well so a company-managed address wins
+    // when Lark has both values available. The directory lookup is best-effort:
+    // missing contact permission must not prevent an otherwise valid login.
+    const directoryUser = body.data.user_id ? await this.fetchDirectoryUser(body.data.user_id) : undefined;
     const email = normalizeEmail(body.data.email);
-    const enterpriseEmail = normalizeEmail(body.data.enterprise_email);
+    const enterpriseEmail = normalizeEmail(directoryUser?.enterprise_email ?? body.data.enterprise_email);
 
     return {
       openId: body.data.open_id,
@@ -242,9 +258,36 @@ export class LarkAuthService {
       tenantKey: body.data.tenant_key,
       email,
       enterpriseEmail,
-      displayName: body.data.name?.trim() || body.data.en_name?.trim() || email || enterpriseEmail || body.data.open_id,
+      displayName: body.data.name?.trim() || body.data.en_name?.trim() || enterpriseEmail || email || body.data.open_id,
       avatarUrl: body.data.avatar_url ?? body.data.avatar_big ?? body.data.avatar_middle ?? body.data.avatar_thumb
     };
+  }
+
+  private async fetchDirectoryUser(userId: string) {
+    const appId = process.env.LARK_APP_ID?.trim();
+    const appSecret = process.env.LARK_APP_SECRET?.trim();
+    if (!appId || !appSecret || appId === "local-disabled" || appSecret === "local-disabled") return undefined;
+
+    const baseUrl = (process.env.LARK_OPEN_API_BASE_URL?.trim() || "https://open.larksuite.com").replace(/\/$/, "");
+    try {
+      const tokenResponse = await this.providerFetch(process.env.LARK_TENANT_TOKEN_URL ?? DEFAULT_TENANT_TOKEN_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json; charset=utf-8" },
+        body: JSON.stringify({ app_id: appId, app_secret: appSecret })
+      });
+      const tokenBody = (await tokenResponse.json().catch(() => ({}))) as { code?: number; tenant_access_token?: string };
+      if (!tokenResponse.ok || tokenBody.code !== 0 || !tokenBody.tenant_access_token) return undefined;
+
+      const response = await this.providerFetch(`${baseUrl}/open-apis/contact/v3/users/${encodeURIComponent(userId)}?user_id_type=user_id`, {
+        headers: { authorization: `Bearer ${tokenBody.tenant_access_token}` }
+      });
+      const body = (await response.json().catch(() => ({}))) as LarkDirectoryUserResponse;
+      if (!response.ok || body.code !== 0) return undefined;
+      return body.data?.user;
+    } catch {
+      this.logger.warn("Lark directory email lookup was unavailable; falling back to OAuth profile email");
+      return undefined;
+    }
   }
 
   private async resolveUserFromProfile(profile: NormalizedLarkProfile, workspace: WorkspaceContext) {
@@ -287,7 +330,7 @@ export class LarkAuthService {
   }
 
   private async provisionUserFromProfile(profile: NormalizedLarkProfile, workspace: WorkspaceContext) {
-    const email = profile.email ?? profile.enterpriseEmail;
+    const email = profile.enterpriseEmail ?? profile.email;
     if (!email) {
       throw new ForbiddenException("Lark account email is required for workspace access");
     }
@@ -374,15 +417,16 @@ export class LarkAuthService {
   }
 
   private async findUserByEmail(profile: NormalizedLarkProfile) {
-    const emails = [profile.email, profile.enterpriseEmail].filter(Boolean) as string[];
+    const emails = [profile.enterpriseEmail, profile.email].filter(Boolean) as string[];
     if (!emails.length) {
       return undefined;
     }
 
-    return this.prisma.user.findFirst({
+    const users = await this.prisma.user.findMany({
       where: { email: { in: emails } },
       orderBy: { createdAt: "asc" }
     });
+    return users.find((user) => user.email === profile.enterpriseEmail) ?? users[0];
   }
 
   private async findBootstrapAdmin(openId: string, workspace: WorkspaceContext) {
