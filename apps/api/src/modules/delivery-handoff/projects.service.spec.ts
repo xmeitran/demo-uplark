@@ -2838,6 +2838,61 @@ describe("ProjectsService interaction remediation", () => {
     }));
   });
 
+  it("persists the selected milestone when creating a project document", async () => {
+    const file = {
+      id: "file-1", accountId: "acc-1", projectId: "prj-1", fileName: "handoff.pdf",
+      contentType: "application/pdf", byteSize: 42, checksumSha256: "abc123", storageProvider: "local",
+      storageKey: "twk-1/acc-1/file-1", ownerType: "general", customerVisible: false,
+      internalOnly: true, allowedRoles: [], scanStatus: "clean", status: "active",
+      createdAt: new Date("2026-07-15T00:00:00.000Z")
+    };
+    const artifact = {
+      id: "doc-1", accountId: "acc-1", projectId: "prj-1", milestoneId: "ms-1", code: "PRJ-DOC-1", name: "Handoff",
+      artifactType: "project_document", storageKey: file.storageKey, customerVisible: false, internalOnly: true,
+      allowedRoles: [], signedUrlExpiresSeconds: 300, createdAt: file.createdAt, updatedAt: file.createdAt,
+      account: { name: "Acme" }, project: { name: "CRM" }, milestone: { name: "Milestone 1" }, versions: []
+    };
+    const prisma: Record<string, any> = {
+      project: { findFirst: vi.fn().mockResolvedValue({ id: "prj-1", accountId: "acc-1", code: "PRJ" }) },
+      projectMilestone: { findFirst: vi.fn().mockResolvedValue({ id: "ms-1" }) },
+      fileObject: { findFirst: vi.fn().mockResolvedValue(file), update: vi.fn().mockResolvedValue(file) },
+      projectDocumentVersion: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn() },
+      projectArtifact: {
+        create: vi.fn().mockResolvedValue({ id: "doc-1" }),
+        findFirstOrThrow: vi.fn().mockResolvedValue(artifact)
+      },
+      $transaction: vi.fn(async (callback: any) => callback(prisma))
+    };
+    const service = new ProjectsService(withMutationDependencies(prisma) as any);
+
+    await service.createProjectDocument("prj-1", {
+      name: "Handoff", fileObjectId: "file-1", milestoneId: "ms-1"
+    }, principal);
+
+    expect(prisma.projectArtifact.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ milestoneId: "ms-1" })
+    }));
+  });
+
+  it("updates a document milestone without changing the document version", async () => {
+    const document = { id: "doc-1", projectId: "prj-1", workspaceId: "twk-1" };
+    const prisma: Record<string, any> = {
+      project: { findFirst: vi.fn().mockResolvedValue({ id: "prj-1", accountId: "acc-1" }) },
+      projectMilestone: { findFirst: vi.fn().mockResolvedValue({ id: "ms-2" }) },
+      projectArtifact: {
+        findFirst: vi.fn().mockResolvedValue(document),
+        update: vi.fn().mockResolvedValue({ ...document, milestoneId: "ms-2", versions: [] })
+      }
+    };
+    const service = new ProjectsService(withMutationDependencies(prisma) as any);
+
+    await service.updateProjectDocument("prj-1", "doc-1", { milestoneId: "ms-2" }, principal);
+
+    expect(prisma.projectArtifact.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "doc-1" }, data: expect.objectContaining({ milestoneId: "ms-2" })
+    }));
+  });
+
   it("appends immutable document version 2 and advances the artifact pointer", async () => {
     const createdAt = new Date("2026-07-15T03:00:00.000Z");
     const file = {

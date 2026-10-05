@@ -248,6 +248,8 @@ export function mapProjectDocumentSummary(artifact: any): ProjectDocumentSummary
     accountName: artifact.account?.name ?? "",
     projectId: artifact.projectId ?? "",
     projectName: artifact.project?.name ?? "",
+    milestoneId: artifact.milestoneId ?? undefined,
+    milestoneName: artifact.milestone?.name ?? undefined,
     code: artifact.code,
     name: artifact.name,
     artifactType: artifact.artifactType,
