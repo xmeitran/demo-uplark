@@ -249,7 +249,9 @@ export class LarkAuthService {
     // missing contact permission must not prevent an otherwise valid login.
     const directoryUser = body.data.user_id ? await this.fetchDirectoryUser(body.data.user_id) : undefined;
     const email = normalizeEmail(body.data.email);
-    const enterpriseEmail = normalizeEmail(directoryUser?.enterprise_email ?? body.data.enterprise_email);
+    const enterpriseEmail = normalizeEmail(
+      this.configuredEnterpriseEmail(body.data.user_id) ?? directoryUser?.enterprise_email ?? body.data.enterprise_email
+    );
 
     return {
       openId: body.data.open_id,
@@ -288,6 +290,13 @@ export class LarkAuthService {
       this.logger.warn("Lark directory email lookup was unavailable; falling back to OAuth profile email");
       return undefined;
     }
+  }
+
+  private configuredEnterpriseEmail(userId?: string) {
+    if (!userId) return undefined;
+
+    const entry = csv(process.env.CRM_LARK_ENTERPRISE_EMAIL_OVERRIDES).find((item) => item.startsWith(`${userId}=`));
+    return entry ? normalizeEmail(entry.slice(userId.length + 1)) : undefined;
   }
 
   private async resolveUserFromProfile(profile: NormalizedLarkProfile, workspace: WorkspaceContext) {

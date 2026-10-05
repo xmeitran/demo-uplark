@@ -37,6 +37,7 @@ Source nằm ở `apps/api/src/modules/identity-access/lark-auth.service.ts` và
 - `FOUNDATION_ADMIN_LARK_OPEN_IDS`: identity quản trị viên được chủ hệ thống xác nhận.
 - `CRM_LARK_AUTO_PROVISION=false`: mặc định không tự tạo người dùng toàn tổ chức.
 - `CRM_LARK_DEFAULT_ROLE_CODE`: role dùng khi chủ động cho phép provisioning.
+- `CRM_LARK_ENTERPRISE_EMAIL_OVERRIDES`: ánh xạ tùy chọn `Lark user_id=email_công_ty`, dùng khi OAuth chỉ trả email cá nhân và production chưa có identity cũ để đối chiếu.
 
 Quyền cấu hình ở app, phạm vi dữ liệu danh bạ và quyền/RoleBinding trong CRM là các lớp khác nhau. Không dùng `open_id` từ app khác một cách tùy ý vì định danh phụ thuộc app.
 

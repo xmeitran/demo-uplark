@@ -140,6 +140,34 @@ describe("Lark authentication boundary", () => {
     expect(nativeAuth.completeIdentityLogin).toHaveBeenCalledWith("usr-lark-HCM273", expect.objectContaining({ workspaceId: "twk-foundation" }), { authMethod: "lark" });
   });
 
+  it("uses the configured enterprise email when production has not imported the legacy Lark identity", async () => {
+    vi.stubEnv("CRM_LARK_AUTO_PROVISION", "true");
+    vi.stubEnv("CRM_LARK_DEFAULT_ROLE_CODE", "WORKSPACE_USER");
+    vi.stubEnv("CRM_LARK_ENTERPRISE_EMAIL_OVERRIDES", "HCM273=maitns@upbase.asia");
+    const { service, prisma, nativeAuth } = makeService();
+    const existingMember = { id: "usr-lark-HCM273", email: "maitns@upbase.asia", displayName: "Trần Ngô Sao Mai", status: "ACTIVE" };
+    prisma.portalIdentity.findUnique.mockResolvedValue(null);
+    prisma.portalIdentity.findFirst.mockResolvedValue(null);
+    prisma.portalIdentity.upsert.mockResolvedValue({ userId: existingMember.id });
+    prisma.user.findMany.mockResolvedValue([existingMember]);
+    prisma.user.update.mockResolvedValue(existingMember);
+    const { state } = await service.createAuthorizeUrl({ redirectUri });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, access_token: "provider-token" }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, data: { open_id: "ou_new_app_id", user_id: "HCM273", tenant_key: "tn_test", email: "tranngosaomai@gmail.com", name: "Trần Ngô Sao Mai" } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 1 }) }));
+
+    await service.completeCallback({ code: "code", state, redirectUri });
+
+    expect(prisma.user.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { email: { in: ["maitns@upbase.asia", "tranngosaomai@gmail.com"] } }
+    }));
+    expect(prisma.portalIdentity.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ userId: existingMember.id, providerUserId: "ou_new_app_id", tenantKey: "prod" })
+    }));
+    expect(nativeAuth.completeIdentityLogin).toHaveBeenCalledWith(existingMember.id, expect.objectContaining({ workspaceId: "twk-foundation" }), { authMethod: "lark" });
+  });
+
   it("repairs an existing linked CRM user when Lark provides an enterprise email", async () => {
     const { service, prisma } = makeService();
     prisma.portalIdentity.findUnique.mockResolvedValue({
