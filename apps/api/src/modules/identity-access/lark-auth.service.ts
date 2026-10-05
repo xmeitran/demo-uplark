@@ -247,7 +247,7 @@ export class LarkAuthService {
     // Resolve the directory record as well so a company-managed address wins
     // when Lark has both values available. The directory lookup is best-effort:
     // missing contact permission must not prevent an otherwise valid login.
-    const directoryUser = body.data.user_id ? await this.fetchDirectoryUser(body.data.user_id) : undefined;
+    const directoryUser = body.data.user_id ? await this.fetchDirectoryUser(body.data.user_id, accessToken) : undefined;
     const email = normalizeEmail(body.data.email);
     const enterpriseEmail = normalizeEmail(
       this.configuredEnterpriseEmail(body.data.user_id) ?? directoryUser?.enterprise_email ?? body.data.enterprise_email
@@ -265,12 +265,27 @@ export class LarkAuthService {
     };
   }
 
-  private async fetchDirectoryUser(userId: string) {
+  private async fetchDirectoryUser(userId: string, userAccessToken: string) {
+    const baseUrl = (process.env.LARK_OPEN_API_BASE_URL?.trim() || "https://open.larksuite.com").replace(/\/$/, "");
+    const directoryUrl = `${baseUrl}/open-apis/contact/v3/users/${encodeURIComponent(userId)}?user_id_type=user_id`;
+
+    // The OAuth token carries the exact directory scope granted by the person
+    // signing in. Prefer it so a user can resolve their own enterprise email
+    // even when the app-wide tenant token has a narrower contact range.
+    try {
+      const response = await this.providerFetch(directoryUrl, {
+        headers: { authorization: `Bearer ${userAccessToken}` }
+      });
+      const body = (await response.json().catch(() => ({}))) as LarkDirectoryUserResponse;
+      if (response.ok && body.code === 0 && body.data?.user) return body.data.user;
+    } catch {
+      // Fall through to the app identity lookup below.
+    }
+
     const appId = process.env.LARK_APP_ID?.trim();
     const appSecret = process.env.LARK_APP_SECRET?.trim();
     if (!appId || !appSecret || appId === "local-disabled" || appSecret === "local-disabled") return undefined;
 
-    const baseUrl = (process.env.LARK_OPEN_API_BASE_URL?.trim() || "https://open.larksuite.com").replace(/\/$/, "");
     try {
       const tokenResponse = await this.providerFetch(process.env.LARK_TENANT_TOKEN_URL ?? DEFAULT_TENANT_TOKEN_URL, {
         method: "POST",
@@ -280,7 +295,7 @@ export class LarkAuthService {
       const tokenBody = (await tokenResponse.json().catch(() => ({}))) as { code?: number; tenant_access_token?: string };
       if (!tokenResponse.ok || tokenBody.code !== 0 || !tokenBody.tenant_access_token) return undefined;
 
-      const response = await this.providerFetch(`${baseUrl}/open-apis/contact/v3/users/${encodeURIComponent(userId)}?user_id_type=user_id`, {
+      const response = await this.providerFetch(directoryUrl, {
         headers: { authorization: `Bearer ${tokenBody.tenant_access_token}` }
       });
       const body = (await response.json().catch(() => ({}))) as LarkDirectoryUserResponse;
