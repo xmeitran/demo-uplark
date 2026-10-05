@@ -3,9 +3,10 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "@/lib/auth";
 import { authRequest } from "@/lib/native-auth-client";
 import { CustomDropdown } from "@/components/crm-workspace/tasks-workbench";
+import { MANUAL_WORKSPACE_ROLE_OPTIONS } from "@/lib/people-roles";
 import { AuthField, authButton, authInput } from "./account-form";
-const invitationRoles = [{value:"WORKSPACE_USER",label:"Workspace User"},{value:"WORKSPACE_ADMIN",label:"Workspace Admin"},{value:"FOUNDER_GM",label:"Founder/GM"}];
-const workspaceRoles = [{value:"FOUNDER_GM",label:"Founder/GM"},{value:"WORKSPACE_ADMIN",label:"Workspace Admin"},{value:"WORKSPACE_USER",label:"Workspace User"}];
+const invitationRoles = MANUAL_WORKSPACE_ROLE_OPTIONS;
+const workspaceRoles = MANUAL_WORKSPACE_ROLE_OPTIONS;
 type Invitation = {id:string;email:string;displayName?:string;roleCode:string;status:string;expiresAt:string};
 export function AdminInvitations() {
   const {user} = useAuth(); const [open,setOpen] = useState(false); const [rows,setRows] = useState<Invitation[]>([]);

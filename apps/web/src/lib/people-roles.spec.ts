@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { normalizeBusinessRole, systemRoleLabel } from "./people-roles";
+import { MANUAL_WORKSPACE_ROLE_OPTIONS, normalizeBusinessRole, systemRoleLabel } from "./people-roles";
+
+it("keeps Workspace Admin available for manual assignment", () => {
+  expect(MANUAL_WORKSPACE_ROLE_OPTIONS).toEqual([
+    { value: "FOUNDER_GM", label: "Founder/GM" },
+    { value: "WORKSPACE_ADMIN", label: "Workspace Admin" },
+    { value: "WORKSPACE_USER", label: "Workspace User" },
+  ]);
+});
 
 describe("people role normalization", () => {
   it("exposes only the agreed business role labels", () => {

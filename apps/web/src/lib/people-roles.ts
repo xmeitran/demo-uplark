@@ -9,6 +9,9 @@ export const SYSTEM_ROLE_OPTIONS: Array<{ value: WorkspaceSystemRole; label: str
   { value: "WORKSPACE_USER", label: "Workspace User" },
 ];
 
+/** Roles that an administrator can assign manually to an internal workspace user. */
+export const MANUAL_WORKSPACE_ROLE_OPTIONS = SYSTEM_ROLE_OPTIONS;
+
 export const SYSTEM_ROLE_LABELS: Record<WorkspaceSystemRole, string> = Object.fromEntries(
   SYSTEM_ROLE_OPTIONS.map((option) => [option.value, option.label]),
 ) as Record<WorkspaceSystemRole, string>;
