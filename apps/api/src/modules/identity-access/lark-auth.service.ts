@@ -5,7 +5,8 @@ import {
   ForbiddenException,
   Injectable,
   Inject,
-  InternalServerErrorException
+  InternalServerErrorException,
+  Logger
 } from "@nestjs/common";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { PrismaService } from "../../shared/prisma/prisma.service";
@@ -73,6 +74,8 @@ interface NormalizedLarkProfile {
 
 @Injectable()
 export class LarkAuthService {
+  private readonly logger = new Logger(LarkAuthService.name);
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(TenantWorkspaceService) private readonly workspaces: TenantWorkspaceService,
@@ -117,41 +120,53 @@ export class LarkAuthService {
   }
 
   async completeCallback(input: { code?: string; state?: string; redirectUri?: string; invitationToken?: string }) {
-    const code = requiredString(input.code, "code");
-    const redirectUri = this.normalizeRedirectUri(input.redirectUri);
-    const state = this.verifyState(requiredString(input.state, "state"));
-    if (state.redirectUri !== redirectUri) {
-      throw new BadRequestException("Lark redirectUri does not match authorization state");
+    let stage = "validate callback";
+    try {
+      const code = requiredString(input.code, "code");
+      const redirectUri = this.normalizeRedirectUri(input.redirectUri);
+      const state = this.verifyState(requiredString(input.state, "state"));
+      if (state.redirectUri !== redirectUri) {
+        throw new BadRequestException("Lark redirectUri does not match authorization state");
+      }
+
+      const invitationTokenHash = input.invitationToken ? createHash("sha256").update(input.invitationToken).digest("hex") : undefined;
+      if (state.invitationTokenHash !== invitationTokenHash) throw new BadRequestException("Invitation does not match authorization state");
+      const consumed = await this.prisma.authActionToken.updateMany({
+        where: { tokenHash: createHash("sha256").update(input.state!).digest("hex"), purpose: "LARK_STATE", consumedAt: null, expiresAt: { gt: new Date() } },
+        data: { consumedAt: new Date() }
+      });
+      if (consumed.count !== 1) throw new BadRequestException("OAuth state is expired or already used");
+
+      stage = "exchange authorization code";
+      const token = await this.exchangeCodeForToken({ code, redirectUri });
+      stage = "fetch Lark user profile";
+      const profile = await this.fetchUserInfo(token.accessToken);
+      stage = "resolve workspace";
+      const workspace = await this.workspaces.resolveWorkspace({
+        tenantKey: state.tenantKey,
+        workspaceKey: state.workspaceKey
+      });
+      this.assertLarkTenantAllowed(profile.tenantKey);
+      stage = "resolve CRM user";
+      const userId = input.invitationToken
+        ? (await this.nativeAuth.acceptSsoInvitation(input.invitationToken, profile, workspace)).userId
+        : (await this.resolveUserFromProfile(profile, workspace)).id;
+      stage = "create CRM session";
+      const session = await this.nativeAuth.completeIdentityLogin(userId, {
+        tenantKey: workspace.tenantKey,
+        workspaceId: workspace.workspaceId,
+        workspaceKey: workspace.workspaceKey
+      }, { authMethod: "lark" });
+
+      return {
+        ...session,
+        returnTo: state.returnTo
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      this.logger.error(`Lark OAuth callback failed at ${stage}: ${message}`);
+      throw error;
     }
-
-    const invitationTokenHash = input.invitationToken ? createHash("sha256").update(input.invitationToken).digest("hex") : undefined;
-    if (state.invitationTokenHash !== invitationTokenHash) throw new BadRequestException("Invitation does not match authorization state");
-    const consumed = await this.prisma.authActionToken.updateMany({
-      where: { tokenHash: createHash("sha256").update(input.state!).digest("hex"), purpose: "LARK_STATE", consumedAt: null, expiresAt: { gt: new Date() } },
-      data: { consumedAt: new Date() }
-    });
-    if (consumed.count !== 1) throw new BadRequestException("OAuth state is expired or already used");
-
-    const token = await this.exchangeCodeForToken({ code, redirectUri });
-    const profile = await this.fetchUserInfo(token.accessToken);
-    const workspace = await this.workspaces.resolveWorkspace({
-      tenantKey: state.tenantKey,
-      workspaceKey: state.workspaceKey
-    });
-    this.assertLarkTenantAllowed(profile.tenantKey);
-    const userId = input.invitationToken
-      ? (await this.nativeAuth.acceptSsoInvitation(input.invitationToken, profile, workspace)).userId
-      : (await this.resolveUserFromProfile(profile, workspace)).id;
-    const session = await this.nativeAuth.completeIdentityLogin(userId, {
-      tenantKey: workspace.tenantKey,
-      workspaceId: workspace.workspaceId,
-      workspaceKey: workspace.workspaceKey
-    }, { authMethod: "lark" });
-
-    return {
-      ...session,
-      returnTo: state.returnTo
-    };
   }
 
   async createLinkedSession(input: { openId?: string; tenantKey?: string; workspaceKey?: string }) {
