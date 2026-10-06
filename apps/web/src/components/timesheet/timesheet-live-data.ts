@@ -136,9 +136,28 @@ async function readJson<T>(url: string, signal?: AbortSignal): Promise<T> {
 async function loadPaged<T>(path: string, signal?: AbortSignal) {
   const separator = path.includes("?") ? "&" : "?";
   const pageUrl = (offset: number) => `${path}${separator}limit=100&offset=${offset}&principal=founder`;
-  const rows: T[] = [];
-  let offset = 0;
-  for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
+  const firstPage = await readJson<ApiResponse<T>>(pageUrl(0), signal);
+  const rows: T[] = [...(firstPage.data ?? [])];
+  const firstPagination = firstPage.meta?.pagination;
+  const total = firstPagination?.total;
+
+  // API list endpoints return a stable total. Fetch remaining pages in small
+  // concurrent batches instead of waiting for every page sequentially; the
+  // old approach made Timesheet appear stuck when several history windows
+  // were loaded at once.
+  if (typeof total === "number" && total > rows.length) {
+    const offsets: number[] = [];
+    for (let offset = 100; offset < total; offset += 100) offsets.push(offset);
+    for (let index = 0; index < offsets.length; index += 8) {
+      const pages = await Promise.all(offsets.slice(index, index + 8).map((offset) => readJson<ApiResponse<T>>(pageUrl(offset), signal)));
+      for (const page of pages) rows.push(...(page.data ?? []));
+    }
+    return rows;
+  }
+
+  // Keep a defensive fallback for endpoints that do not expose totals.
+  let offset = rows.length;
+  for (let pageIndex = 1; pageIndex < 100 && firstPagination?.hasNextPage; pageIndex += 1) {
     const payload = await readJson<ApiResponse<T>>(pageUrl(offset), signal);
     const pageRows = payload.data ?? [];
     rows.push(...pageRows);
@@ -153,7 +172,10 @@ async function loadPaged<T>(path: string, signal?: AbortSignal) {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TIME_ENTRY_MAX_RANGE_DAYS = 90;
-const TIMESHEET_HISTORY_DAYS = 1095;
+// Keep the workbench responsive while covering the normal reporting period.
+// The API supports 90-day windows; three years created 13 windows and made
+// the old sequential pagination path effectively non-terminating in Render.
+export const TIMESHEET_HISTORY_DAYS = 365;
 
 export function buildTimesheetDateRanges(startAt: Date, endAt: Date, maxRangeDays = TIME_ENTRY_MAX_RANGE_DAYS) {
   const startMs = startAt.getTime();

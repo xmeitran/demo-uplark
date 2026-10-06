@@ -134,6 +134,6 @@ export function isProductionDisabledRoute(href: string) {
 export function isLocalNavigationVisibleRoute(href: string) {
   const route = matchProductRoute(href);
   const stagingBetaEnabled = process.env.NODE_ENV !== "production"
-    || process.env.NEXT_PUBLIC_STAGING_BYPASS_AUTH === "true";
+    || process.env.NEXT_PUBLIC_STAGING_MODULES_ENABLED === "true";
   return route?.classification === "visible" || (stagingBetaEnabled && route?.classification === "beta");
 }

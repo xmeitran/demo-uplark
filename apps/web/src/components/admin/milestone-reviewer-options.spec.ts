@@ -22,7 +22,7 @@ describe("milestone reviewer options", () => {
     expect(options[1]).toMatchObject({
       value: "user-1",
       label: "Nguyễn Hùng Việt Kha",
-      subtext: "Founder Gm · kha@example.com",
+      subtext: "Founder/GM · kha@example.com",
       avatarUrl: "https://example.com/kha.png"
     });
   });

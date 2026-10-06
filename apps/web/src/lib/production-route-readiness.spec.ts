@@ -5,6 +5,7 @@ import {
   PRODUCTION_VISIBLE_ROUTES,
   getProductionRouteDecision,
   getShellRoutes,
+  isLocalNavigationVisibleRoute,
   matchProductRoute,
   SYSTEM_ROUTES
 } from "./production-route-readiness";
@@ -82,5 +83,28 @@ describe("canonical product route readiness", () => {
     expect(getShellRoutes("shopify", "development").map((route) => route.href)).toContain("/pipeline");
     expect(getProductionRouteDecision("/pipeline")).toBe("unavailable");
     expect(getProductionRouteDecision("/totally-unknown-business-page")).toBe("unclassified");
+  });
+
+  describe("production beta navigation flag is independent from auth bypass", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("shows Timesheet and P&L in a production build when module visibility is enabled", () => {
+      vi.stubEnv("NODE_ENV", "production");
+      vi.stubEnv("NEXT_PUBLIC_STAGING_MODULES_ENABLED", "true");
+
+      expect(isLocalNavigationVisibleRoute("/timesheet")).toBe(true);
+      expect(isLocalNavigationVisibleRoute("/pnl")).toBe(true);
+      expect(process.env.NEXT_PUBLIC_STAGING_BYPASS_AUTH).not.toBe("true");
+    });
+
+    it("keeps beta navigation hidden when the module visibility flag is disabled", () => {
+      vi.stubEnv("NODE_ENV", "production");
+      vi.stubEnv("NEXT_PUBLIC_STAGING_MODULES_ENABLED", "false");
+
+      expect(isLocalNavigationVisibleRoute("/timesheet")).toBe(false);
+      expect(isLocalNavigationVisibleRoute("/pnl")).toBe(false);
+    });
   });
 });

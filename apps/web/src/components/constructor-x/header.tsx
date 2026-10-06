@@ -51,10 +51,10 @@ export function Header({ title }: HeaderProps) {
   const profileTriggerRef = useRef<HTMLButtonElement>(null);
   const notificationOpenRef = useRef(false);
   const profileOpenRef = useRef(false);
-  // Keep quick navigation in sync with the sidebar.  The review/staging
-  // deployment intentionally exposes the beta CRM modules (Timesheet and
-  // P&L), while a real production build keeps them gated until promoted.
-  const navigationEnvironment = process.env.NEXT_PUBLIC_STAGING_BYPASS_AUTH === "true"
+  // Keep quick navigation in sync with the sidebar. Module visibility is
+  // intentionally separate from the auth-bypass flag so production still
+  // requires a real Lark session while exposing the completed demo modules.
+  const navigationEnvironment = process.env.NEXT_PUBLIC_STAGING_MODULES_ENABLED === "true"
     ? "staging"
     : "production";
   const routes = useMemo(() => getShellRoutes("constructor", navigationEnvironment), [navigationEnvironment]);

@@ -18,6 +18,8 @@ services:
         value: "false"
       - key: NEXT_PUBLIC_STAGING_BYPASS_AUTH
         value: "false"
+      - key: NEXT_PUBLIC_STAGING_MODULES_ENABLED
+        value: "true"
       - key: WORKFORCE_ANALYTICS_GA_ENABLED
         value: "true"
       - key: CRM_API_INTERNAL_URL

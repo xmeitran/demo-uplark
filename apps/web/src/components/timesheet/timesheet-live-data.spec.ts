@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildTimesheetDateRanges, resolveTaskStatus } from "./timesheet-live-data";
+import { buildTimesheetDateRanges, resolveTaskStatus, TIMESHEET_HISTORY_DAYS } from "./timesheet-live-data";
 import { normalizeNodeStatus } from "./timesheet-status";
 
 describe("timesheet history ranges", () => {
+  it("uses a bounded reporting history for the live workbench", () => {
+    expect(TIMESHEET_HISTORY_DAYS).toBe(365);
+  });
+
   it("splits a long history into contiguous API-safe windows", () => {
     const startAt = new Date("2026-01-01T00:00:00.000Z");
     const endAt = new Date("2026-10-01T00:00:00.000Z");
