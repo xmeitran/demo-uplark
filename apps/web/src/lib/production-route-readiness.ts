@@ -38,14 +38,11 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
   { id: "admin", href: "/admin", label: "Admin", classification: "detail", shells: ["constructor"], navGroup: "Settings" },
   { id: "analytics", href: "/analytics", label: "Analytics", classification: "visible", shells: ["constructor"], navGroup: "Quản trị", productionFlag: "WORKFORCE_ANALYTICS_GA_ENABLED" },
 
-  // Timesheet ships against mock data first (spec 35 §7). Keep it "beta" so it
-  // is navigable locally but never reachable in production until the real
-  // endpoints replace `timesheet-mock-data`.
-  { id: "timesheet", href: "/timesheet", label: "Timesheet", classification: "beta", shells: ["constructor"], navGroup: "Triển khai" },
-  // P&L uses the canonical project-control summary when available and keeps a
-  // clearly labelled demo fallback while period-close and revenue contracts are
-  // still being finalized.
-  { id: "pnl", href: "/pnl", label: "P&L", classification: "beta", shells: ["constructor"], navGroup: "Triển khai" },
+  // These modules are backed by live APIs and are part of the demo's primary
+  // operations surface. Authentication remains enforced independently by the
+  // session middleware and protected API routes.
+  { id: "timesheet", href: "/timesheet", label: "Timesheet", classification: "visible", shells: ["constructor"], navGroup: "Triển khai" },
+  { id: "pnl", href: "/pnl", label: "P&L", classification: "visible", shells: ["constructor"], navGroup: "Triển khai" },
 
   { id: "project-detail", href: "/projects/", label: "Project detail", classification: "detail", match: "prefix" },
   { id: "user-detail", href: "/users/", label: "User detail", classification: "detail", match: "prefix" },
@@ -133,7 +130,5 @@ export function isProductionDisabledRoute(href: string) {
 
 export function isLocalNavigationVisibleRoute(href: string) {
   const route = matchProductRoute(href);
-  const stagingBetaEnabled = process.env.NODE_ENV !== "production"
-    || process.env.NEXT_PUBLIC_STAGING_MODULES_ENABLED === "true";
-  return route?.classification === "visible" || (stagingBetaEnabled && route?.classification === "beta");
+  return route?.classification === "visible" || (process.env.NODE_ENV !== "production" && route?.classification === "beta");
 }

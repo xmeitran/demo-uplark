@@ -15,7 +15,7 @@ describe("canonical product route readiness", () => {
     expect(new Set(PRODUCT_ROUTES.map((route) => route.id)).size).toBe(PRODUCT_ROUTES.length);
     expect(new Set(PRODUCT_ROUTES.map((route) => route.href)).size).toBe(PRODUCT_ROUTES.length);
     expect(PRODUCTION_VISIBLE_ROUTES).toEqual([
-      "/", "/projects", "/calendar", "/resource-mgmt", "/project-controls", "/people", "/users", "/clients", "/settings", "/analytics"
+      "/", "/projects", "/calendar", "/resource-mgmt", "/project-controls", "/people", "/users", "/clients", "/settings", "/analytics", "/timesheet", "/pnl"
     ]);
     expect(PRODUCTION_DISABLED_ROUTES).toContain("/notes");
     expect(SYSTEM_ROUTES).toEqual(["/login", "/signup", "/unavailable", "/dashboard", "/workspace"]);
@@ -85,26 +85,13 @@ describe("canonical product route readiness", () => {
     expect(getProductionRouteDecision("/totally-unknown-business-page")).toBe("unclassified");
   });
 
-  describe("production beta navigation flag is independent from auth bypass", () => {
-    afterEach(() => {
-      vi.unstubAllEnvs();
-    });
+  it("shows Timesheet and P&L in production navigation without enabling auth bypass", () => {
+    vi.stubEnv("NODE_ENV", "production");
 
-    it("shows Timesheet and P&L in a production build when module visibility is enabled", () => {
-      vi.stubEnv("NODE_ENV", "production");
-      vi.stubEnv("NEXT_PUBLIC_STAGING_MODULES_ENABLED", "true");
-
-      expect(isLocalNavigationVisibleRoute("/timesheet")).toBe(true);
-      expect(isLocalNavigationVisibleRoute("/pnl")).toBe(true);
-      expect(process.env.NEXT_PUBLIC_STAGING_BYPASS_AUTH).not.toBe("true");
-    });
-
-    it("keeps beta navigation hidden when the module visibility flag is disabled", () => {
-      vi.stubEnv("NODE_ENV", "production");
-      vi.stubEnv("NEXT_PUBLIC_STAGING_MODULES_ENABLED", "false");
-
-      expect(isLocalNavigationVisibleRoute("/timesheet")).toBe(false);
-      expect(isLocalNavigationVisibleRoute("/pnl")).toBe(false);
-    });
+    expect(isLocalNavigationVisibleRoute("/timesheet")).toBe(true);
+    expect(isLocalNavigationVisibleRoute("/pnl")).toBe(true);
+    expect(getProductionRouteDecision("/timesheet", "production")).toBe("allow");
+    expect(getProductionRouteDecision("/pnl", "production")).toBe("allow");
+    expect(process.env.NEXT_PUBLIC_STAGING_BYPASS_AUTH).not.toBe("true");
   });
 });

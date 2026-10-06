@@ -51,12 +51,9 @@ export function Header({ title }: HeaderProps) {
   const profileTriggerRef = useRef<HTMLButtonElement>(null);
   const notificationOpenRef = useRef(false);
   const profileOpenRef = useRef(false);
-  // Keep quick navigation in sync with the sidebar. Module visibility is
-  // intentionally separate from the auth-bypass flag so production still
-  // requires a real Lark session while exposing the completed demo modules.
-  const navigationEnvironment = process.env.NEXT_PUBLIC_STAGING_MODULES_ENABLED === "true"
-    ? "staging"
-    : "production";
+  // Keep quick navigation in sync with the sidebar. Authentication is handled
+  // independently by the session middleware and auth provider.
+  const navigationEnvironment = "production";
   const routes = useMemo(() => getShellRoutes("constructor", navigationEnvironment), [navigationEnvironment]);
   const results = routes.filter((route) => `${route.label} ${route.href}`.toLowerCase().includes(searchValue.trim().toLowerCase()));
   const currentTitle = title || matchProductRoute(pathname)?.label || "Dashboard";
