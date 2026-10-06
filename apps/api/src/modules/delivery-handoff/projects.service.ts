@@ -2897,7 +2897,7 @@ export class ProjectsService {
       include: projectRiskInclude
     });
 
-    if (risk.ownerUserId && risk.ownerUserId !== createdByUserId) {
+    if (risk.ownerUserId) {
       await this.notifyProjectRiskOwnerSafely({ project, risk, workspaceId: principal.workspaceId, event: "created" });
     }
 
