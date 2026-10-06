@@ -5,6 +5,7 @@ import { authRequest } from "@/lib/native-auth-client";
 import { CustomDropdown } from "@/components/crm-workspace/tasks-workbench";
 import { MANUAL_WORKSPACE_ROLE_OPTIONS } from "@/lib/people-roles";
 import { AuthField, authButton, authInput } from "./account-form";
+import type { EmploymentStatus } from "@b2b-crm/contracts";
 const invitationRoles = MANUAL_WORKSPACE_ROLE_OPTIONS;
 const workspaceRoles = MANUAL_WORKSPACE_ROLE_OPTIONS;
 type Invitation = {id:string;email:string;displayName?:string;roleCode:string;status:string;expiresAt:string};
@@ -33,17 +34,42 @@ export function AdminInvitations() {
     </div>}
   </section>;
 }
-export function AdminMemberControls({userId,status,currentRole}:{userId:string;status:string;currentRole:string}) {
+const employmentStatusOptions = [
+  { value: "ACTIVE", label: "Đang làm việc", subtext: "Được phép truy cập workspace" },
+  { value: "ON_LEAVE", label: "Tạm nghỉ", subtext: "Tạm dừng truy cập nhưng giữ hồ sơ" },
+  { value: "INACTIVE", label: "Đã nghỉ việc", subtext: "Ngừng truy cập workspace" },
+];
+
+export function AdminMemberControls({userId,status,currentRole,employmentStatus="ACTIVE"}:{userId:string;status:string;currentRole:string;employmentStatus?:EmploymentStatus}) {
   const {user}=useAuth();
   const [roleCode,setRole]=useState(currentRole);
+  const [workStatus,setWorkStatus]=useState<EmploymentStatus>(employmentStatus);
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
-  const [confirm,setConfirm]=useState<"role"|"deactivate"|"reactivate"|"revoke-sessions"|null>(null);
+  const [confirm,setConfirm]=useState<"profile"|"deactivate"|"reactivate"|"revoke-sessions"|null>(null);
   async function execute(){
     if(!confirm)return;
     setBusy(true);setError("");
     try{
-      if(confirm==="role"||confirm==="reactivate") await authRequest(`admin/users/${encodeURIComponent(userId)}/${confirm}`,confirm==="role"?{roleCode}:{},confirm==="role"?"PATCH":"POST");
+      if(confirm==="profile") {
+        const response = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/resource-profile`, {
+          method: "PATCH",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ systemRole: roleCode, employmentStatus: workStatus }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.message || "Không thể lưu thông tin thành viên.");
+      } else if(confirm==="reactivate") {
+        const response = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/resource-profile`, {
+          method: "PATCH",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ systemRole: roleCode, employmentStatus: "ACTIVE" }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.message || "Không thể khôi phục thành viên.");
+      }
       else {const r=await fetch(`/api/admin/users/${encodeURIComponent(userId)}/${confirm}`,{method:"POST",headers:{"content-type":"application/json"},body:"{}"});if(!r.ok){const b=await r.json();throw new Error(b.message||"Unable to update member.");}}
       window.location.reload();
     }catch(e){setError(e instanceof Error?e.message:"Unable to update member.");}finally{setBusy(false);}
@@ -55,13 +81,17 @@ export function AdminMemberControls({userId,status,currentRole}:{userId:string;s
       <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500">Vai trò trong workspace</label>
       <CustomDropdown label="" value={roleCode} options={workspaceRoles} onChange={setRole}/>
     </div>
+    <div className="mt-4 space-y-2">
+      <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500">Trạng thái làm việc</label>
+      <CustomDropdown label="" value={workStatus} options={employmentStatusOptions} onChange={(value) => setWorkStatus(value as EmploymentStatus)}/>
+    </div>
     <div className="mt-4 grid gap-2 sm:grid-cols-2">
-      <button className={authButton} disabled={busy||roleCode===currentRole} onClick={()=>setConfirm("role")}>{busy?"Đang lưu…":"Lưu thay đổi"}</button>
+      <button className={authButton} disabled={busy||(roleCode===currentRole&&workStatus===employmentStatus)} onClick={()=>setConfirm("profile")}>{busy?"Đang lưu…":"Lưu thay đổi"}</button>
       <button disabled={busy} className="min-h-11 rounded-xl border border-border px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50" onClick={()=>setConfirm(status==="active"?"deactivate":"reactivate")}>{status==="active"?"Tạm khóa truy cập":"Khôi phục truy cập"}</button>
     </div>
     <button disabled={busy} className="mt-2 min-h-10 w-full rounded-xl px-3 text-xs font-semibold text-slate-500 transition hover:bg-slate-50 hover:text-red-600" onClick={()=>setConfirm("revoke-sessions")}>Thu hồi tất cả session</button>
     <p className="mt-4 rounded-xl border border-blue-100 bg-blue-50/70 p-3 text-xs leading-5 text-blue-800">Hệ thống luôn giữ lại ít nhất một Founder/GM và không cho phép tài khoản đang đăng nhập tự hạ quyền.</p>
-    {confirm&&<div role="alert" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-sm font-medium text-amber-900">Xác nhận {confirm==="role"?`đổi thành ${roleCode === "FOUNDER_GM" ? "Founder/GM" : roleCode === "WORKSPACE_ADMIN" ? "Workspace Admin" : "Workspace User"}`:confirm.replaceAll("-"," ")}?</p><div className="mt-3 flex gap-2"><button disabled={busy} className={authButton} onClick={()=>void execute()}>Xác nhận</button><button className="min-h-11 px-3 text-sm font-semibold text-slate-600" onClick={()=>setConfirm(null)}>Hủy</button></div></div>}
+    {confirm&&<div role="alert" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-sm font-medium text-amber-900">Xác nhận {confirm==="profile"?"lưu role và trạng thái làm việc":confirm.replaceAll("-"," ")}?</p><div className="mt-3 flex gap-2"><button disabled={busy} className={authButton} onClick={()=>void execute()}>Xác nhận</button><button className="min-h-11 px-3 text-sm font-semibold text-slate-600" onClick={()=>setConfirm(null)}>Hủy</button></div></div>}
     {error&&<p role="alert" className="mt-3 text-sm text-red-600">{error}</p>}
   </section>;
 }

@@ -117,7 +117,7 @@ export default function UserProfilePage() {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, { cache: "no-store" });
+        const response = await fetch(`/api/admin/users/${encodeURIComponent(userId)}?includeSuspended=true`, { cache: "no-store" });
         if (response.status === 401) {
           window.location.assign(`/login?returnTo=${encodeURIComponent(`/users/${userId}`)}`);
           return;
@@ -313,7 +313,7 @@ export default function UserProfilePage() {
                   </div>
 
                   <div className="space-y-5 xl:sticky xl:top-4">
-                    <AdminMemberControls userId={user.id} status={user.status} currentRole={workspaceRole} />
+                    <AdminMemberControls userId={user.id} status={user.status} currentRole={workspaceRole} employmentStatus={user.employmentStatus} />
                     <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
                       <div className="flex items-center justify-between"><div><h2 className="text-base font-bold text-foreground">Workspace summary</h2><p className="mt-0.5 text-xs text-muted-foreground">Phạm vi truy cập hiện tại.</p></div><span className={`h-2.5 w-2.5 rounded-full ${user.status === "active" ? "bg-emerald-500" : "bg-slate-400"}`} /></div>
                       <dl className="mt-4 divide-y divide-border border-y border-border">

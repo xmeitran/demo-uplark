@@ -38,6 +38,8 @@ export interface FetchLiveProjectsOptions {
   q?: string;
   status?: Project["status"] | "all";
   category?: string;
+  accountId?: string;
+  ownerUserId?: string;
   signal?: AbortSignal;
   cacheScope?: string;
 }
@@ -71,6 +73,8 @@ export async function fetchLiveProjects(options: FetchLiveProjectsOptions = {}):
   });
   const q = options.q?.trim();
   const category = options.category?.trim();
+  const accountId = options.accountId?.trim();
+  const ownerUserId = options.ownerUserId?.trim();
   if (q) {
     params.set("q", q);
   }
@@ -79,6 +83,12 @@ export async function fetchLiveProjects(options: FetchLiveProjectsOptions = {}):
   }
   if (category && category !== "all") {
     params.set("category", category);
+  }
+  if (accountId && accountId !== "all") {
+    params.set("accountId", accountId);
+  }
+  if (ownerUserId && ownerUserId !== "all") {
+    params.set("ownerUserId", ownerUserId);
   }
   const response = await fetchWithTransientRetry(`/api/projects?${params.toString()}`, {
     cache: "no-store",

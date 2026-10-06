@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   return proxyCrmBffJson({
     request,
-    path: "/auth/admin/users",
+    path: "/auth/admin/users?includeSuspended=true",
     principalFallback: "founder"
   });
 }

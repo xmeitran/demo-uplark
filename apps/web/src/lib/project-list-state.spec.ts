@@ -11,6 +11,8 @@ describe("project list URL state", () => {
       query: "  AMOBEAR  ",
       statusFilter: "Active",
       categoryFilter: "Delivery",
+      clientFilter: "account-1",
+      ownerFilter: "user-1",
       page: 2,
       view: "sheet",
       sortKey: "dueDate",
@@ -18,7 +20,7 @@ describe("project list URL state", () => {
     };
 
     const url = buildProjectListUrl(state);
-    expect(url).toBe("/projects?q=AMOBEAR&status=Active&category=Delivery&page=2&view=sheet&sort=dueDate&dir=desc");
+    expect(url).toBe("/projects?q=AMOBEAR&status=Active&category=Delivery&client=account-1&pic=user-1&page=2&view=sheet&sort=dueDate&dir=desc");
     expect(readProjectListState(new URLSearchParams(url.split("?")[1]))).toEqual({
       ...state,
       query: "AMOBEAR"
@@ -30,6 +32,8 @@ describe("project list URL state", () => {
       query: "",
       statusFilter: "all",
       categoryFilter: "all",
+      clientFilter: "all",
+      ownerFilter: "all",
       page: 1,
       view: "grid",
       sortKey: "name",

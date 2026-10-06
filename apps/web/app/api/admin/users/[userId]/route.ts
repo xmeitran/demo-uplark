@@ -6,7 +6,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ user
   const { userId } = await params;
   return proxyCrmBffJson({
     request,
-    path: `/auth/admin/users/${encodeURIComponent(userId)}`,
+    path: `/auth/admin/users/${encodeURIComponent(userId)}?includeSuspended=true`,
     principalFallback: "founder"
   });
 }

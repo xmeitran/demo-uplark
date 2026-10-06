@@ -830,6 +830,8 @@ export default function ProjectsPage() {
   const [query, setQuery]       = useState(urlState.query);
   const [statusFilter, setStatusFilter]   = useState(urlState.statusFilter);
   const [categoryFilter, setCategoryFilter] = useState(urlState.categoryFilter);
+  const [clientFilter, setClientFilter] = useState(urlState.clientFilter);
+  const [ownerFilter, setOwnerFilter] = useState(urlState.ownerFilter);
   const [sortKey, setSortKey]   = useState<SortKey>(urlState.sortKey);
   const [sortDir, setSortDir]   = useState<SortDir>(urlState.sortDir);
   const resultsScrollRef = useRef<HTMLDivElement>(null);
@@ -840,6 +842,8 @@ export default function ProjectsPage() {
     setQuery(urlState.query);
     setStatusFilter(urlState.statusFilter);
     setCategoryFilter(urlState.categoryFilter);
+    setClientFilter(urlState.clientFilter);
+    setOwnerFilter(urlState.ownerFilter);
     setSortKey(urlState.sortKey);
     setSortDir(urlState.sortDir);
   }, [projectListSearch, urlState]);
@@ -853,12 +857,14 @@ export default function ProjectsPage() {
       query,
       statusFilter,
       categoryFilter,
+      clientFilter,
+      ownerFilter,
       page: projectPage,
       view,
       sortKey,
       sortDir
     }),
-    [query, statusFilter, categoryFilter, projectPage, view, sortKey, sortDir]
+    [query, statusFilter, categoryFilter, clientFilter, ownerFilter, projectPage, view, sortKey, sortDir]
   );
 
   const resetProjectsFrameScroll = () => {
@@ -883,6 +889,8 @@ export default function ProjectsPage() {
           q: query,
           status: statusFilter as Project["status"] | "all",
           category: categoryFilter,
+          accountId: clientFilter,
+          ownerUserId: ownerFilter,
           signal: controller.signal
         });
         setProjectsList(live.projects);
@@ -900,7 +908,9 @@ export default function ProjectsPage() {
           const matchesQuery = !normalizedQuery || `${project.name} ${project.client} ${project.description}`.toLowerCase().includes(normalizedQuery);
           const matchesStatus = statusFilter === "all" || project.status === statusFilter;
           const matchesCategory = categoryFilter === "all" || project.category === categoryFilter;
-          return matchesQuery && matchesStatus && matchesCategory;
+          const matchesClient = clientFilter === "all" || project.accountId === clientFilter;
+          const matchesOwner = ownerFilter === "all" || project.ownerUserId === ownerFilter;
+          return matchesQuery && matchesStatus && matchesCategory && matchesClient && matchesOwner;
         });
         setUsingLocalProjectFallback(localDevelopment);
         setProjectsError(localDevelopment ? null : error instanceof Error ? error.message : "Could not load live projects");
@@ -926,7 +936,7 @@ export default function ProjectsPage() {
     }
 
     return () => controller.abort();
-  }, [projectPage, query, statusFilter, categoryFilter, pushedProjectOwnerKey]);
+  }, [projectPage, query, statusFilter, categoryFilter, clientFilter, ownerFilter, pushedProjectOwnerKey]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1042,6 +1052,20 @@ export default function ProjectsPage() {
     resetProjectsFrameScroll();
   };
 
+  const handleClientFilterChange = (value: string) => {
+    setClientFilter(value);
+    setProjectPage(1);
+    updateProjectListUrl({ clientFilter: value, page: 1 });
+    resetProjectsFrameScroll();
+  };
+
+  const handleOwnerFilterChange = (value: string) => {
+    setOwnerFilter(value);
+    setProjectPage(1);
+    updateProjectListUrl({ ownerFilter: value, page: 1 });
+    resetProjectsFrameScroll();
+  };
+
   const handleProjectPageChange = (page: number) => {
     setProjectPage(page);
     updateProjectListUrl({ page });
@@ -1057,6 +1081,16 @@ export default function ProjectsPage() {
     { value: "all", label: "All Categories" },
     ...PROJECT_CATEGORY_FILTER_OPTIONS
   ], []);
+
+  const filterClientOptions = useMemo(() => [
+    { value: "all", label: "Tất cả Client" },
+    ...accountOptions.map((account) => ({ value: account.accountId, label: account.label })),
+  ], [accountOptions]);
+
+  const filterOwnerOptions = useMemo(() => [
+    { value: "all", label: "Tất cả PIC" },
+    ...workspaceUsers.map((member) => ({ value: member.id, label: member.name, avatarUrl: member.avatarUrl, initials: member.initials, color: member.color })),
+  ], [workspaceUsers]);
 
   const filtered = useMemo(() => {
     let list = projectsList;
@@ -1394,6 +1428,24 @@ export default function ProjectsPage() {
                 value={categoryFilter}
                 onChange={handleCategoryFilterChange}
                 className="w-full shrink-0 sm:w-44"
+              />
+
+              <CrmSelect
+                ariaLabel="Lọc theo Client"
+                options={filterClientOptions}
+                value={clientFilter}
+                onChange={handleClientFilterChange}
+                searchable
+                className="w-full shrink-0 sm:w-48"
+              />
+
+              <CrmSelect
+                ariaLabel="Lọc theo PIC"
+                options={filterOwnerOptions}
+                value={ownerFilter}
+                onChange={handleOwnerFilterChange}
+                searchable
+                className="w-full shrink-0 sm:w-48"
               />
 
             </div>

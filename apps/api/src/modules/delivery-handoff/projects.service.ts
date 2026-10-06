@@ -1054,6 +1054,7 @@ export class ProjectsService {
   async listProjects(query: any, principal: PrincipalContext) {
     const pagination = normalizePagination({ limit: query.limit, offset: query.offset });
     const accountId = optionalString(query.accountId, "accountId");
+    const ownerUserId = optionalString(query.ownerUserId, "ownerUserId");
     const statusAliases = normalizeProjectStatusFilter(optionalString(query.status, "status") ?? null);
     const category = optionalString(query.category, "category");
     const search = optionalString(query.q ?? query.search, "q");
@@ -1081,6 +1082,7 @@ export class ProjectsService {
     const where: Prisma.ProjectWhereInput = {
       workspaceId: principal.workspaceId,
       ...(accountId ? { accountId } : {}),
+      ...(ownerUserId ? { ownerUserId } : {}),
       ...(andFilters.length > 0 ? { AND: andFilters } : {})
     };
 
