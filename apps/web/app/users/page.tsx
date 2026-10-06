@@ -503,7 +503,7 @@ export default function UsersPage() {
 
                           {/* P&L permission */}
                           <td className="py-3.5 px-4" onClick={(event) => event.stopPropagation()}>
-                            {canManageRoles && user.id !== currentUser?.id ? (
+                            {canManageRoles ? (
                               <CrmSelect
                                 ariaLabel={`Quyền P&L của ${user.name}`}
                                 className="max-w-[170px]"
