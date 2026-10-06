@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, CalendarDays, Download, Info, Link2, RotateCcw, ShieldCheck, Users, Clock3 } from "lucide-react";
 import { CustomDropdown, type DropdownOption } from "@/components/constructor-x/custom-controls";
+import { CrmMultiSelect } from "@/components/crm-workspace/crm-select";
 import { emptyTimesheetDataset, loadTimesheetDataset } from "./timesheet-live-data";
 import { filterLogs, type TimesheetFilters } from "./timesheet-selectors";
 import { formatDate, formatHours, formatMonth } from "./timesheet-format";
@@ -76,6 +77,7 @@ function buildFilterDetail(
     month: kind === "month" ? option.value : filters.month,
     departmentId: kind === "department" ? option.value : filters.departmentId,
     personId: kind === "person" ? option.value : filters.personId,
+    personIds: kind === "person" ? [option.value] : filters.personIds,
     projectId: kind === "project" ? option.value : filters.projectId,
     workGroup: kind === "workGroup" ? (option.value as TimesheetFilters["workGroup"]) : filters.workGroup
   };
@@ -167,13 +169,17 @@ export function TimesheetWorkbench() {
   const scope: ViewerScope = canViewWorkspace ? requestedScope : "self";
 
   const filters = useMemo<TimesheetFilters>(
-    () => ({
+    () => {
+      const personIds = (searchParams.get("person") ?? "").split(",").map((value) => value.trim()).filter(Boolean);
+      return {
       month: searchParams.get("month") ?? dataset.months[dataset.months.length - 1],
       departmentId: searchParams.get("dept") ?? "all",
-      personId: searchParams.get("person") ?? "all",
+      personId: personIds.length === 1 ? personIds[0] : personIds.length > 1 ? "multiple" : "all",
+      personIds,
       projectId: searchParams.get("project") ?? "all",
       workGroup: (searchParams.get("group") as WorkGroup | null) ?? "all"
-    }),
+      };
+    },
     [searchParams, dataset.months]
   );
 
@@ -286,9 +292,9 @@ export function TimesheetWorkbench() {
     setFilterDetail(buildFilterDetail(kind, option, scopedDataset, filters, scope));
   }, [scopedDataset, filters, scope]);
 
-  const activeFilterCount = [filters.departmentId, filters.personId, filters.projectId, filters.workGroup].filter(
+  const activeFilterCount = [filters.departmentId, filters.projectId, filters.workGroup].filter(
     (value) => value !== "all"
-  ).length;
+  ).length + (filters.personIds?.length ? 1 : 0);
 
   const viewCopy = view === "project"
     ? {
@@ -346,7 +352,15 @@ export function TimesheetWorkbench() {
             />
           </FilterField>
           <FilterField label="Nhân sự">
-            <CustomDropdown ariaLabel="Chọn nhân sự" options={personOptions} value={filters.personId} onChange={(value) => commit({ person: value })} onOptionInfo={(option) => openFilterDetail("person", option)} />
+            <CrmMultiSelect
+              ariaLabel="Chọn một hoặc nhiều nhân sự"
+              options={personOptions.filter((option) => option.value !== "all")}
+              values={filters.personIds ?? []}
+              onChange={(values) => commit({ person: values.join(",") })}
+              selectedCountLabel={(count) => `${count} nhân sự đã chọn`}
+              placeholder="Tất cả nhân sự"
+              searchPlaceholder="Tìm nhân sự..."
+            />
           </FilterField>
           <FilterField label="Dự án">
             <CustomDropdown ariaLabel="Chọn dự án" options={projectOptions} value={filters.projectId} onChange={(value) => commit({ project: value })} onOptionInfo={(option) => openFilterDetail("project", option)} />

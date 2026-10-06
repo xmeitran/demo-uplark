@@ -169,7 +169,7 @@ export function buildTimesheetWorkbook(ExcelJS: ExcelJsModule, context: Timeshee
     `Phạm vi: ${scopeLabel}`,
     `Chế độ xem: ${view}`,
     `Phòng ban: ${filters.departmentId === "all" ? "Tất cả" : formatDepartmentLabel(filters.departmentId)}`,
-    `Nhân sự: ${filters.personId === "all" ? "Tất cả" : filters.personId}`,
+    `Nhân sự: ${filters.personIds?.length ? filters.personIds.join(", ") : filters.personId === "all" ? "Tất cả" : filters.personId}`,
     `Dự án: ${filters.projectId === "all" ? "Tất cả" : filters.projectId}`,
     `Nhóm công việc: ${filters.workGroup === "all" ? "Tất cả" : WORK_GROUP_LABELS[filters.workGroup]}`
   ];

@@ -39,15 +39,23 @@ export interface TimesheetFilters {
   month: string;
   departmentId: string | "all";
   personId: string | "all";
+  /** Supports both the legacy single-person value and the multi-select UI. */
+  personIds?: string[];
   projectId: string | "all";
   workGroup: WorkGroup | "all";
 }
 
+function selectedPersonIds(filters: TimesheetFilters) {
+  if (filters.personIds) return filters.personIds;
+  return filters.personId === "all" ? [] : [filters.personId];
+}
+
 export function filterLogs(dataset: TimesheetDataset, filters: TimesheetFilters): TimeLog[] {
   const peopleById = new Map(dataset.people.map((person) => [person.id, person]));
+  const personIds = selectedPersonIds(filters);
   return dataset.logs.filter((log) => {
     if (monthOf(log.date) !== filters.month) return false;
-    if (filters.personId !== "all" && log.personId !== filters.personId) return false;
+    if (personIds.length > 0 && !personIds.includes(log.personId)) return false;
     if (filters.projectId !== "all" && log.projectId !== filters.projectId) return false;
     if (filters.workGroup !== "all" && log.workGroup !== filters.workGroup) return false;
     if (filters.departmentId !== "all") {
@@ -59,10 +67,11 @@ export function filterLogs(dataset: TimesheetDataset, filters: TimesheetFilters)
 }
 
 export function peopleInScope(dataset: TimesheetDataset, filters: TimesheetFilters): Person[] {
+  const personIds = selectedPersonIds(filters);
   return dataset.people.filter((person) => {
     if (!person.active) return false;
     if (filters.departmentId !== "all" && person.departmentId !== filters.departmentId) return false;
-    if (filters.personId !== "all" && person.id !== filters.personId) return false;
+    if (personIds.length > 0 && !personIds.includes(person.id)) return false;
     return true;
   });
 }

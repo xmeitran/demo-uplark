@@ -53,6 +53,13 @@ interface Project {
 
 const SIDEBAR_PROJECTS_CACHE_PREFIX = "sidebar_projects_cache";
 
+function getProjectsReturnHref(searchParams: { get(name: string): string | null }, isProjectDetail: boolean) {
+  if (!isProjectDetail) return "/projects";
+  const returnTo = searchParams.get("returnTo");
+  if (!returnTo || !returnTo.startsWith("/projects") || returnTo.startsWith("//")) return "/projects";
+  return returnTo;
+}
+
 interface SidebarProps {
   activeRoute?: string;
   onCreateProjectClick?: () => void;
@@ -179,6 +186,7 @@ export function Sidebar({ activeRoute = "/", onCreateProjectClick, variant = "de
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeProjectId = getProjectIdFromPath(pathname);
+  const projectsHref = getProjectsReturnHref(searchParams, Boolean(activeProjectId));
   const { user } = useAuth();
   const isWorkspaceAdmin = Boolean(user?.roleCodes?.some((role) => role === "FOUNDER_GM" || role === "WORKSPACE_ADMIN"));
   const pushedProjectOwnerKey = getPushedProjectsOwnerKey(user);
@@ -397,7 +405,7 @@ export function Sidebar({ activeRoute = "/", onCreateProjectClick, variant = "de
         {/* 2. Projects collapsible */}
         <div className="mx-2">
           <div className={`flex min-h-11 items-center rounded-xl transition-all text-muted-foreground hover:bg-muted hover:text-foreground ${collapsed ? "justify-center" : compactRowClass}`}>
-            <Link href="/projects" className={`flex min-h-11 items-center gap-3 flex-1 px-3 py-2 ${compactRowClass}`}>
+            <Link href={projectsHref} className={`flex min-h-11 items-center gap-3 flex-1 px-3 py-2 ${compactRowClass}`}>
               <Briefcase className="w-4 h-4 shrink-0" />
               {!collapsed && <span className={`text-[13.5px] ${expandedInlineClass}`}>Projects</span>}
             </Link>
@@ -513,7 +521,7 @@ export function Sidebar({ activeRoute = "/", onCreateProjectClick, variant = "de
                     </div>
                   )}
                   <Link
-                    href="/projects"
+                    href={projectsHref}
                     className="mt-1 flex min-h-9 items-center justify-center rounded-lg px-3 py-1.5 text-[11px] font-medium text-primary hover:bg-primary/5"
                   >
                     Xem tất cả dự án

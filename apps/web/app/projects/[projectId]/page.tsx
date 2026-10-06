@@ -148,6 +148,12 @@ const PROJECT_NOT_FOUND: Project = {
   category: "Unknown"
 };
 
+function getProjectsReturnHref(searchParams: { get(name: string): string | null }) {
+  const returnTo = searchParams.get("returnTo");
+  if (!returnTo || !returnTo.startsWith("/projects") || returnTo.startsWith("//")) return "/projects";
+  return returnTo;
+}
+
 async function fetchLiveProjectById(projectId: string, signal?: AbortSignal, cacheScope?: string): Promise<Project | null> {
   return fetchLiveProjectSummaryById(projectId, { signal, cacheScope });
 }
@@ -585,6 +591,9 @@ interface TimeEntry {
 
 interface TaskItem {
   id: string; title: string;
+  taskType?: string;
+  taskTypeLayer1?: "PRE_SALE" | "DELIVERY" | "PM";
+  taskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE" | "DAY_OFF_COMPANY";
   status: "todo" | "in-progress" | "done";
   priority: "critical" | "high" | "medium" | "low";
   assignee: string; aColor: string; due: string;
@@ -958,6 +967,9 @@ function mapProjectTaskToTaskItem(task: ProjectTaskSummary): TaskItem {
   return {
     id: task.id,
     title: task.title,
+    taskType: task.taskType,
+    taskTypeLayer1: task.taskTypeLayer1,
+    taskTypeLayer2: task.taskTypeLayer2,
     status: toTaskStatus(task.status),
     priority: toTaskPriority(task.priority),
     assignee: initialsForDisplayName(assigneeName),
@@ -2436,6 +2448,9 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
   currentUserId?: string;
 }) {
   const [title,    setTitle]    = useState("");
+  const [taskType, setTaskType] = useState("implementation");
+  const [taskTypeLayer1, setTaskTypeLayer1] = useState<TaskItem["taskTypeLayer1"]>("DELIVERY");
+  const [taskTypeLayer2, setTaskTypeLayer2] = useState<TaskItem["taskTypeLayer2"]>("CUSTOMER_PROJECT");
   const [priority, setPriority] = useState<TaskItem["priority"]>("medium");
   const [status,   setStatus]   = useState<TaskItem["status"]>("todo");
   const [startDate, setStartDate] = useState("");
@@ -2475,6 +2490,9 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
                   await onSave({
                     id:`t-${Date.now()}`,
                     title:title.trim(),
+                    taskType,
+                    taskTypeLayer1,
+                    taskTypeLayer2,
                     status,
                     priority,
                     assignee:pic.initials,
@@ -2503,6 +2521,52 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
           <input autoFocus value={title} onChange={e => setTitle(e.target.value)}
             placeholder="Describe the task..."
             className="w-full border border-input rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none" />
+        </Field>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Task Type · Nhóm">
+            <CustomDropdown
+              ariaLabel="Task Type · Nhóm"
+              value={taskTypeLayer1 || "DELIVERY"}
+              options={[
+                { value: "PRE_SALE", label: "Pre-sale · Công việc BD" },
+                { value: "DELIVERY", label: "Delivery" },
+                { value: "PM", label: "Quản trị nội bộ" }
+              ]}
+              onChange={(value) => setTaskTypeLayer1(value as TaskItem["taskTypeLayer1"])}
+            />
+          </Field>
+          <Field label="Task Type · Bối cảnh">
+            <CustomDropdown
+              ariaLabel="Task Type · Bối cảnh"
+              value={taskTypeLayer2 || "CUSTOMER_PROJECT"}
+              options={[
+                { value: "CUSTOMER_PROJECT", label: "Project khách hàng" },
+                { value: "INTERNAL_PROJECT", label: "Nội bộ / Project nội bộ" },
+                { value: "TICKET_MAINTENANCE", label: "Ticket / Bảo trì" },
+                { value: "DAY_OFF_COMPANY", label: "Ngày nghỉ công ty" }
+              ]}
+              onChange={(value) => setTaskTypeLayer2(value as TaskItem["taskTypeLayer2"])}
+            />
+          </Field>
+        </div>
+        <Field label="Loại công việc">
+          <CustomDropdown
+            ariaLabel="Loại công việc"
+            value={taskType}
+            options={[
+              { value: "discovery", label: "Khảo sát" },
+              { value: "blueprint", label: "Thiết kế giải pháp" },
+              { value: "proposal", label: "Đề xuất giải pháp" },
+              { value: "implementation", label: "Triển khai" },
+              { value: "prototype", label: "Prototype" },
+              { value: "kickoff", label: "Kickoff" },
+              { value: "customer_action", label: "Việc phía khách hàng" },
+              { value: "acceptance", label: "Nghiệm thu" },
+              { value: "consulting", label: "Tư vấn" },
+              { value: "support", label: "Hỗ trợ kỹ thuật" }
+            ]}
+            onChange={setTaskType}
+          />
         </Field>
         {/* Priority */}
         <Field label="Priority">
@@ -3841,6 +3905,9 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
   members?: ProjectTeamMember[];
 }) {
   const [title,    setTitle]    = useState(task.title);
+  const [taskType, setTaskType] = useState(task.taskType || "implementation");
+  const [taskTypeLayer1, setTaskTypeLayer1] = useState<TaskItem["taskTypeLayer1"]>(task.taskTypeLayer1 || "DELIVERY");
+  const [taskTypeLayer2, setTaskTypeLayer2] = useState<TaskItem["taskTypeLayer2"]>(task.taskTypeLayer2 || "CUSTOMER_PROJECT");
   const [priority, setPriority] = useState<TaskItem["priority"]>(task.priority);
   const [status,   setStatus]   = useState<TaskItem["status"]>(task.status);
   const [startDate, setStartDate] = useState(task.startDate ?? "");
@@ -3883,6 +3950,9 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
                   await onSave({
                     ...task,
                     title:title.trim(),
+                    taskType,
+                    taskTypeLayer1,
+                    taskTypeLayer2,
                     status,
                     priority,
                     assignee:pic.initials,
@@ -3907,6 +3977,52 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
         <Field label="Task Title" required>
           <input autoFocus value={title} onChange={e => setTitle(e.target.value)}
             className="w-full border border-input rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none" />
+        </Field>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Task Type · Nhóm">
+            <CustomDropdown
+              ariaLabel="Task Type · Nhóm"
+              value={taskTypeLayer1 || "DELIVERY"}
+              options={[
+                { value: "PRE_SALE", label: "Pre-sale · Công việc BD" },
+                { value: "DELIVERY", label: "Delivery" },
+                { value: "PM", label: "Quản trị nội bộ" }
+              ]}
+              onChange={(value) => setTaskTypeLayer1(value as TaskItem["taskTypeLayer1"])}
+            />
+          </Field>
+          <Field label="Task Type · Bối cảnh">
+            <CustomDropdown
+              ariaLabel="Task Type · Bối cảnh"
+              value={taskTypeLayer2 || "CUSTOMER_PROJECT"}
+              options={[
+                { value: "CUSTOMER_PROJECT", label: "Project khách hàng" },
+                { value: "INTERNAL_PROJECT", label: "Nội bộ / Project nội bộ" },
+                { value: "TICKET_MAINTENANCE", label: "Ticket / Bảo trì" },
+                { value: "DAY_OFF_COMPANY", label: "Ngày nghỉ công ty" }
+              ]}
+              onChange={(value) => setTaskTypeLayer2(value as TaskItem["taskTypeLayer2"])}
+            />
+          </Field>
+        </div>
+        <Field label="Loại công việc">
+          <CustomDropdown
+            ariaLabel="Loại công việc"
+            value={taskType}
+            options={[
+              { value: "discovery", label: "Khảo sát" },
+              { value: "blueprint", label: "Thiết kế giải pháp" },
+              { value: "proposal", label: "Đề xuất giải pháp" },
+              { value: "implementation", label: "Triển khai" },
+              { value: "prototype", label: "Prototype" },
+              { value: "kickoff", label: "Kickoff" },
+              { value: "customer_action", label: "Việc phía khách hàng" },
+              { value: "acceptance", label: "Nghiệm thu" },
+              { value: "consulting", label: "Tư vấn" },
+              { value: "support", label: "Hỗ trợ kỹ thuật" }
+            ]}
+            onChange={setTaskType}
+          />
         </Field>
         <Field label="Priority">
           <div className="flex gap-2 flex-wrap">
@@ -5933,6 +6049,7 @@ export default function ProjectDetailPage() {
   }, [projectId, pushedProjectOwnerKey]);
 
   const searchParams = useSearchParams();
+  const projectsReturnHref = getProjectsReturnHref(searchParams);
   const [tab, setTab] = useState<Tab>(() => {
     const initialTab = resolveProjectDetailTab(searchParams.get("tab"));
     return initialTab ?? "Overview";
@@ -7027,6 +7144,9 @@ export default function ProjectDetailPage() {
         projectId,
         stageId: mutationStageId,
         title: task.title,
+        taskType: task.taskType,
+        taskTypeLayer1: task.taskTypeLayer1,
+        taskTypeLayer2: task.taskTypeLayer2,
         status: toApiTaskStatus(task.status),
         priority: task.priority,
         assigneeUserId: assignee?.id,
@@ -7071,6 +7191,9 @@ export default function ProjectDetailPage() {
         stageId: mutationStageId,
         title: updated.title,
         description: updated.description ?? null,
+        taskType: updated.taskType,
+        taskTypeLayer1: updated.taskTypeLayer1,
+        taskTypeLayer2: updated.taskTypeLayer2,
         status: toApiTaskStatus(updated.status),
         priority: updated.priority,
         assigneeUserId: assignee?.id ?? null,
@@ -7311,7 +7434,7 @@ export default function ProjectDetailPage() {
                   This project ID does not exist in the production CRM workspace.
                 </p>
                 <Link
-                  href="/projects"
+                  href={projectsReturnHref}
                   className="mt-6 inline-flex items-center gap-2 rounded-lg bg-foreground px-4 py-2 text-sm font-semibold text-background transition-opacity hover:opacity-90"
                 >
                   <ArrowLeft className="h-4 w-4" />
@@ -7480,7 +7603,7 @@ export default function ProjectDetailPage() {
           {projectPeople.error && <div role="alert" className="mx-6 mt-4 rounded-xl border border-destructive/30 p-3 text-sm text-destructive">{projectPeople.error} <button className="underline" onClick={projectPeople.refresh}>Retry loading project members</button></div>}
           {/* Breadcrumb */}
           <div className="flex items-center gap-1.5 px-4 pt-4 text-xs text-muted-foreground sm:px-6">
-            <Link href="/projects" className="hover:text-foreground transition-colors flex items-center gap-1.5">
+            <Link href={projectsReturnHref} className="hover:text-foreground transition-colors flex items-center gap-1.5">
               <ArrowLeft className="w-3.5 h-3.5" /> Projects
             </Link>
             <ChevronRight className="w-3 h-3" />

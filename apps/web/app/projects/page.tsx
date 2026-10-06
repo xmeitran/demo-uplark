@@ -13,6 +13,7 @@ import {
   CheckCircle2, Clock, ArrowRight, Wallet, BarChart2, Layers, X, Pin, Pencil, Trash2, Check
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { CustomDropdown, CustomDatePicker } from "@/components/constructor-x/custom-controls";
 import { ModalLayer } from "@/components/modal-layer";
@@ -47,13 +48,19 @@ import {
   type ProjectSheetSortDir,
   type ProjectSheetSortKey
 } from "@/features/project-sheet/project-sheet";
+import {
+  buildProjectListUrl,
+  readProjectListState,
+  type ProjectListUrlState,
+  type ProjectListView as UrlProjectListView
+} from "@/lib/project-list-state";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type SortKey = ProjectSheetSortKey;
 type SortDir = ProjectSheetSortDir;
 
-type ProjectListView = "grid" | "sheet" | "timeline";
+type ProjectListView = UrlProjectListView;
 const PROJECT_LIST_VIEW_TABS: WorkspaceTabItem<ProjectListView>[] = [
   { id: "grid", label: "Tổng quan", description: "Cards dự án & trạng thái" },
   { id: "sheet", label: "Project Sheet", ariaLabel: "Project Sheet View", description: "Bảng dữ liệu & chi phí" },
@@ -203,12 +210,14 @@ function ProjectMemberAvatarStack({ members, limit = 4 }: { members: Member[]; l
 
 function ProjectCard({
   project,
+  returnTo,
   isPushed,
   onTogglePush,
   onEdit,
   onDelete
 }: {
   project: Project;
+  returnTo: string;
   isPushed: boolean;
   onTogglePush: () => void;
   onEdit: () => void;
@@ -219,7 +228,7 @@ function ProjectCard({
   const budgetPct = project.budget > 0 ? Math.round((project.spent / project.budget) * 100) : 0;
 
   return (
-    <Link href={`/projects/${project.id}`} className="block h-full group">
+    <Link href={`/projects/${encodeURIComponent(project.id)}?returnTo=${encodeURIComponent(returnTo)}`} className="block h-full group">
       <motion.div layout initial={{ opacity:0, scale:0.96 }} animate={{ opacity:1, scale:1 }} whileHover={{ y:-3 }}
         className="min-w-0 bg-card border border-border rounded-xl p-5 shadow-sm hover:shadow-md transition-all cursor-pointer flex h-full flex-col gap-4">
         {/* Top */}
@@ -793,10 +802,17 @@ function timelinePercent(date: Date, start: Date, end: Date) {
 
 export default function ProjectsPage() {
   const { user } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const projectListSearch = searchParams.toString();
+  const urlState = useMemo(
+    () => readProjectListState(new URLSearchParams(projectListSearch)),
+    [projectListSearch]
+  );
   const pushedProjectOwnerKey = getPushedProjectsOwnerKey(user);
   const [projectsList, setProjectsList] = useState<Project[]>([]);
   const [accountOptions, setAccountOptions] = useState<LiveProjectAccountOption[]>([]);
-  const [projectPage, setProjectPage] = useState(1);
+  const [projectPage, setProjectPage] = useState(urlState.page);
   const [projectPagination, setProjectPagination] = useState<ResourceListPaginationMeta>(EMPTY_PROJECT_PAGINATION);
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [projectsError, setProjectsError] = useState<string | null>(null);
@@ -810,13 +826,40 @@ export default function ProjectsPage() {
   const [loadingWorkspaceUsers, setLoadingWorkspaceUsers] = useState(true);
   const [workspaceUsersError, setWorkspaceUsersError] = useState<string | null>(null);
   const [pushedIds, setPushedIds] = useState<string[]>([]);
-  const [view, setView]         = useState<ProjectListView>("grid");
-  const [query, setQuery]       = useState("");
-  const [statusFilter, setStatusFilter]   = useState("all");
-  const [categoryFilter, setCategoryFilter] = useState("all");
-  const [sortKey, setSortKey]   = useState<SortKey>("name");
-  const [sortDir, setSortDir]   = useState<SortDir>("asc");
+  const [view, setView]         = useState<ProjectListView>(urlState.view);
+  const [query, setQuery]       = useState(urlState.query);
+  const [statusFilter, setStatusFilter]   = useState(urlState.statusFilter);
+  const [categoryFilter, setCategoryFilter] = useState(urlState.categoryFilter);
+  const [sortKey, setSortKey]   = useState<SortKey>(urlState.sortKey);
+  const [sortDir, setSortDir]   = useState<SortDir>(urlState.sortDir);
   const resultsScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setProjectPage(urlState.page);
+    setView(urlState.view);
+    setQuery(urlState.query);
+    setStatusFilter(urlState.statusFilter);
+    setCategoryFilter(urlState.categoryFilter);
+    setSortKey(urlState.sortKey);
+    setSortDir(urlState.sortDir);
+  }, [projectListSearch, urlState]);
+
+  const updateProjectListUrl = (overrides: Partial<ProjectListUrlState>) => {
+    router.replace(buildProjectListUrl({ ...urlState, ...overrides }), { scroll: false });
+  };
+
+  const currentProjectListUrl = useMemo(
+    () => buildProjectListUrl({
+      query,
+      statusFilter,
+      categoryFilter,
+      page: projectPage,
+      view,
+      sortKey,
+      sortDir
+    }),
+    [query, statusFilter, categoryFilter, projectPage, view, sortKey, sortDir]
+  );
 
   const resetProjectsFrameScroll = () => {
     if (typeof window === "undefined") return;
@@ -972,33 +1015,36 @@ export default function ProjectsPage() {
   const [projectMilestones, setProjectMilestones] = useState<string[]>(PILOT_PROJECT_MILESTONES);
 
   const handleSort = (k: SortKey, direction?: SortDir) => {
-    if (direction) {
-      setSortKey(k);
-      setSortDir(direction);
-    } else if (sortKey === k) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortKey(k); setSortDir("asc"); }
+    const nextDir = direction ?? (sortKey === k ? (sortDir === "asc" ? "desc" : "asc") : "asc");
+    setSortKey(k);
+    setSortDir(nextDir);
+    updateProjectListUrl({ sortKey: k, sortDir: nextDir });
   };
 
   const handleQueryChange = (value: string) => {
     setQuery(value);
     setProjectPage(1);
+    updateProjectListUrl({ query: value, page: 1 });
     resetProjectsFrameScroll();
   };
 
   const handleStatusFilterChange = (value: string) => {
     setStatusFilter(value);
     setProjectPage(1);
+    updateProjectListUrl({ statusFilter: value, page: 1 });
     resetProjectsFrameScroll();
   };
 
   const handleCategoryFilterChange = (value: string) => {
     setCategoryFilter(value);
     setProjectPage(1);
+    updateProjectListUrl({ categoryFilter: value, page: 1 });
     resetProjectsFrameScroll();
   };
 
   const handleProjectPageChange = (page: number) => {
     setProjectPage(page);
+    updateProjectListUrl({ page });
     resetProjectsFrameScroll();
   };
 
@@ -1316,7 +1362,10 @@ export default function ProjectsPage() {
             <WorkspaceTabBar
               items={PROJECT_LIST_VIEW_TABS}
               value={view}
-              onChange={setView}
+              onChange={(nextView) => {
+                setView(nextView);
+                updateProjectListUrl({ view: nextView });
+              }}
               ariaLabel="Chế độ xem danh sách Project"
               idPrefix="projects-view"
               className="w-full"
@@ -1374,6 +1423,7 @@ export default function ProjectsPage() {
                       <ProjectCard
                         key={p.id}
                         project={p}
+                        returnTo={currentProjectListUrl}
                         isPushed={pushedIds.includes(p.id)}
                         onTogglePush={() => handleTogglePush(p.id)}
                         onEdit={() => {
@@ -1400,9 +1450,10 @@ export default function ProjectsPage() {
 
             {/* Project Sheet */}
             {view === "sheet" && (
-              <div ref={resultsScrollRef} className="min-h-0 flex-1 overflow-hidden" data-testid="projects-results-frame">
+              <div ref={resultsScrollRef} className="flex min-h-0 flex-1 flex-col overflow-hidden" data-testid="projects-results-frame">
                 <ProjectSheet
                   projects={filtered}
+                  returnTo={currentProjectListUrl}
                   pushedIds={pushedIds}
                   sortKey={sortKey}
                   sortDir={sortDir}
@@ -1475,7 +1526,7 @@ export default function ProjectsPage() {
                               <Layers className="w-4 h-4" style={{ color: p.color }} />
                             </div>
                             <div className="min-w-0 flex-1">
-                              <Link href={`/projects/${p.id}`} className="text-xs font-bold text-foreground hover:text-primary truncate block transition-colors">{p.name}</Link>
+                              <Link href={`/projects/${encodeURIComponent(p.id)}?returnTo=${encodeURIComponent(currentProjectListUrl)}`} className="text-xs font-bold text-foreground hover:text-primary truncate block transition-colors">{p.name}</Link>
                               <span className="text-[10px] text-muted-foreground block truncate">{p.client} · {p.category}</span>
                             </div>
                             <span className="text-[9px] font-bold px-2 py-0.5 rounded-lg shrink-0" style={{ backgroundColor: sc.bg, color: sc.color }}>{formatProjectStatusLabel(p.status)}</span>
@@ -1489,7 +1540,7 @@ export default function ProjectsPage() {
                             ))}
 
                             {isInCurrentYear ? (
-                              <Link href={`/projects/${p.id}`} className="absolute h-8 rounded-xl flex items-center px-3 border text-[10px] font-bold shadow-sm transition-all hover:scale-[1.01] hover:shadow-md cursor-pointer select-none truncate"
+                              <Link href={`/projects/${encodeURIComponent(p.id)}?returnTo=${encodeURIComponent(currentProjectListUrl)}`} className="absolute h-8 rounded-xl flex items-center px-3 border text-[10px] font-bold shadow-sm transition-all hover:scale-[1.01] hover:shadow-md cursor-pointer select-none truncate"
                                 style={{
                                   left: `${pillLeft}%`,
                                   width: `${pillWidth}%`,
@@ -1503,7 +1554,7 @@ export default function ProjectsPage() {
                                 <span className="text-[9px] opacity-90 shrink-0 font-mono hidden sm:inline">{p.startDate.split(",")[0]} - {p.dueDate.split(",")[0]}</span>
                               </Link>
                             ) : (
-                              <Link href={`/projects/${p.id}`} className="absolute left-0 h-8 rounded-xl flex items-center px-3 border border-dashed border-border bg-muted/30 text-[10px] font-bold text-muted-foreground">
+                              <Link href={`/projects/${encodeURIComponent(p.id)}?returnTo=${encodeURIComponent(currentProjectListUrl)}`} className="absolute left-0 h-8 rounded-xl flex items-center px-3 border border-dashed border-border bg-muted/30 text-[10px] font-bold text-muted-foreground">
                                 Outside {currentYear}
                               </Link>
                             )}

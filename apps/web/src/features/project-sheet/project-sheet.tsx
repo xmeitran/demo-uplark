@@ -11,6 +11,7 @@ export type ProjectSheetSortDir = "asc" | "desc";
 
 type ProjectSheetProps = {
   projects: Project[];
+  returnTo: string;
   pushedIds: string[];
   sortKey: ProjectSheetSortKey;
   sortDir: ProjectSheetSortDir;
@@ -69,7 +70,7 @@ function MemberStack({ project }: { project: Project }) {
   );
 }
 
-export function ProjectSheet({ projects }: ProjectSheetProps) {
+export function ProjectSheet({ projects, returnTo }: ProjectSheetProps) {
   return (
     <section className="flex min-h-0 flex-1 flex-col bg-card" data-testid="project-sheet">
       <header className="flex shrink-0 flex-col gap-2 border-b border-border px-5 py-5 sm:flex-row sm:items-end sm:justify-between">
@@ -97,7 +98,7 @@ export function ProjectSheet({ projects }: ProjectSheetProps) {
             {projects.map((project) => {
               const hours = projectHours(project);
               const spentPercent = project.budget > 0 ? Math.round(project.spent / project.budget * 100) : 0;
-              const href = `/projects/${project.id}?tab=Project%20Sheet`;
+              const href = `/projects/${encodeURIComponent(project.id)}?tab=Project%20Sheet&returnTo=${encodeURIComponent(returnTo)}`;
               return (
                 <tr key={project.id} className="group transition-colors hover:bg-muted/25">
                   <td className="border-b border-border/70 px-4 py-4">

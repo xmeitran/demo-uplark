@@ -1354,13 +1354,16 @@ test("project sheet presents the delivery summary and opens the project control 
   const sheet = page.getByTestId("project-sheet");
   await expect(sheet).toBeVisible();
   await expect(sheet.getByRole("heading", { name: "Project Sheet", exact: true })).toBeVisible();
+  const resultsFrame = page.getByTestId("projects-results-frame");
+  await expect(resultsFrame).toHaveCSS("display", "flex");
+  await expect(resultsFrame).toHaveCSS("flex-direction", "column");
   await expect(sheet.getByRole("link", { name: `Open Project Sheet for ${liveProject.name}` })).toBeVisible();
   await expect(sheet.getByRole("columnheader", { name: "Plan hour", exact: true })).toBeVisible();
   await expect(sheet.getByRole("columnheader", { name: "Logwork hour", exact: true })).toBeVisible();
   await expect(sheet.getByRole("columnheader", { name: "P&L hour", exact: true })).toBeVisible();
 
   const controlCenterLink = sheet.getByRole("link", { name: `Open Project Sheet for ${liveProject.name}` });
-  await expect(controlCenterLink).toHaveAttribute("href", `/projects/${liveProject.id}?tab=Project%20Sheet`);
+  await expect(controlCenterLink).toHaveAttribute("href", `/projects/${liveProject.id}?tab=Project%20Sheet&returnTo=%2Fprojects%3Fview%3Dsheet`);
 });
 
 test("projects search is sent to the API before pagination", async ({ page }) => {
