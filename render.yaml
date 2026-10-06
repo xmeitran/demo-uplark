@@ -64,7 +64,7 @@ services:
     # This Render service is the review/demo environment, not the customer
     # production database. Seed the live P&L fixture into the same foundation
     # workspace used by Lark sessions so the demo does not diverge from local.
-    startCommand: pnpm prisma migrate resolve --rolled-back 20260629090000_baseline_production_gates || true; pnpm db:migrate && pnpm db:seed:foundation && ALLOW_DEMO_SEED_IN_PRODUCTION=true DEMO_TENANT_KEY=prod DEMO_WORKSPACE_ID=twk-foundation DEMO_WORKSPACE_KEY=default DEMO_WORKSPACE_NAME="Default Workspace" DEMO_WORKSPACE_PLAN=pilot pnpm db:seed:demo && pnpm --filter @b2b-crm/api start
+    startCommand: pnpm prisma migrate resolve --rolled-back 20260629090000_baseline_production_gates || true; pnpm db:migrate && pnpm db:seed:foundation && DEMO_TENANT_KEY=prod DEMO_WORKSPACE_ID=twk-foundation DEMO_WORKSPACE_KEY=default pnpm tsx scripts/operations/seed-render-pnl-demo.ts && pnpm --filter @b2b-crm/api start
     healthCheckPath: /api/health
     envVars:
       - key: API_PORT
