@@ -73,6 +73,7 @@ describe("canonical product route readiness", () => {
     expect(matchProductRoute("/users/usr-1")?.classification).toBe("detail");
     expect(matchProductRoute("/clients/acc-1")?.classification).toBe("detail");
     expect(matchProductRoute("/tasks/task-1")?.classification).toBe("detail");
+    expect(matchProductRoute("/pnl/render-pnl-demo-project")?.classification).toBe("detail");
     expect(getShellRoutes("constructor", "production").some((route) => route.classification === "detail")).toBe(false);
   });
 
@@ -92,6 +93,7 @@ describe("canonical product route readiness", () => {
     expect(isLocalNavigationVisibleRoute("/pnl")).toBe(true);
     expect(getProductionRouteDecision("/timesheet", "production")).toBe("allow");
     expect(getProductionRouteDecision("/pnl", "production")).toBe("allow");
+    expect(getProductionRouteDecision("/pnl/render-pnl-demo-project", "production")).toBe("allow");
     expect(process.env.NEXT_PUBLIC_STAGING_BYPASS_AUTH).not.toBe("true");
   });
 });

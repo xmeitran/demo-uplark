@@ -43,6 +43,7 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
   // session middleware and protected API routes.
   { id: "timesheet", href: "/timesheet", label: "Timesheet", classification: "visible", shells: ["constructor"], navGroup: "Triển khai" },
   { id: "pnl", href: "/pnl", label: "P&L", classification: "visible", shells: ["constructor"], navGroup: "Triển khai" },
+  { id: "pnl-detail", href: "/pnl/", label: "P&L detail", classification: "detail", match: "prefix" },
 
   { id: "project-detail", href: "/projects/", label: "Project detail", classification: "detail", match: "prefix" },
   { id: "user-detail", href: "/users/", label: "User detail", classification: "detail", match: "prefix" },
