@@ -15,6 +15,47 @@ async function main() {
     throw new Error(`P&L demo seed workspace not found: ${tenantKey}/${workspaceKey}/${workspaceId}`);
   }
 
+  const pnlRoles = await prisma.role.findMany({
+    where: { code: { in: ["COST_VIEW", "COST_EDIT", "COST_APPROVE", "COST_EXPORT"] } },
+    select: { id: true, code: true }
+  });
+  const workspaceAdmins = await prisma.user.findMany({
+    where: {
+      status: "ACTIVE",
+      subjectType: "INTERNAL_USER",
+      roleBindings: {
+        some: {
+          tenantKey,
+          workspaceId: workspace.id,
+          endsAt: null,
+          role: { code: { in: ["FOUNDER_GM", "WORKSPACE_ADMIN"] } }
+        }
+      }
+    },
+    select: { id: true }
+  });
+  if (!workspaceAdmins.length || pnlRoles.length !== 4) {
+    throw new Error(`P&L roles/admins are incomplete in workspace ${workspace.id}`);
+  }
+  await prisma.$transaction(
+    workspaceAdmins.flatMap((user) =>
+      pnlRoles.map((role) =>
+        prisma.roleBinding.upsert({
+          where: {
+            userId_roleId_tenantKey_workspaceId: {
+              userId: user.id,
+              roleId: role.id,
+              tenantKey,
+              workspaceId: workspace.id
+            }
+          },
+          update: { endsAt: null },
+          create: { userId: user.id, roleId: role.id, tenantKey, workspaceId: workspace.id }
+        })
+      )
+    )
+  );
+
   const operator = await prisma.user.findFirst({
     where: {
       status: "ACTIVE",
