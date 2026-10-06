@@ -93,3 +93,33 @@ describe("NotificationsService milestone approval requests", () => {
     expect(prisma.appNotification.upsert).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("NotificationsService project risk notifications", () => {
+  it("creates an issue notification with a deep link to the assigned issue", async () => {
+    const prisma = fakePrisma();
+    const service = new NotificationsService(prisma as never);
+
+    await service.notifyProjectRiskOwner({
+      workspaceId: "ws-1",
+      recipientUserId: "usr-owner",
+      projectId: "project-1",
+      projectCode: "PRJ-001",
+      projectName: "CRM rollout",
+      riskId: "risk-1",
+      riskCategory: "Issue",
+      riskDescription: "Customer data is missing",
+      event: "created"
+    });
+
+    expect(prisma.appNotification.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { dedupeKey: "project-risk-owner:risk-1:usr-owner:created" },
+      create: expect.objectContaining({
+        kind: "project_risk_owner",
+        entityType: "project_risk",
+        entityId: "risk-1",
+        href: "/projects/project-1?tab=Issues&issueId=risk-1",
+        data: expect.objectContaining({ riskId: "risk-1", event: "created" })
+      })
+    }));
+  });
+});

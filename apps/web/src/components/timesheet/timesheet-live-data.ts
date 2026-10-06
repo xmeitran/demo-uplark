@@ -1,5 +1,6 @@
 import type {
   Department,
+  MemberState,
   MilestoneNode,
   NodeStatus,
   Person,
@@ -38,7 +39,7 @@ type ApiProject = {
   projectType?: string;
   ownerUserId?: string;
   memberUserIds?: string[];
-  members?: Array<{ userId?: string; displayName?: string; relation?: string }>;
+  members?: Array<{ userId?: string; displayName?: string; relation?: string; employmentStatus?: string }>;
 };
 
 type ApiTask = {
@@ -120,6 +121,13 @@ function projectStatus(value?: string): ProjectStatus {
   if (normalized === "discovery") return "discovery";
   if (normalized === "acceptance") return "acceptance";
   return "in_progress";
+}
+
+export function projectMemberState(value?: string): MemberState {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (["ON_LEAVE", "ON_HOLD", "PAUSED"].includes(normalized)) return "on_hold";
+  if (["INACTIVE", "RELEASED", "SUSPENDED"].includes(normalized)) return "released";
+  return "active";
 }
 
 /** Prefer the canonical task status; time-entry rows may carry a stale/default status. */
@@ -260,6 +268,7 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
   const projectById = new Map(projects.map((project) => [project.id, project]));
   const usersById = new Map((users.data ?? []).map((user) => [user.id, user]));
   const projectMembers = new Map<string, Set<string>>();
+  const projectMemberStates = new Map<string, Map<string, MemberState>>();
 
   for (const project of projects) {
     const members = new Set<string>([
@@ -267,18 +276,30 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
       ...(project.members ?? []).flatMap((member) => member.userId ? [member.userId] : [])
     ]);
     projectMembers.set(project.id, members);
+    projectMemberStates.set(project.id, new Map(
+      (project.members ?? [])
+        .filter((member): member is { userId: string; employmentStatus?: string } => Boolean(member.userId))
+        .map((member) => [member.userId, projectMemberState(member.employmentStatus)])
+    ));
   }
 
   for (const task of tasks) {
     const members = projectMembers.get(task.projectId) ?? new Set<string>();
     if (task.assigneeUserId) members.add(task.assigneeUserId);
     if (task.ownerUserId) members.add(task.ownerUserId);
+    const states = projectMemberStates.get(task.projectId) ?? new Map<string, MemberState>();
+    if (task.assigneeUserId && !states.has(task.assigneeUserId)) states.set(task.assigneeUserId, "active");
+    if (task.ownerUserId && !states.has(task.ownerUserId)) states.set(task.ownerUserId, "active");
+    projectMemberStates.set(task.projectId, states);
     projectMembers.set(task.projectId, members);
   }
   for (const entry of entries) {
     const members = projectMembers.get(entry.projectId) ?? new Set<string>();
     members.add(entry.userId);
     projectMembers.set(entry.projectId, members);
+    const states = projectMemberStates.get(entry.projectId) ?? new Map<string, MemberState>();
+    if (!states.has(entry.userId)) states.set(entry.userId, "active");
+    projectMemberStates.set(entry.projectId, states);
   }
 
   const peopleById = new Map<string, Person>();
@@ -369,7 +390,12 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
         stages: stageNodes
       };
     });
-    const members: ProjectMember[] = [...(projectMembers.get(project.id) ?? [])].map((personId) => ({ personId, role: "Project member", state: "active", joinedAt: "" }));
+    const members: ProjectMember[] = [...(projectMembers.get(project.id) ?? [])].map((personId) => ({
+      personId,
+      role: "Project member",
+      state: projectMemberStates.get(project.id)?.get(personId) ?? "active",
+      joinedAt: ""
+    }));
     return {
       id: project.id,
       code: project.code || project.id,

@@ -41,6 +41,7 @@ import type {
   ProjectDocumentSummary,
   ProjectHierarchySummary,
   ProjectRiskSummary,
+  UpdateProjectRiskInput,
   ProjectStageSummary,
   ProjectSummary,
   ProjectTaskSummary,
@@ -773,6 +774,8 @@ function mapProjectRiskToRiskItem(risk: ProjectRiskSummary): RiskItem {
     impact: risk.impact,
     response: risk.response,
     switch: risk.switchTrigger ?? risk.status,
+    dueAt: risk.dueAt,
+    ownerUserId: risk.ownerUserId,
     owner: risk.ownerDisplayName ?? "PMO",
     status: risk.status
   };
@@ -1461,6 +1464,8 @@ interface RiskItem {
   impact: "Low" | "Medium" | "High";
   response: string;
   switch: string;
+  dueAt?: string;
+  ownerUserId?: string;
   owner: string;
   status: string;
 }
@@ -1474,6 +1479,7 @@ type ProjectRiskDraft = {
   impact: RiskItem["impact"];
   response: string;
   switchTrigger: string;
+  dueAt?: string;
   ownerUserId?: string;
   status: string;
 };
@@ -1506,11 +1512,15 @@ function riskSeverityLabel(value: string) {
 function ProjectIssuesPanel({
   risks,
   teamMembers,
-  onCreate
+  onCreate,
+  onUpdate,
+  initialRiskId
 }: {
   risks: RiskItem[];
   teamMembers: ProjectTeamMember[];
   onCreate: (draft: ProjectRiskDraft) => Promise<void>;
+  onUpdate: (riskId: string, input: UpdateProjectRiskInput) => Promise<void>;
+  initialRiskId?: string;
 }) {
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState<RiskItem["category"]>("Risk");
@@ -1518,14 +1528,27 @@ function ProjectIssuesPanel({
   const [impact, setImpact] = useState<RiskItem["impact"]>("Medium");
   const [response, setResponse] = useState("");
   const [switchTrigger, setSwitchTrigger] = useState("");
+  const [dueAt, setDueAt] = useState("");
   const [ownerUserId, setOwnerUserId] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [severityFilter, setSeverityFilter] = useState("all");
   const [ownerFilter, setOwnerFilter] = useState("all");
   const [expandedRiskId, setExpandedRiskId] = useState<string | null>(null);
+  const [editingRiskId, setEditingRiskId] = useState<string | null>(null);
+  const [editResponse, setEditResponse] = useState("");
+  const [editDueAt, setEditDueAt] = useState("");
+  const [editStatus, setEditStatus] = useState("open");
+  const [editOwnerUserId, setEditOwnerUserId] = useState("");
+  const [updatingRiskId, setUpdatingRiskId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!initialRiskId || !risks.some((risk) => risk.id === initialRiskId)) return;
+    setExpandedRiskId(initialRiskId);
+    window.requestAnimationFrame(() => document.getElementById(`issue-${initialRiskId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  }, [initialRiskId, risks]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const overdueCount = risks.filter((risk) => risk.dueAt && new Date(risk.dueAt).getTime() < Date.now() && !["resolved", "closed", "done"].includes(risk.status.toLowerCase())).length;
   const openCount = risks.filter((risk) => !["resolved", "closed", "done"].includes(risk.status.toLowerCase())).length;
   const highCount = risks.filter((risk) => risk.likelihood === "High" || risk.impact === "High").length;
   const visibleRisks = risks.filter((risk) => {
@@ -1539,8 +1562,8 @@ function ProjectIssuesPanel({
 
   const exportVisibleRisks = () => {
     const rows = [
-      ["Mã", "Loại", "Nội dung", "Mức độ", "Owner", "Trạng thái", "Phương án xử lý"],
-      ...visibleRisks.map((risk, index) => [`ISS-${String(index + 1).padStart(3, "0")}`, riskKindLabel(risk.category), risk.description, riskSeverityLabel(riskSeverity(risk)), risk.owner || "Chưa phân công", risk.status, risk.response || "Chưa cập nhật"])
+      ["Mã", "Loại", "Nội dung", "Mức độ", "Owner", "Trạng thái", "Hạn xử lý", "Phương án xử lý"],
+      ...visibleRisks.map((risk, index) => [`ISS-${String(index + 1).padStart(3, "0")}`, riskKindLabel(risk.category), risk.description, riskSeverityLabel(riskSeverity(risk)), risk.owner || "Chưa phân công", risk.status, risk.dueAt ? new Intl.DateTimeFormat("vi-VN").format(new Date(risk.dueAt)) : "Chưa có hạn xử lý", risk.response || "Chưa cập nhật"])
     ];
     const csv = `\ufeff${rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n")}`;
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
@@ -1568,17 +1591,46 @@ function ProjectIssuesPanel({
         impact,
         response: response.trim(),
         switchTrigger: switchTrigger.trim(),
+        dueAt: dueAt || undefined,
         ownerUserId: ownerUserId || undefined,
         status: "open"
       });
       setDescription("");
       setResponse("");
       setSwitchTrigger("");
+      setDueAt("");
       setOwnerUserId("");
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : "Không thể tạo bản ghi.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const beginEdit = (risk: RiskItem) => {
+    setExpandedRiskId(risk.id);
+    setEditingRiskId(risk.id);
+    setEditResponse(risk.response);
+    setEditDueAt(risk.dueAt ? risk.dueAt.slice(0, 10) : "");
+    setEditStatus(risk.status);
+    setEditOwnerUserId(risk.ownerUserId ?? "");
+  };
+
+  const saveEdit = async (event: React.FormEvent<HTMLFormElement>, riskId: string) => {
+    event.preventDefault();
+    setUpdatingRiskId(riskId);
+    try {
+      await onUpdate(riskId, {
+        response: editResponse.trim(),
+        dueAt: editDueAt || null,
+        status: editStatus,
+        ownerUserId: editOwnerUserId || null
+      });
+      setEditingRiskId(null);
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : "Không thể cập nhật vấn đề.");
+    } finally {
+      setUpdatingRiskId(null);
     }
   };
 
@@ -1592,7 +1644,7 @@ function ProjectIssuesPanel({
         {[
           { label: "Đang mở", value: openCount, detail: `${risks.filter((risk) => risk.category === "Blocker").length} blocker · ${risks.filter((risk) => risk.category === "Risk").length} risk · ${risks.filter((risk) => risk.category === "Issue").length} issue`, tone: "text-foreground" },
           { label: "Mức cao trở lên", value: highCount, detail: "Theo khả năng hoặc tác động", tone: "text-rose-600" },
-          { label: "Quá hạn xử lý", value: 0, detail: "Chưa có hạn xử lý", tone: "text-amber-600" },
+          { label: "Quá hạn xử lý", value: overdueCount, detail: overdueCount ? "Cần xử lý ngay" : "Chưa có bản ghi quá hạn", tone: "text-amber-600" },
           { label: "Chưa có owner", value: risks.filter((risk) => !risk.owner).length, detail: "Cần phân công", tone: "text-violet-600" },
           { label: "Đang chặn điểm chốt", value: risks.filter((risk) => risk.category === "Blocker" && !["resolved", "closed", "done"].includes(risk.status.toLowerCase())).length, detail: "Cần xử lý trước khi chuyển stage", tone: "text-rose-600" }
         ].map((card) => <div key={card.label} className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{card.label}</p><p className={`mt-1 text-2xl font-black ${card.tone}`}>{card.value}</p><p className="mt-1 text-[11px] text-muted-foreground">{card.detail}</p></div>)}
@@ -1608,6 +1660,7 @@ function ProjectIssuesPanel({
           <div><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Tác động</span><CustomDropdown options={[{ value: "Low", label: "Thấp" }, { value: "Medium", label: "Vừa" }, { value: "High", label: "Cao" }]} value={impact} onChange={(value) => setImpact(value as RiskItem["impact"])} /></div>
           <label className="lg:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Phương án xử lý</span><input value={response} onChange={(event) => setResponse(event.target.value)} placeholder="Giảm thiểu, chờ phê duyệt, cập nhật dữ liệu…" className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-primary" /></label>
           <label className="lg:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Điều kiện chuyển trạng thái</span><input value={switchTrigger} onChange={(event) => setSwitchTrigger(event.target.value)} placeholder="Ví dụ: Khách hàng xác nhận trước 17:00" className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-primary" /></label>
+          <div><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Hạn xử lý</span><CustomDatePicker ariaLabel="Hạn xử lý" value={dueAt} onChange={setDueAt} placeholder="Chưa có hạn xử lý" /></div>
         </div>
         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs text-rose-600">{error}</p><button type="submit" disabled={saving} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"><Plus className="h-4 w-4" />{saving ? "Đang lưu…" : "Báo vấn đề"}</button></div>
       </form>
@@ -1632,16 +1685,24 @@ function ProjectIssuesPanel({
                   const expanded = expandedRiskId === risk.id;
                   const severity = riskSeverity(risk);
                   return <React.Fragment key={risk.id}>
-                    <tr className="cursor-pointer align-top transition hover:bg-muted/15" onClick={() => setExpandedRiskId(expanded ? null : risk.id)}>
+                    <tr id={`issue-${risk.id}`} className="cursor-pointer align-top transition hover:bg-muted/15" onClick={() => setExpandedRiskId(expanded ? null : risk.id)}>
                       <td className="px-4 py-3"><div className="flex items-center gap-2"><span className="text-xs font-black text-foreground">ISS-{String(index + 1).padStart(3, "0")}</span><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${riskKindTone(risk.category)}`}>{riskKindLabel(risk.category)}</span></div></td>
                       <td className="max-w-[360px] px-4 py-3"><p className="line-clamp-2 font-semibold text-foreground">{risk.description}</p><p className="mt-1 text-[11px] text-muted-foreground">{risk.switch || "Chưa có điều kiện chuyển trạng thái"}</p></td>
                       <td className="px-4 py-3 text-xs text-muted-foreground">Chưa gắn Milestone</td>
                       <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${severity === "High" ? "bg-rose-100 text-rose-700" : severity === "Medium" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>{riskSeverityLabel(severity)}</span></td>
                       <td className="px-4 py-3 text-xs font-semibold text-foreground">{risk.owner || "Chưa phân công"}</td>
                       <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${isOpen ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{isOpen ? "Đang mở" : "Đã xử lý"}</span></td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">Chưa có hạn xử lý <span className="ml-1 text-[10px]">{expanded ? "▲" : "▼"}</span></td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground">{risk.dueAt ? new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(risk.dueAt)) : "Chưa có hạn xử lý"} <span className="ml-1 text-[10px]">{expanded ? "▲" : "▼"}</span></td>
                     </tr>
-                    {expanded && <tr className="bg-muted/10"><td colSpan={7} className="px-6 py-4"><div className="grid gap-4 md:grid-cols-2"><div className="rounded-lg border border-border bg-background p-3"><p className="text-xs font-bold text-foreground">Phương án xử lý</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{risk.response || "Chưa cập nhật"}</p><p className="mt-3 text-xs font-bold text-foreground">Điều kiện chuyển trạng thái</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{risk.switch || "Chưa cập nhật"}</p></div><div className="rounded-lg border border-border bg-background p-3"><p className="text-xs font-bold text-foreground">Nhật ký xử lý</p><p className="mt-1 text-xs leading-5 text-muted-foreground">API hiện chưa trả về lịch sử xử lý riêng cho issue này.</p></div></div></td></tr>}
+                    {expanded && <tr className="bg-muted/10"><td colSpan={7} className="px-6 py-4">
+                      {editingRiskId === risk.id ? <form className="grid gap-3 rounded-lg border border-primary/20 bg-background p-3 md:grid-cols-2" onSubmit={(event) => void saveEdit(event, risk.id)}>
+                        <label className="md:col-span-2"><span className="mb-1 block text-xs font-bold text-foreground">Phương án xử lý</span><input value={editResponse} onChange={(event) => setEditResponse(event.target.value)} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary" /></label>
+                        <div><span className="mb-1 block text-xs font-bold text-foreground">Owner</span><TeamMemberSingleSelect members={teamMembers} value={teamMembers.find((member) => member.id === editOwnerUserId)} onChange={(member) => setEditOwnerUserId(member?.id ?? "")} placeholder="Chưa phân công" /></div>
+                        <div><span className="mb-1 block text-xs font-bold text-foreground">Trạng thái</span><CustomDropdown options={[{ value: "open", label: "Đang mở" }, { value: "resolved", label: "Đã xử lý" }]} value={editStatus} onChange={setEditStatus} /></div>
+                        <div><span className="mb-1 block text-xs font-bold text-foreground">Hạn xử lý</span><CustomDatePicker ariaLabel="Hạn xử lý" value={editDueAt} onChange={setEditDueAt} placeholder="Chưa có hạn xử lý" /></div>
+                        <div className="flex items-end justify-end gap-2"><button type="button" onClick={() => setEditingRiskId(null)} className="rounded-lg border border-border px-3 py-2 text-xs font-semibold">Hủy</button><button type="submit" disabled={updatingRiskId === risk.id} className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-60">{updatingRiskId === risk.id ? "Đang lưu…" : "Lưu cập nhật"}</button></div>
+                      </form> : <div className="grid gap-4 md:grid-cols-2"><div className="rounded-lg border border-border bg-background p-3"><p className="text-xs font-bold text-foreground">Phương án xử lý</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{risk.response || "Chưa cập nhật"}</p><p className="mt-3 text-xs font-bold text-foreground">Hạn xử lý</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{risk.dueAt ? new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(risk.dueAt)) : "Chưa có hạn xử lý"}</p><p className="mt-3 text-xs font-bold text-foreground">Điều kiện chuyển trạng thái</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{risk.switch || "Chưa cập nhật"}</p><button type="button" onClick={(event) => { event.stopPropagation(); beginEdit(risk); }} className="mt-4 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground">Cập nhật xử lý</button></div><div className="rounded-lg border border-border bg-background p-3"><p className="text-xs font-bold text-foreground">Nhật ký xử lý</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Các cập nhật mới nhất được lưu cùng Issue và hiển thị theo trạng thái hiện tại.</p></div></div>}
+                    </td></tr>}
                   </React.Fragment>;
                 })}
               </tbody>
@@ -6586,6 +6647,24 @@ export default function ProjectDetailPage() {
     const created = await response.json() as ProjectRiskSummary;
     setRiskRegistry((current) => [mapProjectRiskToRiskItem(created), ...current]);
   }, [projectId]);
+  const handleUpdateProjectRisk = useCallback(async (riskId: string, input: UpdateProjectRiskInput) => {
+    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/risks/${encodeURIComponent(riskId)}`, {
+      method: "PATCH",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input)
+    });
+    if (response.status === 401) {
+      window.location.assign(`/login?returnTo=${encodeURIComponent(`/projects/${projectId}?tab=Issues&issueId=${riskId}`)}`);
+      return;
+    }
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as { message?: string } | null;
+      throw new Error(payload?.message || "Không thể cập nhật vấn đề.");
+    }
+    const updated = await response.json() as ProjectRiskSummary;
+    setRiskRegistry((current) => current.map((risk) => risk.id === riskId ? mapProjectRiskToRiskItem(updated) : risk));
+  }, [projectId]);
   const [showAddDocModal, setShowAddDocModal] = useState(false);
   const [showAddLinkModal, setShowAddLinkModal] = useState(false);
   const [assignDocumentFor, setAssignDocumentFor] = useState<ProjectDoc | null>(null);
@@ -7757,6 +7836,8 @@ export default function ProjectDetailPage() {
                   risks={riskRegistry}
                   teamMembers={teamMembers}
                   onCreate={handleCreateProjectRisk}
+                  onUpdate={handleUpdateProjectRisk}
+                  initialRiskId={searchParams.get("issueId") ?? undefined}
                 />
               )}
 

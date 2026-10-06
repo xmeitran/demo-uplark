@@ -2058,6 +2058,7 @@ model ProjectRisk {
   impact          String          @default("Medium")
   response        String          @default("")
   switchTrigger   String?
+  dueAt           DateTime?
   ownerUserId     String?
   status          String          @default("open")
   createdByUserId String?
@@ -2073,6 +2074,7 @@ model ProjectRisk {
   @@index([projectId, status])
   @@index([accountId, status])
   @@index([ownerUserId, status])
+  @@index([dueAt, status])
   @@index([category])
   @@index([createdByUserId])
 }

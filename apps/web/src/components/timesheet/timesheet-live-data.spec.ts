@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTimesheetDateRanges, resolveTaskStatus, TIMESHEET_HISTORY_DAYS } from "./timesheet-live-data";
+import { buildTimesheetDateRanges, projectMemberState, resolveTaskStatus, TIMESHEET_HISTORY_DAYS } from "./timesheet-live-data";
 import { normalizeNodeStatus } from "./timesheet-status";
 
 describe("timesheet history ranges", () => {
@@ -25,6 +25,15 @@ describe("timesheet history ranges", () => {
 });
 
 describe("live timesheet status mapping", () => {
+  it.each([
+    ["ACTIVE", "active"],
+    ["ON_LEAVE", "on_hold"],
+    ["INACTIVE", "released"],
+    ["SUSPENDED", "released"]
+  ])("maps employment status %s to member state %s", (employmentStatus, expected) => {
+    expect(projectMemberState(employmentStatus)).toBe(expected);
+  });
+
   it.each(["waiting", "pending", "on_hold"])("maps %s to Đang chờ", (status) => {
     expect(normalizeNodeStatus(status)).toBe("waiting");
   });

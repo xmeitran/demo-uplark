@@ -98,6 +98,65 @@ async function postLarkApprovalCard(input: {
 export class NotificationsService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
+  async notifyProjectRiskOwner(input: {
+    workspaceId: string;
+    recipientUserId: string;
+    projectId: string;
+    projectCode?: string | null;
+    projectName: string;
+    riskId: string;
+    riskCategory: string;
+    riskDescription: string;
+    event: "created" | "reassigned";
+  }) {
+    const dedupeKey = `project-risk-owner:${input.riskId}:${input.recipientUserId}:${input.event}`;
+    const href = `/projects/${encodeURIComponent(input.projectId)}?tab=Issues&issueId=${encodeURIComponent(input.riskId)}`;
+    const title = input.event === "created" ? "Bạn được giao một vấn đề" : "Bạn được gán lại một vấn đề";
+    const body = `${input.projectName} · ${input.riskCategory}: ${input.riskDescription}`;
+    const data = {
+      projectId: input.projectId,
+      projectCode: input.projectCode ?? undefined,
+      projectName: input.projectName,
+      riskId: input.riskId,
+      riskCategory: input.riskCategory,
+      riskDescription: input.riskDescription,
+      event: input.event
+    };
+
+    return this.prisma.appNotification.upsert({
+      where: { dedupeKey },
+      create: {
+        workspaceId: input.workspaceId,
+        recipientUserId: input.recipientUserId,
+        kind: "project_risk_owner",
+        title,
+        body,
+        href,
+        entityType: "project_risk",
+        entityId: input.riskId,
+        status: "pending",
+        dedupeKey,
+        data
+      },
+      update: {
+        title,
+        body,
+        href,
+        status: "pending",
+        readAt: null,
+        actedAt: null,
+        data
+      }
+    });
+  }
+
+  async resolveProjectRiskNotifications(workspaceId: string, riskId: string) {
+    await this.prisma.appNotification.updateMany({
+      where: { workspaceId, entityType: "project_risk", entityId: riskId, status: "pending" },
+      data: { status: "resolved", actedAt: new Date(), readAt: new Date() }
+    });
+  }
+
   async list(principal: PrincipalContext): Promise<AppNotificationsResponse> {
     assertInternal(principal);
     const [rows, unreadCount] = await Promise.all([

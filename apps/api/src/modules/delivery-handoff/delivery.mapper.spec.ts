@@ -102,6 +102,28 @@ describe("delivery.mapper", () => {
     });
   });
 
+  it("returns the resource employment state for project members", () => {
+    const project = mapProjectSummary({
+      id: "proj-state",
+      accountId: "acc-1",
+      account: { name: "Acme" },
+      code: "ACM-STATE",
+      name: "State project",
+      status: "in_progress",
+      members: [
+        { userId: "usr-active", relation: "member", user: { displayName: "Active", status: "ACTIVE", resourceProfile: { employmentStatus: "ACTIVE" } } },
+        { userId: "usr-leave", relation: "member", user: { displayName: "On leave", status: "SUSPENDED", resourceProfile: { employmentStatus: "ON_LEAVE" } } },
+        { userId: "usr-inactive", relation: "member", user: { displayName: "Inactive", status: "SUSPENDED", resourceProfile: { employmentStatus: "INACTIVE" } } }
+      ],
+      budgets: [],
+      costs: [],
+      stages: [],
+      tasks: []
+    });
+
+    expect(project.members?.map((member) => member.employmentStatus)).toEqual(["ACTIVE", "ON_LEAVE", "INACTIVE"]);
+  });
+
   it("reports 100 percent progress when every project task is completed even if stage progress is stale", () => {
     const project = mapProjectSummary({
       id: "proj-all-done",

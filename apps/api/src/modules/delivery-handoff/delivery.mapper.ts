@@ -1,6 +1,7 @@
 import type {
   ProjectActivitySummary,
   ProjectDocumentSummary,
+  EmploymentStatus,
   ProjectRiskSummary,
   ProjectStageSummary,
   ProjectSummary,
@@ -74,6 +75,7 @@ export function mapProjectSummary(project: any): ProjectSummary {
       email: member.user?.email ?? "",
       avatarUrl: member.user?.avatarUrl ?? undefined,
       relation: member.relation,
+      employmentStatus: deriveProjectMemberEmploymentStatus(member.user),
       ...projectMemberTaskStats(memberTaskStats.get(member.userId))
     })),
     budgetAmount: toMoneyNumber(activeBudget?.plannedRevenueAmount),
@@ -93,6 +95,14 @@ export function mapProjectSummary(project: any): ProjectSummary {
     milestoneMode: project.milestoneMode ?? "auto",
     milestoneTemplateKey: project.milestoneTemplateKey ?? undefined
   };
+}
+
+/** ProjectMember is durable membership; employment state is owned by ResourceProfile. */
+export function deriveProjectMemberEmploymentStatus(user: any): EmploymentStatus {
+  const profileStatus = String(user?.resourceProfile?.employmentStatus ?? "").trim().toUpperCase();
+  if (profileStatus === "ON_LEAVE") return "ON_LEAVE";
+  if (profileStatus === "INACTIVE") return "INACTIVE";
+  return user?.status === "SUSPENDED" ? "INACTIVE" : "ACTIVE";
 }
 
 function buildProjectMemberTaskStats(tasks: any[]) {
@@ -305,6 +315,7 @@ export function mapProjectRiskSummary(risk: any): ProjectRiskSummary {
     impact: normalizeRiskLevel(risk.impact),
     response: risk.response,
     switchTrigger: risk.switchTrigger ?? undefined,
+    dueAt: toIso(risk.dueAt) ?? undefined,
     ownerUserId: risk.ownerUserId ?? undefined,
     ownerDisplayName: risk.owner?.displayName ?? undefined,
     status: risk.status,

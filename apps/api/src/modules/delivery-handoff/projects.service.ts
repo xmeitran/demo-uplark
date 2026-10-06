@@ -52,6 +52,7 @@ import {
   mapProjectRiskSummary,
   mapProjectStageSummary,
   mapProjectSummary,
+  deriveProjectMemberEmploymentStatus,
   mapTaskAttachmentSummary,
   mapTaskCommentSummary,
   mapTaskPlanningBlockSummary,
@@ -91,7 +92,9 @@ const projectInclude = {
           id: true,
           displayName: true,
           email: true,
-          avatarUrl: true
+          avatarUrl: true,
+          status: true,
+          resourceProfile: { select: { employmentStatus: true } }
         }
       }
     },
@@ -148,8 +151,7 @@ const projectInclude = {
 
 function projectIncludeForPrincipal(principal: PrincipalContext) {
   return { ...projectInclude, members: { ...projectInclude.members,
-    where: { workspaceId: principal.workspaceId, user: { status: SubjectStatus.ACTIVE,
-      roleBindings: { some: { workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, ...activeMembershipWhere() } } } }
+    where: { workspaceId: principal.workspaceId }
   } };
 }
 
@@ -2887,6 +2889,7 @@ export class ProjectsService {
         impact: input.impact?.trim() || "Medium",
         response: input.response?.trim() || "",
         switchTrigger: optionalString(input.switchTrigger, "switchTrigger") ?? undefined,
+        dueAt: optionalDate(input.dueAt, "dueAt") ?? undefined,
         ownerUserId: optionalString(input.ownerUserId, "ownerUserId") ?? undefined,
         status: input.status?.trim() || "open",
         createdByUserId
@@ -2894,11 +2897,16 @@ export class ProjectsService {
       include: projectRiskInclude
     });
 
+    if (risk.ownerUserId && risk.ownerUserId !== createdByUserId) {
+      await this.notifyProjectRiskOwnerSafely({ project, risk, workspaceId: principal.workspaceId, event: "created" });
+    }
+
     return mapProjectRiskSummary(risk);
   }
 
   async updateProjectRisk(projectId: string, riskId: string, input: UpdateProjectRiskInput, principal: PrincipalContext) {
-    await this.ensureProjectRisk(projectId, riskId, principal.workspaceId);
+    const existingRisk = await this.ensureProjectRisk(projectId, riskId, principal.workspaceId);
+    const project = await this.ensureProject(projectId, principal.workspaceId);
 
     const risk = await this.prisma.projectRisk.update({
       where: { id: riskId },
@@ -2909,11 +2917,20 @@ export class ProjectsService {
         impact: optionalString(input.impact, "impact") ?? undefined,
         response: optionalString(input.response, "response") ?? undefined,
         switchTrigger: optionalString(input.switchTrigger, "switchTrigger"),
+        dueAt: optionalDate(input.dueAt, "dueAt"),
         ownerUserId: optionalString(input.ownerUserId, "ownerUserId"),
         status: optionalString(input.status, "status") ?? undefined
       },
       include: projectRiskInclude
     });
+
+    const resolved = ["resolved", "closed", "done"].includes(risk.status.toLowerCase());
+    if (resolved) {
+      await this.resolveProjectRiskNotificationsSafely(principal.workspaceId, risk.id);
+    } else if (risk.ownerUserId && risk.ownerUserId !== existingRisk.ownerUserId && risk.ownerUserId !== principal.subjectId) {
+      await this.resolveProjectRiskNotificationsSafely(principal.workspaceId, risk.id);
+      await this.notifyProjectRiskOwnerSafely({ project, risk, workspaceId: principal.workspaceId, event: "reassigned" });
+    }
 
     return mapProjectRiskSummary(risk);
   }
@@ -4440,17 +4457,28 @@ export class ProjectsService {
     await this.ensureProject(projectId, principal.workspaceId);
     const pagination = normalizePagination(query);
     const q = optionalString(query.q ?? query.search, "q");
-    const where: Prisma.UserWhereInput = { status: SubjectStatus.ACTIVE,
-      roleBindings: { some: { workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, ...activeMembershipWhere() } },
+    const where: Prisma.UserWhereInput = {
       projectMembers: { some: { workspaceId: principal.workspaceId, projectId } },
       ...(q ? { OR: [{ displayName: { contains: q, mode: "insensitive" } }, { email: { contains: q, mode: "insensitive" } }] } : {})
     };
     const [users, total, permissions] = await Promise.all([
-      this.prisma.user.findMany({ where, select: { id: true, displayName: true, email: true, avatarUrl: true,
+      this.prisma.user.findMany({ where, select: { id: true, displayName: true, email: true, avatarUrl: true, status: true,
+        resourceProfile: { select: { employmentStatus: true } },
         roleBindings: { where: { workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, ...activeMembershipWhere() }, select: { role: { select: { code: true } } } } }, orderBy: [{ displayName: "asc" }, { id: "asc" }], skip: pagination.offset, take: pagination.limit }),
       this.prisma.user.count({ where }), this.projectPermissions(this.prisma, projectId, principal)
     ]);
-    return { data: users.map((user) => ({ userId: user.id, displayName: user.displayName, email: user.email, avatarUrl: user.avatarUrl ?? undefined, status: "active" as const, roleCodes: user.roleBindings.map((binding) => binding.role.code) })),
+    return { data: users.map((user) => {
+      const employmentStatus = deriveProjectMemberEmploymentStatus(user);
+      return {
+        userId: user.id,
+        displayName: user.displayName,
+        email: user.email,
+        avatarUrl: user.avatarUrl ?? undefined,
+        status: employmentStatus === "ACTIVE" ? "active" : employmentStatus === "ON_LEAVE" ? "on_hold" : "released",
+        employmentStatus,
+        roleCodes: user.roleBindings.map((binding) => binding.role.code)
+      };
+    }),
       meta: { pagination: buildPaginationMeta({ ...pagination, total, returned: users.length }), permissions: { canManage: permissions.canManage, canLogForOthers: permissions.canLogForOthers }, principalUserId: principal.subjectId } };
   }
 
@@ -4947,6 +4975,40 @@ export class ProjectsService {
     }
 
     return risk;
+  }
+
+  private async notifyProjectRiskOwnerSafely(input: {
+    project: { id: string; code: string; name: string };
+    risk: { id: string; ownerUserId: string | null; category: string; description: string };
+    workspaceId: string;
+    event: "created" | "reassigned";
+  }) {
+    if (!this.notifications || !input.risk.ownerUserId) return;
+    try {
+      await this.notifications.notifyProjectRiskOwner({
+        workspaceId: input.workspaceId,
+        recipientUserId: input.risk.ownerUserId,
+        projectId: input.project.id,
+        projectCode: input.project.code,
+        projectName: input.project.name,
+        riskId: input.risk.id,
+        riskCategory: input.risk.category,
+        riskDescription: input.risk.description,
+        event: input.event
+      });
+    } catch (error) {
+      // The issue must remain saved even if notification delivery is temporarily unavailable.
+      console.error("Project risk notification failed", error);
+    }
+  }
+
+  private async resolveProjectRiskNotificationsSafely(workspaceId: string, riskId: string) {
+    if (!this.notifications) return;
+    try {
+      await this.notifications.resolveProjectRiskNotifications(workspaceId, riskId);
+    } catch (error) {
+      console.error("Project risk notification resolution failed", error);
+    }
   }
 
   private taskAccessWhere(principal: PrincipalContext): Prisma.ProjectTaskWhereInput {

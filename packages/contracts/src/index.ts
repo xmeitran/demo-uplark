@@ -502,6 +502,8 @@ export interface ProjectMemberSummary {
   email: string;
   avatarUrl?: string;
   relation: string;
+  /** Employment state sourced from the user's ResourceProfile. */
+  employmentStatus?: EmploymentStatus;
   assignedTaskCount?: number;
   doneTaskCount?: number;
   doneTaskPercent?: number;
@@ -854,6 +856,7 @@ export interface ProjectRiskSummary {
   impact: ProjectRiskLevel;
   response: string;
   switchTrigger?: string;
+  dueAt?: string;
   ownerUserId?: string;
   ownerDisplayName?: string;
   status: string;
@@ -870,6 +873,7 @@ export interface CreateProjectRiskInput {
   impact?: ProjectRiskLevel;
   response?: string;
   switchTrigger?: string;
+  dueAt?: string;
   ownerUserId?: string;
   status?: string;
 }
@@ -881,6 +885,7 @@ export interface UpdateProjectRiskInput {
   impact?: ProjectRiskLevel;
   response?: string;
   switchTrigger?: string | null;
+  dueAt?: string | null;
   ownerUserId?: string | null;
   status?: string;
 }
@@ -1141,6 +1146,10 @@ export interface AppNotificationSummary {
     milestoneId?: string;
     milestoneName?: string;
     reviewerName?: string;
+    riskId?: string;
+    riskCategory?: string;
+    riskDescription?: string;
+    event?: "created" | "reassigned";
   };
 }
 
