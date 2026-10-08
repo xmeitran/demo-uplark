@@ -558,6 +558,18 @@ export interface ProjectPlanStageSuggestion {
   tasks: ProjectPlanTaskSuggestion[];
 }
 
+export interface ProjectTaskTemplateInput {
+  title: string;
+  description?: string;
+  status?: string;
+  priority?: string;
+  taskType?: string;
+  estimateMinutes?: number;
+  plannedStartAt?: string;
+  dueAt?: string;
+  subtasks?: ProjectTaskTemplateInput[];
+}
+
 export interface ProjectPlanMilestoneSuggestion {
   id: string;
   name: string;
@@ -606,6 +618,7 @@ export interface CreateProjectMilestoneInput extends ProjectMilestoneConditionIn
     slaDays?: number;
     upbaseRole?: string;
     customerRole?: string;
+    tasks?: ProjectTaskTemplateInput[];
   }>;
 }
 
@@ -1633,6 +1646,9 @@ export interface ProjectPlSummaryResponse {
     generatedAt: string;
     source: "postgresql";
     policy: string;
+    periodKey?: string;
+    periodStart?: string;
+    periodEnd?: string;
   };
 }
 

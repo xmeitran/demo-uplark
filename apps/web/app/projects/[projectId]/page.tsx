@@ -611,6 +611,8 @@ interface TaskItem {
   description?: string;
   timeEntries?: TimeEntry[];
   sortOrder?: number;
+  subtasks?: TaskItem[];
+  parentTaskId?: string;
 }
 
 interface StageItem {
@@ -986,7 +988,8 @@ function mapProjectTaskToTaskItem(task: ProjectTaskSummary): TaskItem {
     actualHours: minutesToHours(task.loggedMinutes),
     description: task.description,
     timeEntries: (task.timeEntries ?? []).map(mapTimeEntryToUi),
-    sortOrder: task.sortOrder
+    sortOrder: task.sortOrder,
+    subtasks: (task.subtasks ?? []).map(mapProjectTaskToTaskItem)
   };
 }
 
@@ -5459,12 +5462,13 @@ function TaskDetailsDrawer({ task, milestoneName, stageName, color, onClose, onS
 
 // ─── Task Row ─────────────────────────────────────────────────────────────────
 
-function TaskRow({ task, projectColor, onEdit, onDelete, onViewDetails, sortHandle, disabled = false, members = EMPTY_TEAM_MEMBERS }: {
+function TaskRow({ task, projectColor, onEdit, onDelete, onViewDetails, onAddSubtask, sortHandle, disabled = false, members = EMPTY_TEAM_MEMBERS }: {
   task: TaskItem;
   projectColor: string;
   onEdit: (task: TaskItem) => void;
   onDelete: (taskId: string) => void;
   onViewDetails: (task: TaskItem) => void;
+  onAddSubtask: (task: TaskItem) => void;
   sortHandle?: SortHandleProps;
   disabled?: boolean;
   members?: ProjectTeamMember[];
@@ -5479,10 +5483,12 @@ function TaskRow({ task, projectColor, onEdit, onDelete, onViewDetails, sortHand
   const menuItems: MenuItem[] = [
     { label:"View Details", icon:ListChecks, onClick:() => onViewDetails(task) },
     { label:"Edit Task",    icon:Pencil, onClick:() => onEdit(task) },
+    { label:"Add Subtask",  icon:Plus, onClick:() => onAddSubtask(task) },
     { label:"Delete Task",  icon:Trash2, onClick:() => onDelete(task.id), danger:true },
   ];
 
   return (
+    <>
     <div className="group flex items-center justify-between px-4 py-3 transition-colors hover:bg-muted/30">
       <HierarchyDragHandle handle={sortHandle} label={`Sắp xếp task ${task.title}`} />
       <div
@@ -5552,14 +5558,17 @@ function TaskRow({ task, projectColor, onEdit, onDelete, onViewDetails, sortHand
         </div>
       </div>
     </div>
+    {task.subtasks?.length ? <div className="ml-10 border-l border-border/60 bg-muted/10">{task.subtasks.map((subtask) => <TaskRow key={subtask.id} task={subtask} projectColor={projectColor} onEdit={onEdit} onDelete={onDelete} onViewDetails={onViewDetails} onAddSubtask={onAddSubtask} disabled={disabled} members={members} />)}</div> : null}
+    </>
   );
 }
 
 // ─── Stage Section ────────────────────────────────────────────────────────────
 
-function StageSection({ stage, projectColor, onAddTask, onEditTask, onDeleteTask, onEditStage, onDeleteStage, onViewTaskDetails, onReorderTasks, sortHandle, hierarchyBusy = false, locked = false, members = EMPTY_TEAM_MEMBERS }: {
+function StageSection({ stage, projectColor, onAddTask, onAddSubtask, onEditTask, onDeleteTask, onEditStage, onDeleteStage, onViewTaskDetails, onReorderTasks, sortHandle, hierarchyBusy = false, locked = false, members = EMPTY_TEAM_MEMBERS }: {
   stage: StageItem; projectColor: string;
   onAddTask: (stageId: string, stageName: string) => void;
+  onAddSubtask: (task: TaskItem) => void;
   onEditTask: (stageId: string, task: TaskItem) => void;
   onDeleteTask: (stageId: string, taskId: string) => void;
   onEditStage: (stage: StageItem) => void;
@@ -5678,6 +5687,7 @@ function StageSection({ stage, projectColor, onAddTask, onEditTask, onDeleteTask
                       onEdit={locked ? () => undefined : t => onEditTask(stage.id, t)}
                       onDelete={locked ? () => undefined : id => onDeleteTask(stage.id, id)}
                       onViewDetails={onViewTaskDetails}
+                      onAddSubtask={onAddSubtask}
                       sortHandle={taskHandle}
                       disabled={locked}
                       members={members}
@@ -5700,6 +5710,7 @@ function StageSection({ stage, projectColor, onAddTask, onEditTask, onDeleteTask
                         onEdit={locked ? () => undefined : t => onEditTask(stage.id, t)}
                         onDelete={locked ? () => undefined : id => onDeleteTask(stage.id, id)}
                         onViewDetails={onViewTaskDetails}
+                        onAddSubtask={onAddSubtask}
                         disabled={locked}
                         members={members}
                       />
@@ -5726,10 +5737,11 @@ function StageSection({ stage, projectColor, onAddTask, onEditTask, onDeleteTask
 
 // ─── Milestone Section (in Tasks tab) ────────────────────────────────────────
 
-function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onAddTask, onEditTask, onDeleteTask, onEditStage, onDeleteStage, onViewTaskDetails, onEditMilestone, onDeleteMilestone, onReorderStages, onReorderTasks, sortHandle, hierarchyBusy = false, locked: lockedProp, members = EMPTY_TEAM_MEMBERS }: {
+function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onAddTask, onAddSubtask, onEditTask, onDeleteTask, onEditStage, onDeleteStage, onViewTaskDetails, onEditMilestone, onDeleteMilestone, onReorderStages, onReorderTasks, sortHandle, hierarchyBusy = false, locked: lockedProp, members = EMPTY_TEAM_MEMBERS }: {
   milestone: Milestone; group: MilestoneGroup; projectColor: string;
   onAddStage: (milestoneId: string, milestoneName: string) => void;
   onAddTask: (milestoneId: string, stageId: string, stageName: string) => void;
+  onAddSubtask: (task: TaskItem) => void;
   onEditTask: (milestoneId: string, stageId: string, task: TaskItem) => void;
   onDeleteTask: (milestoneId: string, stageId: string, taskId: string) => void;
   onEditStage: (stage: StageItem) => void;
@@ -5880,6 +5892,7 @@ function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onA
                     <StageSection
                       stage={stage} projectColor={projectColor}
                       onAddTask={(id, name) => onAddTask(milestone.id, id, name)}
+                      onAddSubtask={onAddSubtask}
                       onEditTask={(id, task) => onEditTask(milestone.id, id, task)}
                       onDeleteTask={(id, taskId) => onDeleteTask(milestone.id, id, taskId)}
                       onEditStage={onEditStage}
@@ -5907,6 +5920,7 @@ function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onA
                         stage={stage}
                         projectColor={projectColor}
                         onAddTask={(id, name) => onAddTask(milestone.id, id, name)}
+                        onAddSubtask={onAddSubtask}
                         onEditTask={(id, task) => onEditTask(milestone.id, id, task)}
                         onDeleteTask={(id, taskId) => onDeleteTask(milestone.id, id, taskId)}
                         onEditStage={onEditStage}
@@ -6594,7 +6608,7 @@ export default function ProjectDetailPage() {
 
   // Modal state for stage/task creation
   const [addStageFor,  setAddStageFor]  = useState<{ id:string; name:string } | null>(null);
-  const [addTaskFor,   setAddTaskFor]   = useState<{ milestoneId:string; stageId:string; stageName:string } | null>(null);
+  const [addTaskFor,   setAddTaskFor]   = useState<{ milestoneId:string; stageId:string; stageName:string; parentTaskId?: string } | null>(null);
 
   // Modal state for edit/delete
   const [editTaskFor,   setEditTaskFor]   = useState<{ milestoneId:string; stageId:string; task:TaskItem } | null>(null);
@@ -7234,6 +7248,7 @@ export default function ProjectDetailPage() {
         plannedStartAt: toApiDateValue(task.startDate),
         dueAt: toApiDateValue(task.due),
         estimateMinutes: hoursToMinutes(task.plannedHours),
+        parentTaskId: task.parentTaskId,
         description: task.description
       })
     });
@@ -7603,7 +7618,11 @@ export default function ProjectDetailPage() {
           color={project.color}
           stageName={addTaskFor.stageName}
           onClose={() => setAddTaskFor(null)}
-          onSave={task => handleAddTask(addTaskFor.milestoneId, addTaskFor.stageId, task)}
+          onSave={task => handleAddTask(
+            addTaskFor.milestoneId,
+            addTaskFor.stageId,
+            addTaskFor.parentTaskId ? { ...task, parentTaskId: addTaskFor.parentTaskId } : task
+          )}
           members={assignmentTeamMembers}
           currentUserId={user?.id}
         />
@@ -8547,6 +8566,10 @@ export default function ProjectDetailPage() {
                                 projectColor={project.color}
                                 onAddStage={(id, name) => setAddStageFor({ id, name })}
                                 onAddTask={(id, stageId, stageName) => setAddTaskFor({ milestoneId:id, stageId, stageName })}
+                                onAddSubtask={(task) => {
+                                  const stage = group.stages.find(item => item.tasks.some(candidate => candidate.id === task.id));
+                                  if (stage) setAddTaskFor({ milestoneId: milestone.id, stageId: stage.id, stageName: `Subtask · ${task.title}`, parentTaskId: task.id });
+                                }}
                                 onEditTask={(id, stageId, task) => setEditTaskFor({ milestoneId:id, stageId, task })}
                                 onDeleteTask={(id, stageId, taskId) => {
                                   const task = milestoneGroups.find(mg => mg.milestoneId === id)?.stages
@@ -8592,6 +8615,10 @@ export default function ProjectDetailPage() {
                                 projectColor={project.color}
                                 onAddStage={(id, name) => setAddStageFor({ id, name })}
                                 onAddTask={(id, stageId, stageName) => setAddTaskFor({ milestoneId:id, stageId, stageName })}
+                                onAddSubtask={(task) => {
+                                  const stage = group.stages.find(item => item.tasks.some(candidate => candidate.id === task.id));
+                                  if (stage) setAddTaskFor({ milestoneId: milestone.id, stageId: stage.id, stageName: `Subtask · ${task.title}`, parentTaskId: task.id });
+                                }}
                                 onEditTask={(id, stageId, task) => setEditTaskFor({ milestoneId:id, stageId, task })}
                                 onDeleteTask={(id, stageId, taskId) => setDeleteTaskFor({ milestoneId:id, stageId, taskId, title:"" })}
                                 onEditStage={(stage) => setEditStageFor({ milestoneId: milestone.id, stage })}
@@ -8629,6 +8656,10 @@ export default function ProjectDetailPage() {
                                 projectColor={project.color}
                                 onAddStage={(id, name) => setAddStageFor({ id, name })}
                                 onAddTask={(id, stageId, stageName) => setAddTaskFor({ milestoneId:id, stageId, stageName })}
+                                onAddSubtask={(task) => {
+                                  const stage = group.stages.find(item => item.tasks.some(candidate => candidate.id === task.id));
+                                  if (stage) setAddTaskFor({ milestoneId: milestone.id, stageId: stage.id, stageName: `Subtask · ${task.title}`, parentTaskId: task.id });
+                                }}
                                 onEditTask={(id, stageId, task) => setEditTaskFor({ milestoneId:id, stageId, task })}
                                 onDeleteTask={(id, stageId, taskId) => {
                                   const task = milestoneGroups

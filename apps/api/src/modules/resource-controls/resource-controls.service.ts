@@ -206,6 +206,7 @@ export class ResourceControlsService {
     if (!principal.roleCodes.some((role) => COST_VIEW_ROLES.has(role))) {
       throw new ForbiddenException("Financial P&L access requires an assigned cost permission group");
     }
+    const period = parseReportBounds(query);
     const projects = await this.prisma.project.findMany({
       where: {
         workspaceId: principal.workspaceId,
@@ -215,13 +216,32 @@ export class ResourceControlsService {
       include: {
         account: true,
         budgets: { orderBy: { updatedAt: "desc" }, take: 1 },
-        costs: true,
-        paymentMilestones: true,
+        costs: period
+          ? { where: { occurredAt: { gte: period.start, lt: period.end } } }
+          : true,
+        paymentMilestones: period
+          ? {
+              where: {
+                OR: [
+                  { dueAt: { gte: period.start, lt: period.end } },
+                  { paidAt: { gte: period.start, lt: period.end } }
+                ]
+              }
+            }
+          : true,
         paymentSchedules: true,
-        plSnapshots: { orderBy: { createdAt: "desc" }, take: 1 },
+        plSnapshots: period
+          ? {
+              where: { periodStart: { lt: period.end }, periodEnd: { gte: period.start } },
+              orderBy: { createdAt: "desc" },
+              take: 1
+            }
+          : { orderBy: { createdAt: "desc" }, take: 1 },
         tasks: {
           include: {
-            timeEntries: true
+            timeEntries: period
+              ? { where: { workDate: { gte: period.start, lt: period.end } } }
+              : true
           }
         }
       },
@@ -292,7 +312,8 @@ export class ResourceControlsService {
         policy: "workspace_finance",
         principal: principal.displayName,
         rowScope: "workspace",
-        source: "postgresql"
+        source: "postgresql",
+        ...(period ? { periodKey: period.key, periodStart: period.start.toISOString(), periodEnd: period.end.toISOString() } : {})
       }
     };
   }
@@ -443,6 +464,36 @@ function parseDate(value: unknown) {
   }
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function parsePeriodBounds(value: unknown) {
+  const key = optionalString(value);
+  if (!key) return undefined;
+  const match = /^(\d{4})-(\d{2})$/.exec(key);
+  if (!match) throw new BadRequestException("period must use YYYY-MM format");
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (month < 1 || month > 12) throw new BadRequestException("period must use a valid month");
+  const start = new Date(Date.UTC(year, month - 1, 1));
+  const end = new Date(Date.UTC(year, month, 1));
+  return { key, start, end };
+}
+
+function parseReportBounds(query: { period?: unknown; startDate?: unknown; endDate?: unknown }) {
+  const startKey = optionalString(query.startDate);
+  const endKey = optionalString(query.endDate);
+  if (!startKey && !endKey) return parsePeriodBounds(query.period);
+  if (!startKey || !endKey || !/^\d{4}-\d{2}-\d{2}$/.test(startKey) || !/^\d{4}-\d{2}-\d{2}$/.test(endKey)) {
+    throw new BadRequestException("startDate and endDate must use YYYY-MM-DD format");
+  }
+  const start = new Date(`${startKey}T00:00:00.000Z`);
+  const inclusiveEnd = new Date(`${endKey}T00:00:00.000Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(inclusiveEnd.getTime()) || start > inclusiveEnd) {
+    throw new BadRequestException("startDate must be before or equal to endDate");
+  }
+  const end = new Date(inclusiveEnd);
+  end.setUTCDate(end.getUTCDate() + 1);
+  return { key: `${startKey}:${endKey}`, start, end };
 }
 
 function startOfDay(date: Date) {

@@ -34,6 +34,7 @@ import type {
   AdminOverviewResponse,
   CreateProjectMilestoneInput,
   CreateProjectMilestoneTemplateInput,
+  ProjectTaskTemplateInput,
   ProjectMilestoneTemplateSummary,
   ProjectMilestoneSummary,
   ProjectMilestoneEvidenceMode,
@@ -322,21 +323,21 @@ export function WorkspaceAdminDashboard() {
 
   return (
     <AppShell activeRoute="/admin" title="Admin workspace">
-      <main className="min-h-0 flex-1 overflow-y-auto bg-background p-4 sm:p-6">
-        <div className="mx-auto grid max-w-[1480px] gap-5">
-          <header className="rounded-xl border border-border bg-card px-5 py-5 shadow-sm sm:px-6">
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+      <main className="admin-workspace-page min-h-0 flex-1 overflow-y-auto bg-background p-3 sm:p-4 xl:p-6">
+        <div className="mx-auto grid max-w-[1480px] gap-4">
+          <header className="flex shrink-0 flex-col gap-4 border-b border-border pb-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="min-w-0">
               <div>
-                <p className="text-xs font-semibold text-primary">ADMIN · WORKSPACE CONTROL</p>
-                <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl">Điều hành workspace</h1>
-                <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">Một nơi duy nhất để xử lý cảnh báo, khóa ngày nghỉ và điều phối nhắc Lark.</p>
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">ADMIN WORKSPACE</p>
+                <h1 className="mt-1 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">Điều hành workspace</h1>
+                <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Quản lý quy trình, quyền duyệt và các chính sách vận hành của workspace.</p>
               </div>
-              <div className="inline-flex items-center gap-2 self-start rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs font-semibold text-muted-foreground lg:self-auto"><span className="h-2 w-2 rounded-full bg-emerald-500" /> {overview?.workspace.name ?? "Workspace"} · {overview?.workspace.timezone ?? "Asia/Ho_Chi_Minh"}</div>
             </div>
+            <div className="inline-flex w-fit items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold text-muted-foreground"><span className="h-2 w-2 rounded-full bg-emerald-500" /> {overview?.workspace.name ?? "Workspace"}<span className="text-border">·</span>{overview?.workspace.timezone ?? "Asia/Ho_Chi_Minh"}</div>
           </header>
 
-          <div className="-mx-4 -mt-4 bg-background/95 px-4 py-1.5 sm:-mx-6 sm:-mt-6 sm:px-6">
-            <nav aria-label="Admin sections" className="mx-auto max-w-[1480px]">
+          <div className="sticky top-0 z-10 -mx-3 bg-background/95 px-3 py-1 backdrop-blur sm:-mx-4 sm:px-4 xl:-mx-6 xl:px-6">
+            <nav aria-label="Admin sections">
               <WorkspaceTabBar
                 items={[
                   { id: "overview" as AdminSection, label: "Tổng quan", description: "Sức khỏe workspace", icon: <LayoutDashboard className="h-4 w-4" /> },
@@ -352,13 +353,13 @@ export function WorkspaceAdminDashboard() {
                 onChange={selectSection}
                 ariaLabel="Admin sections"
                 idPrefix="admin"
-                className="w-full"
+                className="!rounded-none !border-0 !bg-transparent !p-0 !shadow-none"
               />
             </nav>
           </div>
 
-          {error ? <div role="alert" className="flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />{error}</div> : null}
-          {notice ? <div role="status" className="flex items-start gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"><Check className="mt-0.5 h-4 w-4 shrink-0" />{notice}</div> : null}
+          {error ? <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />{error}</div> : null}
+          {notice ? <div role="status" className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"><Check className="mt-0.5 h-4 w-4 shrink-0" />{notice}</div> : null}
 
           <div id="admin-content" className="scroll-mt-24">
             {section === "overview" ? <OverviewPanel overview={overview} loading={loading} onRefresh={() => void load()} onOpen={selectSection} /> : null}
@@ -366,8 +367,8 @@ export function WorkspaceAdminDashboard() {
             {section === "day-offs" ? <section aria-label="Quản lý ngày nghỉ"><WorkspaceDayOffSettings /></section> : null}
             {section === "reminders" ? <ReminderPolicyPanel policy={policy} saving={saving} sending={sending} recipients={reminderRecipients} onSave={() => void savePolicy()} onSendManual={(input) => void sendManualReminder(input)} onUpdateSlot={updateSlot} onSetPolicy={setPolicy} /> : null}
             {section === "milestones" ? <>
-              <WorkspaceTabBar items={MILESTONE_TAB_ITEMS} value={milestoneView} onChange={setMilestoneView} ariaLabel="Quản lý milestone" idPrefix="milestone" className="w-full" />
-              {milestoneView === "templates" ? <MilestoneTemplateManager templates={milestoneTemplates} loading={milestoneTemplatesLoading} saving={milestoneTemplatesSaving} teams={reminderRecipients.teams} users={reminderRecipients.users} onCreateTeam={createWorkspaceTeam} onCreate={async (input) => {
+              <WorkspaceTabBar items={MILESTONE_TAB_ITEMS} value={milestoneView} onChange={setMilestoneView} ariaLabel="Quản lý milestone" idPrefix="milestone" className="!rounded-none !border-0 !bg-transparent !p-0 !shadow-none" />
+              {milestoneView === "templates" ? <MilestoneTemplateManagerV4 templates={milestoneTemplates} loading={milestoneTemplatesLoading} saving={milestoneTemplatesSaving} teams={reminderRecipients.teams} users={reminderRecipients.users} onCreateTeam={createWorkspaceTeam} onCreate={async (input) => {
                 setMilestoneTemplatesSaving(true); setError(null);
                 try {
                   const response = await fetch("/api/milestone-templates?principal=founder", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
@@ -581,11 +582,13 @@ function ApprovalPanel({ approvalHistory, historyLoading, onRefreshHistory, onAp
 function OverviewPanel({ overview, loading, onRefresh, onOpen }: { overview: AdminOverviewResponse["data"] | null; loading: boolean; onRefresh: () => void; onOpen: (section: AdminSection) => void }) {
   const alerts = overview?.alerts ?? [];
   const actionAlerts = alerts.filter((alert) => alert.severity !== "info");
-  return <section aria-labelledby="admin-overview-title" className="grid gap-5">
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">CONTROL ROOM</p><h2 id="admin-overview-title" className="mt-1 text-2xl font-bold tracking-tight text-slate-950">Tổng quan vận hành</h2><p className="mt-1 text-sm text-slate-600">Chỉ hiển thị các vấn đề admin cần biết hoặc cần xử lý.</p></div><button type="button" onClick={onRefresh} className="inline-flex min-h-10 items-center justify-center gap-2 self-start rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"><RefreshCw className="h-4 w-4" /> Làm mới</button></div>
-    <section aria-labelledby="admin-alerts-title" className="rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5"><div className="flex items-center justify-between gap-3"><div><h3 id="admin-alerts-title" className="text-base font-bold text-slate-950">Cảnh báo cần xử lý</h3><p className="mt-1 text-xs text-slate-500">Cảnh báo thông tin chỉ hiện khi cần admin xem lại.</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${actionAlerts.length ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>{actionAlerts.length ? `${actionAlerts.length} cần xử lý` : "Đang ổn định"}</span></div><div className="mt-4 grid gap-3 lg:grid-cols-2">{alerts.map((alert) => { const tone = alertTone(alert.severity); return <a key={alert.id} href={alert.href ?? "#"} className={`rounded-2xl border p-4 transition hover:-translate-y-0.5 hover:shadow-sm ${tone.box}`}><div className="flex items-start gap-3"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${tone.icon}`}>{alert.severity === "info" ? <Info className="h-4 w-4" /> : <TriangleAlert className="h-4 w-4" />}</span><div><p className={`text-sm font-bold ${tone.title}`}>{alert.title}</p><p className="mt-1 text-xs leading-relaxed text-slate-600">{alert.detail}</p><span className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-slate-700">Xem chi tiết <ArrowRight className="h-3.5 w-3.5" /></span></div></div></a>; })}{loading && !overview ? <div className="rounded-2xl border border-border bg-slate-50 p-5 text-sm text-muted-foreground lg:col-span-2">Đang tải cảnh báo…</div> : null}</div></section>
-    <section aria-label="Admin metrics" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric icon={<LockKeyhole className="h-4 w-4" />} label="Ngày off đã khóa" value={overview?.metrics.activeDayOffs} tone="amber" /><Metric icon={<CalendarClock className="h-4 w-4" />} label="Ngày off sắp tới" value={overview?.metrics.upcomingDayOffs} tone="sky" /><Metric icon={<TriangleAlert className="h-4 w-4" />} label="Task quá hạn" value={overview?.metrics.overdueTasks} tone="rose" /><Metric icon={<TimerReset className="h-4 w-4" />} label="Task đang mở" value={overview?.metrics.openTasks} tone="indigo" /></section>
-    <section aria-labelledby="quick-actions-title" className="rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5"><div className="flex items-start gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-700"><CheckCircle2 className="h-5 w-5" /></span><div><h3 id="quick-actions-title" className="text-base font-bold text-slate-950">Quản trị nhanh</h3><p className="mt-1 text-xs text-slate-500">Các chính sách vận hành được quản lý tập trung ở đây.</p></div></div><div className="mt-4 grid gap-3 md:grid-cols-3"><button type="button" onClick={() => onOpen("day-offs")} className="group flex items-center justify-between rounded-2xl border border-amber-200 bg-amber-50/60 p-4 text-left transition hover:border-amber-300 hover:bg-amber-50"><span><span className="block text-sm font-bold text-amber-950">Đăng ký ngày nghỉ</span><span className="mt-1 block text-xs text-amber-900/70">Khóa ngày lễ và loại khỏi billable.</span></span><ArrowRight className="h-4 w-4 text-amber-700 transition group-hover:translate-x-1" /></button><button type="button" onClick={() => onOpen("reminders")} className="group flex items-center justify-between rounded-2xl border border-violet-200 bg-violet-50/60 p-4 text-left transition hover:border-violet-300 hover:bg-violet-50"><span><span className="block text-sm font-bold text-violet-950">Cấu hình nhắc Lark</span><span className="mt-1 block text-xs text-violet-900/70">08:30 · 14:00 · 17:00 và ngày chạy.</span></span><ArrowRight className="h-4 w-4 text-violet-700 transition group-hover:translate-x-1" /></button><button type="button" onClick={() => onOpen("pnl-config")} className="group flex items-center justify-between rounded-2xl border border-blue-200 bg-blue-50/60 p-4 text-left transition hover:border-blue-300 hover:bg-blue-50"><span><span className="block text-sm font-bold text-blue-950">Thiết lập P&amp;L</span><span className="mt-1 block text-xs text-blue-900/70">Khoản mục, tham số và kỳ khóa.</span></span><ArrowRight className="h-4 w-4 text-blue-700 transition group-hover:translate-x-1" /></button></div></section>
+  return <section aria-labelledby="admin-overview-title" className="grid gap-4">
+    <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">CONTROL ROOM</p><h2 id="admin-overview-title" className="mt-1 text-2xl font-bold tracking-tight text-slate-950">Tổng quan vận hành</h2><p className="mt-1 text-sm text-slate-600">Chỉ hiển thị các vấn đề admin cần biết hoặc cần xử lý.</p></div><button type="button" onClick={onRefresh} className="inline-flex min-h-9 items-center justify-center gap-2 self-start rounded-lg border border-border bg-white px-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"><RefreshCw className="h-4 w-4" /> Làm mới</button></div>
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,.65fr)]">
+      <section aria-labelledby="admin-alerts-title" className="rounded-xl border border-border bg-card"><div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3.5"><div><h3 id="admin-alerts-title" className="text-sm font-bold text-slate-950">Cảnh báo cần xử lý</h3><p className="mt-1 text-xs text-slate-500">Chỉ hiện các vấn đề cần admin xem lại.</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${actionAlerts.length ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>{actionAlerts.length ? `${actionAlerts.length} cần xử lý` : "Đang ổn định"}</span></div><div className="divide-y divide-border">{alerts.map((alert) => { const tone = alertTone(alert.severity); return <a key={alert.id} href={alert.href ?? "#"} className="flex items-start gap-3 px-4 py-3 transition hover:bg-slate-50"><span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tone.icon}`}>{alert.severity === "info" ? <Info className="h-4 w-4" /> : <TriangleAlert className="h-4 w-4" />}</span><span className="min-w-0 flex-1"><span className={`block text-sm font-bold ${tone.title}`}>{alert.title}</span><span className="mt-1 block text-xs leading-relaxed text-slate-600">{alert.detail}</span></span><ArrowRight className="mt-1 h-4 w-4 shrink-0 text-slate-400" /></a>; })}{loading && !overview ? <div className="px-4 py-8 text-sm text-muted-foreground">Đang tải cảnh báo…</div> : null}{!loading && !alerts.length ? <div className="px-4 py-8 text-sm text-slate-500">Không có cảnh báo mới.</div> : null}</div></section>
+      <section aria-label="Admin metrics" className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border"><Metric icon={<LockKeyhole className="h-4 w-4" />} label="Ngày off đã khóa" value={overview?.metrics.activeDayOffs} tone="amber" /><Metric icon={<CalendarClock className="h-4 w-4" />} label="Ngày off sắp tới" value={overview?.metrics.upcomingDayOffs} tone="sky" /><Metric icon={<TriangleAlert className="h-4 w-4" />} label="Task quá hạn" value={overview?.metrics.overdueTasks} tone="rose" /><Metric icon={<TimerReset className="h-4 w-4" />} label="Task đang mở" value={overview?.metrics.openTasks} tone="indigo" /></section>
+    </div>
+    <section aria-labelledby="quick-actions-title" className="rounded-xl border border-border bg-card"><div className="flex items-center gap-3 border-b border-border px-4 py-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-700"><CheckCircle2 className="h-4 w-4" /></span><div><h3 id="quick-actions-title" className="text-sm font-bold text-slate-950">Quản trị nhanh</h3><p className="mt-1 text-xs text-slate-500">Các chính sách vận hành được quản lý tập trung.</p></div></div><div className="grid gap-2 p-3 md:grid-cols-3"><button type="button" onClick={() => onOpen("day-offs")} className="group flex items-center justify-between rounded-lg border border-border bg-white p-3 text-left transition hover:border-amber-300 hover:bg-amber-50"><span><span className="block text-sm font-bold text-slate-900">Đăng ký ngày nghỉ</span><span className="mt-1 block text-xs text-slate-500">Khóa ngày lễ và loại khỏi billable.</span></span><ArrowRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-1" /></button><button type="button" onClick={() => onOpen("reminders")} className="group flex items-center justify-between rounded-lg border border-border bg-white p-3 text-left transition hover:border-violet-300 hover:bg-violet-50"><span><span className="block text-sm font-bold text-slate-900">Cấu hình nhắc Lark</span><span className="mt-1 block text-xs text-slate-500">08:30 · 14:00 · 17:00.</span></span><ArrowRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-1" /></button><button type="button" onClick={() => onOpen("pnl-config")} className="group flex items-center justify-between rounded-lg border border-border bg-white p-3 text-left transition hover:border-blue-300 hover:bg-blue-50"><span><span className="block text-sm font-bold text-slate-900">Thiết lập P&amp;L</span><span className="mt-1 block text-xs text-slate-500">Khoản mục, tham số và kỳ khóa.</span></span><ArrowRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-1" /></button></div></section>
   </section>;
 }
 
@@ -629,7 +632,7 @@ function AlertsPanel({ rows, loading, onRefresh }: { rows: AdminAlertDetailRow[]
   </section>;
 }
 
-type TemplateStageDraft = { id: string; stageKey?: string; activity: string; phase?: string; criteria?: string; slaDays?: number; upbaseRole?: string; customerRole?: string };
+type TemplateStageDraft = { id: string; stageKey?: string; activity: string; phase?: string; criteria?: string; slaDays?: number; upbaseRole?: string; customerRole?: string; tasks?: ProjectTaskTemplateInput[] };
 type TemplateMilestoneDraft = Omit<CreateProjectMilestoneInput, "stages" | "requiredDocumentTypes"> & { id: string; requiredDocumentTypes: string; stages: TemplateStageDraft[] };
 type TemplateDraft = { id?: string; key: string; name: string; description: string; readOnly?: boolean; milestones: TemplateMilestoneDraft[] };
 
@@ -666,7 +669,7 @@ function templateToDraft(template: ProjectMilestoneTemplateSummary): TemplateDra
       customerConfirmationRequired: Boolean(milestone.customerConfirmationRequired),
       reviewerMode: milestone.reviewerMode ?? "workspace_admin",
       reviewerUserId: milestone.reviewerUserId ?? "",
-      stages: milestone.stages.map((stage, stageIndex) => ({ id: `stage-${milestoneIndex}-${stageIndex}-${template.id}`, ...stage }))
+      stages: milestone.stages.map((stage, stageIndex) => ({ id: `stage-${milestoneIndex}-${stageIndex}-${template.id}`, ...stage, tasks: stage.tasks ?? [] }))
     }))
   };
 }
@@ -688,9 +691,329 @@ function emptyTemplateDraft(): TemplateDraft {
       customerConfirmationRequired: false,
       reviewerMode: "workspace_admin",
       reviewerUserId: "",
-      stages: [{ id: `stage-${Date.now()}`, activity: "Stage 1", phase: "stage" }]
+      stages: [{ id: `stage-${Date.now()}`, activity: "Stage 1", phase: "stage", tasks: [] }]
     }]
   };
+}
+
+function TemplateStageEditor({
+  stage,
+  index,
+  readOnly,
+  canDelete,
+  onChange,
+  onDelete
+}: {
+  stage: TemplateStageDraft;
+  index: number;
+  readOnly?: boolean;
+  canDelete: boolean;
+  onChange: (patch: Partial<TemplateStageDraft>) => void;
+  onDelete: () => void;
+}) {
+  const tasks = stage.tasks ?? [];
+  const updateTask = (taskIndex: number, patch: Partial<ProjectTaskTemplateInput>) => onChange({ tasks: tasks.map((task, currentIndex) => currentIndex === taskIndex ? { ...task, ...patch } : task) });
+  const deleteTask = (taskIndex: number) => onChange({ tasks: tasks.filter((_, currentIndex) => currentIndex !== taskIndex) });
+  return <div className="rounded-xl border border-indigo-100 bg-indigo-50/35 p-3">
+    <div className="flex items-center gap-2"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-indigo-100 text-[10px] font-bold text-indigo-700">S{index + 1}</span><input disabled={readOnly} value={stage.activity} onChange={(event) => onChange({ activity: event.target.value })} className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-white px-2.5 text-sm font-semibold disabled:bg-slate-100" placeholder="Tên stage" />{canDelete && !readOnly ? <button type="button" onClick={onDelete} className="text-xs font-semibold text-rose-600">Xóa</button> : null}</div>
+    <div className="mt-2 grid gap-2 sm:grid-cols-2"><input disabled={readOnly} value={stage.criteria ?? ""} onChange={(event) => onChange({ criteria: event.target.value })} className="h-9 rounded-lg border border-border bg-white px-2.5 text-sm disabled:bg-slate-100" placeholder="Tiêu chí hoàn thành stage" /><input disabled={readOnly} type="number" min="0" value={stage.slaDays ?? ""} onChange={(event) => onChange({ slaDays: event.target.value === "" ? undefined : Math.max(0, Number(event.target.value) || 0) })} className="h-9 rounded-lg border border-border bg-white px-2.5 text-sm disabled:bg-slate-100" placeholder="SLA (ngày)" /></div>
+    <div className="mt-3 border-l-2 border-indigo-200 pl-3"><div className="flex items-center justify-between"><div><p className="text-[11px] font-bold uppercase tracking-wider text-indigo-700">TASK TRONG STAGE</p><p className="text-[10px] text-slate-500">Các việc cần làm để hoàn tất stage</p></div>{!readOnly ? <button type="button" onClick={() => onChange({ tasks: [...tasks, { title: `Task ${tasks.length + 1}`, subtasks: [] }] })} className="text-xs font-bold text-primary hover:underline">+ Thêm task</button> : null}</div><div className="mt-2 space-y-2">{tasks.map((task, taskIndex) => <div key={`${stage.id}-task-${taskIndex}`} className="rounded-lg border border-border bg-white p-2.5"><div className="flex items-center gap-2"><span className="text-[10px] font-bold text-primary">T{taskIndex + 1}</span><input disabled={readOnly} value={task.title} onChange={(event) => updateTask(taskIndex, { title: event.target.value })} className="h-8 min-w-0 flex-1 rounded-lg border border-border px-2 text-xs font-medium disabled:bg-slate-100" placeholder="Tên task" />{!readOnly ? <button type="button" onClick={() => deleteTask(taskIndex)} className="text-[10px] font-semibold text-rose-600">Xóa</button> : null}</div><div className="mt-2 flex flex-wrap items-center gap-2"><input disabled={readOnly} type="number" min="0" value={task.estimateMinutes ?? ""} onChange={(event) => updateTask(taskIndex, { estimateMinutes: event.target.value === "" ? undefined : Math.max(0, Number(event.target.value) || 0) })} className="h-7 w-28 rounded-md border border-border px-2 text-[10px] disabled:bg-slate-100" placeholder="Estimate (phút)" /><span className="text-[10px] text-slate-400">Task mặc định: Todo · Medium</span></div>{(task.subtasks ?? []).length ? <div className="mt-2 space-y-1 border-l-2 border-primary/15 pl-3">{(task.subtasks ?? []).map((subtask, subtaskIndex) => <div key={`${stage.id}-task-${taskIndex}-subtask-${subtaskIndex}`} className="flex items-center gap-1.5"><span className="text-[9px] font-semibold text-primary/70">ST{subtaskIndex + 1}</span><input disabled={readOnly} value={subtask.title} onChange={(event) => updateTask(taskIndex, { subtasks: (task.subtasks ?? []).map((child, currentIndex) => currentIndex === subtaskIndex ? { ...child, title: event.target.value } : child) })} className="h-7 min-w-0 flex-1 rounded-md border border-border px-2 text-[10px] disabled:bg-slate-100" placeholder="Tên subtask" />{!readOnly ? <button type="button" onClick={() => updateTask(taskIndex, { subtasks: (task.subtasks ?? []).filter((_, currentIndex) => currentIndex !== subtaskIndex) })} className="text-[9px] text-rose-600">Xóa</button> : null}</div>)}</div> : null}{!readOnly ? <button type="button" onClick={() => updateTask(taskIndex, { subtasks: [...(task.subtasks ?? []), { title: `Subtask ${(task.subtasks?.length ?? 0) + 1}`, subtasks: [] }] })} className="mt-2 text-[10px] font-semibold text-primary hover:underline">+ Thêm subtask</button> : null}</div>)}{!tasks.length ? <p className="rounded-lg border border-dashed border-indigo-200 bg-white/60 px-3 py-2 text-[10px] italic text-slate-500">Stage này chưa có task. Thêm task để template trở thành checklist thực thi.</p> : null}</div></div>
+  </div>;
+}
+
+function TemplateTaskTreeEditor({
+  draft,
+  onUpdateStage
+}: {
+  draft: TemplateDraft | null;
+  onUpdateStage: (milestoneId: string, stageId: string, patch: Partial<TemplateStageDraft>) => void;
+}) {
+  if (!draft) return null;
+  const taskCount = draft.milestones.reduce((total, milestone) => total + milestone.stages.reduce((stageTotal, stage) => stageTotal + (stage.tasks?.length ?? 0), 0), 0);
+  return <section aria-labelledby="template-task-tree-title" className="rounded-3xl border border-indigo-100 bg-indigo-50/30 p-4 shadow-sm sm:p-5"><div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-indigo-700">PROJECT CHECKLIST</p><h3 id="template-task-tree-title" className="mt-1 text-lg font-bold tracking-tight text-slate-950">Task & Subtask theo từng Stage</h3><p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-600">Template không chỉ tạo khung milestone/stage mà còn tạo sẵn checklist để team bắt tay vào làm project.</p></div><span className="w-fit rounded-full bg-white px-2.5 py-1 text-xs font-bold text-indigo-700">{taskCount} task</span></div><div className="mt-4 space-y-3">{draft.milestones.map((milestone, milestoneIndex) => <article key={milestone.id} className="rounded-2xl border border-border bg-white p-3 sm:p-4"><div className="flex items-center gap-2"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-[11px] font-black text-violet-700">M{milestoneIndex + 1}</span><div><h4 className="text-sm font-bold text-slate-900">{milestone.name}</h4><p className="text-[11px] text-slate-500">{milestone.stages.length} stage · {milestone.stages.reduce((total, stage) => total + (stage.tasks?.length ?? 0), 0)} task</p></div></div><div className="mt-3 space-y-2 border-l-2 border-indigo-200 pl-3">{milestone.stages.map((stage, stageIndex) => <TemplateStageEditor key={stage.id} stage={stage} index={stageIndex} readOnly={draft.readOnly} canDelete={false} onChange={(patch) => onUpdateStage(milestone.id, stage.id, patch)} onDelete={() => undefined} />)}</div></article>)}</div></section>;
+}
+
+function MilestoneTemplateManagerV2({
+  templates,
+  loading,
+  saving,
+  onCreate,
+  onUpdate
+}: {
+  templates: ProjectMilestoneTemplateSummary[];
+  loading: boolean;
+  saving: boolean;
+  teams: WorkspaceReminderTeamOption[];
+  users: WorkspaceReminderRecipientOption[];
+  onCreateTeam: (input: { name: string; code?: string }) => Promise<WorkspaceReminderTeamOption | void>;
+  onCreate: (input: CreateProjectMilestoneTemplateInput) => Promise<ProjectMilestoneTemplateSummary | void>;
+  onUpdate: (templateId: string, input: UpdateProjectMilestoneTemplateInput) => Promise<void>;
+}) {
+  const [activeId, setActiveId] = useState("");
+  const [draft, setDraft] = useState<TemplateDraft | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [selectedMilestoneIndex, setSelectedMilestoneIndex] = useState(0);
+
+  useEffect(() => {
+    if (isCreating) return;
+    const active = templates.find((template) => template.id === activeId) ?? templates[0];
+    setActiveId(active?.id ?? "");
+    setDraft(active ? templateToDraft(active) : null);
+    setSelectedMilestoneIndex(0);
+  }, [activeId, isCreating, templates]);
+
+  const updateDraft = (patch: Partial<TemplateDraft>) => setDraft((current) => current ? { ...current, ...patch } : current);
+  const updateMilestone = (id: string, patch: Partial<TemplateMilestoneDraft>) => setDraft((current) => current ? { ...current, milestones: current.milestones.map((milestone) => milestone.id === id ? { ...milestone, ...patch } : milestone) } : current);
+  const updateStage = (milestoneId: string, stageId: string, patch: Partial<TemplateStageDraft>) => setDraft((current) => current ? { ...current, milestones: current.milestones.map((milestone) => milestone.id === milestoneId ? { ...milestone, stages: milestone.stages.map((stage) => stage.id === stageId ? { ...stage, ...patch } : stage) } : milestone) } : current);
+
+  const save = async () => {
+    if (!draft || draft.readOnly || !draft.name.trim() || saving) return;
+    const milestones: CreateProjectMilestoneInput[] = draft.milestones.map((milestone, milestoneIndex) => ({
+      name: milestone.name.trim(),
+      sortOrder: (milestoneIndex + 1) * 10,
+      requiredDocumentCount: Math.max(0, Number(milestone.requiredDocumentCount) || 0),
+      requiredDocumentTypes: parseRequiredDocumentTypes(milestone.requiredDocumentTypes),
+      evidenceMode: milestone.evidenceMode,
+      unlockCriteria: milestone.unlockCriteria?.trim() || undefined,
+      customerConfirmationRequired: Boolean(milestone.customerConfirmationRequired),
+      reviewerMode: milestone.reviewerMode ?? "workspace_admin",
+      reviewerUserId: milestone.reviewerMode === "specific_user" ? milestone.reviewerUserId || undefined : undefined,
+      stages: milestone.stages.map((stage, stageIndex) => ({
+        stageKey: stage.stageKey || `${milestone.id}-${stageIndex + 1}`,
+        activity: stage.activity.trim(),
+        phase: stage.phase?.trim() || stage.activity.trim(),
+        criteria: stage.criteria?.trim() || undefined,
+        slaDays: stage.slaDays,
+        upbaseRole: stage.upbaseRole?.trim() || undefined,
+        customerRole: stage.customerRole?.trim() || undefined,
+        tasks: stage.tasks ?? []
+      }))
+    }));
+    if (isCreating) {
+      const created = await onCreate({ key: draft.key.trim() || undefined, name: draft.name.trim(), description: draft.description.trim() || undefined, milestones });
+      if (created) { setActiveId(created.id); setDraft(templateToDraft(created)); setIsCreating(false); setSelectedMilestoneIndex(0); }
+    } else if (draft.id) {
+      await onUpdate(draft.id, { name: draft.name.trim(), description: draft.description.trim(), milestones });
+    }
+  };
+
+  const startCreate = () => { setDraft(emptyTemplateDraft()); setActiveId(""); setIsCreating(true); setSelectedMilestoneIndex(0); };
+  const duplicate = () => { if (!draft) return; setDraft({ ...draft, id: undefined, key: `${draft.key}-custom`, name: `${draft.name} · bản tuỳ chỉnh`, readOnly: false }); setIsCreating(true); setActiveId(""); };
+  const selectedMilestone = draft?.milestones[selectedMilestoneIndex];
+  const totalStages = draft?.milestones.reduce((sum, milestone) => sum + milestone.stages.length, 0) ?? 0;
+  const totalTasks = draft?.milestones.reduce((sum, milestone) => sum + milestone.stages.reduce((stageSum, stage) => stageSum + (stage.tasks?.length ?? 0), 0), 0) ?? 0;
+
+  return <section aria-labelledby="milestone-template-v2-title" className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+    <div className="border-b border-border bg-gradient-to-r from-indigo-50 via-white to-sky-50 px-5 py-5 sm:px-6"><div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-indigo-700">PROJECT TEMPLATE BUILDER</p><h2 id="milestone-template-v2-title" className="mt-1 text-2xl font-bold tracking-tight text-slate-950">Cấu hình quy trình Project</h2><p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Tạo checklist thực thi theo cây Milestone → Stage → Task → Subtask. Chọn một milestone ở cột trái để chỉnh nội dung ở cột phải.</p></div><div className="flex gap-2">{draft?.readOnly ? <button type="button" onClick={duplicate} className="inline-flex min-h-10 items-center justify-center rounded-xl border border-indigo-200 bg-white px-4 text-sm font-bold text-indigo-700 hover:bg-indigo-50">Tạo bản sao để chỉnh sửa</button> : <button type="button" disabled={!draft || saving} onClick={() => void save()} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-primary-foreground shadow-sm disabled:opacity-50"><Save className="h-4 w-4" />{saving ? "Đang lưu…" : isCreating ? "Lưu template" : "Lưu thay đổi"}</button>}<button type="button" onClick={startCreate} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-primary/20 bg-primary/5 px-4 text-sm font-bold text-primary hover:bg-primary/10">+ Template mới</button></div></div></div>
+    {loading ? <div className="p-8 text-center text-sm text-slate-500">Đang tải template…</div> : !draft ? <div className="p-10 text-center text-sm text-slate-500">Chưa có template. Bấm “Template mới” để bắt đầu.</div> : <div className="grid min-w-0 lg:grid-cols-[300px_minmax(0,1fr)]">
+      <aside className="border-b border-border bg-slate-50/70 p-4 lg:border-b-0 lg:border-r"><div className="flex items-center justify-between"><div><p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">TEMPLATE</p><p className="mt-1 text-xs text-slate-500">Chọn quy trình cần chỉnh</p></div><span className="rounded-full bg-white px-2 py-1 text-[11px] font-bold text-slate-500">{templates.length}</span></div><div className="mt-3 space-y-2">{templates.map((template) => <button type="button" key={template.id} onClick={() => { setIsCreating(false); setActiveId(template.id); setDraft(templateToDraft(template)); setSelectedMilestoneIndex(0); }} className={`w-full rounded-xl border p-3 text-left transition ${template.id === activeId && !isCreating ? "border-indigo-300 bg-white shadow-sm" : "border-transparent bg-white/60 hover:border-border hover:bg-white"}`}><div className="flex items-start justify-between gap-2"><span className="min-w-0 truncate text-sm font-bold text-slate-900">{template.name}</span>{template.readOnly ? <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">Mặc định</span> : null}</div><p className="mt-1 text-[11px] text-slate-500">{template.milestoneCount} milestone · {template.stageCount} stage</p></button>)}</div><div className="mt-5 border-t border-border pt-4"><div className="flex items-center justify-between"><p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">CẤU TRÚC</p><span className="text-[10px] text-slate-500">{draft.milestones.length}M · {totalStages}S · {totalTasks}T</span></div><div className="mt-2 space-y-1">{draft.milestones.map((milestone, index) => <button type="button" key={milestone.id} onClick={() => setSelectedMilestoneIndex(index)} className={`w-full rounded-lg px-2.5 py-2 text-left ${selectedMilestoneIndex === index ? "bg-indigo-100 text-indigo-950" : "hover:bg-white"}`}><span className="flex items-center gap-2"><span className="font-bold text-[10px] text-indigo-700">M{index + 1}</span><span className="min-w-0 flex-1 truncate text-xs font-semibold">{milestone.name}</span><span className="text-[10px] text-slate-500">{milestone.stages.length}S</span></span></button>)}</div>{!draft.readOnly ? <button type="button" onClick={() => { const nextIndex = draft.milestones.length; updateDraft({ milestones: [...draft.milestones, { id: `milestone-${Date.now()}`, name: `Milestone ${nextIndex + 1}`, sortOrder: (nextIndex + 1) * 10, requiredDocumentCount: 0, requiredDocumentTypes: "", unlockCriteria: "", customerConfirmationRequired: false, reviewerMode: "workspace_admin", reviewerUserId: "", stages: [{ id: `stage-${Date.now()}`, activity: "Stage 1", phase: "stage", tasks: [] }] }] }); setSelectedMilestoneIndex(nextIndex); }} className="mt-2 w-full rounded-lg border border-dashed border-indigo-200 px-2.5 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50">+ Thêm milestone</button> : null}</div></aside>
+      <main className="min-w-0 p-4 sm:p-6"><div className="grid gap-3 sm:grid-cols-3"><label><span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Tên template</span><input disabled={draft.readOnly} value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold disabled:bg-slate-50" /></label><label><span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Mã template</span><input disabled={draft.readOnly || !isCreating} value={draft.key} onChange={(event) => updateDraft({ key: event.target.value })} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm disabled:bg-slate-50" /></label><div className="rounded-xl border border-indigo-100 bg-indigo-50/50 px-3 py-2.5"><p className="text-[11px] font-bold text-indigo-700">TỔNG QUAN</p><p className="mt-1 text-xs text-indigo-950">{draft.milestones.length} milestone · {totalStages} stage · {totalTasks} task</p></div></div><label className="mt-3 block"><span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Mô tả sử dụng</span><textarea disabled={draft.readOnly} rows={2} value={draft.description} onChange={(event) => updateDraft({ description: event.target.value })} className="w-full resize-none rounded-xl border border-border bg-white px-3 py-2.5 text-sm disabled:bg-slate-50" /></label>{selectedMilestone ? <div className="mt-5 rounded-2xl border border-border bg-slate-50/60 p-4"><div className="flex items-start gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-xs font-black text-violet-700">M{selectedMilestoneIndex + 1}</span><div className="min-w-0 flex-1"><input disabled={draft.readOnly} value={selectedMilestone.name} onChange={(event) => updateMilestone(selectedMilestone.id, { name: event.target.value })} className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-base font-bold disabled:bg-slate-100" /><p className="mt-1 text-xs text-slate-500">Cấu hình gate và checklist cho milestone này</p></div>{!draft.readOnly && draft.milestones.length > 1 ? <button type="button" onClick={() => { updateDraft({ milestones: draft.milestones.filter((item) => item.id !== selectedMilestone.id) }); setSelectedMilestoneIndex(Math.max(0, selectedMilestoneIndex - 1)); }} className="text-xs font-semibold text-rose-600">Xóa</button> : null}</div><div className="mt-4 grid gap-3 rounded-xl border border-border bg-white p-3 sm:grid-cols-3"><label><span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Hồ sơ tối thiểu</span><input disabled={draft.readOnly} type="number" min="0" value={selectedMilestone.requiredDocumentCount || 0} onChange={(event) => updateMilestone(selectedMilestone.id, { requiredDocumentCount: Math.max(0, Number(event.target.value) || 0) })} className="h-9 w-full rounded-lg border border-border px-2.5 text-sm disabled:bg-slate-50" /></label><label><span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Loại hồ sơ</span><input disabled={draft.readOnly} value={selectedMilestone.requiredDocumentTypes} onChange={(event) => updateMilestone(selectedMilestone.id, { requiredDocumentTypes: event.target.value })} placeholder="BRD, FRD, SRS" className="h-9 w-full rounded-lg border border-border px-2.5 text-sm disabled:bg-slate-50" /></label><label className="flex items-end gap-2 pb-2 text-xs font-semibold text-slate-600"><input disabled={draft.readOnly} type="checkbox" checked={Boolean(selectedMilestone.customerConfirmationRequired)} onChange={(event) => updateMilestone(selectedMilestone.id, { customerConfirmationRequired: event.target.checked })} className="h-4 w-4 rounded border-border text-primary" /> Khách hàng xác nhận</label><label className="sm:col-span-3"><span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Điều kiện mở milestone tiếp theo</span><textarea disabled={draft.readOnly} rows={2} value={selectedMilestone.unlockCriteria ?? ""} onChange={(event) => updateMilestone(selectedMilestone.id, { unlockCriteria: event.target.value })} className="w-full resize-none rounded-lg border border-border px-2.5 py-2 text-sm disabled:bg-slate-50" /></label></div><div className="mt-5 flex items-center justify-between"><div><h3 className="text-sm font-bold text-slate-950">Các Stage & checklist</h3><p className="mt-0.5 text-xs text-slate-500">Mỗi Stage có thể chứa nhiều Task và Subtask.</p></div>{!draft.readOnly ? <button type="button" onClick={() => updateMilestone(selectedMilestone.id, { stages: [...selectedMilestone.stages, { id: `stage-${Date.now()}`, activity: `Stage ${selectedMilestone.stages.length + 1}`, phase: "stage", tasks: [] }] })} className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs font-bold text-primary hover:bg-primary/10">+ Thêm stage</button> : null}</div><div className="mt-3 space-y-3">{selectedMilestone.stages.map((stage, stageIndex) => <TemplateStageEditor key={stage.id} stage={stage} index={stageIndex} readOnly={draft.readOnly} canDelete={selectedMilestone.stages.length > 1} onChange={(patch) => updateStage(selectedMilestone.id, stage.id, patch)} onDelete={() => updateMilestone(selectedMilestone.id, { stages: selectedMilestone.stages.filter((item) => item.id !== stage.id) })} />)}</div></div> : null}</main>
+    </div>}
+  </section>;
+}
+
+function MilestoneTemplateManagerV4({
+  templates,
+  loading,
+  saving,
+  onCreate,
+  onUpdate
+}: {
+  templates: ProjectMilestoneTemplateSummary[];
+  loading: boolean;
+  saving: boolean;
+  teams: WorkspaceReminderTeamOption[];
+  users: WorkspaceReminderRecipientOption[];
+  onCreateTeam: (input: { name: string; code?: string }) => Promise<WorkspaceReminderTeamOption | void>;
+  onCreate: (input: CreateProjectMilestoneTemplateInput) => Promise<ProjectMilestoneTemplateSummary | void>;
+  onUpdate: (templateId: string, input: UpdateProjectMilestoneTemplateInput) => Promise<void>;
+}) {
+  const [activeId, setActiveId] = useState("");
+  const [draft, setDraft] = useState<TemplateDraft | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [openMilestone, setOpenMilestone] = useState(0);
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+
+  useEffect(() => {
+    if (isCreating) return;
+    const active = templates.find((template) => template.id === activeId) ?? templates[0];
+    setActiveId(active?.id ?? "");
+    setDraft(active ? templateToDraft(active) : null);
+    setOpenMilestone(0);
+  }, [activeId, isCreating, templates]);
+
+  const updateDraft = (patch: Partial<TemplateDraft>) => setDraft((current) => current ? { ...current, ...patch } : current);
+  const updateMilestone = (id: string, patch: Partial<TemplateMilestoneDraft>) => setDraft((current) => current ? { ...current, milestones: current.milestones.map((item) => item.id === id ? { ...item, ...patch } : item) } : current);
+  const updateStage = (milestoneId: string, stageId: string, patch: Partial<TemplateStageDraft>) => setDraft((current) => current ? { ...current, milestones: current.milestones.map((milestone) => milestone.id === milestoneId ? { ...milestone, stages: milestone.stages.map((stage) => stage.id === stageId ? { ...stage, ...patch } : stage) } : milestone) } : current);
+
+  const totalStages = draft?.milestones.reduce((sum, milestone) => sum + milestone.stages.length, 0) ?? 0;
+  const totalTasks = draft?.milestones.reduce((sum, milestone) => sum + milestone.stages.reduce((stageSum, stage) => stageSum + (stage.tasks?.length ?? 0), 0), 0) ?? 0;
+
+  const save = async () => {
+    if (!draft || draft.readOnly || !draft.name.trim() || saving) return;
+    const milestones: CreateProjectMilestoneInput[] = draft.milestones.map((milestone, milestoneIndex) => ({
+      name: milestone.name.trim(), sortOrder: (milestoneIndex + 1) * 10,
+      requiredDocumentCount: Math.max(0, Number(milestone.requiredDocumentCount) || 0),
+      requiredDocumentTypes: parseRequiredDocumentTypes(milestone.requiredDocumentTypes),
+      evidenceMode: milestone.evidenceMode, unlockCriteria: milestone.unlockCriteria?.trim() || undefined,
+      customerConfirmationRequired: Boolean(milestone.customerConfirmationRequired), reviewerMode: milestone.reviewerMode ?? "workspace_admin",
+      reviewerUserId: milestone.reviewerMode === "specific_user" ? milestone.reviewerUserId || undefined : undefined,
+      stages: milestone.stages.map((stage, stageIndex) => ({
+        stageKey: stage.stageKey || `${milestone.id}-${stageIndex + 1}`, activity: stage.activity.trim(), phase: stage.phase?.trim() || stage.activity.trim(),
+        criteria: stage.criteria?.trim() || undefined, slaDays: stage.slaDays, upbaseRole: stage.upbaseRole?.trim() || undefined,
+        customerRole: stage.customerRole?.trim() || undefined, tasks: stage.tasks ?? []
+      }))
+    }));
+    if (isCreating) {
+      const created = await onCreate({ key: draft.key.trim() || undefined, name: draft.name.trim(), description: draft.description.trim() || undefined, milestones });
+      if (created) { setActiveId(created.id); setDraft(templateToDraft(created)); setIsCreating(false); setOpenMilestone(0); }
+    } else if (draft.id) await onUpdate(draft.id, { name: draft.name.trim(), description: draft.description.trim(), milestones });
+  };
+
+  const startCreate = () => { setDraft(emptyTemplateDraft()); setActiveId(""); setIsCreating(true); setOpenMilestone(0); };
+  const duplicate = () => { if (!draft) return; setDraft({ ...draft, id: undefined, key: `${draft.key}-custom`, name: `${draft.name} · bản tuỳ chỉnh`, readOnly: false }); setActiveId(""); setIsCreating(true); };
+  const addMilestone = () => {
+    if (!draft) return;
+    const index = draft.milestones.length;
+    updateDraft({ milestones: [...draft.milestones, { id: `milestone-${Date.now()}`, name: `Milestone ${index + 1}`, sortOrder: (index + 1) * 10, requiredDocumentCount: 0, requiredDocumentTypes: "", evidenceMode: "file_or_link", unlockCriteria: "", customerConfirmationRequired: false, reviewerMode: "workspace_admin", reviewerUserId: "", stages: [{ id: `stage-${Date.now()}`, activity: "Stage 1", phase: "stage", tasks: [] }] }] });
+    setOpenMilestone(index);
+  };
+
+  if (loading) return <section className="rounded-2xl border border-border bg-card p-10 text-center text-sm text-muted-foreground">Đang tải template…</section>;
+  if (!draft) return <section className="rounded-2xl border border-border bg-card p-10 text-center"><p className="text-sm text-muted-foreground">Chưa có template.</p><button type="button" onClick={startCreate} className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground">+ Tạo template</button></section>;
+
+  return <section aria-labelledby="milestone-template-v4-title" className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+    <header className="border-b border-border px-5 py-5 sm:px-7"><div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><p className="text-[11px] font-bold uppercase tracking-[0.18em] text-primary">TEMPLATE WORKFLOW</p><h2 id="milestone-template-v4-title" className="mt-1 text-2xl font-extrabold tracking-tight text-foreground">Quy trình Project</h2><p className="mt-1 max-w-2xl text-sm text-muted-foreground">Thiết lập theo đúng thứ tự thực hiện. Mở một Milestone để chỉnh Stage và checklist công việc.</p></div><div className="flex flex-wrap gap-2">{draft.readOnly ? <button type="button" onClick={duplicate} className="min-h-10 rounded-lg border border-primary/25 bg-primary/5 px-3 text-sm font-bold text-primary">Tạo bản sao để sửa</button> : <button type="button" disabled={saving} onClick={() => void save()} className="min-h-10 rounded-lg bg-primary px-4 text-sm font-bold text-primary-foreground disabled:opacity-50">{saving ? "Đang lưu…" : isCreating ? "Lưu template" : "Lưu thay đổi"}</button>}<button type="button" onClick={startCreate} className="min-h-10 rounded-lg border border-border bg-white px-3 text-sm font-bold hover:bg-muted">+ Template mới</button></div></div></header>
+    <div className="border-b border-border bg-slate-50/70 px-5 py-4 sm:px-7"><div className="grid gap-3 lg:grid-cols-[minmax(260px,1.1fr)_minmax(220px,1fr)_auto] lg:items-end"><div className="relative"><span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">Template đang chỉnh</span><button type="button" onClick={() => setTemplatePickerOpen((open) => !open)} aria-expanded={templatePickerOpen} className="flex min-h-11 w-full items-center gap-3 rounded-xl border border-primary/50 bg-white px-3 text-left shadow-[0_0_0_3px_rgba(37,99,235,0.08)]"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary text-xs font-black text-primary-foreground">{isCreating ? "+" : (draft.name.trim().charAt(0).toUpperCase() || "T")}</span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-bold text-slate-900">{isCreating ? "Template mới" : draft.name}</span><span className="block truncate text-[10px] text-slate-500">{isCreating ? "Đang tạo bản mới" : `${draft.milestones.length} milestone · ${totalStages} stage`}</span></span><span className="text-xs text-slate-400">{templatePickerOpen ? "▲" : "▼"}</span></button>{templatePickerOpen ? <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-20 overflow-hidden rounded-xl border border-border bg-white p-1.5 shadow-xl"><p className="px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Chọn quy trình</p>{templates.map((template) => <button type="button" key={template.id} onClick={() => { setIsCreating(false); setActiveId(template.id); setDraft(templateToDraft(template)); setOpenMilestone(0); setTemplatePickerOpen(false); }} className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left ${template.id === activeId && !isCreating ? "bg-primary/10" : "hover:bg-slate-50"}`}><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-slate-100 text-[10px] font-black text-slate-600">{template.name.charAt(0).toUpperCase()}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-bold text-slate-900">{template.name}</span><span className="block text-[10px] text-slate-500">{template.milestoneCount} milestone · {template.stageCount} stage</span></span>{template.readOnly ? <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-500">Mặc định</span> : null}</button>)}</div> : null}</div><label className="min-w-0"><span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">Tên template</span><input disabled={draft.readOnly} value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} className="h-11 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold disabled:bg-slate-100" /></label><div className="flex gap-2"><div className="min-w-[70px] rounded-xl bg-violet-100 px-3 py-2 text-center"><strong className="block text-lg leading-5 text-violet-900">{draft.milestones.length}</strong><span className="text-[9px] font-bold uppercase tracking-wide text-violet-700">Milestone</span></div><div className="min-w-[70px] rounded-xl bg-sky-100 px-3 py-2 text-center"><strong className="block text-lg leading-5 text-sky-900">{totalStages}</strong><span className="text-[9px] font-bold uppercase tracking-wide text-sky-700">Stage</span></div><div className="min-w-[70px] rounded-xl bg-emerald-100 px-3 py-2 text-center"><strong className="block text-lg leading-5 text-emerald-900">{totalTasks}</strong><span className="text-[9px] font-bold uppercase tracking-wide text-emerald-700">Task</span></div></div></div><label className="mt-3 block"><span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">Mô tả</span><textarea disabled={draft.readOnly} rows={2} value={draft.description} onChange={(event) => updateDraft({ description: event.target.value })} className="w-full resize-none rounded-xl border border-border bg-white px-3 py-2 text-sm disabled:bg-slate-100" placeholder="Template này dùng cho loại project nào?" /></label></div>
+    <div className="space-y-3 p-4 sm:p-6">{draft.milestones.map((milestone, index) => { const isOpen = openMilestone === index; const taskCount = milestone.stages.reduce((sum, stage) => sum + (stage.tasks?.length ?? 0), 0); return <article key={milestone.id} className={`overflow-hidden rounded-xl border ${isOpen ? "border-primary/40" : "border-border"}`}><button type="button" onClick={() => setOpenMilestone(isOpen ? -1 : index)} aria-expanded={isOpen} className={`flex w-full items-center gap-3 px-4 py-3 text-left ${isOpen ? "bg-primary/[0.04]" : "bg-white hover:bg-slate-50"}`}><span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-black ${isOpen ? "bg-primary text-primary-foreground" : "bg-slate-100 text-slate-500"}`}>M{index + 1}</span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-bold text-slate-950">{milestone.name || "Chưa đặt tên milestone"}</span><span className="mt-0.5 block text-[11px] text-slate-500">{milestone.stages.length} stage · {taskCount} task</span></span><span className="text-lg text-slate-400">{isOpen ? "−" : "+"}</span></button>{isOpen ? <div className="border-t border-border bg-white p-4 sm:p-5"><div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_160px]"><label><span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">Tên milestone</span><input disabled={draft.readOnly} value={milestone.name} onChange={(event) => updateMilestone(milestone.id, { name: event.target.value })} className="h-10 w-full rounded-lg border border-border px-3 text-sm font-bold disabled:bg-slate-100" /></label><label><span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">Hồ sơ tối thiểu</span><input disabled={draft.readOnly} type="number" min="0" value={milestone.requiredDocumentCount || 0} onChange={(event) => updateMilestone(milestone.id, { requiredDocumentCount: Math.max(0, Number(event.target.value) || 0) })} className="h-10 w-full rounded-lg border border-border px-3 text-sm disabled:bg-slate-100" /></label></div><div className="mt-3"><label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Điều kiện chuyển tiếp</label><textarea disabled={draft.readOnly} rows={2} value={milestone.unlockCriteria ?? ""} onChange={(event) => updateMilestone(milestone.id, { unlockCriteria: event.target.value })} className="mt-1 w-full resize-none rounded-lg border border-border px-3 py-2 text-sm disabled:bg-slate-100" placeholder="Điều kiện để mở milestone tiếp theo" /></div><div className="mt-5 flex items-center justify-between border-t border-border pt-4"><div><h3 className="text-sm font-bold text-slate-950">Các stage trong milestone</h3><p className="mt-0.5 text-xs text-slate-500">Mỗi stage có thể chứa nhiều task và subtask.</p></div>{!draft.readOnly ? <button type="button" onClick={() => updateMilestone(milestone.id, { stages: [...milestone.stages, { id: `stage-${Date.now()}`, activity: `Stage ${milestone.stages.length + 1}`, phase: "stage", tasks: [] }] })} className="rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-xs font-bold text-primary">+ Thêm stage</button> : null}</div><div className="mt-3 space-y-3">{milestone.stages.map((stage, stageIndex) => <TemplateStageEditor key={stage.id} stage={stage} index={stageIndex} readOnly={draft.readOnly} canDelete={!draft.readOnly && milestone.stages.length > 1} onChange={(patch) => updateStage(milestone.id, stage.id, patch)} onDelete={() => updateMilestone(milestone.id, { stages: milestone.stages.filter((item) => item.id !== stage.id) })} />)}</div>{!draft.readOnly && draft.milestones.length > 1 ? <button type="button" onClick={() => { updateDraft({ milestones: draft.milestones.filter((_, currentIndex) => currentIndex !== index) }); setOpenMilestone(Math.max(0, index - 1)); }} className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">Xóa milestone này</button> : null}</div> : null}</article>; })}{!draft.readOnly ? <button type="button" onClick={addMilestone} className="w-full rounded-xl border border-dashed border-primary/35 bg-primary/[0.03] px-4 py-3 text-sm font-bold text-primary hover:bg-primary/[0.07]">+ Thêm milestone</button> : null}</div>
+  </section>;
+}
+
+function MilestoneTemplateManagerV3({
+  templates,
+  loading,
+  saving,
+  onCreate,
+  onUpdate
+}: {
+  templates: ProjectMilestoneTemplateSummary[];
+  loading: boolean;
+  saving: boolean;
+  teams: WorkspaceReminderTeamOption[];
+  users: WorkspaceReminderRecipientOption[];
+  onCreateTeam: (input: { name: string; code?: string }) => Promise<WorkspaceReminderTeamOption | void>;
+  onCreate: (input: CreateProjectMilestoneTemplateInput) => Promise<ProjectMilestoneTemplateSummary | void>;
+  onUpdate: (templateId: string, input: UpdateProjectMilestoneTemplateInput) => Promise<void>;
+}) {
+  const [activeId, setActiveId] = useState("");
+  const [draft, setDraft] = useState<TemplateDraft | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [milestoneIndex, setMilestoneIndex] = useState(0);
+  const [stageIndex, setStageIndex] = useState(0);
+
+  useEffect(() => {
+    if (isCreating) return;
+    const active = templates.find((template) => template.id === activeId) ?? templates[0];
+    setActiveId(active?.id ?? "");
+    setDraft(active ? templateToDraft(active) : null);
+    setMilestoneIndex(0);
+    setStageIndex(0);
+  }, [activeId, isCreating, templates]);
+
+  const updateDraft = (patch: Partial<TemplateDraft>) => setDraft((current) => current ? { ...current, ...patch } : current);
+  const updateMilestone = (id: string, patch: Partial<TemplateMilestoneDraft>) => setDraft((current) => current ? { ...current, milestones: current.milestones.map((milestone) => milestone.id === id ? { ...milestone, ...patch } : milestone) } : current);
+  const updateStage = (milestoneId: string, stageId: string, patch: Partial<TemplateStageDraft>) => setDraft((current) => current ? { ...current, milestones: current.milestones.map((milestone) => milestone.id === milestoneId ? { ...milestone, stages: milestone.stages.map((stage) => stage.id === stageId ? { ...stage, ...patch } : stage) } : milestone) } : current);
+
+  const selectedMilestone = draft?.milestones[milestoneIndex];
+  const selectedStage = selectedMilestone?.stages[stageIndex];
+  const totalStages = draft?.milestones.reduce((sum, milestone) => sum + milestone.stages.length, 0) ?? 0;
+  const totalTasks = draft?.milestones.reduce((sum, milestone) => sum + milestone.stages.reduce((stageSum, stage) => stageSum + (stage.tasks?.length ?? 0), 0), 0) ?? 0;
+  const totalSubtasks = draft?.milestones.reduce((sum, milestone) => sum + milestone.stages.reduce((stageSum, stage) => stageSum + (stage.tasks ?? []).reduce((taskSum, task) => taskSum + (task.subtasks?.length ?? 0), 0), 0), 0) ?? 0;
+
+  useEffect(() => {
+    if (!draft) return;
+    const nextMilestone = draft.milestones[milestoneIndex];
+    if (!nextMilestone) setMilestoneIndex(Math.max(0, draft.milestones.length - 1));
+    if (nextMilestone && !nextMilestone.stages[stageIndex]) setStageIndex(Math.max(0, nextMilestone.stages.length - 1));
+  }, [draft, milestoneIndex, stageIndex]);
+
+  const save = async () => {
+    if (!draft || draft.readOnly || !draft.name.trim() || saving) return;
+    const milestones: CreateProjectMilestoneInput[] = draft.milestones.map((milestone, currentMilestoneIndex) => ({
+      name: milestone.name.trim(),
+      sortOrder: (currentMilestoneIndex + 1) * 10,
+      requiredDocumentCount: Math.max(0, Number(milestone.requiredDocumentCount) || 0),
+      requiredDocumentTypes: parseRequiredDocumentTypes(milestone.requiredDocumentTypes),
+      evidenceMode: milestone.evidenceMode,
+      unlockCriteria: milestone.unlockCriteria?.trim() || undefined,
+      customerConfirmationRequired: Boolean(milestone.customerConfirmationRequired),
+      reviewerMode: milestone.reviewerMode ?? "workspace_admin",
+      reviewerUserId: milestone.reviewerMode === "specific_user" ? milestone.reviewerUserId || undefined : undefined,
+      stages: milestone.stages.map((stage, currentStageIndex) => ({
+        stageKey: stage.stageKey || `${milestone.id}-${currentStageIndex + 1}`,
+        activity: stage.activity.trim(),
+        phase: stage.phase?.trim() || stage.activity.trim(),
+        criteria: stage.criteria?.trim() || undefined,
+        slaDays: stage.slaDays,
+        upbaseRole: stage.upbaseRole?.trim() || undefined,
+        customerRole: stage.customerRole?.trim() || undefined,
+        tasks: stage.tasks ?? []
+      }))
+    }));
+    if (isCreating) {
+      const created = await onCreate({ key: draft.key.trim() || undefined, name: draft.name.trim(), description: draft.description.trim() || undefined, milestones });
+      if (created) { setActiveId(created.id); setDraft(templateToDraft(created)); setIsCreating(false); setMilestoneIndex(0); setStageIndex(0); }
+    } else if (draft.id) {
+      await onUpdate(draft.id, { name: draft.name.trim(), description: draft.description.trim(), milestones });
+    }
+  };
+
+  const selectTemplate = (template: ProjectMilestoneTemplateSummary) => {
+    setIsCreating(false);
+    setActiveId(template.id);
+    setDraft(templateToDraft(template));
+    setMilestoneIndex(0);
+    setStageIndex(0);
+  };
+  const startCreate = () => { setDraft(emptyTemplateDraft()); setActiveId(""); setIsCreating(true); setMilestoneIndex(0); setStageIndex(0); };
+  const duplicate = () => { if (!draft) return; setDraft({ ...draft, id: undefined, key: `${draft.key}-custom`, name: `${draft.name} · bản tuỳ chỉnh`, readOnly: false }); setIsCreating(true); setActiveId(""); };
+
+  if (loading) return <section className="rounded-2xl border border-border bg-card p-10 text-center text-sm text-muted-foreground">Đang tải thư viện template…</section>;
+  if (!draft) return <section className="rounded-2xl border border-border bg-card p-10 text-center"><p className="text-sm text-muted-foreground">Chưa có template để cấu hình.</p><button type="button" onClick={startCreate} className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground">+ Tạo template đầu tiên</button></section>;
+
+  const addMilestone = () => {
+    const nextIndex = draft.milestones.length;
+    updateDraft({ milestones: [...draft.milestones, { id: `milestone-${Date.now()}`, name: `Milestone ${nextIndex + 1}`, sortOrder: (nextIndex + 1) * 10, requiredDocumentCount: 0, requiredDocumentTypes: "", evidenceMode: "file_or_link", unlockCriteria: "", customerConfirmationRequired: false, reviewerMode: "workspace_admin", reviewerUserId: "", stages: [{ id: `stage-${Date.now()}`, activity: "Stage 1", phase: "stage", tasks: [] }] }] });
+    setMilestoneIndex(nextIndex);
+    setStageIndex(0);
+  };
+  const addStage = () => {
+    if (!selectedMilestone) return;
+    updateMilestone(selectedMilestone.id, { stages: [...selectedMilestone.stages, { id: `stage-${Date.now()}`, activity: `Stage ${selectedMilestone.stages.length + 1}`, phase: "stage", tasks: [] }] });
+    setStageIndex(selectedMilestone.stages.length);
+  };
+  const updateTask = (taskIndex: number, patch: Partial<ProjectTaskTemplateInput>) => {
+    if (!selectedMilestone || !selectedStage) return;
+    const tasks = selectedStage.tasks ?? [];
+    updateStage(selectedMilestone.id, selectedStage.id, { tasks: tasks.map((task, index) => index === taskIndex ? { ...task, ...patch } : task) });
+  };
+  const addTask = () => {
+    if (!selectedMilestone || !selectedStage) return;
+    const tasks = selectedStage.tasks ?? [];
+    updateStage(selectedMilestone.id, selectedStage.id, { tasks: [...tasks, { title: `Task ${tasks.length + 1}`, subtasks: [] }] });
+  };
+
+  return <section aria-labelledby="milestone-template-v3-title" className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+    <header className="flex flex-col gap-4 border-b border-border px-5 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+      <div><p className="text-[11px] font-bold uppercase tracking-[0.18em] text-primary">WORKFLOW STUDIO</p><h2 id="milestone-template-v3-title" className="mt-1 text-2xl font-extrabold tracking-tight text-foreground">Thiết kế quy trình Project</h2><p className="mt-1 max-w-2xl text-sm text-muted-foreground">Một màn hình để tạo checklist hoàn chỉnh: Milestone → Stage → Task → Subtask.</p></div>
+      <div className="flex flex-wrap gap-2">{draft.readOnly ? <button type="button" onClick={duplicate} className="min-h-10 rounded-lg border border-primary/25 bg-primary/5 px-3 text-sm font-bold text-primary">Tạo bản sao</button> : <button type="button" disabled={saving} onClick={() => void save()} className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-bold text-primary-foreground disabled:opacity-50"><Save className="h-4 w-4" />{saving ? "Đang lưu…" : isCreating ? "Lưu template" : "Lưu thay đổi"}</button>}<button type="button" onClick={startCreate} className="min-h-10 rounded-lg border border-border bg-white px-3 text-sm font-bold text-foreground hover:bg-muted">+ Template mới</button></div>
+    </header>
+    <div className="grid min-w-0 lg:grid-cols-[230px_minmax(0,1fr)_290px]">
+      <aside className="border-b border-border bg-slate-50/70 p-3 lg:border-b-0 lg:border-r"><div className="flex items-center justify-between"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Templates</p><span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500">{templates.length}</span></div><div className="mt-2 space-y-1.5">{templates.map((template) => <button type="button" key={template.id} onClick={() => selectTemplate(template)} className={`w-full rounded-lg border px-3 py-2.5 text-left ${template.id === activeId && !isCreating ? "border-primary/40 bg-white shadow-sm" : "border-transparent hover:border-border hover:bg-white"}`}><span className="block truncate text-xs font-bold text-slate-900">{template.name}</span><span className="mt-1 block text-[10px] text-slate-500">{template.milestoneCount}M · {template.stageCount}S</span></button>)}</div><div className="mt-5 border-t border-border pt-4"><div className="flex items-center justify-between"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Milestones</p><span className="text-[10px] text-slate-500">{draft.milestones.length}</span></div><div className="mt-2 space-y-1">{draft.milestones.map((milestone, index) => <button type="button" key={milestone.id} onClick={() => { setMilestoneIndex(index); setStageIndex(0); }} className={`w-full rounded-lg px-2.5 py-2 text-left ${index === milestoneIndex ? "bg-primary/10 text-primary" : "hover:bg-white"}`}><span className="block truncate text-xs font-bold">M{index + 1} · {milestone.name}</span><span className="mt-0.5 block text-[10px] text-slate-500">{milestone.stages.length} stage</span></button>)}</div>{!draft.readOnly ? <button type="button" onClick={addMilestone} className="mt-2 w-full rounded-lg border border-dashed border-primary/30 px-2 py-2 text-xs font-bold text-primary hover:bg-primary/5">+ Thêm milestone</button> : null}</div></aside>
+      <main className="min-w-0 border-b border-border p-4 sm:p-5 lg:border-b-0 lg:border-r"><div className="flex flex-wrap items-center gap-2 border-b border-border pb-4"><input disabled={draft.readOnly} value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} className="min-w-[220px] flex-1 rounded-lg border border-border bg-white px-3 py-2 text-base font-bold disabled:bg-slate-50" aria-label="Tên template" /><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600">{draft.readOnly ? "Mặc định" : "Bản chỉnh sửa"}</span></div><div className="mt-4 grid grid-cols-3 gap-2"><div className="rounded-lg bg-violet-50 px-3 py-2"><span className="block text-[10px] font-bold text-violet-600">MILESTONE</span><strong className="text-lg text-violet-950">{draft.milestones.length}</strong></div><div className="rounded-lg bg-sky-50 px-3 py-2"><span className="block text-[10px] font-bold text-sky-600">STAGE</span><strong className="text-lg text-sky-950">{totalStages}</strong></div><div className="rounded-lg bg-emerald-50 px-3 py-2"><span className="block text-[10px] font-bold text-emerald-600">CHECKLIST</span><strong className="text-lg text-emerald-950">{totalTasks + totalSubtasks}</strong></div></div>{selectedMilestone ? <div className="mt-5"><div className="flex items-end justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-wider text-primary">MILESTONE {milestoneIndex + 1}</p><h3 className="mt-1 text-lg font-bold text-slate-950">{selectedMilestone.name}</h3></div>{!draft.readOnly ? <button type="button" onClick={addStage} className="rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-xs font-bold text-primary">+ Stage</button> : null}</div><div className="mt-3 space-y-1.5">{selectedMilestone.stages.map((stage, index) => { const taskCount = stage.tasks?.length ?? 0; return <button type="button" key={stage.id} onClick={() => setStageIndex(index)} className={`w-full rounded-lg border px-3 py-3 text-left transition ${index === stageIndex ? "border-primary bg-primary/[0.04]" : "border-border bg-white hover:border-primary/30"}`}><div className="flex items-center gap-3"><span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[10px] font-black ${index === stageIndex ? "bg-primary text-primary-foreground" : "bg-slate-100 text-slate-500"}`}>S{index + 1}</span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-bold text-slate-900">{stage.activity || "Chưa đặt tên stage"}</span><span className="mt-0.5 block text-[10px] text-slate-500">{taskCount} task · {stage.slaDays ? `${stage.slaDays} ngày SLA` : "Chưa đặt SLA"}</span></span><span className="text-slate-400">›</span></div></button>; })}</div>{selectedStage ? <div className="mt-5 rounded-xl border border-border bg-slate-50/60 p-3"><div className="flex items-center justify-between"><div><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">CHECKLIST CỦA STAGE</p><p className="mt-1 text-xs text-slate-500">Chỉnh task trực tiếp tại đây</p></div>{!draft.readOnly ? <button type="button" onClick={addTask} className="rounded-lg bg-white px-2.5 py-1.5 text-xs font-bold text-primary shadow-sm ring-1 ring-border">+ Task</button> : null}</div><div className="mt-3 space-y-2">{(selectedStage.tasks ?? []).map((task, taskIndex) => <div key={`${selectedStage.id}-${taskIndex}`} className="rounded-lg border border-border bg-white p-2.5"><div className="flex items-center gap-2"><span className="text-[10px] font-black text-primary">T{taskIndex + 1}</span><input disabled={draft.readOnly} value={task.title} onChange={(event) => updateTask(taskIndex, { title: event.target.value })} className="min-w-0 flex-1 border-0 bg-transparent px-0 text-xs font-semibold outline-none focus:ring-0 disabled:text-slate-700" placeholder="Tên task" /><input disabled={draft.readOnly} type="number" min="0" value={task.estimateMinutes ?? ""} onChange={(event) => updateTask(taskIndex, { estimateMinutes: event.target.value === "" ? undefined : Math.max(0, Number(event.target.value) || 0) })} className="w-20 rounded-md border border-border px-2 py-1 text-[10px]" placeholder="phút" /></div><div className="mt-2 ml-5 space-y-1 border-l-2 border-primary/15 pl-2">{(task.subtasks ?? []).map((subtask, subtaskIndex) => <div key={`${selectedStage.id}-${taskIndex}-${subtaskIndex}`} className="flex items-center gap-1.5"><span className="text-[9px] text-slate-400">ST{subtaskIndex + 1}</span><input disabled={draft.readOnly} value={subtask.title} onChange={(event) => updateTask(taskIndex, { subtasks: (task.subtasks ?? []).map((item, index) => index === subtaskIndex ? { ...item, title: event.target.value } : item) })} className="min-w-0 flex-1 border-0 bg-transparent px-0 text-[11px] outline-none focus:ring-0" /></div>)}{!draft.readOnly ? <button type="button" onClick={() => updateTask(taskIndex, { subtasks: [...(task.subtasks ?? []), { title: `Subtask ${(task.subtasks?.length ?? 0) + 1}`, subtasks: [] }] })} className="text-[10px] font-semibold text-primary">+ Subtask</button> : null}</div></div>)}{!(selectedStage.tasks ?? []).length ? <p className="rounded-lg border border-dashed border-border bg-white px-3 py-4 text-center text-xs text-slate-500">Stage này chưa có task. Thêm task để tạo checklist thực thi.</p> : null}</div></div> : null}</div> : null}</main>
+      <aside className="bg-slate-50/60 p-4 sm:p-5"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">INSPECTOR</p><h3 className="mt-1 text-sm font-bold text-slate-950">Thông tin đang chọn</h3>{selectedStage && selectedMilestone ? <div className="mt-4 space-y-4"><section><label className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">Stage name</label><input disabled={draft.readOnly} value={selectedStage.activity} onChange={(event) => updateStage(selectedMilestone.id, selectedStage.id, { activity: event.target.value })} className="mt-1 h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm font-semibold disabled:bg-slate-100" /></section><section><label className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">SLA (ngày)</label><input disabled={draft.readOnly} type="number" min="0" value={selectedStage.slaDays ?? ""} onChange={(event) => updateStage(selectedMilestone.id, selectedStage.id, { slaDays: event.target.value === "" ? undefined : Math.max(0, Number(event.target.value) || 0) })} className="mt-1 h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm disabled:bg-slate-100" /></section><section><label className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">Tiêu chí hoàn thành</label><textarea disabled={draft.readOnly} rows={3} value={selectedStage.criteria ?? ""} onChange={(event) => updateStage(selectedMilestone.id, selectedStage.id, { criteria: event.target.value })} className="mt-1 w-full resize-none rounded-lg border border-border bg-white px-2.5 py-2 text-xs disabled:bg-slate-100" placeholder="Khi nào stage được xem là hoàn tất?" /></section><div className="border-t border-border pt-4"><p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Milestone gate</p><label className="mt-2 block text-xs font-semibold text-slate-700">Hồ sơ tối thiểu<input disabled={draft.readOnly} type="number" min="0" value={selectedMilestone.requiredDocumentCount || 0} onChange={(event) => updateMilestone(selectedMilestone.id, { requiredDocumentCount: Math.max(0, Number(event.target.value) || 0) })} className="mt-1 h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm font-normal disabled:bg-slate-100" /></label><label className="mt-3 flex items-start gap-2 text-xs font-semibold text-slate-700"><input disabled={draft.readOnly} type="checkbox" checked={Boolean(selectedMilestone.customerConfirmationRequired)} onChange={(event) => updateMilestone(selectedMilestone.id, { customerConfirmationRequired: event.target.checked })} className="mt-0.5 h-4 w-4 rounded border-border text-primary" />Khách hàng xác nhận trước khi chuyển milestone</label><label className="mt-3 block text-xs font-semibold text-slate-700">Điều kiện mở tiếp theo<textarea disabled={draft.readOnly} rows={3} value={selectedMilestone.unlockCriteria ?? ""} onChange={(event) => updateMilestone(selectedMilestone.id, { unlockCriteria: event.target.value })} className="mt-1 w-full resize-none rounded-lg border border-border bg-white px-2.5 py-2 text-xs font-normal disabled:bg-slate-100" /></label></div>{!draft.readOnly && draft.milestones.length > 1 ? <button type="button" onClick={() => { updateDraft({ milestones: draft.milestones.filter((_, index) => index !== milestoneIndex) }); setMilestoneIndex(Math.max(0, milestoneIndex - 1)); setStageIndex(0); }} className="w-full rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">Xóa milestone</button> : null}</div> : <p className="mt-4 rounded-lg border border-dashed border-border bg-white p-3 text-xs leading-relaxed text-slate-500">Chọn một stage ở giữa để chỉnh chi tiết.</p>}</aside>
+    </div>
+  </section>;
 }
 
 function MilestoneTemplateManager({
@@ -748,6 +1071,13 @@ function MilestoneTemplateManager({
   };
   const updateDraft = (patch: Partial<TemplateDraft>) => setDraft((current) => current ? { ...current, ...patch } : current);
   const updateMilestone = (id: string, patch: Partial<TemplateMilestoneDraft>) => setDraft((current) => current ? { ...current, milestones: current.milestones.map((milestone) => milestone.id === id ? { ...milestone, ...patch } : milestone) } : current);
+  const updateStage = (milestoneId: string, stageId: string, patch: Partial<TemplateStageDraft>) => setDraft((current) => current ? {
+    ...current,
+    milestones: current.milestones.map((milestone) => milestone.id === milestoneId ? {
+      ...milestone,
+      stages: milestone.stages.map((stage) => stage.id === stageId ? { ...stage, ...patch } : stage)
+    } : milestone)
+  } : current);
   const save = async () => {
     if (!draft || draft.readOnly || !draft.name.trim() || draft.milestones.length === 0) return;
     const milestones: CreateProjectMilestoneInput[] = draft.milestones.map((milestone, milestoneIndex) => ({
@@ -768,7 +1098,8 @@ function MilestoneTemplateManager({
         criteria: stage.criteria?.trim() || undefined,
         slaDays: stage.slaDays,
         upbaseRole: stage.upbaseRole?.trim() || undefined,
-        customerRole: stage.customerRole?.trim() || undefined
+        customerRole: stage.customerRole?.trim() || undefined,
+        tasks: stage.tasks ?? []
       }))
     }));
     try {
@@ -794,6 +1125,7 @@ function MilestoneTemplateManager({
     {loading ? <div className="rounded-2xl border border-border bg-slate-50 p-6 text-center text-sm text-slate-500">Đang tải thư viện template…</div> : null}
     {!loading ? <div className="grid gap-4 lg:grid-cols-[270px_minmax(0,1fr)] lg:items-start"><aside className="rounded-2xl border border-border bg-slate-50/70 p-2"><div className="flex items-center justify-between px-2 pb-2"><span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">TEMPLATE ĐÃ LƯU</span><span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold text-slate-500">{templates.length}</span></div><div className="space-y-1">{templates.map((template) => <button type="button" key={template.id} onClick={() => selectTemplate(template)} className={`w-full rounded-xl px-3 py-3 text-left transition ${template.id === activeId && !isCreating ? "bg-white ring-1 ring-violet-200 shadow-sm" : "hover:bg-white"}`}><span className="flex items-center justify-between gap-2"><span className="truncate text-sm font-bold text-slate-900">{template.name}</span>{template.readOnly ? <span className="shrink-0 rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">Mặc định</span> : null}</span><span className="mt-1 block text-[11px] text-slate-500">{template.milestoneCount} milestone · {template.stageCount} stage</span></button>)}</div>{templates.length === 0 ? <p className="px-2 py-4 text-xs leading-relaxed text-slate-500">Chưa có template riêng. Bấm “Tạo template” để bắt đầu.</p> : null}</aside><div className="min-w-0 rounded-2xl border border-border bg-white">{draft ? <><div className="border-b border-border bg-gradient-to-r from-violet-50 via-white to-sky-50 px-4 py-4 sm:px-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><p className="text-[11px] font-bold uppercase tracking-wider text-violet-700">{isCreating ? "TEMPLATE MỚI" : draft.readOnly ? "SYSTEM TEMPLATE" : "TEMPLATE ĐÃ LƯU"}</p><h3 className="mt-1 text-lg font-bold text-slate-950">{isCreating ? "Thiết lập format milestone" : draft.name}</h3><p className="mt-1 text-xs text-slate-500">{draft.milestones.length} milestone · {draft.milestones.reduce((sum, milestone) => sum + milestone.stages.length, 0)} stage</p></div>{draft.readOnly ? <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-500">Chỉ xem</span> : <button type="button" disabled={saving || !draft.name.trim()} onClick={() => void save()} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-primary-foreground disabled:opacity-50"><Save className="h-4 w-4" />{saving ? "Đang lưu…" : isCreating ? "Lưu template" : "Cập nhật template"}</button>}</div></div><div className="space-y-4 p-4 sm:p-5"><div className="grid gap-3 sm:grid-cols-2"><label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Tên template</span><input disabled={draft.readOnly} value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} placeholder="VD: CRM triển khai chuẩn" className="h-10 w-full rounded-xl border border-border px-3 text-sm font-semibold disabled:bg-slate-50" /></label><label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Mã template <span className="font-normal text-slate-400">(tự sinh nếu bỏ trống)</span></span><input disabled={draft.readOnly || !isCreating} value={draft.key} onChange={(event) => updateDraft({ key: event.target.value })} placeholder="crm-standard-v1" className="h-10 w-full rounded-xl border border-border px-3 text-sm disabled:bg-slate-50" /></label></div><label className="block"><span className="mb-1.5 block text-xs font-semibold text-slate-600">Mô tả sử dụng</span><textarea disabled={draft.readOnly} rows={2} value={draft.description} onChange={(event) => updateDraft({ description: event.target.value })} placeholder="Template này dùng cho loại dự án nào?" className="w-full resize-none rounded-xl border border-border px-3 py-2.5 text-sm disabled:bg-slate-50" /></label><div className="flex items-center justify-between border-t border-border pt-4"><div><p className="text-sm font-bold text-slate-900">Chuỗi milestone</p><p className="mt-0.5 text-xs text-slate-500">Mỗi milestone cần ít nhất một stage để project mới tạo được hierarchy.</p></div>{!draft.readOnly ? <button type="button" onClick={() => updateDraft({ milestones: [...draft.milestones, { id: `milestone-${Date.now()}`, name: `Milestone ${draft.milestones.length + 1}`, sortOrder: (draft.milestones.length + 1) * 10, requiredDocumentCount: 0, requiredDocumentTypes: "", unlockCriteria: "", customerConfirmationRequired: false, reviewerMode: "workspace_admin", reviewerUserId: "", reviewerRole: "", stages: [{ id: `stage-${Date.now()}`, activity: "Stage 1", phase: "stage" }] }] })} className="text-xs font-bold text-primary hover:underline">+ Thêm milestone</button> : null}</div><div className="space-y-3">{draft.milestones.map((milestone, index) => <article key={milestone.id} className="rounded-2xl border border-border bg-slate-50/70 p-3 sm:p-4"><div className="flex items-center gap-2"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-[11px] font-black text-violet-700">M{index + 1}</span><input disabled={draft.readOnly} value={milestone.name} onChange={(event) => updateMilestone(milestone.id, { name: event.target.value })} className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-white px-2.5 text-sm font-bold disabled:bg-slate-100" />{!draft.readOnly && draft.milestones.length > 1 ? <button type="button" onClick={() => updateDraft({ milestones: draft.milestones.filter((item) => item.id !== milestone.id) })} className="text-xs font-semibold text-rose-600">Xóa</button> : null}</div><div className="mt-3 grid gap-2 sm:grid-cols-3"><label><span className="mb-1 block text-[11px] font-semibold text-slate-500">Số hồ sơ tối thiểu</span><input disabled={draft.readOnly} type="number" min="0" value={milestone.requiredDocumentCount || 0} onChange={(event) => updateMilestone(milestone.id, { requiredDocumentCount: Math.max(0, Number(event.target.value) || 0) })} className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm disabled:bg-slate-100" /></label><label className="sm:col-span-2"><span className="mb-1 block text-[11px] font-semibold text-slate-500">Loại hồ sơ (chỉ để phân loại, không bắt buộc)</span><input disabled={draft.readOnly} value={milestone.requiredDocumentTypes} onChange={(event) => updateMilestone(milestone.id, { requiredDocumentTypes: event.target.value })} placeholder="Không cần nhập nếu chỉ kiểm tra số lượng" className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm disabled:bg-slate-100" /></label></div><div className="mt-2 grid gap-2 sm:grid-cols-2"><div><CustomDropdown label="Người duyệt" value={milestone.reviewerMode === "specific_user" ? milestone.reviewerUserId ?? "" : WORKSPACE_ADMIN_REVIEWER_VALUE} options={milestoneReviewerOptions(users, milestone.reviewerMode === "specific_user" ? milestone.reviewerUserId : undefined)} disabled={draft.readOnly} searchable onChange={(value) => updateMilestone(milestone.id, value === WORKSPACE_ADMIN_REVIEWER_VALUE ? { reviewerMode: "workspace_admin", reviewerUserId: "" } : { reviewerMode: "specific_user", reviewerUserId: value })} /></div><label className="flex items-end gap-2 pb-2 text-xs font-semibold text-slate-600"><input disabled={draft.readOnly} type="checkbox" checked={Boolean(milestone.customerConfirmationRequired)} onChange={(event) => updateMilestone(milestone.id, { customerConfirmationRequired: event.target.checked })} className="h-4 w-4 rounded border-border text-primary" /> Cần khách hàng xác nhận</label></div><label className="mt-2 block"><span className="mb-1 block text-[11px] font-semibold text-slate-500">Điều kiện mở milestone kế tiếp</span><textarea disabled={draft.readOnly} rows={2} value={milestone.unlockCriteria ?? ""} onChange={(event) => updateMilestone(milestone.id, { unlockCriteria: event.target.value })} placeholder="Ví dụ: đủ hồ sơ và Admin workspace duyệt" className="w-full resize-none rounded-lg border border-border bg-white px-2.5 py-2 text-sm disabled:bg-slate-100" /></label><div className="mt-3 border-t border-border pt-3"><div className="flex items-center justify-between"><span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">STAGE TRONG MILESTONE</span>{!draft.readOnly ? <button type="button" onClick={() => updateMilestone(milestone.id, { stages: [...milestone.stages, { id: `stage-${Date.now()}`, activity: `Stage ${milestone.stages.length + 1}`, phase: "stage" }] })} className="text-xs font-bold text-primary hover:underline">+ Thêm stage</button> : null}</div><div className="mt-2 space-y-2">{milestone.stages.map((stage, stageIndex) => <div key={stage.id} className="grid gap-2 sm:grid-cols-[28px_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center"><span className="text-[11px] font-bold text-slate-400">{stageIndex + 1}</span><input disabled={draft.readOnly} value={stage.activity} onChange={(event) => updateMilestone(milestone.id, { stages: milestone.stages.map((item) => item.id === stage.id ? { ...item, activity: event.target.value } : item) })} className="h-9 rounded-lg border border-border bg-white px-2.5 text-sm disabled:bg-slate-100" placeholder="Tên stage" /><input disabled={draft.readOnly} value={stage.criteria ?? ""} onChange={(event) => updateMilestone(milestone.id, { stages: milestone.stages.map((item) => item.id === stage.id ? { ...item, criteria: event.target.value } : item) })} className="h-9 rounded-lg border border-border bg-white px-2.5 text-sm disabled:bg-slate-100" placeholder="Tiêu chí hoàn thành" />{!draft.readOnly && milestone.stages.length > 1 ? <button type="button" onClick={() => updateMilestone(milestone.id, { stages: milestone.stages.filter((item) => item.id !== stage.id) })} className="text-xs font-semibold text-rose-600">Xóa</button> : null}</div>)}</div></div></article>)}</div></div></> : <div className="p-8 text-center text-sm text-slate-500">Bấm “Tạo template” để tạo format milestone đầu tiên.</div>}</div></div> : null}
   </section>
+  <TemplateTaskTreeEditor draft={draft} onUpdateStage={updateStage} />
   <MilestoneRulePanel templates={templates} teams={teams} onCreateTeam={onCreateTeam} onUpdate={onUpdate} />
   </>;
 }
@@ -869,7 +1201,8 @@ function MilestoneRulePanel({
           criteria: stage.criteria?.trim() || undefined,
           slaDays: stage.slaDays,
           upbaseRole: stage.upbaseRole?.trim() || undefined,
-          customerRole: stage.customerRole?.trim() || undefined
+          customerRole: stage.customerRole?.trim() || undefined,
+          tasks: stage.tasks ?? []
         }))
       }));
       await onUpdate(draft.id, { milestones });
@@ -1071,7 +1404,7 @@ function LarkReminderCardPreview({ slot, localDate, time, recipientLabel }: { sl
 
 function Metric({ icon, label, value, tone }: { icon: ReactNode; label: string; value?: number; tone: "amber" | "sky" | "rose" | "indigo" }) {
   const colors = { amber: "bg-amber-100 text-amber-700", sky: "bg-sky-100 text-sky-700", rose: "bg-rose-100 text-rose-700", indigo: "bg-indigo-100 text-indigo-700" };
-  return <div className="rounded-2xl border border-border bg-card p-4 shadow-sm"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-xl ${colors[tone]}`}>{icon}</span><div><p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p><p className="mt-0.5 text-2xl font-black tabular-nums text-slate-950">{typeof value === "number" ? value : "—"}</p></div></div></div>;
+  return <div className="bg-card p-4"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-lg ${colors[tone]}`}>{icon}</span><div><p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p><p className="mt-0.5 text-2xl font-black tabular-nums text-slate-950">{typeof value === "number" ? value : "—"}</p></div></div></div>;
 }
 
 function Toggle({ checked, onChange, label, compact = false }: { checked: boolean; onChange: (value: boolean) => void; label: string; compact?: boolean }) {

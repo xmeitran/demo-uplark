@@ -29,6 +29,12 @@ export class ProjectsController {
     return this.projects.previewProjectPlan(body, principal);
   }
 
+  @Post("projects/ai-template-draft")
+  async createAiTemplateDraft(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Body() body: any) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.createAiTemplateDraft(body, principal);
+  }
+
   @Get("milestone-templates")
   async listMilestoneTemplates(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined) {
     const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);

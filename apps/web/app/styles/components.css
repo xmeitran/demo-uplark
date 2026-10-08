@@ -1865,20 +1865,34 @@ s-app-nav {
 }
 
 .delivery-milestone-mode-grid input { margin-top: 3px; accent-color: #2563eb; }
-.delivery-milestone-mode-grid span { display: flex; flex-direction: column; gap: 3px; }
+.delivery-milestone-mode-grid span { display: flex; flex: 1; flex-direction: column; gap: 3px; }
 .delivery-milestone-mode-grid strong { color: #17233d; font-size: 13px; }
 .delivery-milestone-mode-grid small { color: #64748b; font-size: 11px; }
+.delivery-milestone-mode-grid em { min-width: 58px; color: #2563eb; font-size: 10px; font-style: normal; font-weight: 700; text-align: right; }
 
 .delivery-milestone-list { display: flex; flex-direction: column; gap: 10px; }
-.delivery-milestone-card { border: 1px solid #dbe4f0; border-radius: 12px; padding: 12px; background: #fbfdff; }
-.delivery-milestone-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-.delivery-milestone-card-header input { flex: 1; min-width: 0; border: 0; background: transparent; color: #17233d; font-size: 14px; font-weight: 700; outline: none; }
-.delivery-milestone-card-header input:disabled { opacity: 1; }
+.delivery-milestone-card { overflow: hidden; border: 1px solid #dbe4f0; border-radius: 14px; background: #fbfdff; transition: border-color .18s ease, box-shadow .18s ease; }
+.delivery-milestone-card.expanded { border-color: #93b4f8; box-shadow: 0 4px 14px rgba(37, 99, 235, .08); }
+.delivery-milestone-card-header { display: flex; width: 100%; align-items: center; gap: 10px; border: 0; padding: 13px 14px; background: transparent; cursor: pointer; text-align: left; }
+.delivery-milestone-card-header:hover { background: #f4f8ff; }
+.delivery-milestone-card-title { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
+.delivery-milestone-card-title strong { overflow: hidden; color: #17233d; font-size: 14px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.delivery-milestone-card-title small { color: #64748b; font-size: 11px; }
+.delivery-milestone-chevron { display: inline-flex; width: 24px; height: 24px; align-items: center; justify-content: center; border-radius: 7px; background: #eef4ff; color: #2563eb; font-size: 17px; line-height: 1; }
+.delivery-milestone-card-body { border-top: 1px solid #e5edf7; padding: 14px; background: #fff; }
+.delivery-milestone-edit-name { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 12px; }
+.delivery-milestone-edit-name > div { flex: 1; }
+.delivery-milestone-collapsed { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 13px 52px; }
+.delivery-milestone-collapsed span, .delivery-milestone-collapsed small { border: 1px solid #dbe4f0; border-radius: 999px; padding: 4px 8px; background: #fff; color: #64748b; font-size: 10px; }
+.delivery-milestone-collapsed small { border: 0; background: #eef4ff; color: #2563eb; font-weight: 700; }
 .delivery-milestone-index { width: 28px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; background: #e0ecff; color: #2563eb; font-size: 11px; font-weight: 700; }
 .delivery-inline-remove { border: 0; background: transparent; color: #dc2626; font-size: 12px; cursor: pointer; }
 .delivery-milestone-stage-preview { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .delivery-milestone-stage-preview span, .delivery-milestone-stage-preview button { border: 1px solid #dbe4f0; border-radius: 999px; padding: 4px 8px; background: #fff; color: #64748b; font-size: 11px; }
+.delivery-milestone-stage-preview .delivery-stage-label { border: 0; padding-left: 0; background: transparent; color: #94a3b8; font-size: 10px; font-weight: 800; letter-spacing: .08em; }
 .delivery-milestone-stage-preview button { color: #2563eb; cursor: pointer; }
+.delivery-milestone-auto-note { display: flex; flex-direction: column; gap: 3px; margin: 12px 0 0; border-radius: 10px; padding: 10px 12px; background: #f5f8ff; color: #52627c; font-size: 11px; line-height: 1.45; }
+.delivery-milestone-auto-note strong { color: #2563eb; font-size: 11px; }
 .delivery-milestone-gate-grid { display: grid; grid-template-columns: .7fr 1.8fr .8fr; gap: 8px; }
 .delivery-gate-check { display: flex; gap: 7px; align-items: center; margin-top: 8px; color: #52627c; font-size: 12px; }
 .delivery-gate-check input { accent-color: #2563eb; }
@@ -14431,3 +14445,8 @@ button.pipeline-stage-card {
 /* Monetary detail floats above clipped table/card containers. */
 .money-amount { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; white-space: nowrap; font-variant-numeric: tabular-nums; cursor: help; border-radius: 3px; }
 .money-amount-tooltip { position: fixed; z-index: 10000; width: max-content; max-width: min(320px, calc(100vw - 24px)); padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--color-popover); color: var(--color-popover-foreground); box-shadow: 0 8px 24px #0002; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; white-space: normal; max-height: min(320px, 50vh); overflow: auto; }
+
+/* Admin workspace visual contract: one calm surface language across legacy panels. */
+.admin-workspace-page .rounded-3xl { border-radius: 14px !important; }
+.admin-workspace-page .shadow-sm { box-shadow: none !important; }
+.admin-workspace-page .bg-gradient-to-r { background-image: none !important; }

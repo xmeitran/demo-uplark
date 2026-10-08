@@ -1,4 +1,4 @@
-import { ForbiddenException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 import { ResourceControlsService } from "./resource-controls.service";
 
@@ -135,6 +135,73 @@ describe("ResourceControlsService", () => {
       grossMarginAmount: 180,
       grossMarginPercent: 45
     });
+  });
+
+  it("limits P&L labor entries to the requested reporting month", async () => {
+    const prisma = {
+      project: { findMany: vi.fn().mockResolvedValue([]) }
+    } as any;
+    const service = new ResourceControlsService(prisma);
+
+    await service.projectPlSummary({ period: "2026-10" }, principal as any);
+
+    expect(prisma.project.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      include: expect.objectContaining({
+        tasks: {
+          include: {
+            timeEntries: {
+              where: {
+                workDate: {
+                  gte: new Date("2026-10-01T00:00:00.000Z"),
+                  lt: new Date("2026-11-01T00:00:00.000Z")
+                }
+              }
+            }
+          }
+        }
+      })
+    }));
+  });
+
+  it("rejects malformed P&L reporting periods", async () => {
+    const prisma = { project: { findMany: vi.fn() } } as any;
+    const service = new ResourceControlsService(prisma);
+
+    await expect(service.projectPlSummary({ period: "2026-13" }, principal as any)).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.project.findMany).not.toHaveBeenCalled();
+  });
+
+  it("accepts an inclusive custom date range for P&L entries", async () => {
+    const prisma = { project: { findMany: vi.fn().mockResolvedValue([]) } } as any;
+    const service = new ResourceControlsService(prisma);
+
+    await service.projectPlSummary({ startDate: "2026-10-07", endDate: "2026-10-14" }, principal as any);
+
+    expect(prisma.project.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      include: expect.objectContaining({
+        costs: { where: { occurredAt: { gte: new Date("2026-10-07T00:00:00.000Z"), lt: new Date("2026-10-15T00:00:00.000Z") } } },
+        paymentMilestones: {
+          where: {
+            OR: [
+              { dueAt: { gte: new Date("2026-10-07T00:00:00.000Z"), lt: new Date("2026-10-15T00:00:00.000Z") } },
+              { paidAt: { gte: new Date("2026-10-07T00:00:00.000Z"), lt: new Date("2026-10-15T00:00:00.000Z") } }
+            ]
+          }
+        },
+        tasks: {
+          include: {
+            timeEntries: {
+              where: {
+                workDate: {
+                  gte: new Date("2026-10-07T00:00:00.000Z"),
+                  lt: new Date("2026-10-15T00:00:00.000Z")
+                }
+              }
+            }
+          }
+        }
+      })
+    }));
   });
 
   it("rejects an allocation when the user is not an active member of the workspace", async () => {

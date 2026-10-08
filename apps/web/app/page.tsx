@@ -29,6 +29,7 @@ import { CustomDropdown, CustomDatePicker } from "@/components/constructor-x/cus
 import { ModalLayer } from "@/components/modal-layer";
 import { AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/auth";
+import { loadExcelWorkbook } from "@/lib/excel-import";
 import type { Member, Project } from "./projects/data";
 import {
   fetchAccountOptions,
@@ -348,7 +349,47 @@ export default function DashboardPage() {
   const [color, setColor] = useState("#2563eb");
   const [tags, setTags] = useState("");
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+  const [dashboardAiBusy, setDashboardAiBusy] = useState(false);
+  const [dashboardAiError, setDashboardAiError] = useState<string | null>(null);
+  const [dashboardAiDraft, setDashboardAiDraft] = useState<{ sourceFileName: string; projectName: string; description: string; milestones: { name: string; stages: string[] }[]; warnings: string[] } | null>(null);
+  const dashboardAiInputRef = useRef<HTMLInputElement | null>(null);
   const displayName = user?.name ?? "Workspace";
+
+  const handleDashboardExcelImport = async (file: File) => {
+    setDashboardAiBusy(true);
+    setDashboardAiError(null);
+    try {
+      if (file.size > 8 * 1024 * 1024) throw new Error("File tối đa 8 MB.");
+      if (file.name.toLowerCase().endsWith(".xls")) throw new Error("Vui lòng lưu file XLS thành XLSX trước khi import.");
+      const body: { fileName: string; text: string } = { fileName: file.name, text: "" };
+      if (file.name.toLowerCase().endsWith(".csv")) {
+        body.text = await file.text();
+      } else {
+        const workbook = await loadExcelWorkbook(await file.arrayBuffer());
+        const rows: string[] = [];
+        workbook.eachSheet((sheet) => {
+          rows.push(`SHEET: ${sheet.name}`);
+          sheet.eachRow((row) => {
+            const values = Array.isArray(row.values) ? row.values.slice(1) : [];
+            if (values.some((value) => String(value ?? "").trim())) rows.push(values.map((value) => String(value ?? "").replace(/\t/g, " ")).join("\t"));
+          });
+        });
+        body.text = rows.join("\n");
+      }
+      const response = await fetch("/api/projects/ai-template-draft", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof payload.message === "string" ? payload.message : "Không tạo được template tạm từ file.");
+      if (!payload?.data?.milestones?.length) throw new Error("Không tìm thấy milestone trong file.");
+      setDashboardAiDraft(payload.data);
+      setName(payload.data.projectName || "");
+      setDescription(payload.data.description || "");
+    } catch (error) {
+      setDashboardAiError(error instanceof Error ? error.message : "Không thể đọc file.");
+    } finally {
+      setDashboardAiBusy(false);
+      if (dashboardAiInputRef.current) dashboardAiInputRef.current.value = "";
+    }
+  };
 
   useEffect(() => {
     if (accountOptions.length > 0 && !accountOptions.some(option => option.value === client)) {
@@ -541,7 +582,13 @@ export default function DashboardPage() {
           tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean),
           color,
           scopeSummary: description.trim() || undefined,
-          createStageTemplate: true
+          createStageTemplate: true,
+          milestoneMode: dashboardAiDraft ? "manual" : undefined,
+          manualMilestones: dashboardAiDraft?.milestones.map((milestone, index) => ({
+            name: milestone.name,
+            sortOrder: (index + 1) * 10,
+            stages: (milestone.stages.length ? milestone.stages : [`${milestone.name} - Stage 1`]).map((activity, stageIndex) => ({ activity, phase: milestone.name, sortOrder: (stageIndex + 1) * 10 }))
+          }))
       });
 
       if (response.status === 401) {
@@ -582,6 +629,8 @@ export default function DashboardPage() {
       setColor("#2563eb");
       setTags("");
       setSelectedMembers([]);
+      setDashboardAiDraft(null);
+      setDashboardAiError(null);
     } catch (error) {
       setDashboardError(error instanceof Error ? error.message : "Could not create project");
     } finally {
@@ -1074,6 +1123,24 @@ export default function DashboardPage() {
                       className="w-full px-3.5 py-2.5 bg-background border border-input rounded-xl text-sm text-foreground focus:outline-none focus:border-primary transition-colors resize-none"
                     />
                   </div>
+
+                  <section className="rounded-2xl border border-border bg-muted/15 p-4 space-y-3" aria-labelledby="dashboard-ai-import-title">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h4 id="dashboard-ai-import-title" className="text-sm font-bold text-foreground">Import Excel → template tạm</h4>
+                        <p className="mt-1 text-xs text-muted-foreground">Đọc milestone và stage từ Excel/CSV miễn phí. Bạn kiểm tra trước khi tạo Project.</p>
+                      </div>
+                      <div className="shrink-0">
+                        <input ref={dashboardAiInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleDashboardExcelImport(file); }} />
+                        <button type="button" disabled={dashboardAiBusy} onClick={() => dashboardAiInputRef.current?.click()} className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-50">{dashboardAiBusy ? "Đang đọc…" : "Import Excel"}</button>
+                      </div>
+                    </div>
+                    {dashboardAiError ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{dashboardAiError}</div> : null}
+                    {dashboardAiDraft ? <div className="overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-b from-primary/5 to-background text-xs text-foreground shadow-sm">
+                      <div className="border-b border-primary/10 px-3.5 py-3"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="font-bold">Bản nháp project đã đọc</p><p className="mt-1 truncate text-[10px] text-muted-foreground">{dashboardAiDraft.sourceFileName}</p></div><span className="shrink-0 rounded-full bg-primary/10 px-2 py-1 text-[10px] font-bold text-primary">Đã đọc</span></div></div>
+                      <div className="space-y-3 p-3.5"><div className="rounded-xl border border-border bg-background px-3 py-2.5"><p className="truncate font-bold">{dashboardAiDraft.projectName || "Chưa nhận diện tên project"}</p><p className="mt-1 text-[10px] text-muted-foreground">{dashboardAiDraft.milestones.length} milestone · {dashboardAiDraft.milestones.reduce((sum, milestone) => sum + milestone.stages.length, 0)} stage</p></div><div className="max-h-44 space-y-2 overflow-y-auto pr-1">{dashboardAiDraft.milestones.slice(0, 8).map((milestone, index) => <div key={milestone.name} className="flex gap-2 rounded-xl border border-border/70 bg-background/70 p-2"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-primary/10 text-[10px] font-bold text-primary">M{index + 1}</span><div className="min-w-0"><p className="truncate text-[11px] font-bold">{milestone.name}</p><p className="mt-0.5 line-clamp-2 text-[10px] leading-relaxed text-muted-foreground">{milestone.stages.length ? milestone.stages.slice(0, 3).join(" · ") : "Chưa có stage"}</p></div></div>)}</div>{dashboardAiDraft.warnings.length ? <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[10px] leading-relaxed text-amber-800"><span className="font-bold">Cần rà soát:</span> {dashboardAiDraft.warnings.join("; ")}</div> : null}</div>
+                    </div> : null}
+                  </section>
 
                   {/* Highlight Color & Tags */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

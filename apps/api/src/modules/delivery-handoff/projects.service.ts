@@ -5,6 +5,7 @@ import { SubjectStatus, type Prisma } from "@prisma/client";
 import type {
   CreateProjectInput,
   CreateProjectMilestoneInput,
+  ProjectTaskTemplateInput,
   ProjectMilestoneEvidenceMode,
   ProjectMilestoneReviewerMode,
   CreateProjectMilestoneTemplateInput,
@@ -623,7 +624,8 @@ function normalizeManualMilestones(input: unknown) {
           activityPercent: optionalInteger(stage.activityPercent, "activityPercent") ?? 0,
           criteria: optionalString(stage.criteria, "criteria") ?? "Stage completion criteria",
           upbaseRole: optionalString(stage.upbaseRole, "upbaseRole") ?? undefined,
-          customerRole: optionalString(stage.customerRole, "customerRole") ?? undefined
+          customerRole: optionalString(stage.customerRole, "customerRole") ?? undefined,
+          tasks: normalizeTemplateTasks(stage.tasks, `manualMilestones[${milestoneIndex}].stages[${stageIndex}].tasks`)
         };
       })
     };
@@ -974,6 +976,34 @@ function milestoneTemplateKey(value: unknown, fallback: string) {
   return normalized || fallback;
 }
 
+function normalizeTemplateTasks(value: unknown, path: string, depth = 0): ProjectTaskTemplateInput[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new BadRequestException(`${path} must be an array`);
+  if (depth > 3) throw new BadRequestException(`${path} is nested too deeply`);
+  return value.map((rawTask, taskIndex) => {
+    if (!rawTask || typeof rawTask !== "object") throw new BadRequestException(`${path}[${taskIndex}] is invalid`);
+    const task = rawTask as Record<string, unknown>;
+    const title = String(task.title ?? task.name ?? "").trim();
+    if (!title) throw new BadRequestException(`${path}[${taskIndex}] needs a title`);
+    const parsedEstimateMinutes = task.estimateMinutes === undefined || task.estimateMinutes === null
+      ? undefined
+      : optionalInteger(task.estimateMinutes, `${path}[${taskIndex}].estimateMinutes`);
+    const estimateMinutes = parsedEstimateMinutes ?? undefined;
+    if (estimateMinutes !== undefined && estimateMinutes < 0) throw new BadRequestException(`${path}[${taskIndex}].estimateMinutes must be non-negative`);
+    return {
+      title,
+      description: optionalString(task.description, `${path}[${taskIndex}].description`) ?? undefined,
+      status: optionalString(task.status, `${path}[${taskIndex}].status`) ?? "todo",
+      priority: optionalString(task.priority, `${path}[${taskIndex}].priority`) ?? "medium",
+      taskType: optionalString(task.taskType, `${path}[${taskIndex}].taskType`) ?? "implementation",
+      estimateMinutes,
+      plannedStartAt: optionalString(task.plannedStartAt, `${path}[${taskIndex}].plannedStartAt`) ?? undefined,
+      dueAt: optionalString(task.dueAt, `${path}[${taskIndex}].dueAt`) ?? undefined,
+      subtasks: normalizeTemplateTasks(task.subtasks, `${path}[${taskIndex}].subtasks`, depth + 1)
+    };
+  });
+}
+
 function normalizeMilestoneTemplateMilestones(value: unknown): MilestoneTemplateRecord {
   if (!Array.isArray(value) || value.length === 0) {
     throw new BadRequestException("A milestone template must contain at least one milestone");
@@ -998,7 +1028,8 @@ function normalizeMilestoneTemplateMilestones(value: unknown): MilestoneTemplate
         criteria: String(stage.criteria ?? "").trim() || undefined,
         slaDays: Number.isFinite(Number(stage.slaDays)) ? Math.max(0, Number(stage.slaDays)) : undefined,
         upbaseRole: String(stage.upbaseRole ?? "").trim() || undefined,
-        customerRole: String(stage.customerRole ?? "").trim() || undefined
+        customerRole: String(stage.customerRole ?? "").trim() || undefined,
+        tasks: normalizeTemplateTasks(stage.tasks, `milestones[${milestoneIndex}].stages[${stageIndex}].tasks`)
       };
     });
     const requiredDocumentTypes = Array.isArray(item.requiredDocumentTypes)
@@ -1043,6 +1074,129 @@ function mapMilestoneTemplateSummary(row: any, readOnly = false) {
     stageCount: milestones.reduce((total, milestone) => total + milestone.stages.length, 0),
     createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : undefined,
     updatedAt: row.updatedAt ? new Date(row.updatedAt).toISOString() : undefined
+  };
+}
+
+function spreadsheetText(value: unknown) {
+  return String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/đ/g, "d").replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function spreadsheetColumnIndex(header: string[], aliases: string[]) {
+  return header.findIndex((cell) => aliases.some((alias) => {
+    const normalized = spreadsheetText(cell);
+    return normalized === alias || normalized.includes(alias);
+  }));
+}
+
+function buildSpreadsheetTemplateDraft(fileName: string, source: string) {
+  const fallbackMilestone = fileName.replace(/\.(xlsx|xls|csv)$/i, "").replace(/[_-]+/g, " ").trim() || "Imported project";
+  const aliases = {
+    milestone: ["milestone", "giai doan", "phase", "workstream", "epic", "release", "moc", "nhom tinh nang", "project phase"],
+    stage: ["stage", "activity", "hang muc", "work package", "deliverable", "module", "work item"],
+    task: ["task", "chi tiet cong viec", "mo ta cong viec", "detail"],
+    subtask: ["subtask", "sub task", "sub-task", "cong viec con", "con viec con"],
+    project: ["project", "project name", "du an", "ten du an", "initiative"],
+  };
+  const groups = new Map<string, Map<string, { name: string; tasks: Array<{ title: string; subtasks: Array<{ title: string }> }> }>>();
+  const warnings: string[] = [];
+  const sheetBlocks: Array<{ name: string; rows: string[][] }> = [];
+  let currentSheet = "Imported sheet";
+  let currentRows: string[][] = [];
+  const flushSheet = () => {
+    if (currentRows.length) sheetBlocks.push({ name: currentSheet, rows: currentRows });
+    currentRows = [];
+  };
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const sheetMatch = line.match(/^SHEET\s*:\s*(.*)$/i);
+    if (sheetMatch) {
+      flushSheet();
+      currentSheet = sheetMatch[1].trim() || "Imported sheet";
+      continue;
+    }
+    currentRows.push(line.split("\t").map((cell) => cell.trim()));
+  }
+  flushSheet();
+  if (!sheetBlocks.length) sheetBlocks.push({ name: "Imported sheet", rows: [] });
+
+  let projectName = fallbackMilestone;
+  let explicitMilestoneColumn = false;
+  let parsedTables = 0;
+  for (const block of sheetBlocks) {
+    const candidates = block.rows.slice(0, Math.min(block.rows.length, 40)).map((row, index) => {
+      const normalized = row.map(spreadsheetText);
+      const score = normalized.reduce((total, cell) => total + (Object.values(aliases).some((list) => list.some((alias) => cell === alias || cell.includes(alias))) ? 1 : 0), 0);
+      return { index, row, normalized, score };
+    });
+    const headerCandidate = candidates.sort((a, b) => b.score - a.score)[0];
+    const headerIndex = headerCandidate && headerCandidate.score > 0 ? headerCandidate.index : -1;
+    const header = headerIndex >= 0 ? headerCandidate!.normalized : [];
+    const milestoneColumn = spreadsheetColumnIndex(header, aliases.milestone);
+    const stageColumn = spreadsheetColumnIndex(header, aliases.stage);
+    const taskColumn = spreadsheetColumnIndex(header, aliases.task);
+    const subtaskColumn = spreadsheetColumnIndex(header, aliases.subtask);
+    const projectColumn = spreadsheetColumnIndex(header, aliases.project);
+    if (headerIndex >= 0) parsedTables += 1;
+    if (milestoneColumn >= 0) explicitMilestoneColumn = true;
+    if (projectColumn >= 0) {
+      const projectValue = block.rows.slice(headerIndex + 1).map((row) => row[projectColumn]).find((value) => value?.trim());
+      if (projectValue) projectName = projectValue.trim();
+    }
+    if (headerIndex < 0) warnings.push(`Không nhận diện được hàng tiêu đề ở sheet “${block.name}”; hệ thống dùng cách đoán cột.`);
+    let activeMilestone = block.name !== "Imported sheet" ? block.name : fallbackMilestone;
+    let activeStage = "General work";
+    for (const row of block.rows.slice(headerIndex >= 0 ? headerIndex + 1 : 0)) {
+      const values = row.map((cell) => cell.trim());
+      const nonEmpty = values.filter(Boolean);
+      if (!nonEmpty.length) continue;
+      const rowLooksLikeSection = nonEmpty.length === 1 && nonEmpty[0].length < 120 && !/\d{1,4}[\-\/]\d{1,2}/.test(nonEmpty[0]);
+      const rawMilestone = milestoneColumn >= 0 ? values[milestoneColumn] : "";
+      if (rawMilestone) activeMilestone = rawMilestone;
+      if (rowLooksLikeSection && milestoneColumn < 0) {
+        activeMilestone = nonEmpty[0];
+        continue;
+      }
+      const stageValue = stageColumn >= 0 ? values[stageColumn] : "";
+      const taskValue = taskColumn >= 0 ? values[taskColumn] : "";
+      const subtaskValue = subtaskColumn >= 0 ? values[subtaskColumn] : "";
+      const guessedStage = stageValue || (!taskValue ? nonEmpty.find((value) => value !== activeMilestone && !/^stt$|^no\.?$/i.test(value)) : activeStage) || "";
+      if (!guessedStage || /^stt$|^no\.?$/i.test(guessedStage) || /^(status|trang thai|owner|pic|assignee|deadline|due date)$/i.test(guessedStage)) continue;
+      if (stageValue) activeStage = stageValue;
+      const stage = stageValue || guessedStage;
+      const milestone = rawMilestone || activeMilestone || fallbackMilestone;
+      const current = groups.get(milestone) ?? new Map();
+      const stageRecord = current.get(stage) ?? { name: stage, tasks: [] };
+      if (taskValue && taskValue !== stageValue) {
+        const previousTask = stageRecord.tasks[stageRecord.tasks.length - 1];
+        const task = previousTask?.title === taskValue ? previousTask : { title: taskValue, subtasks: [] };
+        if (task !== previousTask) stageRecord.tasks.push(task);
+        if (subtaskValue) task.subtasks.push({ title: subtaskValue });
+      } else if (subtaskValue) {
+        const parentTask = stageRecord.tasks[stageRecord.tasks.length - 1];
+        if (parentTask) parentTask.subtasks.push({ title: subtaskValue });
+        else warnings.push(`Sheet “${block.name}” có Subtask nhưng chưa có Task cha ở milestone “${milestone}”, stage “${stage}”.`);
+      }
+      else if (!current.has(stage) && stageValue) stageRecord.tasks = [];
+      current.set(stage, stageRecord);
+      groups.set(milestone, current);
+    }
+  }
+  if (sheetBlocks.length > 1) warnings.push(`Đã đọc ${sheetBlocks.length} sheet; hệ thống gộp các bảng theo milestone.`);
+  if (!explicitMilestoneColumn) warnings.push("Không thấy cột Milestone/Giai đoạn rõ ràng; hệ thống dùng tên section, tên sheet hoặc tên file để giữ nhóm.");
+  if (!parsedTables) warnings.push("Không tìm thấy header chuẩn; nên kiểm tra lại bản nháp trước khi lưu.");
+  const milestones = Array.from(groups.entries()).map(([name, stages]) => ({
+    name,
+    stages: Array.from(stages.values()).slice(0, 100)
+  })).filter((milestone) => milestone.stages.length > 0).slice(0, 50);
+  return {
+    data: {
+      sourceFileName: fileName,
+      projectName,
+      description: "Bản nháp được suy luận từ file dự án đã import; hãy rà soát milestone/stage trước khi tạo project.",
+      milestones,
+      warnings
+    }
   };
 }
 
@@ -1208,6 +1362,111 @@ export class ProjectsService {
     }
 
     return mapProjectSummary(project);
+  }
+
+  async createAiTemplateDraft(rawInput: any, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project planning is internal");
+    const input = rawInput && typeof rawInput === "object" ? rawInput : {};
+    const fileName = nonEmptyString(input.fileName, "fileName");
+    const text = typeof input.text === "string" ? input.text.trim() : "";
+    const imageDataUrl = typeof input.imageDataUrl === "string" ? input.imageDataUrl.trim() : "";
+    if (!text && !imageDataUrl) throw new BadRequestException("Upload an image or spreadsheet content to analyze");
+    if (text.length > 120_000) throw new BadRequestException("Spreadsheet content is too large to analyze");
+    if (imageDataUrl && !/^data:image\/(png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+$/.test(imageDataUrl)) {
+      throw new BadRequestException("Only PNG, JPEG and WEBP images are supported");
+    }
+
+    if (text) return buildSpreadsheetTemplateDraft(fileName, text);
+
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    if (!apiKey) {
+      throw new BadRequestException("AI import is not configured. Set OPENAI_API_KEY on the API service first.");
+    }
+
+    const userContent: Array<Record<string, unknown>> = [{
+      type: "text",
+      text: `Read the uploaded project planning source (${fileName}) and produce a temporary project template. Do not invent business facts. Preserve names, order and dates when present. Return only JSON matching the required schema.\n\nSOURCE:\n${text || "The source is the attached image."}`
+    }];
+    if (imageDataUrl) userContent.push({ type: "image_url", image_url: { url: imageDataUrl, detail: "high" } });
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: process.env.CRM_AI_MODEL?.trim() || "gpt-4o-mini",
+        temperature: 0.1,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "project_template_draft",
+            strict: true,
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                projectName: { type: "string" },
+                description: { type: "string" },
+                milestones: {
+                  type: "array", items: { type: "object", additionalProperties: false, properties: {
+                    name: { type: "string" },
+                    stages: { type: "array", items: { type: "object", additionalProperties: false, properties: {
+                      name: { type: "string" },
+                      tasks: { type: "array", items: { $ref: "#/$defs/task" } }
+                    }, required: ["name", "tasks"] } }
+                  }, required: ["name", "stages"] }
+                },
+                warnings: { type: "array", items: { type: "string" } }
+              },
+              $defs: {
+                task: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    title: { type: "string" },
+                    subtasks: { type: "array", items: { $ref: "#/$defs/task" } }
+                  },
+                  required: ["title", "subtasks"]
+                }
+              },
+              required: ["projectName", "description", "milestones", "warnings"]
+            }
+          }
+        },
+        messages: [
+          { role: "system", content: "You extract project planning structures. A draft is temporary and must be reviewed by a human before persistence." },
+          { role: "user", content: userContent }
+        ]
+      })
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new BadRequestException(`AI import failed (${response.status})${detail ? `: ${detail.slice(0, 240)}` : ""}`);
+    }
+    const payload = await response.json() as any;
+    const content = payload?.choices?.[0]?.message?.content;
+    let parsed: any;
+    try { parsed = JSON.parse(typeof content === "string" ? content : "{}"); } catch { throw new BadRequestException("AI returned an invalid template draft"); }
+    const normalizeDraftTasks = (value: unknown): ProjectTaskTemplateInput[] => Array.isArray(value)
+      ? value.map((task: any) => ({
+          title: typeof task?.title === "string" ? task.title.trim() : "",
+          subtasks: normalizeDraftTasks(task?.subtasks)
+        })).filter((task) => task.title).slice(0, 200)
+      : [];
+    const milestones = Array.isArray(parsed.milestones) ? parsed.milestones.map((milestone: any) => ({
+      name: typeof milestone?.name === "string" ? milestone.name.trim() : "",
+      stages: Array.isArray(milestone?.stages) ? milestone.stages.map((stage: any) => ({
+        name: typeof stage?.name === "string" ? stage.name.trim() : "",
+        tasks: normalizeDraftTasks(stage?.tasks)
+      })).filter((stage: any) => stage.name).slice(0, 100) : []
+    })).filter((milestone: any) => milestone.name).slice(0, 50) : [];
+    if (!milestones.length) throw new BadRequestException("AI could not find any milestone in the source");
+    return { data: {
+      sourceFileName: fileName,
+      projectName: typeof parsed.projectName === "string" ? parsed.projectName.trim() : "",
+      description: typeof parsed.description === "string" ? parsed.description.trim() : "",
+      milestones,
+      warnings: Array.isArray(parsed.warnings) ? parsed.warnings.filter((warning: unknown): warning is string => typeof warning === "string").slice(0, 20) : []
+    }};
   }
 
   async previewProjectPlan(rawInput: ProjectPlanPreviewInput, principal: PrincipalContext) {
@@ -1390,29 +1649,73 @@ export class ProjectsService {
               reviewerRole: configuredGate?.reviewerRole ?? milestoneTemplate.reviewerRole
             }
           });
-          const stageRows = milestoneTemplate.stages.map((stage: any, stageIndex: number) => ({
-            milestoneId: milestone.id,
-            accountId: account.id,
-            workspaceId: principal.workspaceId,
-            projectId: createdProject.id,
-            stageKey: stage.stageKey || `${normalizeMilestoneKey(milestoneTemplate.name)}-${stageIndex + 1}`,
-            phase: stage.phase || stage.activity,
-            activity: stage.activity,
-            sortOrder: stage.sortOrder ?? (stageIndex + 1) * 10,
-            cumulativePercent: stage.cumulativePercent ?? Math.round(((stageIndex + 1) / milestoneTemplate.stages.length) * 100),
-            activityPercent: stage.activityPercent ?? 0,
-            criteria: stage.criteria || "Stage completion criteria",
-            upbaseRole: stage.upbaseRole,
-            customerRole: stage.customerRole,
-            ownerUserId: milestoneIndex === 0 && stageIndex === 0 ? ownerUserId : undefined,
-            plannedStartAt: milestoneIndex === 0 && stageIndex === 0 ? plannedStartAt : undefined,
-            plannedEndAt: milestoneIndex === milestoneTemplates.length - 1 && stageIndex === milestoneTemplate.stages.length - 1 ? plannedEndAt : undefined,
-            scopeSummary: milestoneIndex === 0 && stageIndex === 0 ? scopeSummary : undefined,
-            acceptanceCriteria: milestoneIndex === milestoneTemplates.length - 1 && stageIndex === milestoneTemplate.stages.length - 1
-              ? optionalString(input.acceptanceCriteria, "acceptanceCriteria") ?? undefined
-              : undefined
-          }));
-          await tx.projectStage.createMany({ data: stageRows });
+          for (let stageIndex = 0; stageIndex < milestoneTemplate.stages.length; stageIndex += 1) {
+            const stage = milestoneTemplate.stages[stageIndex];
+            const stageData = {
+                milestoneId: milestone.id,
+                accountId: account.id,
+                workspaceId: principal.workspaceId,
+                projectId: createdProject.id,
+                stageKey: stage.stageKey || `${normalizeMilestoneKey(milestoneTemplate.name)}-${stageIndex + 1}`,
+                phase: stage.phase || stage.activity,
+                activity: stage.activity,
+                sortOrder: stage.sortOrder ?? (stageIndex + 1) * 10,
+                cumulativePercent: stage.cumulativePercent ?? Math.round(((stageIndex + 1) / milestoneTemplate.stages.length) * 100),
+                activityPercent: stage.activityPercent ?? 0,
+                criteria: stage.criteria || "Stage completion criteria",
+                upbaseRole: stage.upbaseRole,
+                customerRole: stage.customerRole,
+                ownerUserId: milestoneIndex === 0 && stageIndex === 0 ? ownerUserId : undefined,
+                plannedStartAt: milestoneIndex === 0 && stageIndex === 0 ? plannedStartAt : undefined,
+                plannedEndAt: milestoneIndex === milestoneTemplates.length - 1 && stageIndex === milestoneTemplate.stages.length - 1 ? plannedEndAt : undefined,
+                scopeSummary: milestoneIndex === 0 && stageIndex === 0 ? scopeSummary : undefined,
+                acceptanceCriteria: milestoneIndex === milestoneTemplates.length - 1 && stageIndex === milestoneTemplate.stages.length - 1
+                  ? optionalString(input.acceptanceCriteria, "acceptanceCriteria") ?? undefined
+                  : undefined
+            };
+            // Keep lightweight service mocks and older adapters compatible when
+            // the template contains no tasks to persist.
+            if (typeof (tx.projectStage as any).create !== "function") {
+              await tx.projectStage.createMany({ data: [stageData] });
+              continue;
+            }
+            const createdStage = await tx.projectStage.create({ data: stageData });
+            const createTemplateTask = async (task: any, parentTaskId?: string, taskIndex = 0): Promise<void> => {
+              const status = String(task.status ?? "todo").trim() || "todo";
+              const taskDate = optionalDate(task.plannedStartAt, "plannedStartAt");
+              const taskDue = optionalDate(task.dueAt, "dueAt");
+              assertTaskDateRange(taskDate, taskDue);
+              const createdTask = await tx.projectTask.create({
+                data: {
+                  workspaceId: principal.workspaceId,
+                  accountId: account.id,
+                  projectId: createdProject.id,
+                  stageId: createdStage.id,
+                  parentTaskId,
+                  sortOrder: (taskIndex + 1) * 10,
+                  title: nonEmptyString(task.title, "task.title"),
+                  description: task.description,
+                  taskType: task.taskType ?? "implementation",
+                  status,
+                  priority: task.priority ?? "medium",
+                  ownerUserId,
+                  estimateMinutes: task.estimateMinutes ?? 0,
+                  plannedStartAt: taskDate ?? undefined,
+                  dueAt: taskDue ?? undefined,
+                  customerVisible: false,
+                  createdByUserId: principal.subjectId,
+                  startedAt: status === "in_progress" ? new Date() : undefined,
+                  completedAt: isCompletedTaskStatus(status) ? new Date() : undefined
+                }
+              });
+              for (let subtaskIndex = 0; subtaskIndex < (task.subtasks ?? []).length; subtaskIndex += 1) {
+                await createTemplateTask(task.subtasks[subtaskIndex], createdTask.id, subtaskIndex);
+              }
+            };
+            for (let taskIndex = 0; taskIndex < (stage.tasks ?? []).length; taskIndex += 1) {
+              await createTemplateTask(stage.tasks[taskIndex], undefined, taskIndex);
+            }
+          }
         }
       }
 

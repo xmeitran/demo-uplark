@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -29,6 +29,7 @@ import {
   formatMoney,
   formatVnd,
   hours,
+  type PnlDailyPoint,
   type PnlExpense,
   type PnlPerson,
   type PnlProject,
@@ -41,7 +42,7 @@ type TaskLedgerProps = { tasks: ProjectTaskSummary[]; stages: ProjectStageSummar
 
 const STATUS_OPTIONS: Array<"all" | PnlProjectStatus> = ["all", "Chờ xử lý", "Đã đối soát", "Thiếu dữ liệu"];
 
-function currentPeriod() {
+function currentPeriod(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit" }).format(new Date());
 }
 
@@ -56,11 +57,26 @@ function previousPeriod(period: string) {
   return `${year}-${String(month - 1).padStart(2, "0")}`;
 }
 
-function periodBounds(period: string) {
+function uniquePeriodOptions(periods: string[], selectedPeriod?: string) {
+  const today = currentPeriod();
+  const candidates: Array<string | undefined> = [selectedPeriod, today, previousPeriod(today), ...periods];
+  const values = Array.from(new Set(candidates.filter((value): value is string => typeof value === "string" && /^\d{4}-\d{2}$/.test(value))));
+  return values.sort((left, right) => right.localeCompare(left)).map((value) => ({ value, label: periodLabel(value) }));
+}
+
+function monthDateRange(period: string) {
   const [year, month] = period.split("-").map(Number);
-  const start = `${period}-01T00:00:00+07:00`;
-  const nextMonth = month === 12 ? `${year + 1}-01` : `${year}-${String(month + 1).padStart(2, "0")}`;
-  return { start, end: `${nextMonth}-01T00:00:00+07:00` };
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return { startDate: `${period}-01`, endDate: `${period}-${String(lastDay).padStart(2, "0")}` };
+}
+
+function rangeLabel(startDate: string, endDate: string) {
+  if (!startDate || !endDate) return "Tất cả thời gian";
+  const format = (value: string) => {
+    const [year, month, day] = value.split("-");
+    return `${day}/${month}/${year}`;
+  };
+  return `${format(startDate)} → ${format(endDate)}`;
 }
 
 function statusTone(status: PnlProjectStatus) {
@@ -134,7 +150,10 @@ function ExpenseGroups({ expenses, currency = "VND" }: { expenses: PnlExpense[];
   );
 }
 
-function ProjectTable({ projects, period }: { projects: PnlProject[]; period: string }) {
+function ProjectTable({ projects, period, startDate, endDate }: { projects: PnlProject[]; period: string; startDate?: string; endDate?: string }) {
+  const query = startDate && endDate
+    ? `startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`
+    : `period=${encodeURIComponent(period)}`;
   return (
     <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm" aria-label="Đối soát P&L theo project">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
@@ -161,7 +180,7 @@ function ProjectTable({ projects, period }: { projects: PnlProject[]; period: st
             {projects.map((project) => (
               <tr key={project.id} className="group transition-colors hover:bg-muted/20">
                 <td className="px-5 py-4">
-                  <Link href={`/pnl/${encodeURIComponent(project.id)}?period=${encodeURIComponent(period)}`} className="block rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/30">
+                  <Link href={`/pnl/${encodeURIComponent(project.id)}?${query}`} className="block rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/30">
                     <span className="block font-bold text-foreground group-hover:text-primary">{project.name}</span>
                     <span className="mt-1 block text-xs text-muted-foreground">{project.code} · {project.client}</span>
                   </Link>
@@ -225,73 +244,46 @@ function PnlItemTable({ project }: { project: PnlProject }) {
   return <section className="rounded-xl border border-border bg-card p-5 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[11px] font-bold uppercase tracking-[.14em] text-primary">Bảng khoản mục</p><h2 className="mt-1 text-lg font-bold">P&amp;L theo kỳ</h2><p className="mt-1 text-xs text-muted-foreground">Hiển thị output đã tính; công thức chỉ thay đổi tại màn Thiết lập P&amp;L.</p></div><span className={`rounded-full px-3 py-1.5 text-xs font-semibold ${provisional ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-700"}`}>{provisional ? "Tạm tính" : "Chính thức"}</span></div><div className="mt-4 overflow-x-auto rounded-lg border border-border/80"><table className="w-full min-w-[650px] text-left text-sm"><thead className="bg-muted/30 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"><tr><th className="px-4 py-3">Mã khoản mục</th><th className="px-4 py-3">Tên</th><th className="px-4 py-3 text-right">Giá trị</th><th className="px-4 py-3">Nguồn</th></tr></thead><tbody className="divide-y divide-border/70">{rows.map(([code, label, value]) => <tr key={code} className={code === "EBIT" ? "bg-emerald-50/50 font-bold" : ""}><td className="px-4 py-3 font-mono text-xs text-primary">{code}</td><td className="px-4 py-3">{label}</td><td className="px-4 py-3 text-right font-mono font-semibold">{formatMoney(value, project.currency)}</td><td className="px-4 py-3 text-xs text-muted-foreground">{code === "EBIT" || code === "CP" ? "Công thức / Tổng nhóm" : "Nguồn hệ thống"}</td></tr>)}</tbody></table></div></section>;
 }
 
-function Overview({ projects, period, onPeriodChange }: { projects: PnlProject[]; period: string; onPeriodChange: (period: string) => void }) {
+function Overview({ projects, period, startDate, endDate, onPeriodChange, onRangeChange }: { projects: PnlProject[]; period: string; startDate: string; endDate: string; onPeriodChange: (period: string) => void; onRangeChange: (startDate: string, endDate: string) => void }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
-  const [projectFilter, setProjectFilter] = useState("all");
+  const [exceptionsOnly, setExceptionsOnly] = useState(false);
   const filteredProjects = useMemo(() => projects.filter((project) => {
-    const matchesQuery = !query.trim() || `${project.name} ${project.code} ${project.client}`.toLowerCase().includes(query.trim().toLowerCase());
-    const matchesStatus = status === "all" || project.status === status;
-    const matchesProject = projectFilter === "all" || project.id === projectFilter;
-    return matchesQuery && matchesStatus && matchesProject;
-  }), [projects, projectFilter, query, status]);
+    const needle = query.trim().toLowerCase();
+    const matchesQuery = !needle || `${project.name} ${project.code} ${project.client}`.toLowerCase().includes(needle);
+    const hasException = project.status !== "Đã đối soát" || project.pendingMinutes > 0 || project.logworkMinutes > project.planMinutes || !project.costAvailable;
+    return matchesQuery && (status === "all" || project.status === status) && (!exceptionsOnly || hasException);
+  }), [exceptionsOnly, projects, query, status]);
   const totals = filteredProjects.reduce((acc, project) => ({
-    revenue: acc.revenue + project.revenue,
     plan: acc.plan + project.planMinutes,
     logwork: acc.logwork + project.logworkMinutes,
     pnl: acc.pnl + project.pnlMinutes,
-    pending: acc.pending + project.pendingMinutes
-  }), { revenue: 0, plan: 0, logwork: 0, pnl: 0, pending: 0 });
-  const expenses = filteredProjects.reduce((acc, project) => {
-    project.expenses.forEach((expense) => {
-      const current = acc.get(expense.key) ?? { ...expense, amount: 0 };
-      current.amount += expense.amount;
-      acc.set(expense.key, current);
-    });
-    return acc;
-  }, new Map<string, PnlExpense>());
-
+    pending: acc.pending + project.pendingMinutes,
+    revenue: acc.revenue + project.revenue,
+    cost: acc.cost + (project.costAvailable ? Math.max(project.revenue - project.grossMargin, 0) : 0),
+    costRows: acc.costRows + (project.costAvailable ? 1 : 0)
+  }), { plan: 0, logwork: 0, pnl: 0, pending: 0, revenue: 0, cost: 0, costRows: 0 });
+  const rangeQuery = startDate && endDate ? `startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}` : "scope=all";
+  const availablePeriods = projects.flatMap((project) => project.daily.map((point) => point.date.slice(0, 7)));
   return (
-    <div className="space-y-5">
-      <section className="rounded-xl border border-border bg-card p-5 shadow-sm sm:p-6">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-blue-700">Finance · Project control</p>
-            <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl">Project P&amp;L — tổng quan &amp; đối soát</h1>
-            <p className="mt-2 max-w-2xl text-sm text-muted-foreground">Theo dõi doanh thu, baseline giờ, logwork thực tế và giờ đủ điều kiện đưa vào P&amp;L theo từng project.</p>
-          </div>
-          <div className="text-xs font-semibold text-muted-foreground">Theo kỳ báo cáo và phạm vi project</div>
+    <div className="space-y-4">
+      <section className="border-b border-border pb-5">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div><p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Finance · portfolio</p><h1 className="mt-1 text-3xl font-extrabold tracking-tight">P&amp;L tổng quan</h1><p className="mt-2 text-sm text-muted-foreground">Theo dõi giờ, doanh thu và các project cần xử lý trong cùng một phạm vi ngày.</p></div>
+          <DownloadButton projects={filteredProjects} period={`${startDate}_${endDate}`} />
         </div>
-        <div className="mt-6 grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(150px,180px)_minmax(150px,180px)_minmax(150px,180px)_auto]">
-          <label className="relative block">
-            <span className="sr-only">Tìm project</span>
-            <Search className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-muted-foreground" />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm project, client..." className="h-11 w-full rounded-xl border border-border bg-card pl-10 pr-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15" />
-          </label>
-          <FilterSelect label="Kỳ báo cáo" value={period} onChange={onPeriodChange} options={[{ value: period, label: periodLabel(period) }, { value: previousPeriod(period), label: periodLabel(previousPeriod(period)) }]} />
-          <FilterSelect label="Trạng thái project" value={status} onChange={setStatus} options={STATUS_OPTIONS.map((value) => ({ value, label: value === "all" ? "Tất cả trạng thái" : value }))} />
-          <FilterSelect label="Lọc theo project" value={projectFilter} onChange={setProjectFilter} options={[{ value: "all", label: "Tất cả project" }, ...projects.map((project) => ({ value: project.id, label: project.code }))]} />
-          <DownloadButton projects={filteredProjects} period={period} />
+        <div className="mt-5 grid gap-2 lg:grid-cols-[minmax(240px,1fr)_170px_150px_150px_180px_auto]">
+          <label className="relative block"><span className="sr-only">Tìm project</span><Search className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm project, mã hoặc client" className="h-11 w-full rounded-lg border border-border bg-card pl-10 pr-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15" /></label>
+          <FilterSelect label="Kỳ nhanh" value={period || "all"} onChange={onPeriodChange} options={[{ value: "all", label: "Tất cả thời gian" }, ...uniquePeriodOptions(availablePeriods, period)]} />
+          <label className="block"><span className="sr-only">Từ ngày</span><input aria-label="Từ ngày" type="date" value={startDate} onChange={(event) => onRangeChange(event.target.value, endDate)} className="h-11 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15" /></label>
+          <label className="block"><span className="sr-only">Đến ngày</span><input aria-label="Đến ngày" type="date" value={endDate} min={startDate || undefined} onChange={(event) => onRangeChange(startDate, event.target.value)} className="h-11 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15" /></label>
+          <FilterSelect label="Trạng thái" value={status} onChange={setStatus} options={STATUS_OPTIONS.map((value) => ({ value, label: value === "all" ? "Tất cả trạng thái" : value }))} />
+          <button type="button" onClick={() => setExceptionsOnly((value) => !value)} className={`h-11 rounded-lg border px-3 text-sm font-semibold ${exceptionsOnly ? "border-rose-200 bg-rose-50 text-rose-700" : "border-border bg-card text-muted-foreground"}`}>{exceptionsOnly ? "Đang lọc ngoại lệ" : "Chỉ xem ngoại lệ"}</button>
         </div>
       </section>
-
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-4 py-3 text-xs text-muted-foreground shadow-sm">
-        <span className="font-semibold text-foreground">Đang hiển thị</span>
-        <span className="rounded-full bg-muted px-2.5 py-1 font-bold text-foreground">{filteredProjects.length} / {projects.length} project</span>
-        <span>Tất cả dữ liệu trong kỳ báo cáo</span>
-      </div>
-
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" aria-label="Tổng quan P&L">
-        <KpiCard label="Projects" value={String(filteredProjects.length)} icon={<Layers3 className="h-4 w-4" />} />
-        <KpiCard label="Revenue" value={formatCompactVnd(totals.revenue)} icon={<ArrowUpRight className="h-4 w-4" />} tone="green" />
-        <KpiCard label="Plan Hour" value={formatHours(totals.plan)} icon={<CalendarDays className="h-4 w-4" />} tone="violet" />
-        <KpiCard label="Logwork Hour" value={formatHours(totals.logwork)} icon={<Clock3 className="h-4 w-4" />} />
-        <KpiCard label="P&L Hour" value={formatHours(totals.pnl)} icon={<Check className="h-4 w-4" />} tone="green" note="Logwork đủ điều kiện" />
-        <KpiCard label="Chờ xử lý" value={formatHours(totals.pending)} icon={<TriangleAlert className="h-4 w-4" />} tone="amber" note="Thiếu duyệt hoặc cost rate" />
-      </section>
-
-      <ProjectTable projects={filteredProjects} period={period} />
-      <ExpenseGroups expenses={Array.from(expenses.values())} />
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5" aria-label="Tổng hợp P&L"><KpiCard label="Project" value={`${filteredProjects.length}/${projects.length}`} icon={<Layers3 className="h-4 w-4" />} /><KpiCard label="Plan hour" value={formatHours(totals.plan)} icon={<CalendarDays className="h-4 w-4" />} tone="violet" /><KpiCard label="Logwork hour" value={formatHours(totals.logwork)} icon={<Clock3 className="h-4 w-4" />} /><KpiCard label="P&L hour" value={formatHours(totals.pnl)} icon={<Check className="h-4 w-4" />} tone="green" note={`${formatHours(totals.pending)} chờ xử lý`} /><KpiCard label="Revenue" value={totals.revenue ? formatMoney(totals.revenue, filteredProjects[0]?.currency) : "Chưa có dữ liệu"} icon={<ArrowUpRight className="h-4 w-4" />} tone="green" note={`${totals.costRows}/${filteredProjects.length} project có cost`} /></section>
+      <section className="overflow-hidden rounded-xl border border-border bg-card" aria-label="Danh mục P&L theo project"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4"><div><h2 className="text-lg font-bold">Danh mục project</h2><p className="mt-1 text-xs text-muted-foreground">Mở một dòng để xem người, logwork theo ngày và cây Milestone → Stage → Task.</p></div><span className="text-xs font-semibold text-muted-foreground">{filteredProjects.length} project</span></div><div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-sm"><thead className="bg-muted/25 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"><tr><th className="px-5 py-3">Project / client</th><th className="px-3 py-3">Owner</th><th className="px-3 py-3 text-right">Plan</th><th className="px-3 py-3 text-right">Logwork</th><th className="px-3 py-3 text-right">P&amp;L</th><th className="px-3 py-3 text-right">Revenue</th><th className="px-3 py-3">Cost</th><th className="px-5 py-3">Trạng thái</th></tr></thead><tbody className="divide-y divide-border/70">{filteredProjects.map((project) => <tr key={project.id} className="hover:bg-muted/20"><td className="px-5 py-4"><Link href={`/pnl/${encodeURIComponent(project.id)}?${rangeQuery}`} className="font-bold text-foreground hover:text-primary">{project.name}<span className="mt-1 block text-xs font-normal text-muted-foreground">{project.code} · {project.client}</span></Link></td><td className="px-3 py-4 text-xs text-muted-foreground">{project.ownerDisplayName ?? "Chưa phân công"}</td><td className="px-3 py-4 text-right font-mono tabular-nums">{formatHours(project.planMinutes)}</td><td className="px-3 py-4 text-right font-mono tabular-nums">{formatHours(project.logworkMinutes)}</td><td className="px-3 py-4 text-right font-mono font-semibold text-blue-700">{formatHours(project.pnlMinutes)}</td><td className="px-3 py-4 text-right font-mono">{project.revenue ? formatMoney(project.revenue, project.currency) : "—"}</td><td className="px-3 py-4 text-xs">{project.costAvailable ? formatMoney(Math.max(project.revenue - project.grossMargin, 0), project.currency) : <span className="text-amber-700">Chưa cấu hình</span>}</td><td className="px-5 py-4"><span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-bold ${statusTone(project.status)}`}>{project.status}</span>{project.currency !== "VND" ? <span className="mt-1 block text-[10px] text-amber-700">Currency nguồn: {project.currency}</span> : null}</td></tr>)}</tbody></table></div>{filteredProjects.length === 0 ? <div className="p-10 text-center text-sm text-muted-foreground">Không có project phù hợp.</div> : null}</section>
+      <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" /><span>Chi phí chỉ hiển thị khi API có bản ghi cost/snapshot. Chưa có NC2 thì không suy ra cost hoặc gross margin từ số 0.</span></div>
     </div>
   );
 }
@@ -542,41 +534,133 @@ function Results({ project }: { project: PnlProject }) {
   return <section className="rounded-xl border border-border bg-card p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><CircleDollarSign className="h-4 w-4 text-emerald-600" /><h2 className="text-lg font-bold">Kết quả P&amp;L theo kỳ</h2></div><span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">Đơn vị: {project.currency}</span></div><dl className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3"><div className="rounded-xl bg-muted/25 p-4"><dt className="text-xs text-muted-foreground">Doanh thu kế hoạch</dt><dd className="mt-2 text-xl font-bold tabular-nums">{formatMoney(project.plannedRevenue, project.currency)}</dd></div><div className="rounded-xl bg-muted/25 p-4"><dt className="text-xs text-muted-foreground">Đã thu / ghi nhận</dt><dd className="mt-2 text-xl font-bold tabular-nums">{formatMoney(project.paidRevenue, project.currency)}</dd></div><div className="rounded-xl bg-muted/25 p-4"><dt className="text-xs text-muted-foreground">Tổng chi phí</dt><dd className="mt-2 text-xl font-bold tabular-nums">{formatMoney(totalExpenses, project.currency)}</dd><p className="mt-1 text-[11px] text-muted-foreground">{expensePercent.toFixed(1)}% doanh thu</p></div><div className="rounded-xl bg-emerald-50 p-4"><dt className="text-xs text-emerald-700">Gross margin / EBIT</dt><dd className="mt-2 text-xl font-bold tabular-nums text-emerald-800">{formatMoney(ebit, project.currency)}</dd></div><div className="rounded-xl bg-blue-50 p-4"><dt className="text-xs text-blue-700">Biên lợi nhuận</dt><dd className="mt-2 text-xl font-bold tabular-nums text-blue-800">{margin.toFixed(1)}%</dd><p className="mt-1 text-[11px] text-blue-700">Giá trị do hệ thống tính từ doanh thu − chi phí</p></div><div className="rounded-xl bg-amber-50 p-4"><dt className="text-xs text-amber-700">Chi phí kế hoạch</dt><dd className="mt-2 text-xl font-bold tabular-nums text-amber-800">{formatMoney(project.plannedCost, project.currency)}</dd></div></dl></section>;
 }
 
-function Detail({ project, period, onPeriodChange, tasks, stages, milestones, tasksLoading, tasksError }: { project: PnlProject; period: string; onPeriodChange: (period: string) => void; tasks: ProjectTaskSummary[]; stages: ProjectStageSummary[]; milestones: ProjectMilestoneSummary[]; tasksLoading: boolean; tasksError?: string | null }) {
+function DetailDisclosure({ title, description, badge, children, defaultOpen = false }: { title: string; description: string; badge?: string; children: ReactNode; defaultOpen?: boolean }) {
+  return (
+    <details open={defaultOpen} className="group overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4 transition hover:bg-muted/20 [&::-webkit-details-marker]:hidden">
+        <div className="min-w-0">
+          <h2 className="text-base font-bold text-foreground">{title}</h2>
+          <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-3">
+          {badge ? <span className="hidden rounded-full bg-muted px-3 py-1.5 text-xs font-semibold text-muted-foreground sm:inline-flex">{badge}</span> : null}
+          <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" aria-hidden="true" />
+        </div>
+      </summary>
+      <div className="border-t border-border p-4 sm:p-5">{children}</div>
+    </details>
+  );
+}
+
+function DailyLogworkTable({ daily }: { daily: PnlProject["daily"] }) {
+  const [showEmptyDays, setShowEmptyDays] = useState(false);
+  const totals = daily.reduce((acc, point) => ({
+    logwork: acc.logwork + point.minutes,
+    pnl: acc.pnl + (point.pnlMinutes ?? 0),
+    pending: acc.pending + (point.pendingMinutes ?? 0),
+    excluded: acc.excluded + Math.max(point.minutes - (point.pnlMinutes ?? 0) - (point.pendingMinutes ?? 0), 0),
+    entries: acc.entries + (point.entryCount ?? 0)
+  }), { logwork: 0, pnl: 0, pending: 0, excluded: 0, entries: 0 });
+  const loggedDays = daily.filter((point) => point.minutes > 0).length;
+  const visibleDaily = showEmptyDays ? daily : daily.filter((point) => point.minutes > 0);
+  const maxMinutes = Math.max(...daily.map((point) => point.minutes), 1);
+  const dateLabel = (date: string) => new Intl.DateTimeFormat("vi-VN", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(`${date}T12:00:00+07:00`));
+  const statusFor = (point: PnlDailyPoint) => {
+    if (point.minutes === 0) return { label: "Không có log", tone: "text-slate-500 bg-slate-50" };
+    if ((point.pendingMinutes ?? 0) > 0) return { label: "Chờ xử lý", tone: "text-amber-700 bg-amber-50" };
+    if (point.minutes - (point.pnlMinutes ?? 0) - (point.pendingMinutes ?? 0) > 0) return { label: "Có giờ loại", tone: "text-rose-700 bg-rose-50" };
+    return { label: "Đã duyệt", tone: "text-emerald-700 bg-emerald-50" };
+  };
+  return <section className="overflow-hidden rounded-xl border border-border bg-card" aria-label="Logwork theo từng ngày"><div className="border-b border-border px-5 py-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-bold">Logwork theo từng ngày</h2><p className="mt-1 text-xs text-muted-foreground">Đang ưu tiên ngày có phát sinh; tổng số liệu vẫn tính trên toàn bộ phạm vi.</p></div><div className="flex items-center gap-2"><span className="rounded-full bg-muted px-3 py-1.5 text-xs font-semibold text-muted-foreground">{loggedDays}/{daily.length} ngày có log</span><button type="button" onClick={() => setShowEmptyDays((value) => !value)} className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:border-primary/40 hover:text-primary">{showEmptyDays ? "Ẩn ngày trống" : "Hiện ngày trống"}</button></div></div><div className="mt-4 grid gap-2 sm:grid-cols-4"><div className="rounded-lg border border-border/70 bg-muted/20 px-3 py-2"><span className="block text-[11px] text-muted-foreground">Tổng logwork</span><strong className="mt-1 block font-mono text-base">{formatHours(totals.logwork)}</strong></div><div className="rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2"><span className="block text-[11px] text-blue-700">P&amp;L hợp lệ</span><strong className="mt-1 block font-mono text-base text-blue-800">{formatHours(totals.pnl)}</strong></div><div className="rounded-lg border border-amber-100 bg-amber-50/60 px-3 py-2"><span className="block text-[11px] text-amber-700">Chờ xử lý</span><strong className="mt-1 block font-mono text-base text-amber-800">{formatHours(totals.pending)}</strong></div><div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"><span className="block text-[11px] text-slate-600">Bị loại</span><strong className="mt-1 block font-mono text-base text-slate-700">{formatHours(totals.excluded)}</strong></div></div></div><div className="max-h-[560px] overflow-auto"><table className="w-full min-w-[900px] text-left text-sm"><caption className="sr-only">Chi tiết logwork, P&amp;L, chờ xử lý và trạng thái theo từng ngày</caption><thead className="sticky top-0 z-10 bg-muted/95 text-[10px] font-bold uppercase tracking-wider text-muted-foreground backdrop-blur"><tr><th className="px-5 py-3">Ngày</th><th className="px-3 py-3 text-right">Logwork</th><th className="px-3 py-3 text-right">P&amp;L hợp lệ</th><th className="px-3 py-3 text-right">Chờ xử lý</th><th className="px-3 py-3 text-right">Bị loại</th><th className="px-3 py-3 text-right">Người</th><th className="px-3 py-3 text-right">Entry</th><th className="px-5 py-3">Trạng thái</th></tr></thead><tbody className="divide-y divide-border/70">{visibleDaily.map((point) => { const pending = point.pendingMinutes ?? 0; const pnl = point.pnlMinutes ?? 0; const excluded = Math.max(point.minutes - pnl - pending, 0); const status = statusFor(point); return <tr key={point.date} className={point.minutes === 0 ? "text-muted-foreground" : "hover:bg-muted/20"}><td className="px-5 py-3"><span className="block font-semibold text-foreground">{dateLabel(point.date)}</span><div className="mt-1 h-1.5 w-32 overflow-hidden rounded-full bg-muted" aria-hidden="true"><div className="h-full rounded-full bg-blue-500" style={{ width: `${(point.minutes / maxMinutes) * 100}%` }} /></div></td><td className="px-3 py-3 text-right font-mono tabular-nums">{formatHours(point.minutes)}</td><td className="px-3 py-3 text-right font-mono font-semibold tabular-nums text-blue-700">{formatHours(pnl)}</td><td className="px-3 py-3 text-right font-mono tabular-nums text-amber-700">{formatHours(pending)}</td><td className="px-3 py-3 text-right font-mono tabular-nums text-rose-700">{formatHours(excluded)}</td><td className="px-3 py-3 text-right tabular-nums">{point.peopleLogged ?? 0}</td><td className="px-3 py-3 text-right tabular-nums">{point.entryCount ?? 0}</td><td className="px-5 py-3"><span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ${status.tone}`}>{status.label}</span></td></tr>; })}</tbody><tfoot className="border-t border-border bg-muted/30 font-bold"><tr><td className="px-5 py-3">Tổng cộng</td><td className="px-3 py-3 text-right font-mono">{formatHours(totals.logwork)}</td><td className="px-3 py-3 text-right font-mono text-blue-700">{formatHours(totals.pnl)}</td><td className="px-3 py-3 text-right font-mono text-amber-700">{formatHours(totals.pending)}</td><td className="px-3 py-3 text-right font-mono text-rose-700">{formatHours(totals.excluded)}</td><td className="px-3 py-3 text-right">—</td><td className="px-3 py-3 text-right">{totals.entries}</td><td className="px-5 py-3">{loggedDays} ngày có log</td></tr></tfoot></table></div></section>;
+}
+
+function ManagerDetail({ project, period, startDate, endDate, onPeriodChange, onRangeChange, tasks, stages, milestones, tasksLoading, tasksError }: { project: PnlProject; period: string; startDate: string; endDate: string; onPeriodChange: (period: string) => void; onRangeChange: (startDate: string, endDate: string) => void; tasks: ProjectTaskSummary[]; stages: ProjectStageSummary[]; milestones: ProjectMilestoneSummary[]; tasksLoading: boolean; tasksError?: string | null }) {
+  const quickPeriods = uniquePeriodOptions(project.daily.map((point) => point.date.slice(0, 7)), period);
+  const cost = project.costAvailable ? Math.max(project.revenue - project.grossMargin, 0) : undefined;
+  const formatValue = (value: number | undefined, currency = project.currency) => value === undefined ? "Chưa có dữ liệu" : formatMoney(value, currency);
+  return <div className="space-y-4">
+    <section className="border-b border-border pb-5"><div className="flex flex-wrap items-start justify-between gap-4"><div><Link href={startDate && endDate ? `/pnl?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}` : "/pnl?scope=all"} className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground hover:text-primary"><ArrowLeft className="h-4 w-4" /> Quay lại P&amp;L tổng</Link><p className="mt-4 text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Project P&amp;L</p><h1 className="mt-1 text-3xl font-extrabold tracking-tight">{project.name}</h1><p className="mt-2 text-sm text-muted-foreground">{project.code} · {project.client} · {rangeLabel(startDate, endDate)}</p></div><div className="flex flex-wrap items-end gap-2"><label><span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Từ ngày</span><input aria-label="Từ ngày" type="date" value={startDate} onChange={(event) => onRangeChange(event.target.value, endDate)} className="h-10 rounded-lg border border-border bg-card px-3 text-xs" /></label><label><span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Đến ngày</span><input aria-label="Đến ngày" type="date" min={startDate || undefined} value={endDate} onChange={(event) => onRangeChange(startDate, event.target.value)} className="h-10 rounded-lg border border-border bg-card px-3 text-xs" /></label><FilterSelect label="Kỳ nhanh" value={period || "all"} onChange={onPeriodChange} options={[{ value: "all", label: "Tất cả thời gian" }, ...quickPeriods]} /></div></div></section>
+    {project.currency !== "VND" ? <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">Currency nguồn của project là <strong>{project.currency}</strong>. Hệ thống chưa tự quy đổi sang VND vì chưa có tỷ giá được chốt.</div> : null}
+    <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Tóm tắt P&L"><KpiCard label="Tổng giờ kế hoạch" value={formatHours(project.planMinutes)} icon={<CalendarDays className="h-4 w-4" />} tone="violet" /><KpiCard label="Tổng giờ thực hiện" value={formatHours(project.logworkMinutes)} icon={<Clock3 className="h-4 w-4" />} /><KpiCard label="Revenue" value={formatValue(project.revenue)} icon={<ArrowUpRight className="h-4 w-4" />} tone="green" /><KpiCard label="Chi phí" value={formatValue(cost)} icon={<CircleDollarSign className="h-4 w-4" />} tone="slate" note={cost === undefined ? "Chờ cấu hình NC2" : "Nguồn cost đã ghi nhận"} /></section>
+    <section className="overflow-hidden rounded-xl border border-border bg-card" aria-label="Nhân sự tham gia"><div className="border-b border-border px-5 py-4"><h2 className="text-lg font-bold">Nhân sự tham gia</h2><p className="mt-1 text-xs text-muted-foreground">Planned hours và logged hours của từng người trong toàn bộ phạm vi project.</p></div><div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead className="bg-muted/25 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"><tr><th className="px-5 py-3">Nhân sự</th><th className="px-3 py-3 text-right">Planned hours</th><th className="px-3 py-3 text-right">Logged hours</th><th className="px-5 py-3">Trạng thái</th></tr></thead><tbody className="divide-y divide-border/70">{project.people.map((person) => <tr key={person.id} className="hover:bg-muted/20"><td className="px-5 py-3 font-semibold">{person.name}<span className="mt-1 block text-xs font-normal text-muted-foreground">{person.role}</span></td><td className="px-3 py-3 text-right font-mono">{formatHours(person.planMinutes)}</td><td className="px-3 py-3 text-right font-mono font-semibold">{formatHours(person.logworkMinutes)}</td><td className="px-5 py-3 text-xs">{person.pnlMinutes === person.logworkMinutes ? <span className="text-emerald-700">Đã duyệt đủ</span> : <span className="text-amber-700">Còn chờ duyệt</span>}</td></tr>)}{project.people.length === 0 ? <tr><td colSpan={4} className="px-5 py-8 text-center text-sm text-muted-foreground">Chưa có time entry trong phạm vi này.</td></tr> : null}</tbody></table></div></section>
+    <DailyLogworkTable daily={project.daily} />
+    <DetailDisclosure title="Công việc & tiến độ" description="Cây đầy đủ Milestone → Stage → Task để kiểm tra delivery và mở task khi cần." badge={`${tasks.length} task`} defaultOpen><TaskLedger tasks={tasks} stages={stages} milestones={milestones} loading={tasksLoading} error={tasksError} /></DetailDisclosure>
+    <div className="flex items-start gap-2 rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-xs text-blue-950"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-blue-700" /><span><strong>Quy tắc:</strong> P&amp;L hour chỉ gồm logwork đã approved; phần còn lại nằm ở Chờ xử lý hoặc Bị loại. Chi phí chưa có nguồn thì không tự quy về 0.</span></div>
+  </div>;
+}
+
+function Detail({ project, period, startDate, endDate, onPeriodChange, onRangeChange, tasks, stages, milestones, tasksLoading, tasksError }: { project: PnlProject; period: string; startDate: string; endDate: string; onPeriodChange: (period: string) => void; onRangeChange: (startDate: string, endDate: string) => void; tasks: ProjectTaskSummary[]; stages: ProjectStageSummary[]; milestones: ProjectMilestoneSummary[]; tasksLoading: boolean; tasksError?: string | null }) {
   const totalPeople = project.people.length;
+  const quickPeriods = useMemo(() => uniquePeriodOptions(project.daily.map((point) => point.date.slice(0, 7)), period), [period, project.daily]);
   return (
     <div className="space-y-5">
       <section className="rounded-xl border border-border bg-card p-5 shadow-sm sm:p-6">
-        <Link href={`/pnl?period=${encodeURIComponent(period)}`} className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground transition hover:text-primary"><ArrowLeft className="h-4 w-4" /> Quay lại tổng quan</Link>
-        <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-primary">Project detail · P&amp;L</p><h1 className="mt-1 text-2xl font-extrabold tracking-tight">{project.name}</h1><p className="mt-2 text-sm text-muted-foreground">{project.code} · {project.client} · Kỳ báo cáo {periodLabel(period)}</p></div><div className="flex flex-wrap items-center gap-2"><FilterSelect label="Kỳ báo cáo" value={period} onChange={onPeriodChange} options={[{ value: period, label: periodLabel(period) }, { value: previousPeriod(period), label: periodLabel(previousPeriod(period)) }]} /><span className={`inline-flex w-fit rounded-full border px-3 py-1.5 text-xs font-bold ${statusTone(project.status)}`}>{project.status}{project.pendingMinutes > 0 ? " · còn giờ chờ" : ""}</span></div></div>
+        <Link href={startDate && endDate ? `/pnl?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}` : "/pnl?scope=all"} className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground transition hover:text-primary"><ArrowLeft className="h-4 w-4" /> Quay lại tổng quan</Link>
+        <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-primary">Project detail · P&amp;L</p><h1 className="mt-1 text-2xl font-extrabold tracking-tight">{project.name}</h1><p className="mt-2 text-sm text-muted-foreground">{project.code} · {project.client} · Phạm vi {rangeLabel(startDate, endDate)}</p></div><div className="flex flex-wrap items-end gap-2"><div className="grid grid-cols-2 gap-2"><label className="block"><span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Từ ngày</span><input aria-label="Từ ngày" type="date" value={startDate} onChange={(event) => onRangeChange(event.target.value, endDate)} className="h-10 rounded-xl border border-border bg-card px-3 text-xs outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15" /></label><label className="block"><span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Đến ngày</span><input aria-label="Đến ngày" type="date" min={startDate || undefined} value={endDate} onChange={(event) => onRangeChange(startDate, event.target.value)} className="h-10 rounded-xl border border-border bg-card px-3 text-xs outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15" /></label></div><FilterSelect label="Phạm vi nhanh" value={period || "all"} onChange={onPeriodChange} options={[{ value: "all", label: "Tất cả thời gian" }, ...quickPeriods]} /><span className={`inline-flex h-10 items-center rounded-full border px-3 text-xs font-bold ${statusTone(project.status)}`}>{project.status}{project.pendingMinutes > 0 ? " · còn giờ chờ" : ""}</span></div></div>
       </section>
       {project.dataSource === "project" ? <div role="status" className="flex items-start gap-2 rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 text-xs text-blue-900"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-blue-700" /><span>Kỳ này chưa có time entry riêng. Các chỉ số giờ đang lấy từ tổng hợp project để không hiển thị số 0 gây hiểu nhầm; khi có log trong kỳ, hệ thống sẽ tự chuyển sang dữ liệu theo kỳ.</span></div> : null}
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><KpiCard label="Plan Hour" value={formatHours(project.planMinutes)} icon={<CalendarDays className="h-4 w-4" />} /><KpiCard label="Logwork Hour" value={formatHours(project.logworkMinutes)} icon={<Clock3 className="h-4 w-4" />} /><KpiCard label="P&L Hour" value={formatHours(project.pnlMinutes)} icon={<Check className="h-4 w-4" />} tone="green" /><KpiCard label="Chờ xử lý" value={formatHours(project.pendingMinutes)} icon={<TriangleAlert className="h-4 w-4" />} tone="amber" note="Thiếu duyệt hoặc Cost Rate hiệu lực" /></section>
       <ProjectContext project={project} />
       <Reconciliation project={project} />
       <section className="rounded-2xl border border-border bg-card p-5 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-primary">Daily reconciliation</p><h2 className="mt-1 text-lg font-bold">Tổng quan Logwork theo ngày</h2><p className="mt-1 text-xs text-muted-foreground">Tổng giờ của tất cả nhân sự trong từng ngày thuộc kỳ báo cáo.</p></div><span className="inline-flex items-center gap-2 rounded-full bg-muted px-3 py-1.5 text-xs font-semibold text-muted-foreground"><UsersRound className="h-4 w-4" /> {totalPeople} nhân sự</span></div><MiniDailyChart project={project} /></section>
-      <section className="rounded-2xl border border-border bg-card p-5 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-primary">Logwork Daily</p><h2 className="mt-1 text-lg font-bold">Ma trận theo người và ngày</h2><p className="mt-1 text-xs text-muted-foreground">Mỗi ô là số giờ thực tế đã ghi nhận. Bảng chỉ mở các ngày có log; biểu đồ phía trên vẫn hiển thị đủ toàn bộ ngày trong kỳ.</p></div><span className="rounded-full bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700">Tổng {formatHours(project.logworkMinutes)}</span></div><div className="mt-5"><PersonMatrix people={project.people} /></div></section>
-      <section className="rounded-2xl border border-border bg-card p-5 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-bold">Delivery / DX · phân bổ theo nhân sự</h2><p className="mt-1 text-xs text-muted-foreground">Đối soát 3 lớp giờ cho từng thành viên: P = baseline ngày, L = giờ ghi nhận, P&amp;L = giờ hợp lệ. Cột ngày chỉ hiện ngày có phát sinh.</p></div><span className="rounded-full bg-muted px-3 py-1.5 text-xs font-semibold text-muted-foreground">{Math.min(3, project.people.length)} nhân sự</span></div><div className="mt-5"><DeliveryMatrix project={project} /></div></section>
-      <LaborCostTable project={project} />
-      <PnlItemTable project={project} />
-      <TaskLedger tasks={tasks} stages={stages} milestones={milestones} loading={tasksLoading} error={tasksError} />
-      <Results project={project} />
-      <ExpenseGroups expenses={project.expenses} currency={project.currency} />
+      <DetailDisclosure title="Logwork theo người và ngày" description="Mở để đối soát giờ thực tế của từng nhân sự trong kỳ." badge={`${totalPeople} nhân sự · ${formatHours(project.logworkMinutes)}`}>
+        <section className="rounded-xl border border-border bg-card p-4 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-primary">Logwork Daily</p><h3 className="mt-1 text-base font-bold">Ma trận theo người và ngày</h3><p className="mt-1 text-xs text-muted-foreground">Bảng chỉ mở các ngày có log; biểu đồ phía trên vẫn hiển thị đủ toàn bộ ngày trong kỳ.</p></div><span className="rounded-full bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700">Tổng {formatHours(project.logworkMinutes)}</span></div><div className="mt-5"><PersonMatrix people={project.people} /></div></section>
+      </DetailDisclosure>
+      <DetailDisclosure title="Delivery / DX theo nhân sự" description="Đối soát baseline, giờ ghi nhận và giờ đủ điều kiện P&L." badge={`${Math.min(3, project.people.length)} nhân sự`}>
+        <section className="rounded-xl border border-border bg-card p-4 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-base font-bold">Phân bổ theo nhân sự</h3><p className="mt-1 text-xs text-muted-foreground">Cột ngày chỉ hiện ngày có phát sinh.</p></div></div><div className="mt-5"><DeliveryMatrix project={project} /></div></section>
+      </DetailDisclosure>
+      <DetailDisclosure title="Chi phí nhân sự" description="Cost rate, chi phí theo người và trạng thái dữ liệu đầu vào." badge="Cost rate">
+        <LaborCostTable project={project} />
+      </DetailDisclosure>
+      <DetailDisclosure title="Chi tiết P&L theo dòng" description="Các khoản doanh thu, chi phí và giờ được đưa vào phép tính." badge={project.currency}>
+        <PnlItemTable project={project} />
+      </DetailDisclosure>
+      <DetailDisclosure title="Công việc & tiến độ" description="Cây Milestone → Stage → Task; mở khi cần kiểm tra delivery chi tiết." badge={`${tasks.length} task`}>
+        <TaskLedger tasks={tasks} stages={stages} milestones={milestones} loading={tasksLoading} error={tasksError} />
+      </DetailDisclosure>
+      <DetailDisclosure title="Kết quả tài chính" description="Tóm tắt doanh thu, chi phí và biên lợi nhuận của project trong kỳ." badge={project.currency}>
+        <Results project={project} />
+      </DetailDisclosure>
+      <DetailDisclosure title="Chi phí & khoản phát sinh" description="Các nhóm expense được ghi nhận trong project." badge={`${project.expenses.length} nhóm`}>
+        <ExpenseGroups expenses={project.expenses} currency={project.currency} />
+      </DetailDisclosure>
       <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-4 text-sm text-blue-950"><div className="flex items-start gap-3"><ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-blue-700" /><p><strong>Quy tắc dữ liệu:</strong> Plan là baseline, Logwork là giờ thực tế, P&amp;L Hour chỉ gồm Logwork đã được duyệt và có Cost Rate hiệu lực. Nếu còn giờ chờ xử lý, kết quả EBIT được xem là tạm tính.</p></div></div>
     </div>
   );
 }
 
-async function fetchPnlData(period: string) {
-  const { start, end } = periodBounds(period);
-  const [summaryResponse, projectsResponse, entriesResponse] = await Promise.all([
-    fetch("/api/project-controls/pl-summary", { cache: "no-store", credentials: "same-origin" }),
-    fetchPagedResource<ProjectSummary>(`/api/projects?limit=100&offset=0`),
-    fetchPagedResource<TaskTimeEntrySummary>(`/api/tasks/time-entries?limit=100&offset=0&startAt=${encodeURIComponent(start)}&endAt=${encodeURIComponent(end)}`)
+async function fetchAllTimeEntries(projects: ProjectSummary[], startDate: string, endDate: string) {
+  const projectStarts = projects.map((project) => project.plannedStartAt?.slice(0, 10)).filter((value): value is string => Boolean(value));
+  const projectEnds = projects.map((project) => project.plannedEndAt?.slice(0, 10)).filter((value): value is string => Boolean(value));
+  const from = startDate || projectStarts.sort()[0] || "2020-01-01";
+  const to = endDate || projectEnds.sort().at(-1) || new Date().toISOString().slice(0, 10);
+  const cursor = new Date(`${from}T00:00:00.000Z`);
+  const last = new Date(`${to}T00:00:00.000Z`);
+  const entries = new Map<string, TaskTimeEntrySummary>();
+  while (cursor <= last) {
+    const chunkEnd = new Date(cursor);
+    chunkEnd.setUTCDate(chunkEnd.getUTCDate() + 89);
+    const endExclusive = new Date(Math.min(chunkEnd.getTime(), last.getTime()));
+    endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
+    const chunk = await fetchPagedResource<TaskTimeEntrySummary>(`/api/tasks/time-entries?limit=100&offset=0&startAt=${encodeURIComponent(cursor.toISOString())}&endAt=${encodeURIComponent(endExclusive.toISOString())}`);
+    chunk.forEach((entry) => entries.set(entry.id, entry));
+    cursor.setTime(endExclusive.getTime());
+  }
+  return [...entries.values()];
+}
+
+async function fetchPnlData(startDate: string, endDate: string) {
+  const period = startDate ? startDate.slice(0, 7) : undefined;
+  const hasRange = Boolean(startDate && endDate);
+  const summaryQuery = hasRange ? `?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}` : "";
+  const projectsResponse = await fetchPagedResource<ProjectSummary>(`/api/projects?limit=100&offset=0`);
+  const [summaryResponse, entriesResponse] = await Promise.all([
+    fetch(`/api/project-controls/pl-summary${summaryQuery}`, { cache: "no-store", credentials: "same-origin" }),
+    fetchAllTimeEntries(projectsResponse, startDate, endDate)
   ]);
   if (!summaryResponse.ok) throw new Error("P&L API chưa sẵn sàng");
   const summary = await summaryResponse.json() as { data: ProjectPlSummaryItem[] };
-  const mapped = adaptLivePnlProjects(summary.data, projectsResponse, entriesResponse, period);
+  const mapped = adaptLivePnlProjects(summary.data, projectsResponse, entriesResponse, period, hasRange ? { startDate, endDate } : undefined);
   return mapped;
 }
 
@@ -620,7 +704,9 @@ async function fetchProjectWorkItems(projectId: string) {
 
 export function PnlWorkbench({ projectId }: PnlWorkbenchProps) {
   const searchParams = useSearchParams();
-  const [period, setPeriod] = useState(currentPeriod);
+  const [period, setPeriod] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
   const [projects, setProjects] = useState<PnlProject[]>([]);
   const [projectTasks, setProjectTasks] = useState<ProjectTaskSummary[]>([]);
   const [projectStages, setProjectStages] = useState<ProjectStageSummary[]>([]);
@@ -633,14 +719,29 @@ export function PnlWorkbench({ projectId }: PnlWorkbenchProps) {
 
   useEffect(() => {
     const requestedPeriod = searchParams.get("period");
-    if (requestedPeriod && /^\d{4}-\d{2}$/.test(requestedPeriod)) setPeriod(requestedPeriod);
+    const requestedStart = searchParams.get("startDate");
+    const requestedEnd = searchParams.get("endDate");
+    if (requestedStart && requestedEnd && /^\d{4}-\d{2}-\d{2}$/.test(requestedStart) && /^\d{4}-\d{2}-\d{2}$/.test(requestedEnd) && requestedStart <= requestedEnd) {
+      setStartDate(requestedStart);
+      setEndDate(requestedEnd);
+      setPeriod(requestedStart.slice(0, 7));
+    } else if (requestedPeriod && /^\d{4}-\d{2}$/.test(requestedPeriod)) {
+      setPeriod(requestedPeriod);
+      const nextRange = monthDateRange(requestedPeriod);
+      setStartDate(nextRange.startDate);
+      setEndDate(nextRange.endDate);
+    } else if (searchParams.get("scope") === "all") {
+      setPeriod("");
+      setStartDate("");
+      setEndDate("");
+    }
   }, [searchParams]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
-    fetchPnlData(period).then((nextProjects) => {
+    fetchPnlData(startDate, endDate).then((nextProjects) => {
       if (cancelled) return;
       setProjects(nextProjects);
     }).catch((reason: unknown) => {
@@ -650,7 +751,7 @@ export function PnlWorkbench({ projectId }: PnlWorkbenchProps) {
       }
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [period, reloadToken]);
+  }, [endDate, reloadToken, startDate]);
 
   useEffect(() => {
     if (!projectId) {
@@ -683,11 +784,28 @@ export function PnlWorkbench({ projectId }: PnlWorkbenchProps) {
 
   const requestedProjectId = projectId ? decodeURIComponent(projectId) : undefined;
   const selectedProject = requestedProjectId ? projects.find((project) => project.id === requestedProjectId) : undefined;
+  const handlePeriodChange = (nextPeriod: string) => {
+    if (nextPeriod === "all") {
+      setPeriod("");
+      setStartDate("");
+      setEndDate("");
+      return;
+    }
+    setPeriod(nextPeriod);
+    const nextRange = monthDateRange(nextPeriod);
+    setStartDate(nextRange.startDate);
+    setEndDate(nextRange.endDate);
+  };
+  const handleRangeChange = (nextStart: string, nextEnd: string) => {
+    setStartDate(nextStart);
+    setEndDate(nextEnd);
+    setPeriod(/^\d{4}-\d{2}-\d{2}$/.test(nextStart) && /^\d{4}-\d{2}-\d{2}$/.test(nextEnd) && nextStart <= nextEnd ? nextStart.slice(0, 7) : "");
+  };
   return (
     <AppShell activeRoute="/pnl" shellTestId="pnl-shell" desktopSidebarTestId="pnl-desktop-sidebar" mobileHeaderTestId="pnl-mobile-shell" title="P&L">
       <main data-testid="pnl-main" className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-none bg-background p-4 sm:p-6">
         {loadError ? <section role="alert" className="mb-4 flex flex-col gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 sm:flex-row sm:items-center sm:justify-between"><span>{loadError} Dữ liệu demo đã được tắt để tránh hiển thị sai số.</span><button type="button" onClick={() => setReloadToken((value) => value + 1)} className="rounded-lg border border-rose-300 bg-white px-3 py-2 font-semibold text-rose-700 hover:bg-rose-100">Thử lại</button></section> : null}
-        {loading ? <section aria-live="polite" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><div className="h-24 animate-pulse rounded-xl bg-muted" /><div className="h-24 animate-pulse rounded-xl bg-muted" /><div className="h-24 animate-pulse rounded-xl bg-muted" /><div className="h-24 animate-pulse rounded-xl bg-muted" /></section> : requestedProjectId && !selectedProject ? <section role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900"><h1 className="text-lg font-bold">Không tìm thấy project</h1><p className="mt-2">Project này không nằm trong phạm vi dữ liệu hoặc đã bị xoá.</p><Link href={`/pnl?period=${encodeURIComponent(period)}`} className="mt-4 inline-flex rounded-lg border border-amber-300 bg-white px-3 py-2 font-semibold text-amber-800 hover:bg-amber-100">Quay lại tổng quan</Link></section> : selectedProject ? <Detail project={selectedProject} period={period} onPeriodChange={setPeriod} tasks={projectTasks} stages={projectStages} milestones={projectMilestones} tasksLoading={tasksLoading} tasksError={tasksError} /> : <Overview projects={projects} period={period} onPeriodChange={setPeriod} />}
+        {loading ? <section aria-live="polite" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><div className="h-24 animate-pulse rounded-xl bg-muted" /><div className="h-24 animate-pulse rounded-xl bg-muted" /><div className="h-24 animate-pulse rounded-xl bg-muted" /><div className="h-24 animate-pulse rounded-xl bg-muted" /></section> : requestedProjectId && !selectedProject ? <section role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900"><h1 className="text-lg font-bold">Không tìm thấy project</h1><p className="mt-2">Project này không nằm trong phạm vi dữ liệu hoặc đã bị xoá.</p><Link href={startDate && endDate ? `/pnl?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}` : "/pnl?scope=all"} className="mt-4 inline-flex rounded-lg border border-amber-300 bg-white px-3 py-2 font-semibold text-amber-800 hover:bg-amber-100">Quay lại tổng quan</Link></section> : selectedProject ? <ManagerDetail project={selectedProject} period={period} startDate={startDate} endDate={endDate} onPeriodChange={handlePeriodChange} onRangeChange={handleRangeChange} tasks={projectTasks} stages={projectStages} milestones={projectMilestones} tasksLoading={tasksLoading} tasksError={tasksError} /> : <Overview projects={projects} period={period} startDate={startDate} endDate={endDate} onPeriodChange={handlePeriodChange} onRangeChange={handleRangeChange} />}
       </main>
     </AppShell>
   );

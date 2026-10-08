@@ -42,4 +42,32 @@ describe("P&L project adapter — EV-007", () => {
     expect(project.daily[0]).toMatchObject({ date: "2026-09-01", minutes: 0, pnlMinutes: 0, pendingMinutes: 0 });
     expect(project.daily.at(-1)).toMatchObject({ date: "2026-09-30", minutes: 60, pnlMinutes: 0, pendingMinutes: 60 });
   });
+
+  it("does not fall back to lifetime project hours when a scoped range has no entries", () => {
+    const [project] = adaptLivePnlProjects(
+      [{ projectId: "project-1", projectName: "CRM", accountName: "Client", currency: "VND", plannedRevenueAmount: 1000, paidRevenueAmount: 1000, plannedCostAmount: 500, approvedLaborMinutes: 480, actualLaborCostAmount: 100, directCostAmount: 0, writeOffAmount: 0, totalCostAmount: 100, grossMarginAmount: 900 } as any],
+      [{ id: "project-1", code: "PRJ-1", name: "CRM", plannedMinutes: 480, loggedMinutes: 480, approvedMinutes: 480 } as any],
+      [],
+      "2026-10",
+      { startDate: "2026-10-01", endDate: "2026-10-07" }
+    );
+
+    expect(project).toMatchObject({ logworkMinutes: 0, pnlMinutes: 0, pendingMinutes: 0, status: "Thiếu dữ liệu", dataSource: "period" });
+    expect(project.daily).toHaveLength(7);
+  });
+
+  it("derives planned hours per person from distinct task estimates", () => {
+    const [project] = adaptLivePnlProjects(
+      [{ projectId: "project-1", projectName: "CRM", accountName: "Client", currency: "VND", plannedRevenueAmount: 0, paidRevenueAmount: 0, plannedCostAmount: 0, approvedLaborMinutes: 0, actualLaborCostAmount: 0, directCostAmount: 0, writeOffAmount: 0, totalCostAmount: 0, grossMarginAmount: 0 } as any],
+      [{ id: "project-1", code: "PRJ-1", name: "CRM", plannedMinutes: 180 } as any],
+      [
+        { projectId: "project-1", taskId: "task-1", taskEstimateMinutes: 120, userId: "user-1", userDisplayName: "A", minutes: 30, approvalStatus: "approved", workDate: "2026-09-03T02:00:00.000Z" },
+        { projectId: "project-1", taskId: "task-1", taskEstimateMinutes: 120, userId: "user-1", userDisplayName: "A", minutes: 30, approvalStatus: "approved", workDate: "2026-09-04T02:00:00.000Z" },
+        { projectId: "project-1", taskId: "task-2", taskEstimateMinutes: 60, userId: "user-1", userDisplayName: "A", minutes: 30, approvalStatus: "approved", workDate: "2026-09-05T02:00:00.000Z" }
+      ] as any,
+      "2026-09"
+    );
+
+    expect(project.people[0]).toMatchObject({ planMinutes: 180, logworkMinutes: 90 });
+  });
 });

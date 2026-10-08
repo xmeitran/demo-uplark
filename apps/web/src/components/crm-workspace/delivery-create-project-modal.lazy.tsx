@@ -23,10 +23,10 @@ type DraftMilestone = {
 };
 
 const PILOT_MILESTONE_DRAFT: DraftMilestone[] = [
-  { id: "m1", name: "Nhận brief & kick-off dự án", requiredDocumentCount: 0, requiredDocumentTypes: "", unlockCriteria: "Đã xác nhận scope, mục tiêu và lịch kick-off.", customerConfirmationRequired: false, reviewerMode: "workspace_admin", reviewerUserId: "", reviewerRole: "", stages: [{ id: "m1-s1", activity: "Validate scope & kick-off" }] },
-  { id: "m2", name: "Xây dựng hệ thống", requiredDocumentCount: 3, requiredDocumentTypes: "BRD, FRD, SRS", unlockCriteria: "Đủ BRD, FRD, SRS được người duyệt xác nhận trước khi bắt đầu build.", customerConfirmationRequired: true, reviewerMode: "workspace_admin", reviewerUserId: "", reviewerRole: "", stages: [{ id: "m2-s1", activity: "Thiết kế giải pháp" }, { id: "m2-s2", activity: "Xây dựng & kiểm thử" }, { id: "m2-s3", activity: "Chuẩn bị triển khai" }] },
-  { id: "m3", name: "Pilot, Onboarding, Nghiệm thu hệ thống", requiredDocumentCount: 2, requiredDocumentTypes: "pilot_bug_log, onboard_bug_log", unlockCriteria: "Pilot và onboarding hoàn tất; lỗi/blocker đã có phương án xử lý.", customerConfirmationRequired: true, reviewerMode: "workspace_admin", reviewerUserId: "", reviewerRole: "", stages: [{ id: "m3-s1", activity: "Pilot" }, { id: "m3-s2", activity: "Onboarding" }, { id: "m3-s3", activity: "Nghiệm thu hệ thống" }] },
-  { id: "m4", name: "Bảo trì", requiredDocumentCount: 2, requiredDocumentTypes: "handover_cs, golive_confirmation", unlockCriteria: "Đã bàn giao cho CS/CSM và ghi nhận ngày Go-live.", customerConfirmationRequired: false, reviewerMode: "workspace_admin", reviewerUserId: "", reviewerRole: "", stages: [{ id: "m4-s1", activity: "Tối ưu & hỗ trợ" }, { id: "m4-s2", activity: "Bàn giao & Go-live" }] }
+  { id: "m1", name: "Nhận brief & kick-off dự án", requiredDocumentCount: 0, requiredDocumentTypes: "", unlockCriteria: "Đã xác nhận scope, mục tiêu và lịch kick-off.", customerConfirmationRequired: false, reviewerMode: "workspace_admin", reviewerUserId: "", reviewerRole: "", stages: [{ id: "m1-s1", activity: "Intake" }, { id: "m1-s2", activity: "Validate" }] },
+  { id: "m2", name: "Xây dựng hệ thống", requiredDocumentCount: 3, requiredDocumentTypes: "BRD, FRD, SRS", unlockCriteria: "Đủ BRD, FRD, SRS được người duyệt xác nhận trước khi bắt đầu build.", customerConfirmationRequired: true, reviewerMode: "workspace_admin", reviewerUserId: "", reviewerRole: "", stages: [{ id: "m2-s1", activity: "Design" }, { id: "m2-s2", activity: "Build" }, { id: "m2-s3", activity: "Deployment Preparation" }] },
+  { id: "m3", name: "Pilot, Onboarding, Nghiệm thu hệ thống", requiredDocumentCount: 2, requiredDocumentTypes: "pilot_bug_log, onboard_bug_log", unlockCriteria: "Pilot và onboarding hoàn tất; lỗi/blocker đã có phương án xử lý.", customerConfirmationRequired: true, reviewerMode: "workspace_admin", reviewerUserId: "", reviewerRole: "", stages: [{ id: "m3-s1", activity: "Pilot" }, { id: "m3-s2", activity: "Onboard" }, { id: "m3-s3", activity: "Acceptance" }] },
+  { id: "m4", name: "Bảo trì", requiredDocumentCount: 2, requiredDocumentTypes: "handover_cs, golive_confirmation", unlockCriteria: "Đã bàn giao cho CS/CSM và ghi nhận ngày Go-live.", customerConfirmationRequired: false, reviewerMode: "workspace_admin", reviewerUserId: "", reviewerRole: "", stages: [{ id: "m4-s1", activity: "Optimize" }, { id: "m4-s2", activity: "Handover" }] }
 ];
 
 export type DeliveryCreateProjectPayload = CreateProjectInput & {
@@ -72,6 +72,8 @@ export default function DeliveryCreateProjectModal({
   const [createStageTemplate, setCreateStageTemplate] = useState(true);
   const [milestoneMode, setMilestoneMode] = useState<"auto" | "manual">("auto");
   const [milestones, setMilestones] = useState<DraftMilestone[]>(PILOT_MILESTONE_DRAFT);
+  const [expandedMilestoneId, setExpandedMilestoneId] = useState("m1");
+  const [usingGeneratedTemplate, setUsingGeneratedTemplate] = useState(false);
   const [planPreview, setPlanPreview] = useState<ProjectPlanPreviewResponse["data"] | null>(null);
   const [planPreviewError, setPlanPreviewError] = useState("");
   const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
@@ -93,6 +95,8 @@ export default function DeliveryCreateProjectModal({
     setCreateStageTemplate(true);
     setMilestoneMode("auto");
     setMilestones(PILOT_MILESTONE_DRAFT.map((milestone) => ({ ...milestone, stages: milestone.stages.map((stage) => ({ ...stage })) })));
+    setExpandedMilestoneId("m1");
+    setUsingGeneratedTemplate(false);
     setPlanPreview(null);
     setPlanPreviewError("");
   }, [accounts, initialProject, initialStage, isOpen, resourceOptions]);
@@ -154,7 +158,7 @@ export default function DeliveryCreateProjectModal({
       return;
     }
     const currentMilestones = milestones;
-    setMilestoneMode("manual");
+    setUsingGeneratedTemplate(true);
     setMilestones(planPreview.milestones.map((milestone, milestoneIndex) => {
       const current = currentMilestones[milestoneIndex];
       return {
@@ -169,6 +173,7 @@ export default function DeliveryCreateProjectModal({
         stages: milestone.stages.map((stage) => ({ id: stage.id, activity: stage.activity }))
       };
     }));
+    setExpandedMilestoneId(planPreview.milestones[0]?.id || "");
     setPlanPreview(null);
   };
 
@@ -186,6 +191,7 @@ export default function DeliveryCreateProjectModal({
           : "Chưa đặt";
 
   const isEditMode = mode === "edit";
+  const isCustomMilestoneStructure = milestoneMode === "manual" || usingGeneratedTemplate;
   const modalTitle = isEditMode ? "Chỉnh sửa dự án triển khai" : "Tạo dự án triển khai";
 
   return (
@@ -203,9 +209,9 @@ export default function DeliveryCreateProjectModal({
             accountName: selectedAccount?.name,
             code: code.trim() || undefined,
             createStageTemplate: isEditMode ? undefined : createStageTemplate,
-            milestoneMode: isEditMode ? undefined : milestoneMode,
-            milestoneTemplateKey: isEditMode ? undefined : milestoneMode === "auto" ? "pilot-v1" : undefined,
-            manualMilestones: isEditMode || milestoneMode !== "manual" ? undefined : milestones.map((milestone, milestoneIndex) => ({
+            milestoneMode: isEditMode ? undefined : usingGeneratedTemplate ? "manual" : milestoneMode,
+            milestoneTemplateKey: isEditMode || usingGeneratedTemplate ? undefined : milestoneMode === "auto" ? "pilot-v1" : undefined,
+            manualMilestones: isEditMode || (milestoneMode !== "manual" && !usingGeneratedTemplate) ? undefined : milestones.map((milestone, milestoneIndex) => ({
               name: milestone.name.trim(),
               sortOrder: (milestoneIndex + 1) * 10,
               requiredDocumentCount: milestone.requiredDocumentCount,
@@ -291,8 +297,8 @@ export default function DeliveryCreateProjectModal({
           <div className="delivery-create-project-section delivery-milestone-config">
             <div className="delivery-create-project-section-heading">
               <div>
-                <span className="delivery-create-project-section-title">Milestone & checklist chuyển tiếp</span>
-                <small>Chọn mẫu để dùng sẵn. Hệ thống chỉ kiểm tra task, hồ sơ bắt buộc và xác nhận khách hàng; phần mô tả chỉ để tham chiếu.</small>
+                <span className="delivery-create-project-section-title">Template milestone & checklist</span>
+                <small>Chọn template đã lưu để dùng nguyên cấu trúc milestone/stage, hoặc tự chọn nếu project có quy trình riêng.</small>
               </div>
               <button className="delivery-plan-action" disabled={!name.trim() || isGeneratingPlan} onClick={generatePlanPreview} type="button">
                 {isGeneratingPlan ? "Đang dựng kế hoạch..." : "Gợi ý theo mẫu"}
@@ -325,39 +331,42 @@ export default function DeliveryCreateProjectModal({
             ) : null}
             <div className="delivery-milestone-mode-grid" role="radiogroup" aria-label="Cách tạo milestone">
               <label className={milestoneMode === "auto" ? "selected" : ""}>
-                <input checked={milestoneMode === "auto"} name="milestone-mode" onChange={() => setMilestoneMode("auto")} type="radio" />
-                <span><strong>Theo mẫu dự án</strong><small>4 milestone · 9 stage theo pilot UpLark</small></span>
+                <input checked={milestoneMode === "auto"} name="milestone-mode" onChange={() => { setMilestoneMode("auto"); setUsingGeneratedTemplate(false); setMilestones(PILOT_MILESTONE_DRAFT.map((milestone) => ({ ...milestone, stages: milestone.stages.map((stage) => ({ ...stage })) }))); setExpandedMilestoneId("m1"); }} type="radio" />
+                <span><strong>{usingGeneratedTemplate ? "Template AI vừa tạo" : "Theo template đã lưu"}</strong><small>{usingGeneratedTemplate ? "Bạn có thể chỉnh sửa trước khi tạo project" : "Hiện đầy đủ milestone và stage của Pilot UpLark"}</small></span>
+                <em>{milestoneMode === "auto" ? "Đang chọn" : ""}</em>
               </label>
               <label className={milestoneMode === "manual" ? "selected" : ""}>
-                <input checked={milestoneMode === "manual"} name="milestone-mode" onChange={() => setMilestoneMode("manual")} type="radio" />
-                <span><strong>Tự chọn milestone</strong><small>Tự đặt milestone, stage và gate chuyển tiếp</small></span>
+                <input checked={milestoneMode === "manual"} name="milestone-mode" onChange={() => { setMilestoneMode("manual"); setUsingGeneratedTemplate(false); }} type="radio" />
+                <span><strong>Tự chọn milestone</strong><small>Tự đặt milestone, stage và điều kiện chuyển tiếp</small></span>
+                <em>{milestoneMode === "manual" ? "Đang chọn" : ""}</em>
               </label>
             </div>
             <div className="delivery-milestone-list">
-              {milestones.map((milestone, milestoneIndex) => (
-                <article className="delivery-milestone-card" key={milestone.id}>
-                  <div className="delivery-milestone-card-header">
+              {milestones.map((milestone, milestoneIndex) => {
+                const expanded = expandedMilestoneId === milestone.id;
+                return <article className={`delivery-milestone-card ${expanded ? "expanded" : ""}`} key={milestone.id}>
+                  <button aria-expanded={expanded} className="delivery-milestone-card-header" onClick={() => setExpandedMilestoneId(expanded ? "" : milestone.id)} type="button">
                     <span className="delivery-milestone-index">M{milestoneIndex + 1}</span>
-                    <input aria-label={`Tên milestone ${milestoneIndex + 1}`} disabled={milestoneMode === "auto"} onChange={(event) => updateMilestone(setMilestones, milestone.id, { name: event.target.value })} value={milestone.name} />
-                    {milestoneMode === "manual" && milestones.length > 1 ? <button className="delivery-inline-remove" onClick={() => setMilestones((current) => current.filter((item) => item.id !== milestone.id))} type="button">Xóa</button> : null}
-                  </div>
-                  <div className="delivery-milestone-stage-preview">
-                    {milestone.stages.map((stage) => <span key={stage.id}>{stage.activity}</span>)}
-                    {milestoneMode === "manual" ? <button onClick={() => setMilestones((current) => current.map((item) => item.id === milestone.id ? { ...item, stages: [...item.stages, { id: `${milestone.id}-${Date.now()}`, activity: "Stage mới" }] } : item))} type="button">+ Stage</button> : null}
-                  </div>
-                  {milestoneMode === "manual" ? <>
-                    <div className="delivery-milestone-gate-grid">
-                      <FormField label="Số hồ sơ bắt buộc" min={0} onChange={(event) => updateMilestone(setMilestones, milestone.id, { requiredDocumentCount: Math.max(0, Number(event.target.value) || 0) })} type="number" value={String(milestone.requiredDocumentCount)} />
-                      <FormField label="Phân loại tài liệu (không bắt buộc)" onChange={(event) => updateMilestone(setMilestones, milestone.id, { requiredDocumentTypes: event.target.value })} placeholder="Chỉ để phân loại, không dùng để khóa" value={milestone.requiredDocumentTypes} />
-                      <CustomDropdown label="Người duyệt" options={[{ value: "workspace_admin", label: "Admin workspace" }, ...resourceOptions]} value={milestone.reviewerMode === "specific_user" ? milestone.reviewerUserId : "workspace_admin"} searchable onChange={(value) => updateMilestone(setMilestones, milestone.id, value === "workspace_admin" ? { reviewerMode: "workspace_admin", reviewerUserId: "" } : { reviewerMode: "specific_user", reviewerUserId: value })} />
-                    </div>
-                    <FormTextArea label="Mô tả điều kiện (tham chiếu)" onChange={(event) => updateMilestone(setMilestones, milestone.id, { unlockCriteria: event.target.value })} rows={2} value={milestone.unlockCriteria} />
-                    <label className="delivery-gate-check"><input checked={milestone.customerConfirmationRequired} onChange={(event) => updateMilestone(setMilestones, milestone.id, { customerConfirmationRequired: event.target.checked })} type="checkbox" /> Cần khách hàng xác nhận trước khi mở bước tiếp theo</label>
-                  </> : <p className="delivery-milestone-auto-note">Đang dùng checklist chuẩn của template. Bạn có thể xem số hồ sơ, task và xác nhận còn thiếu trong “Hồ sơ chuyển tiếp” sau khi tạo project.</p>}
-                </article>
-              ))}
+                    <span className="delivery-milestone-card-title"><strong>{milestone.name}</strong><small>{milestone.stages.length} stage · {milestone.requiredDocumentCount ? `${milestone.requiredDocumentCount} hồ sơ bắt buộc` : "Chưa yêu cầu hồ sơ"}</small></span>
+                    <span className="delivery-milestone-chevron">{expanded ? "−" : "+"}</span>
+                  </button>
+                  {expanded ? <div className="delivery-milestone-card-body">
+                    {isCustomMilestoneStructure ? <div className="delivery-milestone-edit-name"><FormField label="Tên milestone" aria-label={`Tên milestone ${milestoneIndex + 1}`} onChange={(event) => updateMilestone(setMilestones, milestone.id, { name: event.target.value })} value={milestone.name} />{milestones.length > 1 ? <button className="delivery-inline-remove" onClick={() => setMilestones((current) => current.filter((item) => item.id !== milestone.id))} type="button">Xóa</button> : null}</div> : null}
+                    <div className="delivery-milestone-stage-preview"><span className="delivery-stage-label">STAGE</span>{milestone.stages.map((stage) => <span key={stage.id}>{stage.activity}</span>)}{isCustomMilestoneStructure ? <button onClick={() => setMilestones((current) => current.map((item) => item.id === milestone.id ? { ...item, stages: [...item.stages, { id: `${milestone.id}-${Date.now()}`, activity: "Stage mới" }] } : item))} type="button">+ Thêm stage</button> : null}</div>
+                    {isCustomMilestoneStructure ? <>
+                      <div className="delivery-milestone-gate-grid">
+                        <FormField label="Số hồ sơ bắt buộc" min={0} onChange={(event) => updateMilestone(setMilestones, milestone.id, { requiredDocumentCount: Math.max(0, Number(event.target.value) || 0) })} type="number" value={String(milestone.requiredDocumentCount)} />
+                        <FormField label="Phân loại tài liệu (không bắt buộc)" onChange={(event) => updateMilestone(setMilestones, milestone.id, { requiredDocumentTypes: event.target.value })} placeholder="BRD, FRD, SRS" value={milestone.requiredDocumentTypes} />
+                        <CustomDropdown label="Người duyệt" options={[{ value: "workspace_admin", label: "Admin workspace" }, ...resourceOptions]} value={milestone.reviewerMode === "specific_user" ? milestone.reviewerUserId : "workspace_admin"} searchable onChange={(value) => updateMilestone(setMilestones, milestone.id, value === "workspace_admin" ? { reviewerMode: "workspace_admin", reviewerUserId: "" } : { reviewerMode: "specific_user", reviewerUserId: value })} />
+                      </div>
+                      <FormTextArea label="Điều kiện chuyển tiếp" onChange={(event) => updateMilestone(setMilestones, milestone.id, { unlockCriteria: event.target.value })} rows={2} value={milestone.unlockCriteria} />
+                      <label className="delivery-gate-check"><input checked={milestone.customerConfirmationRequired} onChange={(event) => updateMilestone(setMilestones, milestone.id, { customerConfirmationRequired: event.target.checked })} type="checkbox" /> Cần khách hàng xác nhận trước khi mở milestone tiếp theo</label>
+                    </> : <p className="delivery-milestone-auto-note"><strong>Template đang áp dụng</strong><span>Checklist chuẩn sẽ được tạo cùng project. Bạn có thể điều chỉnh chi tiết sau khi project được khởi tạo.</span></p>}
+                  </div> : <div className="delivery-milestone-collapsed">{milestone.stages.slice(0, 3).map((stage) => <span key={stage.id}>{stage.activity}</span>)}{milestone.stages.length > 3 ? <small>+{milestone.stages.length - 3} stage</small> : null}</div>}
+                </article>;
+              })}
             </div>
-            {milestoneMode === "manual" ? <button className="task-secondary-action delivery-add-milestone" onClick={() => setMilestones((current) => [...current, { id: `m-${Date.now()}`, name: "Milestone mới", requiredDocumentCount: 0, requiredDocumentTypes: "", unlockCriteria: "", customerConfirmationRequired: false, reviewerMode: "workspace_admin", reviewerUserId: "", reviewerRole: "", stages: [{ id: `s-${Date.now()}`, activity: "Stage mới" }] }])} type="button">+ Thêm milestone</button> : null}
+            {isCustomMilestoneStructure ? <button className="task-secondary-action delivery-add-milestone" onClick={() => setMilestones((current) => [...current, { id: `m-${Date.now()}`, name: "Milestone mới", requiredDocumentCount: 0, requiredDocumentTypes: "", unlockCriteria: "", customerConfirmationRequired: false, reviewerMode: "workspace_admin", reviewerUserId: "", reviewerRole: "", stages: [{ id: `s-${Date.now()}`, activity: "Stage mới" }] }])} type="button">+ Thêm milestone</button> : null}
           </div>
         ) : null}
 

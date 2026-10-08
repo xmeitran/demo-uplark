@@ -39,6 +39,7 @@ export type PnlProject = {
   plannedRevenue: number;
   paidRevenue: number;
   plannedCost: number;
+  costAvailable: boolean;
   grossMargin: number;
   grossMarginPercent?: number;
   projectStatus?: string;
@@ -158,6 +159,7 @@ function demoProject(input: {
     plannedRevenue: input.revenue,
     paidRevenue: input.revenue,
     plannedCost: input.expenses,
+    costAvailable: true,
     grossMargin: input.revenue - input.expenses,
     dataSource: "project",
     status: logworkMinutes === pnlMinutes ? "Đã đối soát" : "Chờ xử lý",
@@ -223,6 +225,16 @@ function periodDateKeys(period: string) {
   return Array.from({ length: days }, (_, index) => `${period}-${String(index + 1).padStart(2, "0")}`);
 }
 
+function dateRangeKeys(startDate: string, endDate: string) {
+  const start = new Date(`${startDate}T00:00:00.000Z`);
+  const end = new Date(`${endDate}T00:00:00.000Z`);
+  const keys: string[] = [];
+  for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    keys.push(cursor.toISOString().slice(0, 10));
+  }
+  return keys;
+}
+
 function isWeekday(date: string) {
   const day = new Date(`${date}T12:00:00+07:00`).getDay();
   return day !== 0 && day !== 6;
@@ -245,7 +257,8 @@ export function adaptLivePnlProjects(
   summaries: ProjectPlSummaryItem[],
   projects: ProjectSummary[],
   entries: TaskTimeEntrySummary[],
-  period?: string
+  period?: string,
+  dateRange?: { startDate: string; endDate: string }
 ): PnlProject[] {
   const projectById = new Map(projects.map((project) => [project.id, project]));
   const entriesByProject = new Map<string, TaskTimeEntrySummary[]>();
@@ -260,12 +273,13 @@ export function adaptLivePnlProjects(
     const projectEntries = entriesByProject.get(summary.projectId) ?? [];
     const project = projectById.get(summary.projectId);
     const hasPeriodEntries = projectEntries.length > 0;
+    const hasScopedRange = Boolean(period || dateRange);
     const logworkMinutes = hasPeriodEntries
       ? projectEntries.reduce((total, entry) => total + entry.minutes, 0)
-      : project?.loggedMinutes ?? summary.approvedLaborMinutes;
+      : hasScopedRange ? 0 : project?.loggedMinutes ?? summary.approvedLaborMinutes;
     const pnlMinutes = hasPeriodEntries
       ? projectEntries.filter((entry) => normalizeApprovalStatus(entry.approvalStatus) === "approved").reduce((total, entry) => total + entry.minutes, 0)
-      : project?.approvedMinutes ?? summary.approvedLaborMinutes;
+      : hasScopedRange ? 0 : project?.approvedMinutes ?? summary.approvedLaborMinutes;
     const excludedMinutes = projectEntries.filter((entry) => ["rejected", "cancelled"].includes(normalizeApprovalStatus(entry.approvalStatus))).reduce((total, entry) => total + entry.minutes, 0);
     const pendingMinutes = Math.max(logworkMinutes - pnlMinutes - excludedMinutes, 0);
     const daily = new Map<string, { minutes: number; pnlMinutes: number; excludedMinutes: number; entryCount: number; people: Set<string> }>();
@@ -281,7 +295,7 @@ export function adaptLivePnlProjects(
       if (["rejected", "cancelled"].includes(approvalStatus)) bucket.excludedMinutes += entry.minutes;
       daily.set(date, bucket);
     });
-    const dateKeys = period ? periodDateKeys(period) : Array.from(daily.keys()).sort();
+    const dateKeys = dateRange ? dateRangeKeys(dateRange.startDate, dateRange.endDate) : period ? periodDateKeys(period) : Array.from(daily.keys()).sort();
     const dailyPoints = dateKeys.map((date) => {
       const bucket = daily.get(date) ?? { minutes: 0, pnlMinutes: 0, excludedMinutes: 0, entryCount: 0, people: new Set<string>() };
       return {
@@ -296,6 +310,7 @@ export function adaptLivePnlProjects(
       };
     });
     const people = new Map<string, PnlPerson>();
+    const plannedByPerson = new Map<string, Map<string, number>>();
     projectEntries.forEach((entry) => {
       const current = people.get(entry.userId) ?? {
         id: entry.userId,
@@ -306,6 +321,11 @@ export function adaptLivePnlProjects(
         pnlMinutes: 0,
         daily: {}
       };
+      if (entry.taskEstimateMinutes && entry.taskId) {
+        const taskPlans = plannedByPerson.get(entry.userId) ?? new Map<string, number>();
+        taskPlans.set(entry.taskId, Math.max(taskPlans.get(entry.taskId) ?? 0, entry.taskEstimateMinutes));
+        plannedByPerson.set(entry.userId, taskPlans);
+      }
       current.logworkMinutes += entry.minutes;
       const approvalStatus = normalizeApprovalStatus(entry.approvalStatus);
       if (approvalStatus === "approved") current.pnlMinutes += entry.minutes;
@@ -317,6 +337,9 @@ export function adaptLivePnlProjects(
       current.daily[date] = daily;
       people.set(entry.userId, current);
     });
+    people.forEach((person) => {
+      person.planMinutes = [...(plannedByPerson.get(person.id)?.values() ?? [])].reduce((total, minutes) => total + minutes, 0);
+    });
     return {
       id: summary.projectId,
       code: project?.code ?? summary.projectId,
@@ -326,6 +349,7 @@ export function adaptLivePnlProjects(
       plannedRevenue: summary.plannedRevenueAmount,
       paidRevenue: summary.paidRevenueAmount,
       plannedCost: summary.plannedCostAmount,
+      costAvailable: summary.totalCostAmount > 0 || summary.plannedCostAmount > 0,
       grossMargin: summary.grossMarginAmount,
       grossMarginPercent: summary.grossMarginPercent,
       projectStatus: project?.status,
@@ -337,8 +361,8 @@ export function adaptLivePnlProjects(
       plannedEndAt: project?.plannedEndAt,
       budgetAmount: project?.budgetAmount,
       spentAmount: project?.spentAmount,
-      dataSource: hasPeriodEntries ? "period" : "project",
-      status: statusFromEntries(logworkMinutes, pendingMinutes, project?.plannedMinutes ?? 0, !project),
+      dataSource: hasPeriodEntries || hasScopedRange ? "period" : "project",
+      status: statusFromEntries(logworkMinutes, pendingMinutes, project?.plannedMinutes ?? 0, !project || (hasScopedRange && !hasPeriodEntries)),
       revenue: summary.paidRevenueAmount || summary.plannedRevenueAmount,
       planMinutes: project?.plannedMinutes ?? 0,
       logworkMinutes,

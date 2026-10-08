@@ -73,7 +73,39 @@ export const PILOT_PROJECT_MILESTONE_TEMPLATE = [
     customerConfirmationRequired: false,
     reviewerMode: "workspace_admin",
     stages: [
-      { stageKey: "validate", phase: "validate", activity: "Validate scope & kick-off", sortOrder: 10, cumulativePercent: 20, activityPercent: 20, criteria: "Brief, module, PIC, proposal, scope và tiêu chí nghiệm thu được xác nhận.", upbaseRole: "PM / Dx", customerRole: "Project Sponsor" }
+      {
+        stageKey: "intake",
+        phase: "intake",
+        activity: "Intake",
+        sortOrder: 10,
+        cumulativePercent: 10,
+        activityPercent: 10,
+        criteria: "Đã tiếp nhận brief và ghi nhận đầy đủ nhu cầu ban đầu của khách hàng.",
+        upbaseRole: "PM / Dx",
+        customerRole: "Project Sponsor",
+        slaDays: 2,
+        tasks: [
+          { title: "Tiếp nhận brief, thu thập đầy đủ thông tin painpoint và kỳ vọng sơ bộ của khách hàng.", subtasks: [] },
+          { title: "Phân tích hiện trạng, xây dựng quy trình đề xuất và dựng Proposal/Demo.", subtasks: [] }
+        ]
+      },
+      {
+        stageKey: "validate",
+        phase: "validate",
+        activity: "Validate scope & kick-off",
+        sortOrder: 20,
+        cumulativePercent: 20,
+        activityPercent: 10,
+        criteria: "Brief, module, PIC, proposal, scope và tiêu chí nghiệm thu được xác nhận.",
+        upbaseRole: "PM / Dx",
+        customerRole: "Project Sponsor",
+        slaDays: 2,
+        tasks: [
+          { title: "Trình bày Proposal và Demo giải pháp (nếu có) cho khách hàng.", subtasks: [] },
+          { title: "Hoàn thiện Proposal/Demo dựa trên các góp ý chỉnh sửa của khách hàng.", subtasks: [] },
+          { title: "Ký duyệt/Xác nhận đóng Scope quy trình về mặt Business với khách hàng.", subtasks: [] }
+        ]
+      }
     ]
   },
   {
@@ -86,9 +118,9 @@ export const PILOT_PROJECT_MILESTONE_TEMPLATE = [
     customerConfirmationRequired: true,
     reviewerMode: "workspace_admin",
     stages: [
-      { stageKey: "design", phase: "design", activity: "Thiết kế giải pháp", sortOrder: 10, cumulativePercent: 40, activityPercent: 20, criteria: "BRD/FRD/SRS hoàn tất và được duyệt.", upbaseRole: "Dx", customerRole: "Business Owner" },
-      { stageKey: "build", phase: "build", activity: "Xây dựng & kiểm thử", sortOrder: 20, cumulativePercent: 65, activityPercent: 25, criteria: "Hệ thống đã build, có URL và test case.", upbaseRole: "Dx", customerRole: "Technical Owner" },
-      { stageKey: "deployment_preparation", phase: "deployment_preparation", activity: "Chuẩn bị triển khai", sortOrder: 30, cumulativePercent: 72, activityPercent: 7, criteria: "SOP và video hướng dẫn đã sẵn sàng.", upbaseRole: "Dx / PQA", customerRole: "Operations Owner" }
+      { stageKey: "design", phase: "design", activity: "Design", sortOrder: 10, cumulativePercent: 40, activityPercent: 20, criteria: "BRD/FRD/SRS hoàn tất và được duyệt.", upbaseRole: "Dx", customerRole: "Business Owner", slaDays: 3, tasks: [{ title: "Xây dựng bộ tài liệu thiết kế giải pháp (Form, Flow, Data, Permission).", subtasks: [] }] },
+      { stageKey: "build", phase: "build", activity: "Build", sortOrder: 20, cumulativePercent: 65, activityPercent: 25, criteria: "Hệ thống đã build, có URL và test case.", upbaseRole: "Dx", customerRole: "Technical Owner", slaDays: 5, tasks: [{ title: "Cấu hình và xây dựng hệ thống vận hành trên Lark.", subtasks: [] }, { title: "Import dữ liệu mẫu, UAT nội bộ, Fix bug.", subtasks: [] }] },
+      { stageKey: "deployment_preparation", phase: "deployment_preparation", activity: "Deployment Preparation", sortOrder: 30, cumulativePercent: 72, activityPercent: 7, criteria: "SOP và video hướng dẫn đã sẵn sàng.", upbaseRole: "Dx / PQA", customerRole: "Operations Owner", slaDays: 2, tasks: [{ title: "Xây dựng tài liệu hướng dẫn vận hành (SOP + Video).", subtasks: [] }, { title: "Chuẩn hoá và Import dữ liệu (nếu có).", subtasks: [] }] }
     ]
   },
   {
@@ -101,9 +133,9 @@ export const PILOT_PROJECT_MILESTONE_TEMPLATE = [
     customerConfirmationRequired: true,
     reviewerMode: "workspace_admin",
     stages: [
-      { stageKey: "pilot", phase: "pilot", activity: "Pilot", sortOrder: 10, cumulativePercent: 82, activityPercent: 10, criteria: "Pilot bug log và đề xuất cải tiến được ghi nhận.", upbaseRole: "Dx", customerRole: "Pilot Users" },
-      { stageKey: "onboard", phase: "onboard", activity: "Onboarding", sortOrder: 20, cumulativePercent: 90, activityPercent: 8, criteria: "Onboard bug log và đề xuất cải tiến được ghi nhận.", upbaseRole: "Dx / CS", customerRole: "End Users" },
-      { stageKey: "acceptance", phase: "acceptance", activity: "Nghiệm thu hệ thống", sortOrder: 30, cumulativePercent: 96, activityPercent: 6, criteria: "Biên bản nghiệm thu và toàn bộ hồ sơ giải pháp được duyệt.", upbaseRole: "PM", customerRole: "Customer" }
+      { stageKey: "pilot", phase: "pilot", activity: "Pilot", sortOrder: 10, cumulativePercent: 82, activityPercent: 10, criteria: "Pilot bug log và đề xuất cải tiến được ghi nhận.", upbaseRole: "Dx", customerRole: "Pilot Users", slaDays: 3, tasks: [{ title: "Chạy Pilot hệ thống với nhóm Key Users.", subtasks: [] }, { title: "Thiết lập phân quyền, bảo mật và Bàn giao Admin cho khách hàng.", subtasks: [] }] },
+      { stageKey: "onboard", phase: "onboard", activity: "Onboard", sortOrder: 20, cumulativePercent: 90, activityPercent: 8, criteria: "Onboard bug log và đề xuất cải tiến được ghi nhận.", upbaseRole: "Dx / CS", customerRole: "End Users", slaDays: 2, tasks: [{ title: "Onboard hệ thống toàn công ty.", subtasks: [] }] },
+      { stageKey: "acceptance", phase: "acceptance", activity: "Acceptance", sortOrder: 30, cumulativePercent: 96, activityPercent: 6, criteria: "Biên bản nghiệm thu và toàn bộ hồ sơ giải pháp được duyệt.", upbaseRole: "PM", customerRole: "Customer", slaDays: 1, tasks: [{ title: "Nghiệm thu hệ thống.", subtasks: [] }] }
     ]
   },
   {
@@ -116,8 +148,8 @@ export const PILOT_PROJECT_MILESTONE_TEMPLATE = [
     customerConfirmationRequired: false,
     reviewerMode: "workspace_admin",
     stages: [
-      { stageKey: "optimize", phase: "optimize", activity: "Tối ưu & hỗ trợ", sortOrder: 10, cumulativePercent: 98, activityPercent: 2, criteria: "Hồ sơ bàn giao cho CS đầy đủ.", upbaseRole: "Dx / PQA", customerRole: "CSM" },
-      { stageKey: "handover", phase: "handover", activity: "Bàn giao & Go-live", sortOrder: 20, cumulativePercent: 100, activityPercent: 2, criteria: "Có xác nhận bàn giao và ngày Go-live.", upbaseRole: "BD / PM", customerRole: "CSM / Customer" }
+      { stageKey: "optimize", phase: "optimize", activity: "Optimize", sortOrder: 10, cumulativePercent: 98, activityPercent: 2, criteria: "Hồ sơ bàn giao cho CS đầy đủ.", upbaseRole: "Dx / PQA", customerRole: "CSM", tasks: [{ title: "Tiếp nhận, phân loại và xử lý các điều chỉnh của khách hàng sau go-live.", subtasks: [] }] },
+      { stageKey: "handover", phase: "handover", activity: "Handover", sortOrder: 20, cumulativePercent: 100, activityPercent: 2, criteria: "Có xác nhận bàn giao và ngày Go-live.", upbaseRole: "BD / PM", customerRole: "CSM / Customer", tasks: [{ title: "Chuyển giao dự án cho team CS, sang giai đoạn bảo trì và chăm sóc dài hạn.", subtasks: [] }] }
     ]
   }
 ] as const;
