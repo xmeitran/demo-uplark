@@ -28,7 +28,8 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
   { id: "calendar", href: "/calendar", label: "Calendar", classification: "visible", shells: ["constructor"], navGroup: "Navigate" },
   { id: "resource-mgmt", href: "/resource-mgmt", label: "Nguồn lực", classification: "visible", shells: ["constructor", "shopify"], navGroup: "Triển khai" },
   { id: "project-controls", href: "/project-controls", label: "Kiểm soát dự án", classification: "visible", shells: ["constructor", "shopify"], navGroup: "Triển khai" },
-  { id: "people", href: "/people", label: "Hồ sơ nhân sự", classification: "visible", shells: ["constructor"], navGroup: "Triển khai" },
+  // Merged into Users; the page only redirects, so keep it reachable but out of navigation.
+  { id: "people", href: "/people", label: "Hồ sơ nhân sự", classification: "detail", shells: ["constructor"], navGroup: "Triển khai" },
   { id: "users", href: "/users", label: "Users", classification: "visible", shells: ["constructor"], navGroup: "Navigate" },
   { id: "clients", href: "/clients", label: "Clients", classification: "visible", shells: ["constructor"], navGroup: "Navigate" },
   { id: "settings", href: "/settings", label: "Settings", classification: "visible", shells: ["constructor"], navGroup: "Settings" },

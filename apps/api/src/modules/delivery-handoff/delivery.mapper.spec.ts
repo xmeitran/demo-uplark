@@ -374,4 +374,20 @@ describe("delivery.mapper", () => {
       subtasks: [{ id: "subtask-1", parentTaskId: "task-1", title: "Review UAT checklist", status: "todo" }]
     });
   });
+
+  it("never flags closed work as overdue, whichever terminal status it holds", () => {
+    const past = new Date(Date.now() - 86_400_000);
+    const taskWith = (status: string, extra: Record<string, unknown> = {}) => mapTaskSummary({ id: "t", accountId: "a", title: "T", taskType: "implementation", status, priority: "medium", dueAt: past, estimateMinutes: 0, customerVisible: false, ...extra });
+    for (const status of ["done", "completed", "closed", "cancelled", "canceled", "archived"]) expect(taskWith(status).overdue).toBe(false);
+    for (const status of ["todo", "in_progress", "blocked"]) expect(taskWith(status).overdue).toBe(true);
+    expect(taskWith("todo", { archivedAt: new Date() }).overdue).toBe(false);
+  });
+
+  it("sums logged minutes from actual entries only (not rejected, cancelled or planned)", () => {
+    const timeEntries = ([[60, "approved"], [30, "submitted"], [400, "rejected"], [200, "cancelled"], [100, "planned"]] as const)
+      .map(([minutes, approvalStatus], index) => ({ id: `te-${index}`, taskId: "t", userId: "u", minutes, approvalStatus, workDate: new Date("2026-10-05T02:00:00.000Z"), createdAt: new Date(), updatedAt: new Date() }));
+    const taskRow = { id: "t", accountId: "a", title: "T", taskType: "implementation", status: "in_progress", priority: "medium", estimateMinutes: 120, customerVisible: false, timeEntries };
+    expect(mapTaskSummary(taskRow)).toMatchObject({ loggedMinutes: 90, approvedMinutes: 60 });
+    expect(mapProjectSummary({ id: "p", accountId: "a", code: "P", name: "P", status: "in_progress", tasks: [taskRow, taskRow] })).toMatchObject({ loggedMinutes: 180, approvedMinutes: 120 });
+  });
 });

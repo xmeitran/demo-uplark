@@ -10,14 +10,14 @@ interface RouteContext {
 
 export async function GET(request: Request, context: RouteContext) {
   const { accountId } = await context.params;
-  return proxyCrmBffJson({ request, path: `/accounts/${accountId}`, principalFallback: "founder" });
+  return proxyCrmBffJson({ request, path: `/accounts/${encodeURIComponent(accountId)}`, principalFallback: "founder" });
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
   const { accountId } = await context.params;
   return proxyCrmBffJson({
     request,
-    path: `/accounts/${accountId}`,
+    path: `/accounts/${encodeURIComponent(accountId)}`,
     method: "PATCH",
     body: await readJsonBody(request)
   });
@@ -27,7 +27,7 @@ export async function DELETE(request: Request, context: RouteContext) {
   const { accountId } = await context.params;
   return proxyCrmBffJson({
     request,
-    path: `/accounts/${accountId}`,
+    path: `/accounts/${encodeURIComponent(accountId)}`,
     method: "DELETE"
   });
 }

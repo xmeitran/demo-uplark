@@ -6,17 +6,21 @@ import type {
   Person,
   ProjectMember,
   ProjectNode,
-  ProjectStatus,
   StageNode,
   TaskNode,
-  TaskStatusEvent,
   TimeLog,
   TimesheetDataset,
   WorkGroup
 } from "./timesheet-types";
 import { formatDepartmentLabel } from "@/lib/department-labels";
 import { businessRoleFromMember } from "@/lib/people-roles";
-import { normalizeNodeStatus } from "./timesheet-status";
+import { fetchAllPages } from "@/lib/api-pages";
+import { resolveProjectStatus } from "@/lib/project-status";
+import { isActualTimeEntry } from "@/lib/time-entry-actual";
+import { toVietnamDateKey, vietnamDayStartIso } from "@/lib/vietnam-time";
+import { isClosedNodeStatus, isPausedTaskStatus, normalizeNodeStatus } from "./timesheet-status";
+import { monthBounds } from "./timesheet-dates";
+import type { ProjectMemberParticipationItem } from "@b2b-crm/contracts";
 export { normalizeNodeStatus } from "./timesheet-status";
 
 type ApiUser = {
@@ -36,11 +40,18 @@ type ApiProject = {
   name: string;
   accountName?: string;
   status?: string;
+  /** Canonical status from the API; preferred over `status`. */
+  statusCode?: string;
   projectType?: string;
   ownerUserId?: string;
+  plannedStartAt?: string;
+  plannedEndAt?: string;
   memberUserIds?: string[];
-  members?: Array<{ userId?: string; displayName?: string; relation?: string; employmentStatus?: string }>;
+  members?: ApiProjectMember[];
 };
+
+/** `projectRole`/`role`/`joinedAt` are read when the payload carries them; today it does not. */
+type ApiProjectMember = { userId?: string; displayName?: string; relation?: string; employmentStatus?: string; projectRole?: string; role?: string; joinedAt?: string };
 
 type ApiTask = {
   id: string;
@@ -60,7 +71,6 @@ type ApiTask = {
   dueAt?: string;
   completedAt?: string;
   estimateMinutes?: number;
-  statusHistory?: Array<{ id?: string; changedAt?: string; fromStatus?: string | null; toStatus?: string; changedByUserId?: string | null }>;
 };
 
 type ApiTimeEntry = {
@@ -77,6 +87,8 @@ type ApiTimeEntry = {
   minutes?: number;
   billable?: boolean;
   workType?: string;
+  /** Approval status of the entry; decides whether it counts as actual hours (isActualTimeEntry). */
+  approvalStatus?: string;
   note?: string;
   createdAt?: string;
 };
@@ -93,8 +105,9 @@ function avatarColor(id: string) {
   return colors[hash % colors.length];
 }
 
-function dateOnly(value?: string) {
-  return value ? value.slice(0, 10) : null;
+/** Calendar day in Asia/Ho_Chi_Minh — a UTC slice puts 00:00–06:59 local on the previous day. */
+export function dateOnly(value?: string) {
+  return value ? toVietnamDateKey(value) || null : null;
 }
 
 function workGroup(value?: string, projectName?: string): WorkGroup {
@@ -106,26 +119,9 @@ function workGroup(value?: string, projectName?: string): WorkGroup {
   return "customer_project";
 }
 
-function statusEventStatus(value?: string): NodeStatus {
-  return normalizeNodeStatus(value);
-}
-
-function projectStatus(value?: string): ProjectStatus {
-  const normalized = String(value ?? "").trim().toLowerCase();
-  if (["completed", "done", "closed"].includes(normalized)) return "completed";
-  if (["in_review", "review"].includes(normalized)) return "in_review";
-  if (["planning", "not_started", "todo"].includes(normalized)) return "planning";
-  if (["on_hold", "paused", "pause"].includes(normalized)) return "paused";
-  if (["at_risk", "blocked", "cancelled"].includes(normalized)) return "at_risk";
-  if (normalized === "onboarding") return "onboarding";
-  if (normalized === "discovery") return "discovery";
-  if (normalized === "acceptance") return "acceptance";
-  return "in_progress";
-}
-
 export function projectMemberState(value?: string): MemberState {
   const normalized = String(value ?? "").trim().toUpperCase();
-  if (["ON_LEAVE", "ON_HOLD", "PAUSED"].includes(normalized)) return "on_hold";
+  if (["ON_LEAVE", "ON_HOLD", "PAUSED"].includes(normalized)) return "on_leave";
   if (["INACTIVE", "RELEASED", "SUSPENDED"].includes(normalized)) return "released";
   return "active";
 }
@@ -141,41 +137,28 @@ async function readJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-async function loadPaged<T>(path: string, signal?: AbortSignal) {
-  const separator = path.includes("?") ? "&" : "?";
-  const pageUrl = (offset: number) => `${path}${separator}limit=100&offset=${offset}&principal=founder`;
-  const firstPage = await readJson<ApiResponse<T>>(pageUrl(0), signal);
-  const rows: T[] = [...(firstPage.data ?? [])];
-  const firstPagination = firstPage.meta?.pagination;
-  const total = firstPagination?.total;
+function loadPaged<T>(path: string, signal?: AbortSignal) {
+  return fetchAllPages<T>(`${path}${path.includes("?") ? "&" : "?"}principal=founder`, { signal, errorLabel: "Không tải được dữ liệu Timesheet" });
+}
 
-  // API list endpoints return a stable total. Fetch remaining pages in small
-  // concurrent batches instead of waiting for every page sequentially; the
-  // old approach made Timesheet appear stuck when several history windows
-  // were loaded at once.
-  if (typeof total === "number" && total > rows.length) {
-    const offsets: number[] = [];
-    for (let offset = 100; offset < total; offset += 100) offsets.push(offset);
-    for (let index = 0; index < offsets.length; index += 8) {
-      const pages = await Promise.all(offsets.slice(index, index + 8).map((offset) => readJson<ApiResponse<T>>(pageUrl(offset), signal)));
-      for (const page of pages) rows.push(...(page.data ?? []));
-    }
-    return rows;
-  }
+const participationCache = new Map<string, Promise<Map<string, ProjectMemberParticipationItem>>>();
 
-  // Keep a defensive fallback for endpoints that do not expose totals.
-  let offset = rows.length;
-  for (let pageIndex = 1; pageIndex < 100 && firstPagination?.hasNextPage; pageIndex += 1) {
-    const payload = await readJson<ApiResponse<T>>(pageUrl(offset), signal);
-    const pageRows = payload.data ?? [];
-    rows.push(...pageRows);
-    const pagination = payload.meta?.pagination;
-    if (!pagination?.hasNextPage || pageRows.length === 0) break;
-    const nextOffset = (pagination.offset ?? offset) + (pagination.returned ?? pageRows.length);
-    if (nextOffset <= offset) break;
-    offset = nextOffset;
+/**
+ * EV-035 participation state per member for one project and month ("YYYY-MM").
+ * Cached per project+period for the life of ONE dataset load: loadTimesheetDataset clears it,
+ * so "Thử lại"/reload never shows participation older than the hours next to it. Failures are not cached.
+ */
+export function fetchProjectMemberParticipation(projectId: string, month: string) {
+  const key = `${projectId}:${month}`;
+  let request = participationCache.get(key);
+  if (!request) {
+    const { start, end } = monthBounds(month);
+    request = readJson<{ data?: ProjectMemberParticipationItem[] }>(`/api/projects/${encodeURIComponent(projectId)}/member-participation?startDate=${start}&endDate=${end}`)
+      .then((body) => new Map((body.data ?? []).map((item) => [item.userId, item])));
+    request.catch(() => participationCache.delete(key));
+    participationCache.set(key, request);
   }
-  return rows;
+  return request;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -201,8 +184,30 @@ export function buildTimesheetDateRanges(startAt: Date, endAt: Date, maxRangeDay
   return ranges;
 }
 
+/** First whole Asia/Ho_Chi_Minh day of the loaded time-entry window. */
+export function timesheetWindowStart(now: Date) {
+  return toVietnamDateKey(new Date(now.getTime() - TIMESHEET_HISTORY_DAYS * DAY_MS));
+}
+
+/**
+ * Months offered in the period picker. The window is a rolling 365 days, so its oldest month is
+ * only partly loaded: it is left out rather than measured against a full month's standard hours.
+ */
+export function selectableTimesheetMonths(logDates: string[], windowStart: string, today: string) {
+  const months = new Set(logDates.map((date) => date.slice(0, 7)).filter((month) => `${month}-01` >= windowStart));
+  months.add(today.slice(0, 7));
+  return [...months].sort();
+}
+
+/** Every calendar year between two date keys, inclusive (day-offs are fetched per year). */
+export function yearsBetween(startKey: string, endKey: string) {
+  const years: number[] = [];
+  for (let year = Number(startKey.slice(0, 4)); year <= Number(endKey.slice(0, 4)); year += 1) years.push(year);
+  return years;
+}
+
 async function loadTimeEntriesAcrossHistory(now: Date, signal?: AbortSignal) {
-  const startAt = new Date(now.getTime() - TIMESHEET_HISTORY_DAYS * DAY_MS);
+  const startAt = new Date(vietnamDayStartIso(timesheetWindowStart(now)));
   const endAt = new Date(now.getTime() + DAY_MS);
   const ranges = buildTimesheetDateRanges(startAt, endAt);
   const batches = await Promise.all(ranges.map((range) => (
@@ -213,18 +218,24 @@ async function loadTimeEntriesAcrossHistory(now: Date, signal?: AbortSignal) {
   )));
 
   const entriesById = new Map<string, ApiTimeEntry>();
-  for (const entry of batches.flat()) entriesById.set(entry.id, entry);
+  // The one definition of actual hours: rejected/cancelled/planned entries never reach the sheet.
+  for (const entry of batches.flat()) if (isActualTimeEntry(entry)) entriesById.set(entry.id, entry);
   return [...entriesById.values()];
 }
 
 export async function loadTimesheetDataset(signal?: AbortSignal): Promise<TimesheetDataset> {
+  participationCache.clear();
   const now = new Date();
-  const year = now.getFullYear();
-  const [projects, entries, users, dayOffResponse, apiTasks] = await Promise.all([
+  const today = toVietnamDateKey(now);
+  const windowStart = timesheetWindowStart(now);
+  const [projects, entries, users, dayOffResponses, apiTasks] = await Promise.all([
     loadPaged<ApiProject>("/api/projects", signal),
     loadTimeEntriesAcrossHistory(now, signal),
     readJson<ApiResponse<ApiUser>>("/api/workspace/users?principal=founder", signal),
-    readJson<ApiResponse<{ date?: string; isActive?: boolean }>>(`/api/workspace/day-offs?year=${year}&principal=founder`, signal),
+    // One request per year the window touches; a single "this year" call lost last year's holidays.
+    Promise.all(yearsBetween(windowStart, toVietnamDateKey(new Date(now.getTime() + DAY_MS))).map((year) => (
+      readJson<ApiResponse<{ date?: string; isActive?: boolean }>>(`/api/workspace/day-offs?year=${year}&principal=founder`, signal)
+    ))),
     // Keep the full task hierarchy separate from the time-entry slice. The
     // entry endpoint intentionally omits milestone/stage metadata, which made
     // every live row fall back to the generic "Time log" bucket.
@@ -269,8 +280,10 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
   const usersById = new Map((users.data ?? []).map((user) => [user.id, user]));
   const projectMembers = new Map<string, Set<string>>();
   const projectMemberStates = new Map<string, Map<string, MemberState>>();
+  const memberPayloads = new Map<string, ApiProjectMember>();
 
   for (const project of projects) {
+    for (const member of project.members ?? []) if (member.userId) memberPayloads.set(`${project.id}:${member.userId}`, member);
     const members = new Set<string>([
       ...(project.memberUserIds ?? []),
       ...(project.members ?? []).flatMap((member) => member.userId ? [member.userId] : [])
@@ -319,7 +332,9 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
       teamName: departmentId,
       standardMinutesPerDay: 480,
       contractRatio: 1,
-      active: user?.status !== "suspended"
+      // Someone who only appears through old time entries (not in the workspace directory) or is
+      // suspended is a former user: kept for their hours, never expected to log.
+      active: Boolean(user) && user?.status !== "suspended"
     });
   };
   for (const user of users.data ?? []) addPerson(user.id);
@@ -344,8 +359,8 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
         const taskStatuses = stageTasks.map((task) => normalizeNodeStatus(task.status));
         const status: NodeStatus = taskStatuses.some((value) => value === "blocked")
           ? "blocked"
-          : taskStatuses.length > 0 && taskStatuses.every((value) => value === "completed")
-            ? "completed"
+          : taskStatuses.length > 0 && taskStatuses.every(isClosedNodeStatus)
+            ? taskStatuses.some((value) => value === "completed") ? "completed" : "cancelled"
             : taskStatuses.some((value) => value === "in_progress")
               ? "in_progress"
               : "not_started";
@@ -365,6 +380,7 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
             assigneeId: task.assigneeUserId || task.ownerUserId || null,
             estimateMinutes: task.estimateMinutes ?? 0,
             status: normalizeNodeStatus(task.status),
+            paused: isPausedTaskStatus(task.status) || undefined,
             startDate: dateOnly(task.plannedStartAt),
             dueDate: dateOnly(task.dueAt),
             completedDate: dateOnly(task.completedAt)
@@ -374,8 +390,8 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
       const stageStatuses = stageNodes.map((stage) => stage.status);
       const status: NodeStatus = stageStatuses.some((value) => value === "blocked")
         ? "blocked"
-        : stageStatuses.length > 0 && stageStatuses.every((value) => value === "completed")
-          ? "completed"
+        : stageStatuses.length > 0 && stageStatuses.every(isClosedNodeStatus)
+          ? stageStatuses.some((value) => value === "completed") ? "completed" : "cancelled"
           : stageStatuses.some((value) => value === "in_progress")
             ? "in_progress"
             : "not_started";
@@ -390,21 +406,25 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
         stages: stageNodes
       };
     });
-    const members: ProjectMember[] = [...(projectMembers.get(project.id) ?? [])].map((personId) => ({
-      personId,
-      role: "Project member",
-      state: projectMemberStates.get(project.id)?.get(personId) ?? "active",
-      joinedAt: ""
-    }));
+    const members: ProjectMember[] = [...(projectMembers.get(project.id) ?? [])].map((personId) => {
+      const payload = memberPayloads.get(`${project.id}:${personId}`);
+      return {
+        personId,
+        role: payload?.projectRole || payload?.role || undefined,
+        state: projectMemberStates.get(project.id)?.get(personId) ?? "active",
+        joinedAt: dateOnly(payload?.joinedAt) ?? undefined
+      };
+    });
     return {
       id: project.id,
       code: project.code || project.id,
       name: project.name,
       accountName: project.accountName || "—",
-      status: projectStatus(project.status),
+      status: resolveProjectStatus(project),
       workGroup: workGroup(project.projectType, project.name),
       picId: project.ownerUserId || "",
-      deadline: null,
+      startDate: dateOnly(project.plannedStartAt),
+      deadline: dateOnly(project.plannedEndAt),
       members,
       milestones
     };
@@ -416,7 +436,7 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
     const relation = taskToMilestone.get(entry.taskId);
     return {
       id: entry.id,
-      date: dateOnly(entry.workDate) || dateOnly(entry.createdAt) || `${year}-01-01`,
+      date: dateOnly(entry.workDate) || dateOnly(entry.createdAt) || today,
       personId: entry.userId,
       projectId: entry.projectId,
       milestoneId: relation?.milestoneId || "unassigned-milestone",
@@ -430,15 +450,13 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
   });
 
   const departments: Department[] = [...new Set([...peopleById.values()].map((person) => person.departmentId))].map((id) => ({ id, name: formatDepartmentLabel(id) }));
-  const months = [...new Set(logs.map((log) => log.date.slice(0, 7)))].sort();
-  if (!months.includes(`${year}-${String(now.getMonth() + 1).padStart(2, "0")}`)) months.push(`${year}-${String(now.getMonth() + 1).padStart(2, "0")}`);
-  const holidays = (dayOffResponse.data ?? []).filter((item) => item.isActive !== false && item.date).map((item) => item.date!.slice(0, 10));
-  const statusEvents: TaskStatusEvent[] = tasks.flatMap((task) => (task.statusHistory ?? []).filter((event) => event.changedAt && event.toStatus).map((event, index) => ({ id: event.id || `${task.id}-${index}`, taskId: task.id, projectId: task.projectId, changedAt: event.changedAt!.slice(0, 10), fromStatus: event.fromStatus ? statusEventStatus(event.fromStatus) : null, toStatus: statusEventStatus(event.toStatus), changedByUserId: event.changedByUserId ?? null })));
+  const months = selectableTimesheetMonths(logs.map((log) => log.date), windowStart, today);
+  const holidays = [...new Set(dayOffResponses.flatMap((response) => response.data ?? []).filter((item) => item.isActive !== false && item.date).flatMap((item) => dateOnly(item.date) ?? []))];
 
-  return { generatedAt: dateOnly(now.toISOString()) || `${year}-01-01`, departments, people: [...peopleById.values()], projects: projectNodes, logs, statusEvents, holidays, months };
+  return { generatedAt: today, windowStart, departments, people: [...peopleById.values()], projects: projectNodes, logs, holidays, months };
 }
 
 export function emptyTimesheetDataset(): TimesheetDataset {
-  const month = new Date().toISOString().slice(0, 7);
-  return { generatedAt: new Date().toISOString().slice(0, 10), departments: [], people: [], projects: [], logs: [], statusEvents: [], holidays: [], months: [month] };
+  const today = toVietnamDateKey(new Date());
+  return { generatedAt: today, departments: [], people: [], projects: [], logs: [], holidays: [], months: [today.slice(0, 7)] };
 }

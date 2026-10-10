@@ -28,7 +28,8 @@ import {
   mapProjectSummaryToUiProject,
   formatProjectStatusLabel,
   readLiveProjectSnapshot,
-  clearLiveProjectSnapshotCache
+  clearLiveProjectSnapshotCache,
+  toBackendProjectStatus
 } from "../live-projects";
 import {
   getPushedProjectsOwnerKey,
@@ -40,7 +41,10 @@ import type {
   FileObjectSummary,
   ProjectDocumentSummary,
   ProjectHierarchySummary,
+  ProjectMemberParticipationItem,
   ProjectRiskSummary,
+  ProjectStatusHistoryItem,
+  ProjectWarningItem,
   UpdateProjectRiskInput,
   ProjectStageSummary,
   ProjectSummary,
@@ -54,7 +58,10 @@ import {
   isUnauthorizedWorkspaceUsersError,
   type WorkspaceUserOption
 } from "@/lib/workspace-users";
-import { formatVietnamTime, VIETNAM_TIME_ZONE, VIETNAM_TIME_ZONE_LABEL } from "@/lib/vietnam-time";
+import { formatVietnamDate, formatVietnamTime, VIETNAM_TIME_ZONE, VIETNAM_TIME_ZONE_LABEL } from "@/lib/vietnam-time";
+import { PARTICIPATION_STATE, currentVietnamMonthRange } from "@/lib/member-participation";
+import { PROJECT_STATUS_LABELS, UNKNOWN_PROJECT_STATUS_LABEL } from "@/lib/project-status";
+import { PersonLink } from "@/components/person-link";
 import { hasAnyAuthRole } from "@/lib/auth-role";
 import { systemRoleLabel } from "@/lib/people-roles";
 import { formatProjectDateRange } from "@/lib/project-date";
@@ -295,21 +302,35 @@ async function fetchProjectOperationalRecords(projectId: string, signal?: AbortS
 
 async function fetchProjectResource<T>(projectId: string, resource: "documents" | "activity" | "risks", signal?: AbortSignal) {
   const limit = resource === "activity" ? 10 : 100;
-  const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/${resource}?limit=${limit}`, {
-    cache: "no-store",
-    credentials: "same-origin",
-    signal
-  });
+  const fetchPage = async (offset: number) => {
+    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/${resource}?limit=${limit}&offset=${offset}`, {
+      cache: "no-store",
+      credentials: "same-origin",
+      signal
+    });
 
-  if (response.status === 401) {
-    throw new LiveProjectDetailError("Unauthorized", 401);
+    if (response.status === 401) {
+      throw new LiveProjectDetailError("Unauthorized", 401);
+    }
+
+    if (!response.ok) {
+      throw new LiveProjectDetailError(`Could not load project ${resource}: ${response.status}`, response.status);
+    }
+
+    return (await response.json()) as ResourceListResponse<T>;
+  };
+
+  const payload = await fetchPage(0);
+  // Activity is a "latest 10" preview. Risks and documents are registers: the API caps a page at 100,
+  // so keep paging until hasNextPage is false instead of silently dropping row 101 onwards.
+  if (resource !== "activity") {
+    let page = payload;
+    while (page.meta?.pagination?.hasNextPage && page.data.length > 0) {
+      page = await fetchPage(payload.data.length);
+      payload.data.push(...page.data);
+    }
   }
-
-  if (!response.ok) {
-    throw new LiveProjectDetailError(`Could not load project ${resource}: ${response.status}`, response.status);
-  }
-
-  return (await response.json()) as ResourceListResponse<T>;
+  return payload;
 }
 
 class LiveProjectDetailError extends Error {
@@ -1083,6 +1104,13 @@ function hoursToMinutes(hours?: number) {
   return Math.round(hours * 60);
 }
 
+const MAX_PLANNED_HOURS = 8;
+const PLANNED_HOURS_ERROR = "Giờ kế hoạch phải nhỏ hơn hoặc bằng 8 giờ.";
+
+function isPlannedHoursInvalid(hours: number) {
+  return !Number.isFinite(hours) || hours < 0 || hours > MAX_PLANNED_HOURS;
+}
+
 function roundHours(hours = 0) {
   return Math.round((hours + Number.EPSILON) * 10) / 10;
 }
@@ -1166,7 +1194,7 @@ function ProjectSheetPanel({
     "in-progress": TASK_STATUS["in-progress"].label,
     todo: TASK_STATUS.todo.label
   };
-  const milestoneLabel: Record<Milestone["status"], string> = { done: "Hoàn tất", "in-progress": "Đang thực hiện", upcoming: "Sắp tới", "at-risk": "Có rủi ro" };
+  const milestoneLabel: Record<Milestone["status"], string> = { done: "Đã hoàn thành", "in-progress": "Đang làm", upcoming: "Sắp tới", "at-risk": "Có rủi ro" };
   const readiness = [project.client, project.ownerDisplayName, project.startDate && project.dueDate].filter(Boolean).length;
 
   return (
@@ -1206,7 +1234,7 @@ function ProjectSheetPanel({
           </div>
           <div className="grid gap-2 sm:grid-cols-3 xl:w-[620px]">
             <label className="flex items-center gap-2 rounded-xl border border-input bg-background px-3 py-2.5 sm:col-span-1"><Search className="h-4 w-4 shrink-0 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm task, người thực hiện..." className="min-w-0 flex-1 bg-transparent text-sm outline-none" /></label>
-            <CustomDropdown ariaLabel="Lọc trạng thái" options={[{ value: "all", label: "Tất cả trạng thái" }, { value: "done", label: "Hoàn tất" }, { value: "in-progress", label: "Đang thực hiện" }, { value: "todo", label: "Chưa bắt đầu" }]} value={statusFilter} onChange={(value) => setStatusFilter(value as typeof statusFilter)} />
+            <CustomDropdown ariaLabel="Lọc trạng thái" options={[{ value: "all", label: "Tất cả trạng thái" }, { value: "done", label: "Đã hoàn thành" }, { value: "in-progress", label: "Đang làm" }, { value: "todo", label: "Chưa bắt đầu" }]} value={statusFilter} onChange={(value) => setStatusFilter(value as typeof statusFilter)} />
             <div className="min-w-0" aria-label="Lọc người thực hiện"><TeamMemberSingleSelect members={teamMembers} value={memberFilter === "all" ? undefined : teamMembers.find((member) => member.id === memberFilter)} onChange={(member) => setMemberFilter(member?.id ?? "all")} placeholder="Tất cả người thực hiện" /></div>
           </div>
         </div>
@@ -1891,23 +1919,228 @@ function MilestoneOverviewBar({
   );
 }
 
+// One catalogue for every Project Status label on this page: @/lib/project-status.
+const PROJECT_STATUS_OPTIONS: Array<{ value: Project["status"]; label: string }> = Object.values(PROJECT_STATUS_LABELS).map((value) => ({ value, label: value }));
+// Status history stores canonical codes (EV-064); anything else is shown as stored.
+const PROJECT_STATUS_CODE_LABEL: Record<string, string> = PROJECT_STATUS_LABELS;
+
+async function fetchProjectJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(withProjectPrincipal(path), { cache: "no-store", credentials: "same-origin", signal });
+  if (!response.ok) throw new Error(await mutationErrorMessage(response, "Không tải được dữ liệu"));
+  return (await response.json()) as T;
+}
+
+function ProjectStatusEditModal({ projectId, project, color, onClose, onSaved }: {
+  projectId: string; project: Project; color: string;
+  onClose: () => void; onSaved: () => Promise<void>;
+}) {
+  const [status, setStatus] = useState<Project["status"]>(project.status);
+  const [reason, setReason] = useState("");
+  const { submit, submitting, submitError } = useModalMutation(onClose);
+  const reasonRequired = status === "On Hold" || status === "At Risk";
+  const reasonLabel = status === "On Hold" ? "Lý do tạm dừng" : status === "At Risk" ? "Blocker hoặc hành động xử lý" : "Lý do";
+  const canSave = status !== project.status && (!reasonRequired || Boolean(reason.trim())) && !submitting;
+  const save = () => {
+    if (!canSave) return;
+    void submit(async () => {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: toBackendProjectStatus(status), statusReason: reason.trim() || undefined })
+      });
+      if (!response.ok) throw new Error(await mutationErrorMessage(response, "Không thể cập nhật trạng thái"));
+      await onSaved();
+    });
+  };
+  return (
+    <ModalShell title="Sửa trạng thái" icon={Pencil} iconColor={color} onClose={onClose} initialFocusSelector="[data-initial-focus] button"
+      footer={
+        <>
+          <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted transition-colors">Hủy</button>
+          <button type="button" onClick={save} disabled={!canSave} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm disabled:opacity-40" style={{ backgroundColor: color }}>
+            {submitting ? "Đang lưu…" : "Lưu trạng thái"}
+          </button>
+        </>
+      }>
+      <Field label="Trạng thái" required>
+        <div data-initial-focus="true">
+          <CustomDropdown ariaLabel="Trạng thái dự án" options={PROJECT_STATUS_OPTIONS} value={status} onChange={(value) => setStatus(value as Project["status"])} />
+        </div>
+      </Field>
+      <Field label={reasonLabel} required={reasonRequired}>
+        <textarea rows={3} value={reason} onChange={(event) => setReason(event.target.value)} aria-label={reasonLabel} aria-required={reasonRequired}
+          className="w-full border border-input rounded-xl p-3 text-sm text-foreground bg-background focus:outline-none resize-none" />
+      </Field>
+      <ModalMutationFeedback error={submitError} />
+    </ModalShell>
+  );
+}
+
+function warningSeverityTone(severity: string) {
+  const value = severity.toLowerCase();
+  if (value === "high" || value === "critical") return { label: "Cao", className: "bg-red-50 text-red-700" };
+  if (value === "medium") return { label: "Vừa", className: "bg-amber-50 text-amber-700" };
+  return { label: value === "low" ? "Thấp" : severity, className: "bg-slate-100 text-slate-600" };
+}
+
+function CloseWarningModal({ projectId, warning, color, onClose, onClosed }: {
+  projectId: string; warning: ProjectWarningItem; color: string;
+  onClose: () => void; onClosed: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const { submit, submitting, submitError } = useModalMutation(onClose);
+  const canSave = Boolean(reason.trim()) && !submitting;
+  const save = () => {
+    if (!canSave) return;
+    void submit(async () => {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/warnings/${encodeURIComponent(warning.id)}/close`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reason: reason.trim() })
+      });
+      if (!response.ok) throw new Error(await mutationErrorMessage(response, "Không thể đóng cảnh báo"));
+      onClosed();
+    });
+  };
+  return (
+    <ModalShell title="Đóng cảnh báo" icon={AlertCircle} iconColor={color} onClose={onClose} initialFocusSelector="textarea"
+      footer={
+        <>
+          <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted transition-colors">Hủy</button>
+          <button type="button" onClick={save} disabled={!canSave} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm disabled:opacity-40" style={{ backgroundColor: color }}>
+            {submitting ? "Đang lưu…" : "Đóng cảnh báo"}
+          </button>
+        </>
+      }>
+      <p className="text-xs font-semibold text-foreground">{warning.title}</p>
+      <Field label="Lý do đóng" required>
+        <textarea rows={3} value={reason} onChange={(event) => setReason(event.target.value)} aria-label="Lý do đóng cảnh báo" aria-required="true"
+          className="w-full border border-input rounded-xl p-3 text-sm text-foreground bg-background focus:outline-none resize-none" />
+      </Field>
+      <ModalMutationFeedback error={submitError} />
+    </ModalShell>
+  );
+}
+
+/**
+ * EV-065: warnings of the project. A failed load shows an inline error with retry (never an empty block);
+ * with nothing open, closed warnings stay reachable through a compact "Đã đóng (n)" disclosure.
+ */
+function ProjectWarningsBlock({ projectId, projectColor, teamMembers, onChanged }: {
+  projectId: string; projectColor: string; teamMembers: ProjectTeamMember[]; onChanged: () => void;
+}) {
+  const [warnings, setWarnings] = useState<ProjectWarningItem[]>([]);
+  const [revision, setRevision] = useState(0);
+  const [closing, setClosing] = useState<ProjectWarningItem | null>(null);
+  const [closedOpen, setClosedOpen] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoadError(null);
+    fetchProjectJson<{ data: ProjectWarningItem[] }>(`/api/projects/${encodeURIComponent(projectId)}/warnings`, controller.signal)
+      .then((body) => setWarnings(body.data ?? []))
+      .catch((error) => { if (!controller.signal.aborted) setLoadError(error instanceof Error ? error.message : "Không tải được cảnh báo dự án"); });
+    return () => controller.abort();
+  }, [projectId, revision]);
+
+  const open = warnings.filter((warning) => warning.status === "open");
+  const closed = warnings.filter((warning) => warning.status === "closed");
+  const closedDisclosure = closed.length > 0 ? (
+    <>
+      <button type="button" aria-expanded={closedOpen} aria-controls="project-warnings-closed" onClick={() => setClosedOpen((value) => !value)} className="inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:underline">
+        {closedOpen ? <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" /> : <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />} Đã đóng ({closed.length})
+      </button>
+      {closedOpen ? (
+        <ul id="project-warnings-closed" className="mt-2 space-y-2">
+          {closed.map((warning) => (
+            <li key={warning.id} className="text-xs text-muted-foreground">
+              <span className="font-semibold text-foreground">{warning.title}</span> · đóng ngày {formatVietnamDate(warning.closedAt) || "—"} · Lý do: {warning.closeReason || "—"}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </>
+  ) : null;
+  if (loadError) {
+    return (
+      <section aria-label="Cảnh báo dự án" role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 shadow-sm">
+        <span>Không tải được cảnh báo dự án: {loadError}</span>
+        <button type="button" onClick={() => setRevision((value) => value + 1)} className="inline-flex min-h-9 items-center justify-center rounded-lg border border-border bg-card px-3 text-xs font-bold text-muted-foreground transition hover:bg-muted">Thử lại</button>
+      </section>
+    );
+  }
+  if (open.length === 0) {
+    return closedDisclosure ? <section aria-label="Cảnh báo dự án" className="rounded-xl border border-border bg-card px-4 py-2 shadow-sm">{closedDisclosure}</section> : null;
+  }
+  const ownerOf = (userId?: string) => userId ? <PersonLink userId={userId} className="font-semibold text-foreground">{teamMembers.find((member) => member.id === userId)?.name ?? userId}</PersonLink> : "Chưa có";
+
+  return (
+    <section aria-label="Cảnh báo dự án" className="rounded-xl border border-red-200 bg-red-50 shadow-sm">
+      <div className="flex items-center gap-2 px-4 py-3">
+        <AlertCircle aria-hidden="true" className="h-4 w-4 text-red-700" />
+        <h3 className="!text-sm font-bold text-red-700">Cảnh báo đang mở ({open.length})</h3>
+      </div>
+      <ul className="divide-y divide-red-200 border-t border-red-200">
+        {open.map((warning) => {
+          const tone = warningSeverityTone(warning.severity);
+          return (
+            <li key={warning.id} className="flex flex-wrap items-start gap-3 px-4 py-3">
+              <span className={`mt-0.5 rounded-full px-2 py-1 text-[10px] font-bold ${tone.className}`}>{tone.label}</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-foreground">{warning.title}</p>
+                {warning.detail ? <p className="mt-0.5 text-xs text-muted-foreground">{warning.detail}</p> : null}
+                <p className="mt-1 text-[11px] text-muted-foreground">Owner: {ownerOf(warning.ownerUserId)} · Hạn: {formatVietnamDate(warning.dueAt) || "Chưa có"} · Mở ngày {formatVietnamDate(warning.openedAt)}</p>
+              </div>
+              <button type="button" onClick={() => setClosing(warning)} className="inline-flex min-h-9 items-center justify-center rounded-lg border border-border bg-card px-3 text-xs font-bold text-muted-foreground transition hover:bg-muted">Đóng cảnh báo</button>
+            </li>
+          );
+        })}
+      </ul>
+      {closedDisclosure ? <div className="border-t border-red-200 px-4 py-2">{closedDisclosure}</div> : null}
+      {closing ? <CloseWarningModal projectId={projectId} warning={closing} color={projectColor} onClose={() => setClosing(null)} onClosed={() => { setRevision((value) => value + 1); onChanged(); }} /> : null}
+    </section>
+  );
+}
+
 function ProjectStatusSlaBar({
+  projectId,
   project,
   milestones,
   tasks,
-  projectColor
+  projectColor,
+  onStatusChanged
 }: {
+  projectId: string;
   project: Project;
   milestones: Milestone[];
   tasks: TaskItem[];
   projectColor: string;
+  onStatusChanged: () => Promise<void>;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [history, setHistory] = useState<ProjectStatusHistoryItem[] | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!historyOpen) return;
+    const controller = new AbortController();
+    setHistoryError(null);
+    fetchProjectJson<{ data: ProjectStatusHistoryItem[] }>(`/api/projects/${encodeURIComponent(projectId)}/status-history`, controller.signal)
+      .then((body) => setHistory(body.data ?? []))
+      .catch((error) => { if (!controller.signal.aborted) setHistoryError(error instanceof Error ? error.message : "Không tải được lịch sử trạng thái"); });
+    return () => controller.abort();
+  }, [historyOpen, projectId, project.status, project.statusSince]);
   const orderedMilestones = [...milestones].sort((left, right) => left.order - right.order);
   const activeMilestone = selectActiveMilestone(orderedMilestones);
   const deliveryPlanComplete = orderedMilestones.length > 0 && orderedMilestones.every((milestone) => milestone.gateStatus === "approved" || (!milestone.gateStatus && milestone.status === "done"));
   const completedTasks = tasks.filter((task) => task.status === "done").length;
   const progress = tasks.length > 0 ? Math.round((completedTasks / tasks.length) * 100) : project.progress;
-  const statusLabel = deliveryPlanComplete ? "Delivery plan hoàn tất" : project.status === "Active" ? "Đang chạy" : formatProjectStatusLabel(project.status);
+  // Always the real Project Status; a finished delivery plan is only a secondary note next to it.
+  const statusLabel = formatProjectStatusLabel(project.status);
+  const statusUnknown = project.status === UNKNOWN_PROJECT_STATUS_LABEL;
   const normalizedProjectStatus = project.status.toLocaleLowerCase();
   const slaPaused = normalizedProjectStatus.includes("hold") || normalizedProjectStatus.includes("risk") || normalizedProjectStatus.includes("cancel") || normalizedProjectStatus.includes("closed");
   return (
@@ -1915,9 +2148,13 @@ function ProjectStatusSlaBar({
       <div className="min-w-0">
         <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Trạng thái dự án</p>
         <div className="mt-1 flex flex-wrap items-center gap-2">
-          <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${slaPaused ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{statusLabel}</span>
-          <span className="text-xs text-muted-foreground">{activeMilestone?.name ?? (deliveryPlanComplete ? `Milestone cuối: ${orderedMilestones.at(-1)?.name}` : "Chưa có milestone đang chạy")}</span>
+          <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${statusUnknown ? "bg-muted text-muted-foreground" : slaPaused ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{statusLabel}</span>
+          <span className="text-xs text-muted-foreground">{activeMilestone?.name ?? (deliveryPlanComplete ? `Delivery plan hoàn tất · Milestone cuối: ${orderedMilestones.at(-1)?.name}` : "Chưa có milestone đang chạy")}</span>
         </div>
+        {project.statusReason || project.statusSince ? <p className="mt-1.5 text-xs text-muted-foreground">{[project.statusReason, project.statusSince ? `từ ${formatVietnamDate(project.statusSince)}` : ""].filter(Boolean).join(" · ")}</p> : null}
+        <button type="button" aria-expanded={historyOpen} aria-controls="project-status-history" onClick={() => setHistoryOpen((value) => !value)} className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:underline">
+          {historyOpen ? <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" /> : <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />} Lịch sử trạng thái
+        </button>
       </div>
       <div>
         <div className="flex items-center justify-between gap-2 text-xs">
@@ -1930,10 +2167,26 @@ function ProjectStatusSlaBar({
         <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Đồng hồ SLA</p>
         <p className={`mt-1 text-xs font-semibold ${slaPaused ? "text-amber-700" : "text-emerald-700"}`}>{slaPaused ? "Đang tạm dừng" : "Đang chạy"} <span className="font-normal text-muted-foreground">· theo dõi đến {project.dueDate || "TBD"}</span></p>
       </div>
-      <button type="button" className="inline-flex min-h-9 items-center justify-center rounded-lg border border-border px-3 text-xs font-bold text-muted-foreground transition hover:bg-muted">Sửa trạng thái</button>
+      <button type="button" onClick={() => setEditing(true)} className="inline-flex min-h-9 items-center justify-center rounded-lg border border-border px-3 text-xs font-bold text-muted-foreground transition hover:bg-muted">Sửa trạng thái</button>
+      {historyOpen ? (
+        <div id="project-status-history" className="border-t border-border pt-3 md:col-span-4">
+          {historyError ? <p role="alert" className="text-xs text-rose-600">{historyError}</p>
+            : history === null ? <p className="text-xs text-muted-foreground">Đang tải…</p>
+            : history.length === 0 ? <p className="text-xs text-muted-foreground">Chưa có lần đổi trạng thái nào được ghi nhận.</p>
+            : <ul className="space-y-2">{history.map((item) => (
+              <li key={item.id} className="text-xs text-muted-foreground">
+                <span className="font-semibold text-foreground">{item.fromStatus ? `${PROJECT_STATUS_CODE_LABEL[item.fromStatus] ?? item.fromStatus} → ` : ""}{PROJECT_STATUS_CODE_LABEL[item.toStatus] ?? item.toStatus}</span>
+                {item.reason ? ` · ${item.reason}` : ""} · <PersonLink userId={item.changedByUserId}>{item.changedByDisplayName ?? "Hệ thống"}</PersonLink> · {formatVietnamDate(item.changedAt)} {formatVietnamTime(item.changedAt)}
+              </li>
+            ))}</ul>}
+        </div>
+      ) : null}
+      {editing ? <ProjectStatusEditModal projectId={projectId} project={project} color={projectColor} onClose={() => setEditing(false)} onSaved={onStatusChanged} /> : null}
     </section>
   );
 }
+
+const MEMBER_PREVIEW_COUNT = 8;
 
 function milestoneIsLocked(milestones: Milestone[], milestone: Milestone) {
   const index = milestones.findIndex((item) => item.id === milestone.id);
@@ -1943,6 +2196,7 @@ function milestoneIsLocked(milestones: Milestone[], milestone: Milestone) {
 }
 
 function ProjectDeliveryWireframePanels({
+  projectId,
   projectColor,
   milestones,
   milestoneGroups,
@@ -1958,6 +2212,7 @@ function ProjectDeliveryWireframePanels({
   handoffBusy,
   handoffError
 }: {
+  projectId: string;
   projectColor: string;
   milestones: Milestone[];
   milestoneGroups: MilestoneGroup[];
@@ -2011,19 +2266,35 @@ function ProjectDeliveryWireframePanels({
   }
   const openRisks = risks.filter((risk) => !["resolved", "closed", "done"].includes(risk.status.toLowerCase()));
   const previewTasks = (activeGroup?.stages ?? []).flatMap((stage) => stage.tasks.slice(0, 2).map((task) => ({ task, stageName: stage.name }))).slice(0, 5);
-  const taskOwner = (task: TaskItem) => teamMembers.find((member) => member.id === task.assigneeUserId || member.initials === task.assignee);
-  const memberRows = teamMembers.slice(0, 8).map((member) => {
-    const memberTasks = tasks.filter((task) => task.assigneeUserId === member.id || task.assignee === member.initials);
+  // Members are matched to tasks by user id only: two people can share the same initials.
+  const taskOwner = (task: TaskItem) => teamMembers.find((member) => member.id === task.assigneeUserId);
+  // EV-035: participation state per member for the current month; null while loading or on error (never guessed).
+  const [participationPeriod] = useState(() => currentVietnamMonthRange());
+  const [participation, setParticipation] = useState<Map<string, ProjectMemberParticipationItem> | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    setParticipation(null);
+    fetchProjectJson<{ data: ProjectMemberParticipationItem[] }>(`/api/projects/${encodeURIComponent(projectId)}/member-participation?startDate=${participationPeriod.startDate}&endDate=${participationPeriod.endDate}`, controller.signal)
+      .then((body) => setParticipation(new Map((body.data ?? []).map((item) => [item.userId, item]))))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [projectId, participationPeriod]);
+  const [showAllMembers, setShowAllMembers] = useState(false);
+  const memberRows = (showAllMembers ? teamMembers : teamMembers.slice(0, MEMBER_PREVIEW_COUNT)).map((member) => {
+    const memberTasks = tasks.filter((task) => task.assigneeUserId === member.id);
     const planned = sumHours(memberTasks.map((task) => task.plannedHours ?? 0));
-    const actual = sumHours(memberTasks.map((task) => task.actualHours ?? 0));
+    const taskActual = sumHours(memberTasks.map((task) => task.actualHours ?? 0));
     const latestLog = memberTasks
       .flatMap((task) => task.timeEntries ?? [])
       .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
     return {
       member,
       openTasks: memberTasks.filter((task) => task.status !== "done").length,
-      actual,
-      capacity: planned > 0 ? Math.round((actual / planned) * 100) : 0,
+      // "Giờ thực tế" is the member's own hours in the stated period, straight from the participation API;
+      // undefined while it loads or when it failed (shown as "—", never guessed from task totals).
+      periodMinutes: participation?.get(member.id)?.actualMinutes,
+      // "Thực tế / Kế hoạch": all-time hours of the tasks this member is PIC of against their estimate.
+      actualVsPlan: planned > 0 ? Math.round((taskActual / planned) * 100) : null,
       latestLog: latestLog?.date ?? "Chưa ghi nhận"
     };
   });
@@ -2086,8 +2357,9 @@ function ProjectDeliveryWireframePanels({
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-        <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4"><div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">People & capacity</p><h3 className="mt-1 text-base font-black text-foreground">Nguồn lực tham gia</h3><p className="mt-1 text-xs text-muted-foreground">Vai trò, task đang mở, giờ thực tế và lần ghi nhận gần nhất.</p></div><button type="button" onClick={onOpenTasks} className="text-xs font-semibold text-primary hover:underline">Xem Project Sheet →</button></div>
-        {memberRows.length === 0 ? <div className="px-5 py-10 text-center text-xs text-muted-foreground">Chưa có nguồn lực được gán cho project.</div> : <div className="overflow-x-auto"><div className="min-w-[760px]"><div className="grid grid-cols-[minmax(0,1.2fr)_160px_100px_110px_110px_120px] gap-3 border-b border-border bg-muted/30 px-5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><span>Nhân sự / Vai trò</span><span>Trạng thái</span><span>Task mở</span><span>Giờ thực tế</span><span>Năng lực</span><span>Log gần nhất</span></div>{memberRows.map(({ member, openTasks, actual, capacity, latestLog }) => <div key={member.id} className="grid grid-cols-[minmax(0,1.2fr)_160px_100px_110px_110px_120px] items-center gap-3 border-b border-border px-5 py-3 last:border-b-0"><div className="flex min-w-0 items-center gap-2.5"><TeamMemberAvatar member={member} /><div className="min-w-0"><p className="truncate text-xs font-semibold text-foreground">{member.name}</p><p className="truncate text-[11px] text-muted-foreground">{member.role}</p></div></div><span className="w-fit rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">Đang tham gia</span><span className="text-xs font-semibold text-foreground">{openTasks}</span><span className="text-xs font-semibold text-foreground">{formatHours(actual)}h</span><span className={`text-xs font-semibold ${capacity > 100 ? "text-rose-600" : "text-foreground"}`}>{capacity}%</span><span className="text-[11px] text-muted-foreground">{latestLog}</span></div>)}</div></div>}
+        <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4"><div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">People & capacity</p><h3 className="mt-1 text-base font-black text-foreground">Nguồn lực tham gia</h3><p className="mt-1 text-xs text-muted-foreground">Vai trò, task đang mở, giờ thực tế và lần ghi nhận gần nhất.</p><p className="mt-1 text-xs text-muted-foreground">Trạng thái tham gia và giờ thực tế: tháng {participationPeriod.label}</p></div><button type="button" onClick={onOpenTasks} className="text-xs font-semibold text-primary hover:underline">Xem Project Sheet →</button></div>
+        {memberRows.length === 0 ? <div className="px-5 py-10 text-center text-xs text-muted-foreground">Chưa có nguồn lực được gán cho project.</div> : <div className="overflow-x-auto"><div className="min-w-[860px]"><div className="grid grid-cols-[minmax(0,1.2fr)_160px_90px_140px_130px_120px] gap-3 border-b border-border bg-muted/30 px-5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><span>Nhân sự / Vai trò</span><span>Trạng thái</span><span>Task mở</span><span>Giờ thực tế {participationPeriod.label}</span><span>Thực tế / Kế hoạch</span><span>Log gần nhất</span></div>{memberRows.map(({ member, openTasks, periodMinutes, actualVsPlan, latestLog }) => <div key={member.id} className="grid grid-cols-[minmax(0,1.2fr)_160px_90px_140px_130px_120px] items-center gap-3 border-b border-border px-5 py-3 last:border-b-0"><div className="flex min-w-0 items-center gap-2.5"><TeamMemberAvatar member={member} /><div className="min-w-0"><p className="truncate text-xs font-semibold text-foreground">{member.name}</p><p className="truncate text-[11px] text-muted-foreground">{member.role}</p></div></div>{(() => { const item = participation?.get(member.id); return item ? <span title={item.participationReason} className={`w-fit rounded-full px-2 py-1 text-[10px] font-bold ${PARTICIPATION_STATE[item.participationState].className}`}>{PARTICIPATION_STATE[item.participationState].label}</span> : <span className="text-xs text-muted-foreground">—</span>; })()}<span className="text-xs font-semibold text-foreground">{openTasks}</span><span className="text-xs font-semibold text-foreground">{periodMinutes === undefined ? "—" : `${formatHours(periodMinutes / 60)}h`}</span><span className={`text-xs font-semibold ${(actualVsPlan ?? 0) > 100 ? "text-rose-600" : "text-foreground"}`}>{actualVsPlan === null ? "—" : `${actualVsPlan}%`}</span><span className="text-[11px] text-muted-foreground">{latestLog}</span></div>)}</div></div>}
+        {teamMembers.length > MEMBER_PREVIEW_COUNT ? <div className="border-t border-border px-5 py-3"><button type="button" aria-expanded={showAllMembers} onClick={() => setShowAllMembers((value) => !value)} className="text-xs font-semibold text-primary hover:underline">{showAllMembers ? "Thu gọn" : `Xem tất cả (${teamMembers.length})`}</button></div> : null}
       </div>
     </section>
   );
@@ -2102,6 +2374,7 @@ const STATUS_CFG = {
   "On Hold":   { color:C.slate,   bg:"#f1f5f9", icon:Clock },
   "Completed": { color:C.success, bg:"#dcfce7", icon:CheckCircle2 },
   "At Risk":   { color:C.danger,  bg:"#fee2e2", icon:AlertCircle },
+  "Chưa xác định": { color:C.slate, bg:"#f1f5f9", icon:Clock },
   "Cancelled": { color:C.slate,   bg:"#f1f5f9", icon:X },
 };
 
@@ -2162,13 +2435,14 @@ function projectTabDomId(value: Tab) {
 
 const ProjectPickerFeedback = React.createContext<{ ready: boolean; feedback: React.ReactNode }>({ ready: false, feedback: null });
 
-function ModalShell({ title, icon: Icon, iconColor, onClose, children, footer }: {
+function ModalShell({ title, icon: Icon, iconColor, onClose, children, footer, initialFocusSelector }: {
   title: string; icon: React.ElementType; iconColor: string;
   onClose: () => void; children: React.ReactNode; footer: React.ReactNode;
+  initialFocusSelector?: string;
 }) {
   const { feedback: pickerFeedback } = React.useContext(ProjectPickerFeedback);
   return (
-    <ModalLayer onClose={onClose}>
+    <ModalLayer onClose={onClose} initialFocusSelector={initialFocusSelector}>
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={{ backgroundColor:"rgba(0,0,0,0.5)", backdropFilter:"blur(4px)" }}
@@ -2548,6 +2822,9 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
               onClick={() => {
                 if (!title.trim() || !pic || selectedAssigneeIds.length === 0) return;
                 void submit(async () => {
+                  if (isPlannedHoursInvalid(plannedHours)) {
+                    throw new Error(PLANNED_HOURS_ERROR);
+                  }
                   if (isTaskDateRangeInvalid(startDate, due)) {
                     throw new Error(TASK_DATE_RANGE_ERROR);
                   }
@@ -2571,7 +2848,7 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
                   });
                 });
               }}
-              disabled={!title.trim() || !pic || selectedAssigneeIds.length === 0 || submitting}
+              disabled={!title.trim() || !pic || selectedAssigneeIds.length === 0 || isPlannedHoursInvalid(plannedHours) || submitting}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm disabled:opacity-40"
               style={{ backgroundColor:color }}>
               <ListChecks className="w-4 h-4" /> {submitting ? "Adding..." : "Add Task"}
@@ -2688,10 +2965,13 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
             <input
               type="number"
               min={0}
+              max={MAX_PLANNED_HOURS}
               value={plannedHours}
               onChange={e => setPlannedHours(Math.max(0, parseInt(e.target.value) || 0))}
-              className="w-full border border-input rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none"
+              aria-invalid={isPlannedHoursInvalid(plannedHours)}
+              className={`w-full border rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none ${isPlannedHoursInvalid(plannedHours) ? "border-red-400 focus:ring-2 focus:ring-red-500/20" : "border-input"}`}
             />
+            {isPlannedHoursInvalid(plannedHours) && <p className="mt-1 text-[11px] font-semibold text-red-600">{PLANNED_HOURS_ERROR}</p>}
           </Field>
           <Field label="Actual Hours (Giờ thực tế)">
             <input
@@ -3984,7 +4264,7 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
   const staleAssigneeError = directoryReady && !initPic && (task.assigneeUserId || (task.assignee && task.assignee !== "Unassigned"))
     ? PROJECT_MEMBER_ASSIGNMENT_ERROR
     : null;
-  const [plannedHours, setPlannedHours] = useState<number>(task.plannedHours ?? 8);
+  const [plannedHours, setPlannedHours] = useState<number>(Math.min(MAX_PLANNED_HOURS, task.plannedHours ?? 8));
   const [actualHours, setActualHours]   = useState<number>(task.actualHours ?? 0);
   const [description, setDescription]   = useState<string>(task.description ?? "");
   const { submit, submitting, submitError } = useModalMutation(onClose);
@@ -4008,6 +4288,9 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
               onClick={() => {
                 if (!title.trim() || !pic || selectedAssigneeIds.length === 0) return;
                 void submit(async () => {
+                  if (isPlannedHoursInvalid(plannedHours)) {
+                    throw new Error(PLANNED_HOURS_ERROR);
+                  }
                   if (isTaskDateRangeInvalid(startDate, due)) {
                     throw new Error(TASK_DATE_RANGE_ERROR);
                   }
@@ -4031,7 +4314,7 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
                   });
                 });
               }}
-              disabled={!title.trim() || !pic || selectedAssigneeIds.length === 0 || submitting}
+              disabled={!title.trim() || !pic || selectedAssigneeIds.length === 0 || isPlannedHoursInvalid(plannedHours) || submitting}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm disabled:opacity-40"
               style={{ backgroundColor:color }}>
               <Pencil className="w-4 h-4" /> {submitting ? "Saving..." : "Save Changes"}
@@ -4138,10 +4421,13 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
             <input
               type="number"
               min={0}
+              max={MAX_PLANNED_HOURS}
               value={plannedHours}
               onChange={e => setPlannedHours(Math.max(0, parseInt(e.target.value) || 0))}
-              className="w-full border border-input rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none"
+              aria-invalid={isPlannedHoursInvalid(plannedHours)}
+              className={`w-full border rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none ${isPlannedHoursInvalid(plannedHours) ? "border-red-400 focus:ring-2 focus:ring-red-500/20" : "border-input"}`}
             />
+            {isPlannedHoursInvalid(plannedHours) && <p className="mt-1 text-[11px] font-semibold text-red-600">{PLANNED_HOURS_ERROR}</p>}
           </Field>
           <Field label="Actual Hours (Giờ thực tế)">
             <input
@@ -6123,6 +6409,13 @@ export default function ProjectDetailPage() {
     return () => controller.abort();
   }, [projectId, pushedProjectOwnerKey]);
 
+  const refreshProject = useCallback(async () => {
+    clearLiveProjectSnapshotCache();
+    // The change is already saved; a failed reload must not be reported as a failed save.
+    const liveProject = await fetchLiveProjectById(projectId, undefined, pushedProjectOwnerKey).catch(() => null);
+    if (liveProject) setProject(liveProject);
+  }, [projectId, pushedProjectOwnerKey]);
+
   const searchParams = useSearchParams();
   const projectsReturnHref = getProjectsReturnHref(searchParams);
   const [tab, setTab] = useState<Tab>(() => {
@@ -7863,7 +8156,8 @@ export default function ProjectDetailPage() {
               {/* ─── OVERVIEW ─── */}
               {tab === "Overview" && (
                 <div className="space-y-5">
-                  <ProjectStatusSlaBar project={project} milestones={milestones} tasks={allTasks} projectColor={project.color} />
+                  <ProjectWarningsBlock projectId={projectId} projectColor={project.color} teamMembers={teamMembers} onChanged={clearLiveProjectSnapshotCache} />
+                  <ProjectStatusSlaBar projectId={projectId} project={project} milestones={milestones} tasks={allTasks} projectColor={project.color} onStatusChanged={refreshProject} />
                   <MilestoneOverviewBar
                     milestones={milestones}
                     milestoneGroups={milestoneGroups}
@@ -7871,6 +8165,7 @@ export default function ProjectDetailPage() {
                     onOpenProjectSheet={() => handleTabChange("Project Sheet")}
                   />
                   <ProjectDeliveryWireframePanels
+                    projectId={projectId}
                     projectColor={project.color}
                     milestones={milestones}
                     milestoneGroups={milestoneGroups}
@@ -9118,7 +9413,7 @@ export default function ProjectDetailPage() {
                               </button>
                             </div>
                             <div className="grid grid-cols-3 gap-2 mb-3">
-                              {[{label:"Đã giao",value:m.tasks},{label:"Hoàn tất",value:m.done},{label:"Tỷ lệ hoàn tất",value:`${pct}%`}].map(s => (
+                              {[{label:"Đã giao",value:m.tasks},{label:"Đã hoàn thành",value:m.done},{label:"Tỷ lệ hoàn tất",value:`${pct}%`}].map(s => (
                                 <div key={s.label} className="text-center bg-muted/40 rounded-lg py-2">
                                   <p className="text-sm font-bold text-foreground">{s.value}</p>
                                   <p className="text-[9px] uppercase tracking-wide text-muted-foreground">{s.label}</p>

@@ -58,6 +58,48 @@ export class ProjectsController {
     return this.projects.updateMilestoneTemplate(templateId, body, principal);
   }
 
+  @Get("project-participation")
+  async getUserProjectParticipation(@Headers("authorization") authorization: string | undefined, @Query() query: any) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, query.principal);
+    return this.projects.getUserProjectParticipation(query, principal);
+  }
+
+  @Get("project-warnings/counts")
+  async projectWarningCounts(@Headers("authorization") authorization: string | undefined, @Query() query: any) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, query.principal);
+    return this.projects.projectWarningCounts(query, principal);
+  }
+
+  @Get("projects/:projectId/member-participation")
+  async listProjectMemberParticipation(@Headers("authorization") authorization: string | undefined, @Param("projectId") projectId: string, @Query() query: any) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, query.principal);
+    return this.projects.listProjectMemberParticipation(projectId, query, principal);
+  }
+
+  @Get("projects/:projectId/status-history")
+  async listProjectStatusHistory(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("projectId") projectId: string) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.listProjectStatusHistory(projectId, principal);
+  }
+
+  @Get("projects/:projectId/warnings")
+  async listProjectWarnings(@Headers("authorization") authorization: string | undefined, @Param("projectId") projectId: string, @Query() query: any) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, query.principal);
+    return this.projects.listProjectWarnings(projectId, query, principal);
+  }
+
+  @Post("projects/:projectId/warnings/:warningId/close")
+  async closeProjectWarning(
+    @Headers("authorization") authorization: string | undefined,
+    @Query("principal") principalFallback: string | undefined,
+    @Param("projectId") projectId: string,
+    @Param("warningId") warningId: string,
+    @Body() body: any
+  ) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.closeProjectWarning(projectId, warningId, body, principal);
+  }
+
   @Get("projects/:projectId/members")
   async listProjectMembers(@Headers("authorization") authorization: string | undefined, @Param("projectId") projectId: string, @Query() query: any) {
     const principal = await this.principals.resolveFromAuthorization(authorization, query.principal);

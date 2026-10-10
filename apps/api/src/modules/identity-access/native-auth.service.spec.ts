@@ -16,6 +16,13 @@ describe("NativeAuthService rejection and lifecycle boundaries", () => {
     db.user.findUniqueOrThrow.mockResolvedValue({ id: "member", status: "ACTIVE" });
     await expect(service.createInvitation("Bearer valid", { email: "new@example.com", roleCode: "FOUNDER_GM" })).rejects.toMatchObject({ status: 403 });
   });
+  it("lets only a Founder/GM invite another Founder/GM", async () => {
+    const { db, service, principals } = setup({ portalInvitation: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() } });
+    principals.resolveFromAuthorization.mockResolvedValue({ subjectId: "admin", workspaceId: "ws", roleCodes: ["WORKSPACE_ADMIN"] });
+    db.user.findUniqueOrThrow.mockResolvedValue({ id: "admin", status: "ACTIVE" });
+    await expect(service.createInvitation("Bearer valid", { email: "new@example.com", roleCode: "FOUNDER_GM" })).rejects.toMatchObject({ status: 403 });
+    expect(db.portalInvitation.create).not.toHaveBeenCalled();
+  });
   it("rejects expired invitation before password work or creating sessions", async () => {
     const { db, service, principals } = setup();
     db.portalInvitation.findUnique.mockResolvedValue({ status: "PENDING", expiresAt: new Date(0) });

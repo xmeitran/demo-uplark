@@ -1,5 +1,6 @@
 import type { AccountSummary, AccountsResponse, ProjectSummary, ResourceListPaginationMeta, ResourceListResponse } from "@b2b-crm/contracts";
 import type { Project } from "./data";
+import { normalizeProjectStatus, projectStatusLabel, resolveProjectStatus, type ProjectStatusCode } from "@/lib/project-status";
 
 export const PROJECT_PAGE_SIZE = 10;
 export const LIVE_PROJECT_SNAPSHOT_TTL_MS = 5_000;
@@ -78,8 +79,9 @@ export async function fetchLiveProjects(options: FetchLiveProjectsOptions = {}):
   if (q) {
     params.set("q", q);
   }
-  if (options.status && options.status !== "all") {
-    params.set("status", toBackendProjectStatus(options.status));
+  const backendStatus = options.status && options.status !== "all" ? toBackendProjectStatus(options.status) : undefined;
+  if (backendStatus) {
+    params.set("status", backendStatus);
   }
   if (category && category !== "all") {
     params.set("category", category);
@@ -319,7 +321,8 @@ export function isUnauthorizedLiveProjectsError(error: unknown) {
 
 export function mapProjectSummaryToUiProject(project: ProjectSummary): Project {
   const color = project.color || colorForId(project.id);
-  const status = toUiStatus(project.status);
+  const statusCode = resolveProjectStatus(project);
+  const status = projectStatusLabel(statusCode);
   const taskCount = project.taskCount ?? 0;
   const completedTaskCount = project.completedTaskCount ?? (status === "Completed" ? taskCount : 0);
   const uniqueMembers = uniqueProjectMembers(project.members ?? []);
@@ -343,12 +346,16 @@ export function mapProjectSummaryToUiProject(project: ProjectSummary): Project {
     name: project.name,
     description: buildDescription(project),
     status,
-    priority: project.priority ? `${project.priority[0].toUpperCase()}${project.priority.slice(1)}` as Project["priority"] : toUiPriority(project.status, project.progressPercent),
+    statusReason: project.statusReason,
+    statusSince: project.statusSince,
+    openWarningCount: project.openWarningCount,
+    priority: project.priority ? `${project.priority[0].toUpperCase()}${project.priority.slice(1)}` as Project["priority"] : toUiPriority(statusCode, project.progressPercent),
     progress: clampPercent(project.progressPercent ?? (taskCount > 0 ? Math.round((completedTaskCount / taskCount) * 100) : status === "Completed" ? 100 : 0)),
     budget: project.budgetAmount ?? 0,
     spent: project.spentAmount ?? 0,
     startDate: formatUiDate(project.plannedStartAt),
     dueDate: formatUiDate(project.plannedEndAt),
+    dueAt: project.plannedEndAt,
     members,
     ownerUserId: project.ownerUserId,
     ownerDisplayName: project.ownerDisplayName,
@@ -363,7 +370,7 @@ export function mapProjectSummaryToUiProject(project: ProjectSummary): Project {
     pnlHours: minutesToHours(project.approvedMinutes),
     client: project.accountName || "Unassigned Account",
     color,
-    tags: project.tags?.length ? project.tags : [project.code, formatProjectStatusLabel(project.status)].filter(Boolean),
+    tags: project.tags?.length ? project.tags : [project.code, status].filter(Boolean),
     category: formatProjectCategory(projectType) || "Delivery"
   };
 }
@@ -416,13 +423,9 @@ function uniqueStrings(values: string[]) {
   return Array.from(new Set(values));
 }
 
-function normalizeIdentity(value?: string) {
-  const normalized = value?.trim().toLowerCase();
-  return normalized || undefined;
-}
-
+/** Stored value sent to the API for a catalogue label; "Chưa xác định" is display-only and sends nothing. */
 export function toBackendProjectStatus(status: Project["status"]) {
-  const map: Record<Project["status"], string> = {
+  const map: Partial<Record<Project["status"], string>> = {
     Active: "in_progress",
     "In Review": "in_review",
     Planning: "planning",
@@ -471,58 +474,16 @@ function buildDescription(project: ProjectSummary) {
   return parts.length > 0 ? parts.join(" · ") : "Imported from operational CRM data.";
 }
 
-function toUiStatus(status: string): Project["status"] {
-  const normalized = status.toLowerCase();
-  if (["completed", "done", "closed"].includes(normalized)) return "Completed";
-  if (["in_review", "review"].includes(normalized)) return "In Review";
-  if (["planning", "not_started", "todo"].includes(normalized)) return "Planning";
-  if (["on_hold", "paused"].includes(normalized)) return "On Hold";
-  if (["at_risk", "blocked", "cancelled"].includes(normalized)) return "At Risk";
-  return "Active";
-}
-
-function toUiPriority(status: string, progress?: number): Project["priority"] {
-  const normalized = status.toLowerCase();
-  if (["at_risk", "blocked", "cancelled"].includes(normalized)) return "Critical";
-  if (["on_hold", "paused", "pause"].includes(normalized)) return "Low";
-  if ((progress ?? 0) < 20 && normalized !== "completed") return "High";
+function toUiPriority(status: ProjectStatusCode | null, progress?: number): Project["priority"] {
+  if (status === "at_risk") return "Critical";
+  if (status === "on_hold") return "Low";
+  if ((progress ?? 0) < 20 && status !== "completed") return "High";
   return "Medium";
 }
 
+/** Label of a Project Status in the standard catalogue; accepts a code, a legacy alias or a catalogue label. */
 export function formatProjectStatusLabel(status?: string) {
-  if (!status) return "";
-  const normalized = status.trim().toLowerCase();
-  const labels: Record<string, string> = {
-    active: "Đang triển khai",
-    in_progress: "Đang triển khai",
-    "in progress": "Đang triển khai",
-    started: "Đang triển khai",
-    onboarding: "Đang khởi động",
-    discovery: "Khảo sát",
-    in_review: "Đang rà soát",
-    "in review": "Đang rà soát",
-    review: "Đang rà soát",
-    planning: "Lập kế hoạch",
-    not_started: "Chưa bắt đầu",
-    todo: "Chưa bắt đầu",
-    on_hold: "Tạm dừng",
-    "on hold": "Tạm dừng",
-    paused: "Tạm dừng",
-    pause: "Tạm dừng",
-    completed: "Đã hoàn thành",
-    done: "Đã hoàn thành",
-    closed: "Đã đóng",
-    at_risk: "Có rủi ro",
-    "at risk": "Có rủi ro",
-    blocked: "Bị chặn",
-    cancelled: "Đã hủy"
-  };
-  if (labels[normalized]) return labels[normalized];
-  return normalized
-    .split(/[_\s-]+/)
-    .filter(Boolean)
-    .map(part => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
-    .join(" ");
+  return projectStatusLabel(normalizeProjectStatus(status));
 }
 
 function formatProjectCategory(value?: string) {

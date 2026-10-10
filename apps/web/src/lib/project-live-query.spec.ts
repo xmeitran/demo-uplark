@@ -257,8 +257,19 @@ describe("live project query params", () => {
 
     const result = await fetchLiveProjects({ limit: 10, offset: 0 });
 
-    expect(result.projects[0]?.tags).toEqual(["PRJ-RAW", "Đang triển khai"]);
+    // Standard catalogue label (Planning / Active / In Review / On Hold / At Risk / Completed).
+    expect(result.projects[0]?.tags).toEqual(["PRJ-RAW", "Active"]);
     expect(result.projects[0]?.tags).not.toContain("in_progress");
+  });
+
+  it("maps the project status through the shared catalogue and never defaults an unknown one to Active", () => {
+    const map = (patch: Record<string, unknown>) => mapProjectSummaryToUiProject({ ...cachedProjectSummary, ...patch } as Parameters<typeof mapProjectSummaryToUiProject>[0]);
+    expect(map({ status: "in_progress", statusCode: "on_hold" }).status).toBe("On Hold");
+    expect(map({ status: "discovery" }).status).toBe("Active");
+    expect(map({ status: "acceptance" }).status).toBe("In Review");
+    expect(map({ status: "pilot" }).status).toBe("Chưa xác định");
+    expect(map({ status: undefined }).status).toBe("Chưa xác định");
+    expect(map({ plannedEndAt: "2026-12-31T00:00:00.000Z" }).dueAt).toBe("2026-12-31T00:00:00.000Z");
   });
 
   it("dedupes live project members by user identity while preserving real avatars", () => {

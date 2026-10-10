@@ -465,6 +465,13 @@ export interface ProjectSummary {
   code: string;
   name: string;
   status: string;
+  /** Canonical status code (EV-064); undefined for a stored value outside the catalogue. */
+  statusCode?: ProjectStatusCode;
+  /** Reason / action-blocker note of the current status and when it started (detail payload only). */
+  statusReason?: string;
+  statusSince?: string;
+  /** Open ProjectWarning records (EV-065). */
+  openWarningCount?: number;
   projectType?: string;
   scopeSummary?: string;
   marginPercent?: number;
@@ -496,6 +503,88 @@ export interface ProjectSummary {
 
 export type ProjectPriority = "critical" | "high" | "medium" | "low";
 
+export type ProjectStatusCode = "planning" | "active" | "in_review" | "on_hold" | "at_risk" | "completed";
+
+export interface ProjectStatusHistoryItem {
+  id: string;
+  projectId: string;
+  fromStatus?: string;
+  toStatus: string;
+  reason?: string;
+  changedByUserId?: string;
+  changedByDisplayName?: string;
+  changedAt: string;
+}
+
+/** EV-035: derived per period, never stored. Not the HR employment status. */
+export type MemberParticipationState = "active" | "on_hold" | "missing_data" | "no_log";
+
+export interface MemberParticipationFields {
+  participationState: MemberParticipationState;
+  participationReason: string;
+  actualMinutes: number;
+  openTaskCount: number;
+}
+
+export interface ProjectMemberParticipationItem extends MemberParticipationFields {
+  userId: string;
+  displayName: string;
+  email: string;
+  avatarUrl?: string;
+  employmentStatus: EmploymentStatus;
+}
+
+export interface ProjectMemberParticipationResponse {
+  data: ProjectMemberParticipationItem[];
+  meta: { projectId: string; projectStatus: string; startDate: string; endDate: string };
+}
+
+export interface UserProjectParticipationProject {
+  projectId: string;
+  code: string;
+  name: string;
+  status: string;
+}
+
+export interface UserProjectParticipationResponse {
+  data: {
+    userId: string;
+    startDate: string;
+    endDate: string;
+    activeProjects: Array<UserProjectParticipationProject & { actualMinutes: number }>;
+    onHoldProjects: UserProjectParticipationProject[];
+  };
+}
+
+export interface ProjectWarningEventItem {
+  id: string;
+  action: string;
+  actorUserId?: string;
+  note?: string;
+  at: string;
+}
+
+export interface ProjectWarningItem {
+  id: string;
+  projectId: string;
+  milestoneId?: string;
+  stageId?: string;
+  taskId?: string;
+  typeCode: string;
+  severity: string;
+  title: string;
+  detail?: string;
+  status: "open" | "closed";
+  ownerUserId?: string;
+  dueAt?: string;
+  openedAt: string;
+  openedByUserId?: string;
+  closedAt?: string;
+  closedByUserId?: string;
+  closeReason?: string;
+  events: ProjectWarningEventItem[];
+}
+
 export interface ProjectMemberSummary {
   userId: string;
   displayName: string;
@@ -515,6 +604,8 @@ export interface CreateProjectInput {
   code?: string;
   name: string;
   status?: string;
+  /** Required when a project is created directly in On Hold or At Risk. */
+  statusReason?: string;
   projectType?: string;
   marginPercent?: number;
   priority?: ProjectPriority;
@@ -656,6 +747,8 @@ export interface UpdateProjectInput {
   code?: string;
   name?: string;
   status?: string;
+  /** Required when status changes to On Hold (reason) or At Risk (action/blocker). */
+  statusReason?: string;
   projectType?: string;
   marginPercent?: number | null;
   priority?: ProjectPriority | null;
@@ -1029,6 +1122,8 @@ export interface TaskPlanningBlockSummary {
   createdByUserId?: string;
   createdAt: string;
   updatedAt: string;
+  /** Set on a completion response when no time entry could be created from the block; the hours must be logged manually. */
+  actualLogWarning?: string;
 }
 
 export interface ProjectTaskSummary {
@@ -1464,7 +1559,11 @@ export interface CapacitySummaryItem {
   displayRole?: string;
   skills: string[];
   availableMinutes: number;
+  /** Excludes allocations on On Hold projects (see onHoldAllocatedMinutes). */
   allocatedMinutes: number;
+  onHoldAllocatedMinutes?: number;
+  /** False when no capacity period or resource profile exists and the default was used. */
+  capacityKnown?: boolean;
   remainingMinutes: number;
   utilizationPercent: number;
   overbooked: boolean;
@@ -1627,6 +1726,7 @@ export interface ProjectPlSummaryItem {
   currency: string;
   plannedRevenueAmount: number;
   paidRevenueAmount: number;
+  customRevenueAmount?: number;
   plannedCostAmount: number;
   approvedLaborMinutes: number;
   actualLaborCostAmount: number;
@@ -1636,6 +1736,118 @@ export interface ProjectPlSummaryItem {
   grossMarginAmount: number;
   grossMarginPercent?: number;
   latestSnapshot?: ProjectPlSnapshotSummary;
+  /** The single revenue figure the margin is computed on. */
+  revenueAmount: number;
+  revenueBasis: ProjectPlRevenueBasis;
+  /** Total cost ÷ revenue, in percent. Absent when there is no revenue for the range. */
+  expenseRatioPercent?: number;
+  /** Approved minutes whose owner has no cost rate on the work date; their cost is NOT in the totals. */
+  missingRateMinutes: number;
+  laborByPerson: ProjectPlLaborPerson[];
+  /** Non-labor cost lines entered for the project in the reporting range. */
+  costItems: ProjectCostItem[];
+  /** Totals of costItems per BRD expense group. */
+  costByCategory: Record<ProjectCostCategory, number>;
+  /** Share of the month's shared cost pool allocated to this project. */
+  sharedCostAmount: number;
+  /** Costs produced by the formulas users defined in the P&L setup; already inside costByCategory and totalCostAmount. */
+  calculatedCostAmount: number;
+  calculatedItems: ProjectPlCalculatedItem[];
+  /** Plan for the range: scheduled planning blocks in a period, task estimates for the whole project. */
+  plannedMinutes: number;
+  plannedMinutesBasis: "planning_blocks" | "task_estimates";
+  /** True when the figures come from a locked month snapshot. */
+  locked: boolean;
+  /** Everything in totalCostAmount that is not labor (totalCostAmount − actualLaborCostAmount), computed by the API. */
+  otherCostAmount: number;
+  /** Entered cost lines inside totalCostAmount (directCostAmount + writeOffAmount); frozen when locked. */
+  enteredCostAmount: number;
+  /**
+   * Locked months only: the frozen pool share + formula costs as ONE amount (a snapshot cannot split it).
+   * When present, sharedCostAmount/calculatedCostAmount are 0, calculatedItems is empty and costByCategory is all zeros;
+   * laborByPerson, approvedLaborMinutes and costItems are current data and may differ from the locked totals.
+   */
+  lockedOtherCostAmount?: number;
+}
+
+export interface ProjectPlCalculatedItem {
+  code: string;
+  label: string;
+  category: ProjectCostCategory;
+  amount: number;
+}
+
+export type ProjectCostCategory = "welfare-related" | "basic-activities" | "business-location" | "sell-marketing" | "functional-operation";
+
+export type ProjectPlRevenueBasis = "custom" | "planned" | "none";
+
+export interface ProjectPlLaborPerson {
+  userId: string;
+  displayName: string;
+  approvedMinutes: number;
+  laborCostAmount: number;
+  missingRateMinutes: number;
+  hourlyCostRate?: number;
+}
+
+export type ProjectCostItemType = "EXTERNAL" | "SOFTWARE" | "TRAVEL" | "WRITE_OFF" | "OTHER";
+
+export interface ProjectCostItem {
+  id: string;
+  projectId: string;
+  projectName?: string;
+  costType: ProjectCostItemType;
+  category: ProjectCostCategory;
+  label: string;
+  amount: number;
+  currency: string;
+  /** YYYY-MM-DD in the reporting timezone. */
+  occurredOn: string;
+  note?: string;
+}
+
+export interface ProjectCostItemInput {
+  projectId: string;
+  category: ProjectCostCategory;
+  costType?: ProjectCostItemType;
+  label: string;
+  amount: number;
+  occurredOn: string;
+  note?: string;
+}
+
+export interface CostRateRow {
+  userId: string;
+  displayName: string;
+  avatarUrl?: string;
+  role?: string;
+  /** Rate in force for the month, if any. */
+  hourlyCostRate?: number;
+  /** Month (YYYY-MM) the rate in force was entered for; equals the requested month when set directly. */
+  rateFromPeriodKey?: string;
+  approvedMinutes: number;
+  laborCostAmount: number;
+  /** True for a person who is no longer an active member but has approved minutes in the month. */
+  inactive?: boolean;
+}
+
+export interface CostRatesResponse {
+  data: CostRateRow[];
+  /** statementFrozen: the month is locked, so its P&L uses the locked snapshot, not the labor cost listed here. */
+  meta: { periodKey: string; locked: boolean; canEdit: boolean; currency: string; statementFrozen?: boolean };
+}
+
+export interface CostRateInput {
+  userId: string;
+  periodKey: string;
+  /** null clears the month's own rate so the previous month's rate applies again. */
+  hourlyCostRate: number | null;
+}
+
+export interface ProjectCostItemsResponse {
+  data: ProjectCostItem[];
+  /** canEdit is false when the requested range is one locked month. */
+  meta: { canEdit: boolean; locked?: boolean };
 }
 
 export interface ProjectPlSummaryResponse {
@@ -1646,6 +1858,16 @@ export interface ProjectPlSummaryResponse {
     generatedAt: string;
     source: "postgresql";
     policy: string;
+    /** True when the requested range is one month that has been locked. */
+    locked?: boolean;
+    /** Problems in user-defined parameters or formulas; affected items are left out of the totals. */
+    formulaErrors?: string[];
+    /** The range is not made of whole months: revenue, pool and formula costs cover only fullMonthKeys. */
+    partialPeriod?: boolean;
+    /** Months (YYYY-MM) fully covered by the requested range; absent for the all-time view. */
+    fullMonthKeys?: string[];
+    /** The caller may edit P&L inputs for the viewed range (cost-edit permission and the month is not locked). */
+    canEdit?: boolean;
     periodKey?: string;
     periodStart?: string;
     periodEnd?: string;
@@ -3458,7 +3680,7 @@ export interface WorkforceProjectsBreakdownResponse {
 
 
 export interface ProjectMemberDirectoryResponse {
-  data: Array<{ userId: string; displayName: string; email: string; avatarUrl?: string; status: "active"; roleCodes: string[] }>;
+  data: Array<{ userId: string; displayName: string; email: string; avatarUrl?: string; status: "active"; roleCodes: string[] } & Partial<MemberParticipationFields>>;
   meta: { pagination: ResourceListPaginationMeta; permissions: { canManage: boolean; canLogForOthers: boolean }; principalUserId: string };
 }
 export interface TaskAssignmentHistoryResponse {

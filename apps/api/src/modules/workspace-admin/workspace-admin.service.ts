@@ -18,6 +18,8 @@ import type {
 } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { activeMembershipWhere } from "../identity-access/active-membership";
+import { CLOSED_WORK_STATUSES } from "../delivery-handoff/task-status";
+import { PROJECT_STATUS_ALIASES } from "../delivery-handoff/project-status";
 
 const ADMIN_ROLES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN"]);
 const SLOT_LABELS: Record<WorkspaceReminderSlot["slot"], string> = {
@@ -30,7 +32,10 @@ const DEFAULT_SLOTS: WorkspaceReminderSlot[] = [
   { slot: "pm_follow_up", time: "14:00", label: SLOT_LABELS.pm_follow_up, enabled: true },
   { slot: "evening_actual", time: "17:00", label: SLOT_LABELS.evening_actual, enabled: true }
 ];
-const TERMINAL_TASK_STATUSES = ["completed", "done", "cancelled", "closed"];
+// Shared with delivery-handoff: one list decides which tasks are closed and therefore never open or overdue.
+const TERMINAL_TASK_STATUSES = CLOSED_WORK_STATUSES;
+// Same rule as the worker's scheduled reminders: tasks of On Hold and completed projects are not reminded.
+const REMINDER_INACTIVE_PROJECT_STATUSES = Array.from(new Set([...PROJECT_STATUS_ALIASES.on_hold, ...PROJECT_STATUS_ALIASES.completed, "cancelled", "archived"]));
 const WAITING_TASK_STATUSES = new Set(["blocked", "waiting", "on_hold", "on-hold"]);
 const ACTUAL_ENTRY_STATUSES = new Set(["approved", "submitted"]);
 const ADMIN_HISTORY_ACTIONS = [
@@ -470,7 +475,7 @@ export class WorkspaceAdminService {
           }
         },
         ...(scopedUserIds ? { id: { in: scopedUserIds } } : {}),
-        projectMembers: { some: { workspaceId: principal.workspaceId, project: { status: { notIn: ["completed", "cancelled", "closed", "archived"] } } } }
+        projectMembers: { some: { workspaceId: principal.workspaceId, project: { status: { notIn: REMINDER_INACTIVE_PROJECT_STATUSES } } } }
       },
       select: {
         id: true,
@@ -490,7 +495,8 @@ export class WorkspaceAdminService {
           workspaceId: principal.workspaceId,
           archivedAt: null,
           status: { notIn: TERMINAL_TASK_STATUSES },
-          OR: [{ assigneeUserId: { in: userIds } }, { assigneeUserId: null, ownerUserId: { in: userIds } }]
+          OR: [{ assigneeUserId: { in: userIds } }, { assigneeUserId: null, ownerUserId: { in: userIds } }],
+          AND: [{ OR: [{ projectId: null }, { project: { status: { notIn: REMINDER_INACTIVE_PROJECT_STATUSES } } }] }]
         },
         select: { id: true, title: true, assigneeUserId: true, ownerUserId: true, plannedStartAt: true, dueAt: true, estimateMinutes: true, project: { select: { name: true } } },
         orderBy: [{ dueAt: "asc" }, { updatedAt: "desc" }]

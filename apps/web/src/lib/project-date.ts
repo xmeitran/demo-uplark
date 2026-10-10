@@ -30,3 +30,12 @@ export function formatProjectDateRange(
   if (due) return `Đến ${due}`;
   return fallback;
 }
+
+/**
+ * Sort value for a project's due date: the timestamp of the real date (`dueAt`, else the parsed display date).
+ * Sorting the formatted string put "Apr 2027" before "Mar 2026". Projects without a date sort last.
+ */
+export function projectDueSortValue(project: { dueAt?: string | null; dueDate?: string | null }) {
+  const time = Date.parse(project.dueAt || (isDisplayDate(project.dueDate) ? project.dueDate : ""));
+  return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
+}

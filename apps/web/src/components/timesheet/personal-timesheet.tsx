@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
+  ArrowLeft,
   ArrowRight,
   CheckCircle2,
   ChevronRight,
@@ -15,7 +16,9 @@ import {
 import { useAuth } from "@/lib/auth";
 import { CrmSelect } from "@/components/crm-workspace/crm-select";
 import { emptyTimesheetDataset, loadTimesheetDataset } from "./timesheet-live-data";
-import { eachDate, monthBounds } from "./timesheet-mock-data";
+import { eachDate, monthBounds } from "./timesheet-dates";
+import { isClosedNodeStatus, isTaskOverdue } from "./timesheet-status";
+import { projectStatusLabel } from "@/lib/project-status";
 import {
   buildPersonDayMatrix,
   buildPersonProjectRows,
@@ -36,7 +39,6 @@ import {
 } from "./timesheet-format";
 import {
   NODE_STATUS_LABELS,
-  PROJECT_STATUS_LABELS,
   type Person,
   type ProjectNode,
   type TaskNode,
@@ -59,11 +61,11 @@ function isoWeekday(iso: string) {
   return day === 0 ? 6 : day - 1;
 }
 
-function currentTaskTone(task: TaskNode, today: string) {
+function currentTaskTone(task: TaskNode, overdue: boolean) {
   if (task.status === "completed") return "success" as const;
   if (task.status === "waiting") return "warning" as const;
   if (task.status === "blocked") return "danger" as const;
-  if (task.dueDate && task.dueDate < today) return "danger" as const;
+  if (overdue) return "danger" as const;
   if (task.status === "in_progress") return "info" as const;
   return "neutral" as const;
 }
@@ -158,21 +160,21 @@ function CalendarCard({
 
 function TodayTasksCard({ tasks, today, onLog }: { tasks: PersonalTask[]; today: string; onLog: (task: PersonalTask) => void }) {
   const visible = tasks
-    .filter(({ task }) => task.status !== "completed")
-    .sort((a, b) => Number(Boolean(b.task.dueDate && b.task.dueDate < today)) - Number(Boolean(a.task.dueDate && a.task.dueDate < today)) || (a.task.dueDate ?? "9999").localeCompare(b.task.dueDate ?? "9999"))
+    .filter(({ task }) => !isClosedNodeStatus(task.status))
+    .sort((a, b) => Number(isTaskOverdue(b.task, b.project.status, today)) - Number(isTaskOverdue(a.task, a.project.status, today)) || (a.task.dueDate ?? "9999").localeCompare(b.task.dueDate ?? "9999"))
     .slice(0, 6);
   return (
     <SectionCard title="Task của tôi hôm nay" description="Theo kế hoạch đã duyệt · ưu tiên task quá hạn và đến hạn." actions={<ListTodo className="h-4 w-4 text-primary" />} id="personal-tasks">
       {visible.length === 0 ? <EmptyState message="Bạn không có task mở cần xử lý." /> : (
         <ul className="divide-y divide-border">
           {visible.map(({ task, project, milestoneName }) => {
-            const overdue = Boolean(task.dueDate && task.dueDate < today);
+            const overdue = isTaskOverdue(task, project.status, today);
             return (
               <li key={`${project.id}:${task.id}`} className="flex items-center gap-2.5 px-4 py-3">
                 <span className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${overdue ? "bg-destructive" : task.status === "in_progress" ? "bg-info" : task.status === "waiting" ? "bg-warning" : "bg-muted-foreground/40"}`} />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <Pill tone={currentTaskTone(task, today)}>{overdue ? "Quá hạn" : NODE_STATUS_LABELS[task.status]}</Pill>
+                    <Pill tone={currentTaskTone(task, overdue)}>{overdue ? "Quá hạn" : NODE_STATUS_LABELS[task.status]}</Pill>
                     <span className="truncate text-[12.5px] font-semibold text-foreground">{task.name}</span>
                   </div>
                   <p className="mt-0.5 truncate text-[10.5px] text-muted-foreground">{project.code} · {milestoneName}{task.dueDate ? ` · hạn ${formatDateShort(task.dueDate)}` : ""}</p>
@@ -201,9 +203,9 @@ export function PersonalProjectTree({ dataset, logs }: { dataset: TimesheetDatas
             <details key={row.project.id} open className="group">
               <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 hover:bg-muted/30 [&::-webkit-details-marker]:hidden">
                 <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
-                <div className="min-w-0 flex-1"><p className="truncate text-[12.5px] font-bold">{row.project.code} — {row.project.name}</p><p className="text-[10.5px] text-muted-foreground">{PROJECT_STATUS_LABELS[row.project.status]} · {row.taskCount} task có log</p></div>
+                <div className="min-w-0 flex-1"><p className="truncate text-[12.5px] font-bold">{row.project.code} — {row.project.name}</p><p className="text-[10.5px] text-muted-foreground">{projectStatusLabel(row.project.status)} · {row.taskCount} task có log</p></div>
                 <span className="font-mono text-[12px] font-bold tabular-nums">{formatHours(row.actualMinutes)}</span>
-                <Pill tone={projectStatusTone(row.project.status)}>{PROJECT_STATUS_LABELS[row.project.status]}</Pill>
+                <Pill tone={projectStatusTone(row.project.status)}>{projectStatusLabel(row.project.status)}</Pill>
               </summary>
               <div className="space-y-1 border-t border-border bg-muted/[0.12] px-4 py-3 pl-10">
                 {row.milestones.map((milestone) => (
@@ -246,7 +248,7 @@ export function PersonalTimesheet() {
   }, [reloadToken]);
 
   const person = useMemo(() => resolvePerson(dataset, user), [dataset, user]);
-  const month = searchParams.get("month") ?? dataset.months.at(-1) ?? new Date().toISOString().slice(0, 7);
+  const month = searchParams.get("month") ?? dataset.months.at(-1) ?? dataset.generatedAt.slice(0, 7);
   const today = dataset.generatedAt.slice(0, 10);
   const personalLogs = useMemo(() => person ? dataset.logs.filter((log) => log.personId === person.id && log.date.startsWith(month)) : [], [dataset.logs, month, person]);
   const personalProjects = useMemo(() => person ? dataset.projects.filter((project) => project.picId === person.id || project.members.some((member) => member.personId === person.id)) : [], [dataset.projects, person]);
@@ -258,8 +260,8 @@ export function PersonalTimesheet() {
   const actualMinutes = sum(personalLogs.map((log) => log.minutes));
   const missingDays = matrix.rows[0]?.cells.filter((cell) => cell.isWorkingDay && cell.date <= today && cell.minutes === 0) ?? [];
   const allTasks = useMemo(() => person ? personalTasks(personalDataset, person.id) : [], [person, personalDataset]);
-  const openTasks = allTasks.filter(({ task }) => task.status !== "completed");
-  const overdueTasks = openTasks.filter(({ task }) => Boolean(task.dueDate && task.dueDate < today));
+  const openTasks = allTasks.filter(({ task }) => !isClosedNodeStatus(task.status));
+  const overdueTasks = openTasks.filter(({ task, project }) => isTaskOverdue(task, project.status, today));
 
   const openDay = (date: string) => {
     const logs = personalLogs.filter((log) => log.date === date);
@@ -278,15 +280,14 @@ export function PersonalTimesheet() {
     <div className="mx-auto w-full max-w-[1500px] space-y-4 pb-8">
       <div className="rounded-2xl border border-border bg-card px-4 py-4 shadow-sm sm:px-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">TIMESHEET · GIỜ CỦA TÔI</p><h1 className="mt-1 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">Giờ của tôi</h1><p className="mt-1 text-[13px] text-muted-foreground">Tập trung vào giờ, task và kế hoạch của {person.name}.</p></div>
+        <div><Link href="/timesheet" className="mb-2 inline-flex items-center gap-1 text-[12px] font-semibold text-muted-foreground hover:text-foreground"><ArrowLeft className="h-3.5 w-3.5" aria-hidden /> Timesheet</Link><p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">TIMESHEET · GIỜ CỦA TÔI</p><h1 className="!text-xl mt-1 font-bold tracking-tight text-foreground">Giờ của tôi</h1><p className="mt-1 text-[13px] text-muted-foreground">Tập trung vào giờ, task và kế hoạch của {person.name}.</p></div>
         <div className="flex items-center gap-2"><CrmSelect id="personal-month" ariaLabel="Chọn tháng" options={dataset.months.map((value) => ({ value, label: formatMonth(value) }))} value={month} onChange={(value) => router.push(`/timesheet/me?month=${value}`, { scroll: false })} /><button type="button" onClick={() => setReloadToken((value) => value + 1)} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-[12px] font-semibold text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Tải lại dữ liệu"><RefreshCw className="h-3.5 w-3.5" /> Tải lại</button></div>
         </div>
       </div>
       {(missingDays.length > 0 || openTasks.length > 0) ? <div className="flex flex-wrap items-center gap-3 rounded-xl border border-warning/30 bg-warning/[0.08] px-4 py-3"><AlertTriangle className="h-4 w-4 shrink-0 text-warning" /><div className="min-w-0 flex-1"><p className="text-[12.5px] font-bold text-foreground">Cần bổ sung dữ liệu hôm nay</p><p className="text-[11.5px] text-muted-foreground">{missingDays.length > 0 ? `${missingDays.length} ngày làm việc chưa ghi giờ` : "Bạn vẫn còn task đang mở cần theo dõi."}{overdueTasks.length > 0 ? ` · ${overdueTasks.length} task quá hạn` : ""}</p></div><Link href={openTasks[0] ? `/tasks/${openTasks[0].task.id}` : "/tasks"} className="inline-flex items-center gap-1.5 rounded-lg bg-warning px-3 py-2 text-[12px] font-bold text-warning-foreground hover:opacity-90">Ghi giờ ngay <ArrowRight className="h-3.5 w-3.5" /></Link></div> : <div className="flex items-center gap-2 rounded-xl border border-success/25 bg-success/[0.06] px-4 py-3 text-[12px] text-success"><CheckCircle2 className="h-4 w-4" /> Dữ liệu ghi giờ của bạn đang đầy đủ trong kỳ đã chọn.</div>}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3"><KpiCard label={`Giờ tôi đã ghi — ${formatMonth(month)}`} value={formatHours(actualMinutes)} hint={`so với ${formatHours(standardMinutes)} giờ chuẩn`} badge={standardMinutes > 0 ? formatPercent((actualMinutes / standardMinutes) * 100) : "Chưa có chuẩn"} tone={actualMinutes >= standardMinutes ? "success" : "warning"} /><KpiCard label="Ngày còn trống" value={`${missingDays.length}`} hint={missingDays.length ? missingDays.slice(0, 3).map((cell) => formatDateShort(cell.date)).join(" · ") : "Không còn ngày trống"} badge={missingDays.length ? "Cần ghi bổ sung" : "Đã đủ"} tone={missingDays.length ? "warning" : "success"} /><KpiCard label="Task của tôi đang mở" value={`${openTasks.length}`} hint={`${overdueTasks.length} quá hạn · ${openTasks.filter(({ task }) => task.status === "in_progress").length} đang làm`} badge={openTasks.length ? "Theo dõi" : "Đã hoàn tất"} tone={openTasks.length ? "info" : "success"} /></div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3"><KpiCard label={`Giờ tôi đã ghi — ${formatMonth(month)}`} value={formatHours(actualMinutes)} hint={`so với ${formatHours(standardMinutes)} giờ chuẩn`} badge={standardMinutes > 0 ? formatPercent((actualMinutes / standardMinutes) * 100) : "Chưa có chuẩn"} tone={actualMinutes >= standardMinutes ? "success" : "warning"} /><KpiCard label="Ngày còn trống" value={`${missingDays.length}`} hint={missingDays.length ? missingDays.slice(0, 3).map((cell) => formatDateShort(cell.date)).join(" · ") : "Không còn ngày trống"} badge={missingDays.length ? "Cần ghi bổ sung" : "Đã đủ"} tone={missingDays.length ? "warning" : "success"} /><KpiCard label="Task của tôi đang mở" value={`${openTasks.length}`} hint={`${overdueTasks.length} quá hạn · ${openTasks.filter(({ task }) => task.status === "in_progress").length} đang làm`} badge={openTasks.length ? "Theo dõi" : "Đã hoàn thành"} tone={openTasks.length ? "info" : "success"} /></div>
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]"><CalendarCard month={month} today={today} matrix={matrix} person={person} onDayClick={openDay} /><TodayTasksCard tasks={allTasks} today={today} onLog={openTask} /></div>
       <PersonalProjectTree dataset={personalDataset} logs={personalLogs} />
-      <div className="rounded-xl border border-primary/20 bg-primary/[0.04] px-4 py-3 text-[11.5px] leading-relaxed text-muted-foreground"><span className="font-semibold text-primary">Vì sao có màn này?</span> Nhân sự chỉ cần theo dõi giờ và task của chính mình, không phải cuộn qua bảng 12 người và nhiều biểu đồ quản trị. Bảng tháng và bảng dự án vẫn giữ nguyên cho PM/Founder xem tổng hợp.</div>
       <LogDrawer dataset={personalDataset} request={drawer} onClose={() => setDrawer(null)} currentUserId={person.id} />
     </div>
   );

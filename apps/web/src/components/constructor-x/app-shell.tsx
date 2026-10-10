@@ -95,7 +95,10 @@ export function AppShell({
   }, [closeNavigation, navigationOpen]);
 
   return (
-    <div className="flex h-dvh min-w-0 overflow-hidden bg-background text-foreground" data-testid={shellTestId}>
+    // `relative` makes the shell the containing block of absolutely positioned
+    // descendants (e.g. sr-only labels inside a scrolling <main>). Without it they
+    // escape the shell's clipping and stretch the document, leaving blank space below the app.
+    <div className="relative flex h-dvh min-w-0 overflow-hidden bg-background text-foreground" data-testid={shellTestId}>
       <div className="hidden h-full shrink-0 lg:flex" data-testid={desktopSidebarTestId}>
         <Sidebar activeRoute={activeRoute} onCreateProjectClick={onCreateProjectClick} variant="desktop" />
       </div>

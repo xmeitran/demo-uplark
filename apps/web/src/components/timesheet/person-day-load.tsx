@@ -1,6 +1,8 @@
 "use client";
 
+import { PersonLink } from "@/components/person-link";
 import React, { useCallback, useMemo, useState } from "react";
+import Link from "next/link";
 import { AlertTriangle, ExternalLink, FileSearch } from "lucide-react";
 import {
   buildPersonDayMatrix,
@@ -118,7 +120,7 @@ export function PersonDayLoad({
                       <span className="flex items-center gap-2">
                         <Avatar initials={row.person.initials} name={row.person.name} />
                         <span className="min-w-0">
-                          <span className={`block truncate ${row.person.id === currentUserId ? "font-bold text-primary" : "font-semibold"}`} title={row.person.name}>{row.person.name}</span>
+                          <PersonLink userId={row.person.id} className={`block truncate hover:underline ${row.person.id === currentUserId ? "font-bold text-primary" : "font-semibold"}`} title={row.person.name}>{row.person.name}</PersonLink>
                           <span className="block truncate text-[10.5px] text-muted-foreground">
                             {formatHours(row.person.standardMinutesPerDay * row.person.contractRatio)}/ngày
                             {row.overloadedDays > 0 ? <span className="text-destructive"> · {row.overloadedDays} ngày quá tải</span> : null}
@@ -155,7 +157,7 @@ export function PersonDayLoad({
               </tbody>
               <tfoot className="border-t-2 border-border bg-muted/40">
                 <tr>
-                  <Td className="font-bold">Tổng theo ngày</Td>
+                  <Td className="font-bold">Tổng theo ngày (tất cả {matrix.rows.length} nhân sự)</Td>
                   {matrix.dayTotals.map((total, index) => (
                     <td key={matrix.days[index].date} className="px-0 py-2 text-center text-[10px] font-bold tabular-nums text-muted-foreground">
                       {total > 0 ? Math.round(total / 60) : "—"}

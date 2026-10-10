@@ -1,6 +1,18 @@
 export const TASK_REMINDER_TIME_ZONE = "Asia/Ho_Chi_Minh" as const;
 export const TASK_REMINDER_TARGET_MINUTES = 480 as const;
 
+/**
+ * Terminal task statuses: never open, overdue or reminded.
+ * Mirrors CLOSED_WORK_STATUSES in apps/api/src/modules/delivery-handoff/task-status.ts (the worker cannot import API code).
+ */
+export const CLOSED_TASK_STATUSES = ["completed", "done", "cancelled", "canceled", "closed", "archived"];
+
+/**
+ * Stored project statuses whose tasks get no reminder: On Hold and completed (with their legacy aliases, see
+ * PROJECT_STATUS_ALIASES in the API's project-status.ts) plus the shut-down values older rows still hold.
+ */
+export const REMINDER_INACTIVE_PROJECT_STATUSES = ["on_hold", "paused", "pause", "completed", "done", "closed", "cancelled", "archived"];
+
 const HCM_OFFSET_MINUTES = 7 * 60;
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;

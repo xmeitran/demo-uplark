@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import type { ViewerScope } from "./timesheet-types";
 
-type TimesheetView = "monthly" | "project" | "daily";
+type TimesheetView = "monthly" | "project";
 
 export function TimesheetViewNav({
   groupScope = "workspace"
@@ -13,31 +13,27 @@ export function TimesheetViewNav({
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const month = searchParams.get("month");
-  const monthQuery = month ? `&month=${encodeURIComponent(month)}` : "";
-  const scope = groupScope === "managed_projects" ? "managed_projects" : groupScope === "self" ? "self" : "workspace";
-  const activeView: TimesheetView = searchParams.get("view") === "project"
-    ? "project"
-    : searchParams.get("view") === "daily" ? "daily" : "monthly";
+  // Switching view keeps every current filter param; only `view` changes.
+  const hrefFor = (view: TimesheetView) => {
+    const next = new URLSearchParams(searchParams.toString());
+    next.set("view", view);
+    if (groupScope === "self") next.set("scope", "self");
+    return `/timesheet?${next.toString()}`;
+  };
+  const activeView: TimesheetView = searchParams.get("view") === "project" ? "project" : "monthly";
 
   const items = [
     {
       id: "monthly" as const,
-      href: `/timesheet?view=monthly&scope=${scope}${monthQuery}`,
+      href: hrefFor("monthly"),
       label: "Theo tháng",
       description: "Tổng hợp theo nhân sự",
     },
     {
       id: "project" as const,
-      href: `/timesheet?view=project&scope=${scope}${monthQuery}`,
+      href: hrefFor("project"),
       label: "Theo dự án",
       description: "Tổng hợp theo dự án",
-    },
-    {
-      id: "daily" as const,
-      href: `/timesheet?view=daily&scope=${scope}${monthQuery}`,
-      label: "Theo ngày & tuần",
-      description: "Chi tiết ngày công",
     }
   ];
 
@@ -46,7 +42,7 @@ export function TimesheetViewNav({
   return (
     <nav
       aria-label="Chọn màn hình Timesheet"
-      className="grid w-full grid-cols-1 gap-1 rounded-xl border border-border bg-card p-1 shadow-sm sm:grid-cols-3"
+      className="grid w-full grid-cols-1 gap-1 rounded-xl border border-border bg-card p-1 shadow-sm sm:grid-cols-2"
     >
       {items.map((item) => {
         const active = item.id === activeView;

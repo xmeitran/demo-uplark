@@ -1,4 +1,6 @@
 "use client";
+import { apiErrorMessage, isNetworkFailure, readApiError, ApiResponseError } from "@/lib/api-error";
+import { isActualTimeEntry } from "@/lib/time-entry-actual";
 import { allowedPerformers } from "@/lib/task-people-policy";
 import { defaultWorkLogDate } from "@/lib/work-log-date";
 import { useTaskPeople } from "@/hooks/use-task-people";
@@ -43,7 +45,8 @@ import {
   getDeploymentStageForTask,
   getPriorityLabel,
   getStatusLabel,
-  getTaskTypeLabel
+  getTaskTypeLabel,
+  statusLabels
 } from "./task-display-helpers";
 import { ConfirmActionDialog } from "./confirm-action-dialog";
 import { fetchWorkspaceUserOptions, type WorkspaceUserOption } from "@/lib/workspace-users";
@@ -1606,12 +1609,16 @@ export function TimePickerDropdown({
   label,
   value,
   onChange,
-  required
+  required,
+  minTime = "07:00",
+  maxTime = "19:00"
 }: {
   label: string;
   value: string;
   onChange: (val: string) => void;
   required?: boolean;
+  minTime?: string;
+  maxTime?: string;
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -1625,8 +1632,8 @@ export function TimePickerDropdown({
         slots.push(`${hh}:${mm}`);
       }
     }
-    return slots;
-  }, []);
+    return slots.filter((slot) => slot >= minTime && slot <= maxTime);
+  }, [maxTime, minTime]);
 
   const handleBlur = (event: React.FocusEvent<HTMLDivElement>) => {
     const nextFocus = event.relatedTarget as Node | null;
@@ -1679,6 +1686,23 @@ export function TimePickerDropdown({
       )}
     </div>
   );
+}
+
+function timeToMinutes(value: string) {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function getActualTaskMinutes(task: any) {
+  if (typeof task?.loggedMinutes === "number" && Number.isFinite(task.loggedMinutes)) return Math.max(0, task.loggedMinutes);
+  return (Array.isArray(task?.timeEntries) ? task.timeEntries : []).reduce((total: number, entry: any) => {
+    if (!isActualTimeEntry(entry)) return total;
+    return total + Math.max(0, Number(entry?.minutes) || 0);
+  }, 0);
 }
 
 export function LogWorkModal({
@@ -1758,13 +1782,32 @@ export function LogWorkModal({
       const [endH, endM] = endTime.split(":").map(Number);
       if (!isNaN(startH) && !isNaN(startM) && !isNaN(endH) && !isNaN(endM)) {
         let diff = (endH * 60 + endM) - (startH * 60 + startM);
-        if (diff < 0) {
-          diff += 24 * 60;
-        }
-        setMinutes(diff.toString());
+        setMinutes(diff > 0 ? diff.toString() : "");
       }
     }
   }, [startTime, endTime, useTimeSlot]);
+
+  const plannedMinutes = Math.max(0, Number(task?.estimateMinutes) || 0);
+  const loggedMinutes = getActualTaskMinutes(task);
+  const requestedMinutes = Math.max(0, Number(minutes) || 0);
+  const remainingMinutes = Math.max(0, plannedMinutes - loggedMinutes);
+  const selectedStartMinutes = useTimeSlot ? timeToMinutes(startTime) : null;
+  const selectedEndMinutes = useTimeSlot ? timeToMinutes(endTime) : null;
+  const actualValidationMessage = step !== "actual"
+    ? null
+    : plannedMinutes <= 0
+      ? "Task chưa có giờ kế hoạch hợp lệ; hãy cập nhật Plan Hour trước khi ghi giờ."
+      : requestedMinutes > remainingMinutes
+        ? `Thời lượng ghi nhận vượt số giờ kế hoạch còn lại. Công việc chỉ còn ${formatTaskMinutes(remainingMinutes)} được phép (đã ghi ${formatTaskMinutes(loggedMinutes)} trên tổng kế hoạch ${formatTaskMinutes(plannedMinutes)}).`
+        : useTimeSlot && (
+            selectedStartMinutes === null ||
+            selectedEndMinutes === null ||
+            selectedStartMinutes < 7 * 60 ||
+            selectedEndMinutes > 19 * 60 ||
+            selectedEndMinutes <= selectedStartMinutes
+          )
+          ? "Khung giờ phải nằm trong 07:00–19:00 và thời gian kết thúc phải sau thời gian bắt đầu."
+          : null;
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -1772,12 +1815,15 @@ export function LogWorkModal({
     if (people.loading || people.error || !performerOptions.some(option => option.value === userId)) { setSubmitError("Select an active project member as the performer."); return; }
     if (!minutes || !workDate) return;
     if (useTimeSlot && (!startTime || !endTime)) return;
+    if (actualValidationMessage) {
+      setSubmitError(actualValidationMessage);
+      return;
+    }
     const startAt = useTimeSlot ? vietnamDateTimeToIso(workDate, startTime) : undefined;
-    let endAt = useTimeSlot ? vietnamDateTimeToIso(workDate, endTime) : undefined;
+    const endAt = useTimeSlot ? vietnamDateTimeToIso(workDate, endTime) : undefined;
     if (startAt && endAt && new Date(endAt) <= new Date(startAt)) {
-      const adjustedEnd = new Date(endAt);
-      adjustedEnd.setUTCDate(adjustedEnd.getUTCDate() + 1);
-      endAt = adjustedEnd.toISOString();
+      setSubmitError("Khung giờ kết thúc phải sau khung giờ bắt đầu trong cùng ngày.");
+      return;
     }
     submittingRef.current = true;
     setSubmitting(true);
@@ -1896,6 +1942,19 @@ export function LogWorkModal({
             </div>
           ) : null}
 
+          {step === "actual" ? (
+            <div className={`mb-4 rounded-xl border px-3 py-2.5 text-xs ${actualValidationMessage ? "border-red-200 bg-red-50 text-red-700" : "border-blue-100 bg-blue-50/60 text-blue-800"}`}>
+              <p className="font-semibold">
+                Kế hoạch: {formatTaskMinutes(plannedMinutes)} · Đã ghi nhận: {formatTaskMinutes(loggedMinutes)} · Còn lại: {formatTaskMinutes(remainingMinutes)}
+              </p>
+              {actualValidationMessage ? (
+                <p role="alert" className="mt-1 font-semibold">{actualValidationMessage}</p>
+              ) : (
+                <p className="mt-1">Hệ thống tự động đối chiếu thời lượng với kế hoạch và không cho phép ghi vượt số giờ còn lại.</p>
+              )}
+            </div>
+          ) : null}
+
           <div className="task-form-grid task-log-work-grid">
             <div className="flex flex-col">
               <label className="text-[10px] font-bold text-slate-400 mb-1.5">
@@ -1992,7 +2051,7 @@ export function LogWorkModal({
 
           <div className="task-form-actions task-log-actions pt-4 border-t border-slate-100 mt-4">
             <button className="task-button secondary" disabled={submitting} type="button" onClick={() => setStep("choice")}>Quay lại</button>
-            <button disabled={submitting} className={`task-button primary ${step === "plan" ? "bg-indigo-600 hover:bg-indigo-700 shadow-sm shadow-indigo-100" : ""}`} type="submit">
+            <button disabled={submitting || Boolean(actualValidationMessage)} className={`task-button primary ${step === "plan" ? "bg-indigo-600 hover:bg-indigo-700 shadow-sm shadow-indigo-100" : ""}`} type="submit">
               {submitting ? "Đang lưu..." : step === "actual" ? "Ghi thời gian" : "Lưu kế hoạch"}
             </button>
           </div>
@@ -2130,7 +2189,7 @@ export function TasksWorkbench({
         body: JSON.stringify(body)
       });
 
-      if (!response.ok) throw new Error();
+      if (!response.ok) throw await readApiError(response);
       const savedTask = (await response.json()) as ProjectTaskSummary;
 
       const editHistoryItem = {
@@ -2157,9 +2216,10 @@ export function TasksWorkbench({
       syncTasks(updated);
       setShowEditModal(false);
       triggerToast(`Đã cập nhật công việc "${formatTaskTitle(taskInput.title)}".`, "success");
-    } catch {
-      if (!canUseOfflineDrafts) {
-        triggerToast(productionWriteFailureMessage(), "danger");
+    } catch (error) {
+      // An API rejection is shown with its own message and never kept as an offline draft; only network failures are.
+      if (!canUseOfflineDrafts || !isNetworkFailure(error)) {
+        triggerToast(apiErrorMessage(error, productionWriteFailureMessage()), "danger");
         return;
       }
 
@@ -2218,11 +2278,11 @@ export function TasksWorkbench({
         body: JSON.stringify(body)
       });
 
-      if (!response.ok) throw new Error();
+      if (!response.ok) throw await readApiError(response);
 
       const result = (await response.json()) as { id?: string };
       const taskId = result.id;
-      if (!taskId) throw new Error();
+      if (!taskId) throw new ApiResponseError("Máy chủ không trả về mã công việc mới.", response.status);
 
       const createdTask: ProjectTaskSummary = {
         id: taskId,
@@ -2271,9 +2331,10 @@ export function TasksWorkbench({
       syncTasks(updated);
       setShowCreateModal(false);
       triggerToast(`Đã tạo công việc "${formatTaskTitle(taskInput.title)}".`, "success");
-    } catch {
-      if (!canUseOfflineDrafts) {
-        triggerToast(productionWriteFailureMessage(), "danger");
+    } catch (error) {
+      // An API rejection is shown with its own message and never kept as an offline draft; only network failures are.
+      if (!canUseOfflineDrafts || !isNetworkFailure(error)) {
+        triggerToast(apiErrorMessage(error, productionWriteFailureMessage()), "danger");
         return;
       }
 
@@ -2344,7 +2405,7 @@ export function TasksWorkbench({
         body: JSON.stringify(body)
       });
 
-      if (!response.ok) throw new Error();
+      if (!response.ok) throw await readApiError(response);
 
       const newHistoryItem = {
         id: `hist-${Date.now()}`,
@@ -2371,9 +2432,10 @@ export function TasksWorkbench({
       syncTasks(updated);
       setShowTransitionModal(false);
       triggerToast(`Đã chuyển trạng thái sang "${getStatusLabel(newStatus)}".`, "success");
-    } catch {
-      if (!canUseOfflineDrafts) {
-        triggerToast(productionWriteFailureMessage(), "danger");
+    } catch (error) {
+      // An API rejection is shown with its own message and never kept as an offline draft; only network failures are.
+      if (!canUseOfflineDrafts || !isNetworkFailure(error)) {
+        triggerToast(apiErrorMessage(error, productionWriteFailureMessage()), "danger");
         return;
       }
 
@@ -2423,7 +2485,7 @@ export function TasksWorkbench({
         body: JSON.stringify(body)
       });
 
-      if (!response.ok) throw new Error();
+      if (!response.ok) throw await readApiError(response);
 
       const savedEntry = await response.json() as CreateTaskTimeEntryResponse;
       const { dailyActualLog, ...savedTimeEntry } = savedEntry;
@@ -2455,7 +2517,7 @@ export function TasksWorkbench({
       const updated = localTasks.map(t => {
         if (t.id === selectedTaskId) {
           const entries = [...(t.timeEntries || []), newEntry];
-          const totalLogged = entries.reduce((acc, curr) => acc + curr.minutes, 0);
+          const totalLogged = entries.reduce((acc, curr) => acc + (isActualTimeEntry(curr) ? curr.minutes : 0), 0);
           return {
             ...t,
             timeEntries: entries,
@@ -2470,9 +2532,10 @@ export function TasksWorkbench({
       setShowLogModal(false);
       triggerToast(`Đã ghi nhận ${formatTaskMinutes(logInput.minutes)} làm việc.`, "success");
       announceDailyCapacity(capacityFeedback);
-    } catch {
-      if (!canUseOfflineDrafts) {
-        triggerToast(productionWriteFailureMessage(), "danger");
+    } catch (error) {
+      // An API rejection is shown with its own message and never kept as an offline draft; only network failures are.
+      if (!canUseOfflineDrafts || !isNetworkFailure(error)) {
+        triggerToast(apiErrorMessage(error, productionWriteFailureMessage()), "danger");
         return;
       }
 
@@ -2498,7 +2561,7 @@ export function TasksWorkbench({
       const updated = localTasks.map(t => {
         if (t.id === selectedTaskId) {
           const entries = [...(t.timeEntries || []), newEntry];
-          const totalLogged = entries.reduce((acc, curr) => acc + curr.minutes, 0);
+          const totalLogged = entries.reduce((acc, curr) => acc + (isActualTimeEntry(curr) ? curr.minutes : 0), 0);
           return {
             ...t,
             timeEntries: entries,
@@ -2526,14 +2589,15 @@ export function TasksWorkbench({
         method: "DELETE"
       });
 
-      if (!response.ok) throw new Error();
+      if (!response.ok) throw await readApiError(response);
       const updated = localTasks.filter(t => t.id !== taskId);
       syncTasks(updated);
       setSelectedTaskId(null);
       triggerToast("Đã xóa công việc.", "success");
-    } catch {
-      if (!canUseOfflineDrafts) {
-        triggerToast(productionWriteFailureMessage(), "danger");
+    } catch (error) {
+      // An API rejection is shown with its own message and never kept as an offline draft; only network failures are.
+      if (!canUseOfflineDrafts || !isNetworkFailure(error)) {
+        triggerToast(apiErrorMessage(error, productionWriteFailureMessage()), "danger");
         return;
       }
 
@@ -2589,9 +2653,9 @@ export function TasksWorkbench({
       <section className="tasks-kpi-grid" aria-label="Chỉ số công việc">
         {[
           { label: "Tổng công việc", value: totalCount, note: "Trong phạm vi đang xem", icon: "list" as ShopifyIconName, tone: "neutral" },
-          { label: "Đang xử lý", value: inProgressCount, note: "Cần theo dõi trong ngày", icon: "clock" as ShopifyIconName, tone: "info" },
+          { label: statusLabels.in_progress, value: inProgressCount, note: "Cần theo dõi trong ngày", icon: "clock" as ShopifyIconName, tone: "info" },
           { label: "Quá hạn", value: overdueCount, note: "Ưu tiên tháo chặn", icon: "alert" as ShopifyIconName, tone: "danger" },
-          { label: "Hoàn tất", value: completedCount, note: "Đã đóng trong danh sách", icon: "check" as ShopifyIconName, tone: "success" }
+          { label: statusLabels.completed, value: completedCount, note: "Đã đóng trong danh sách", icon: "check" as ShopifyIconName, tone: "success" }
         ].map((metric) => (
           <article className={`tasks-kpi-card tone-${metric.tone}`} key={metric.label}>
             <span className="tasks-kpi-icon">
@@ -2651,9 +2715,9 @@ export function TasksWorkbench({
             value={filterStatus}
             options={[
               { value: "all", label: "Tất cả trạng thái", icon: "clock" },
-              { value: "todo", label: "Cần làm", icon: "clock" },
-              { value: "in_progress", label: "Đang xử lý", icon: "star", iconTone: "info" },
-              { value: "completed", label: "Hoàn tất", icon: "checkmark", iconTone: "success" },
+              { value: "todo", label: statusLabels.todo, icon: "clock" },
+              { value: "in_progress", label: statusLabels.in_progress, icon: "star", iconTone: "info" },
+              { value: "completed", label: statusLabels.completed, icon: "checkmark", iconTone: "success" },
               { value: "blocked", label: "Đang bị chặn", icon: "alert-circle", iconTone: "critical" },
               { value: "cancelled", label: "Đã hủy", icon: "alert-circle", iconTone: "neutral" }
             ]}

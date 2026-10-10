@@ -8,17 +8,6 @@
 import type { WorkGroup } from "./timesheet-types";
 
 /** Every color is a design token; no raw hex anywhere in the Timesheet UI. */
-export const TS_COLORS = {
-  actual: "var(--color-chart-1)",
-  standard: "var(--color-gray-500)",
-  estimate: "var(--color-gray-400)",
-  billable: "var(--color-success)",
-  pending: "var(--color-warning)",
-  over: "var(--color-destructive)",
-  info: "var(--color-info)",
-  accent: "var(--color-chart-2)"
-} as const;
-
 export const WORK_GROUP_COLORS: Record<WorkGroup, string> = {
   customer_project: "var(--color-chart-1)",
   internal_project: "var(--color-chart-2)",
@@ -32,11 +21,6 @@ export function formatHours(minutes: number | null | undefined, fallback = "—"
   if (minutes === null || minutes === undefined || !Number.isFinite(minutes)) return fallback;
   const hours = Math.round((minutes / 60) * 10) / 10;
   return `${hours.toLocaleString("vi-VN", { maximumFractionDigits: 1 })}h`;
-}
-
-export function formatHoursShort(minutes: number | null | undefined): string {
-  if (minutes === null || minutes === undefined || !Number.isFinite(minutes)) return "—";
-  return `${Math.round(minutes / 60)}h`;
 }
 
 export function formatPercent(value: number | null | undefined, fallback = "—"): string {
@@ -98,8 +82,8 @@ export function qualityTone(quality: "good" | "warning" | "critical"): "success"
   return quality === "good" ? "success" : quality === "warning" ? "warning" : "danger";
 }
 
-export function riskTone(risk: "ok" | "watch" | "over"): "success" | "warning" | "danger" {
-  return risk === "ok" ? "success" : risk === "watch" ? "warning" : "danger";
+export function riskTone(risk: "ok" | "watch" | "over" | "no_estimate"): "success" | "warning" | "danger" | "neutral" {
+  return risk === "no_estimate" ? "neutral" : risk === "ok" ? "success" : risk === "watch" ? "warning" : "danger";
 }
 
 export function nodeStatusTone(status: string): "success" | "warning" | "danger" | "info" | "neutral" {
@@ -117,20 +101,17 @@ export function nodeStatusTone(status: string): "success" | "warning" | "danger"
   }
 }
 
-export function projectStatusTone(status: string): "success" | "warning" | "danger" | "info" | "neutral" {
+export function projectStatusTone(status: string | null): "success" | "warning" | "danger" | "info" | "neutral" {
   switch (status) {
     case "completed":
       return "success";
-    case "in_progress":
-    case "onboarding":
+    case "active":
       return "info";
     case "in_review":
       return "warning";
     case "planning":
       return "neutral";
-    case "acceptance":
-      return "warning";
-    case "paused":
+    case "on_hold":
     case "at_risk":
       return "danger";
     default:

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  CLOSED_TASK_STATUSES,
+  REMINDER_INACTIVE_PROJECT_STATUSES,
   dueReminderSlots,
   findActualIssues,
   findPlanIssues,
@@ -91,5 +93,17 @@ describe("actual reminder rules", () => {
       planningBlocks: [{ taskId: "task-1", plannedMinutes: 480 }],
       timeEntries: [{ taskId: "task-1", minutes: 480 }]
     })])).toEqual([]);
+  });
+});
+
+describe("reminder status lists", () => {
+  it("never reminds about a task in any terminal status", () => {
+    for (const status of ["done", "completed", "closed", "cancelled", "canceled", "archived"]) expect(CLOSED_TASK_STATUSES).toContain(status);
+    for (const status of ["todo", "in_progress", "blocked", "review"]) expect(CLOSED_TASK_STATUSES).not.toContain(status);
+  });
+
+  it("skips tasks of On Hold and completed projects, under every stored alias", () => {
+    for (const status of ["on_hold", "paused", "pause", "completed", "done", "closed"]) expect(REMINDER_INACTIVE_PROJECT_STATUSES).toContain(status);
+    for (const status of ["planning", "in_progress", "active", "in_review", "at_risk"]) expect(REMINDER_INACTIVE_PROJECT_STATUSES).not.toContain(status);
   });
 });

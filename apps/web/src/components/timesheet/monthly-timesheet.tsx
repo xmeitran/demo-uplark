@@ -1,14 +1,15 @@
 "use client";
 
+import { PersonLink } from "@/components/person-link";
 import React, { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { ArrowRight, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, CircleAlert, ExternalLink, FileSearch, XCircle } from "lucide-react";
 import {
   buildMonthlyKpis,
   buildPersonDayMatrix,
   buildPersonMonthSummaries,
   buildPersonProjectRows,
-  buildDailySeries,
   buildWorkGroupSplit,
   sum,
   type PersonDayRow,
@@ -21,13 +22,11 @@ import {
   formatPercent,
   formatSignedPercent,
   nodeStatusTone,
-  projectStatusTone,
   qualityTone,
   WORK_GROUP_COLORS
 } from "./timesheet-format";
 import {
   NODE_STATUS_LABELS,
-  PROJECT_STATUS_LABELS,
   type NodeStatus,
   type ProjectStatus,
   type TimeLog,
@@ -36,7 +35,6 @@ import {
 import {
   Avatar,
   BarValue,
-  ChartCard,
   Drawer,
   EmptyState,
   KpiCard,
@@ -49,21 +47,23 @@ import {
   usePagination
 } from "./timesheet-ui";
 import { LogDrawer, type LogDrawerRequest } from "./timesheet-log-drawer";
+import { PersonDayLoad } from "./person-day-load";
+import { projectStatusLabel } from "@/lib/project-status";
+import { isTaskOverdue } from "./timesheet-status";
 
 const chartFallback = () => <div className="h-full w-full animate-pulse rounded-lg bg-muted" aria-hidden />;
 const WorkGroupDonut = dynamic(() => import("./timesheet-charts").then((m) => ({ default: m.WorkGroupDonut })), { ssr: false, loading: chartFallback });
-const DailyEffortChart = dynamic(() => import("./timesheet-charts").then((m) => ({ default: m.DailyEffortChart })), { ssr: false, loading: chartFallback });
 
 const PEOPLE_PAGE_SIZE = 8;
-const MISSING_DAYS_PAGE_SIZE = 6;
+const LOG_LINK_CLASS = "underline decoration-dotted underline-offset-2 hover:decoration-solid";
 
 /**
  * Monthly Timesheet — the person-centric view.
  *
- * Covers: headline totals + daily effort against the 8h/day standard, the
- * per-person Project → Milestone → Stage → Task drill-down, the work-group
- * split, and the monthly log-completeness check. Filters live in the workbench;
- * the drill-down to underlying log rows lives here.
+ * Covers: headline totals with the work-group split, the per-person
+ * Project → Milestone → Stage → Task drill-down with the monthly
+ * log-completeness check, and the day × person grid. Filters live in the
+ * workbench; the drill-down to underlying log rows lives here.
  */
 export function MonthlyTimesheet({
   dataset,
@@ -83,15 +83,9 @@ export function MonthlyTimesheet({
   const summaries = useMemo(() => buildPersonMonthSummaries(dataset, filters, logs), [dataset, filters, logs]);
   const kpis = useMemo(() => buildMonthlyKpis(dataset, filters, logs, summaries), [dataset, filters, logs, summaries]);
   const personDayMatrix = useMemo(() => buildPersonDayMatrix(dataset, filters, logs), [dataset, filters, logs]);
-  const dailySeries = useMemo(() => buildDailySeries(dataset, filters, logs, summaries), [dataset, filters, logs, summaries]);
   const workGroupSplit = useMemo(() => buildWorkGroupSplit(logs), [logs]);
 
-  const peopleMissingDays = useMemo(() => summaries.filter((row) => row.missingDays.length > 0), [summaries]);
-  const totalDaysLogged = useMemo(() => sum(summaries.map((row) => row.daysLogged)), [summaries]);
-  const totalPossibleDays = useMemo(() => sum(summaries.map((row) => row.workingDays)), [summaries]);
-
   const pagedPeople = usePagination(summaries, PEOPLE_PAGE_SIZE);
-  const pagedMissingDays = usePagination(peopleMissingDays, MISSING_DAYS_PAGE_SIZE);
 
   const monthLabel = formatMonth(filters.month);
   const dayDetailRow = personDayMatrix.rows.find((row) => row.person.id === dayDetailPersonId) ?? null;
@@ -108,7 +102,7 @@ export function MonthlyTimesheet({
   return (
     <div className="space-y-4">
       {/* ── Headline totals ────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <KpiCard
           label="Giờ thực tế đã ghi nhận"
           value={formatHours(kpis.actualMinutes)}
@@ -130,23 +124,17 @@ export function MonthlyTimesheet({
           tone={kpis.completionPercent >= 90 ? "success" : kpis.completionPercent >= 70 ? "warning" : "danger"}
           hint={`${formatPercent(kpis.completionPercent)} giờ chuẩn đã ghi nhận`}
         />
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <ChartCard
-          title="Phân loại giờ theo nhóm công việc"
-          description="Tách riêng dự án khách hàng, dự án nội bộ và ticket bảo trì."
-          minHeight={260}
-        >
-          {workGroupSplit.length === 0 ? <EmptyState message="Không có giờ nào trong phạm vi lọc." /> : <WorkGroupDonut data={workGroupSplit} />}
-        </ChartCard>
-        <ChartCard
-          title="Giờ ghi nhận theo ngày"
-          description="So sánh giờ thực tế với giờ tiêu chuẩn trong kỳ."
-          minHeight={260}
-        >
-          {dailySeries.length === 0 ? <EmptyState message="Không có ngày nào trong phạm vi lọc." /> : <DailyEffortChart data={dailySeries} />}
-        </ChartCard>
+        <section aria-label="Phân loại giờ theo nhóm công việc" className="rounded-xl border border-border bg-card p-4 xl:col-span-2">
+          <p className="text-[12px] font-semibold text-muted-foreground">Phân loại giờ theo nhóm công việc</p>
+          {workGroupSplit.length === 0 ? (
+            <p className="mt-2 text-[12px] text-muted-foreground">Không có giờ nào trong phạm vi lọc.</p>
+          ) : (
+            // `absolute inset-0` gives Recharts a definite box to measure (see ChartCard).
+            <div className="relative mt-1 h-[112px] w-full">
+              <div className="absolute inset-0"><WorkGroupDonut data={workGroupSplit} compact /></div>
+            </div>
+          )}
+        </section>
       </div>
 
       {/* ── Person table: totals, drill-down and completeness in one ───── */}
@@ -162,15 +150,14 @@ export function MonthlyTimesheet({
           <TableScroll>
             <table className="w-full min-w-[940px] table-fixed border-separate border-spacing-0">
               <colgroup>
-                <col className="w-[25%]" />
+                <col className="w-[28%]" />
+                <col className="w-[11%]" />
                 <col className="w-[10%]" />
-                <col className="w-[9%]" />
-                <col className="w-[13%]" />
-                <col className="w-[9%]" />
+                <col className="w-[14%]" />
+                <col className="w-[10%]" />
                 <col className="w-[9%]" />
                 <col className="w-[7%]" />
-                <col className="w-[10%]" />
-                <col className="w-[8%]" />
+                <col className="w-[11%]" />
               </colgroup>
               <thead className="border-b border-border bg-muted/60">
                 <tr>
@@ -178,11 +165,10 @@ export function MonthlyTimesheet({
                   <Th align="right">Giờ thực tế</Th>
                   <Th align="right">Giờ chuẩn</Th>
                   <Th align="right">Hoàn thành</Th>
-                  <Th align="right">Giờ thiếu</Th>
                   <Th align="right">Ngày ghi nhận</Th>
+                  <Th align="right">Ngày trống</Th>
                   <Th align="right">Dự án</Th>
                   <Th align="center">Đánh giá</Th>
-                  <Th align="center">Chi tiết</Th>
                 </tr>
               </thead>
               <tbody>
@@ -190,45 +176,38 @@ export function MonthlyTimesheet({
                   const expanded = expandedPersonId === row.person.id;
                   return (
                     <React.Fragment key={row.person.id}>
-                      <tr className={`border-b border-border align-middle transition-colors hover:bg-primary/[0.04] ${expanded ? "bg-primary/[0.07]" : ""}`}>
+                      <tr
+                        className={`cursor-pointer border-b border-border align-middle transition-colors hover:bg-primary/[0.04] ${expanded ? "bg-primary/[0.07]" : ""}`}
+                        onClick={(event) => {
+                          // Links and buttons inside the row keep their own action.
+                          if ((event.target as HTMLElement).closest("a, button")) return;
+                          setExpandedPersonId(expanded ? null : row.person.id);
+                        }}
+                      >
                         <Td className={expanded ? "border-l-2 border-primary" : "border-l-2 border-transparent"}>
-                          <button
-                            type="button"
-                            onClick={() => setExpandedPersonId(expanded ? null : row.person.id)}
-                            aria-expanded={expanded}
-                            className="flex items-center gap-2 text-left"
-                          >
-                            {expanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />}
-                            <Avatar initials={row.person.initials} name={row.person.name} />
+                          <span className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setExpandedPersonId(expanded ? null : row.person.id)}
+                              aria-expanded={expanded}
+                              aria-label={`${expanded ? "Thu gọn" : "Mở rộng"} ${row.person.name}`}
+                              className="flex shrink-0 items-center gap-2"
+                            >
+                              {expanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />}
+                              <Avatar initials={row.person.initials} name={row.person.name} />
+                            </button>
                             <span className="min-w-0">
-                              <span className={`block truncate ${row.person.id === currentUserId ? "font-bold text-primary" : "font-semibold"}`} title={row.person.name}>
+                              <PersonLink userId={row.person.id} className={`block truncate hover:underline ${row.person.id === currentUserId ? "font-bold text-primary" : "font-semibold"}`} title={row.person.name}>
                                 {row.person.name}
-                              </span>
+                              </PersonLink>
                               <span className="block truncate text-[11px] text-muted-foreground">
                                 {row.person.role} · {row.person.teamName}
                                 {row.person.contractRatio < 1 ? ` · ${Math.round(row.person.contractRatio * 100)}% hợp đồng` : ""}
                               </span>
                             </span>
-                          </button>
+                          </span>
                         </Td>
-                        <Td align="right" className="font-mono font-semibold tabular-nums">{formatHours(row.actualMinutes)}</Td>
-                        <Td align="right" className="font-mono tabular-nums text-muted-foreground">{formatHours(row.standardMinutes)}</Td>
-                        <Td align="right">
-                          <BarValue percent={row.completionPercent} value={formatPercent(row.completionPercent)} tone={qualityTone(row.quality)} />
-                        </Td>
-                        <Td align="right" className={`font-mono tabular-nums ${row.missingMinutes > 0 ? "text-destructive" : "text-muted-foreground"}`}>
-                          {row.missingMinutes > 0 ? formatHours(row.missingMinutes) : "—"}
-                        </Td>
-                        <Td align="right" className="font-mono tabular-nums text-muted-foreground">
-                          {row.daysLogged}/{row.workingDays}
-                        </Td>
-                        <Td align="right" className="font-mono tabular-nums text-muted-foreground">{row.projectCount}</Td>
-                        <Td align="center">
-                          <Pill tone={qualityTone(row.quality)}>
-                            {row.quality === "good" ? "Đầy đủ" : row.quality === "warning" ? "Thiếu một phần" : "Không đủ căn cứ"}
-                          </Pill>
-                        </Td>
-                        <Td align="center">
+                        <Td align="right" className="font-mono font-semibold tabular-nums">
                           <button
                             type="button"
                             onClick={() =>
@@ -238,15 +217,43 @@ export function MonthlyTimesheet({
                                 logs: logs.filter((log) => log.personId === row.person.id)
                               })
                             }
-                            className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                            aria-label={`Mở Time Log nguồn của ${row.person.name}`}
+                            title="Mở Time Log nguồn"
+                            className={LOG_LINK_CLASS}
                           >
-                            <FileSearch className="h-3 w-3" aria-hidden /> Xem
+                            {formatHours(row.actualMinutes)}
                           </button>
+                        </Td>
+                        <Td align="right" className="font-mono tabular-nums text-muted-foreground">{formatHours(row.standardMinutes)}</Td>
+                        <Td align="right">
+                          <BarValue percent={row.completionPercent} value={formatPercent(row.completionPercent)} tone={qualityTone(row.quality)} />
+                        </Td>
+                        <Td align="right" className="font-mono tabular-nums text-muted-foreground">
+                          {row.daysLogged}/{row.workingDays}
+                        </Td>
+                        <Td align="right" className={`font-mono tabular-nums ${row.missingDays.length > 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                          {row.missingDays.length > 0 ? (
+                            <button
+                              type="button"
+                              onClick={() => setDayDetailPersonId(row.person.id)}
+                              aria-label={`Xem ${row.missingDays.length} ngày công chưa có log của ${row.person.name}`}
+                              title="Xem ngày công chưa có log"
+                              className={LOG_LINK_CLASS}
+                            >
+                              {row.missingDays.length}
+                            </button>
+                          ) : "0"}
+                        </Td>
+                        <Td align="right" className="font-mono tabular-nums text-muted-foreground">{row.projectCount}</Td>
+                        <Td align="center">
+                          <Pill tone={qualityTone(row.quality)}>
+                            {row.quality === "good" ? "Đầy đủ" : row.quality === "warning" ? "Thiếu một phần" : "Không đủ căn cứ"}
+                          </Pill>
                         </Td>
                       </tr>
                       {expanded ? (
                         <tr className="border-b border-primary/20 bg-background">
-                          <td colSpan={9} className="p-0">
+                          <td colSpan={8} className="p-0">
                             <PersonProjectDetail
                               dataset={dataset}
                               logs={logs.filter((log) => log.personId === row.person.id)}
@@ -261,86 +268,13 @@ export function MonthlyTimesheet({
                   );
                 })}
               </tbody>
-              <tfoot className="border-t-2 border-border bg-muted/60">
-                <tr>
-                  <Td className="font-bold">Tổng cộng {summaries.length} nhân sự</Td>
-                  <Td align="right" className="font-mono font-bold tabular-nums">{formatHours(kpis.actualMinutes)}</Td>
-                  <Td align="right" className="font-mono font-bold tabular-nums">{formatHours(kpis.standardMinutes)}</Td>
-                  <Td align="right">
-                    <BarValue
-                      percent={kpis.completionPercent}
-                      value={formatPercent(kpis.completionPercent)}
-                      tone={kpis.completionPercent >= 90 ? "success" : kpis.completionPercent >= 70 ? "warning" : "danger"}
-                    />
-                  </Td>
-                  <Td align="right" className="font-mono font-bold tabular-nums text-destructive">{formatHours(kpis.missingMinutes)}</Td>
-                  {/* Same "logged / possible" shape as the rows above, not a bare percentage. */}
-                  <Td align="right" className="font-mono font-bold tabular-nums">
-                    {totalDaysLogged}/{totalPossibleDays}
-                  </Td>
-                  <Td align="right" className="font-mono font-bold tabular-nums">{kpis.projectCount}</Td>
-                  <Td align="center" className="whitespace-nowrap text-[11px] font-semibold text-muted-foreground">
-                    {formatPercent(kpis.dayCoveragePercent)}
-                  </Td>
-                  <Td />
-                </tr>
-              </tfoot>
             </table>
           </TableScroll>
         )}
         <Pagination state={pagedPeople} unit="nhân sự" />
       </SectionCard>
 
-      <SectionCard
-        id="mts-missing"
-        title="Ngày công chưa có log"
-        description="Danh sách ngày công mà nhân sự chưa ghi nhận giờ nào."
-        actions={<span className="text-[11px] text-muted-foreground">{peopleMissingDays.length} nhân sự</span>}
-      >
-        {peopleMissingDays.length === 0 ? (
-          <EmptyState message="Mọi nhân sự đều đã ghi nhận đủ số ngày công trong kỳ." />
-        ) : (
-          <>
-            {/* Fixed-height cards keep the grid rows level regardless of how
-                many date chips each person has. */}
-            <div className="grid grid-cols-1 gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
-              {pagedMissingDays.items.map((row) => (
-                <button
-                  key={row.person.id}
-                  type="button"
-                  onClick={() => setDayDetailPersonId(row.person.id)}
-                  aria-label={`Xem tất cả ngày công của ${row.person.name}`}
-                  className="group flex min-h-[128px] flex-col rounded-lg border border-border bg-background p-3 text-left transition-colors hover:border-primary/50 hover:bg-primary/[0.025] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="flex min-w-0 items-center gap-2">
-                      <Avatar initials={row.person.initials} name={row.person.name} />
-                      <span className={`truncate text-[12.5px] ${row.person.id === currentUserId ? "font-bold text-primary" : "font-semibold text-foreground"}`}>
-                        {row.person.name}
-                      </span>
-                    </span>
-                    <Pill tone={row.missingDays.length > 5 ? "danger" : "warning"}>{row.missingDays.length} ngày</Pill>
-                  </div>
-                  <div className="mt-2 flex flex-1 flex-wrap content-start gap-1">
-                    {row.missingDays.slice(0, 12).map((iso) => (
-                      <span key={iso} className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10.5px] tabular-nums text-muted-foreground">
-                        {iso.slice(8, 10)}/{iso.slice(5, 7)}
-                      </span>
-                    ))}
-                    {row.missingDays.length > 12 ? (
-                      <span className="px-1 py-0.5 text-[10.5px] text-muted-foreground">+{row.missingDays.length - 12} ngày nữa</span>
-                    ) : null}
-                  </div>
-                  <span className="mt-auto pt-2 text-[10.5px] font-semibold text-primary/80 transition-colors group-hover:text-primary group-focus-visible:text-primary">
-                    Xem chi tiết tất cả ngày →
-                  </span>
-                </button>
-              ))}
-            </div>
-            <Pagination state={pagedMissingDays} unit="nhân sự" />
-          </>
-        )}
-      </SectionCard>
+      <PersonDayLoad dataset={dataset} filters={filters} logs={logs} onOpenLogs={setDrawerRequest} currentUserId={currentUserId} />
 
       <PersonDayDetailDrawer
         row={dayDetailRow}
@@ -490,6 +424,15 @@ function PersonProjectDetail({
     });
   };
 
+  const openNodeLogs = (nodeName: string, taskIds: string[]) => {
+    const nodeLogs = logs.filter((log) => taskIds.includes(log.taskId));
+    onOpenLogs({
+      title: `Time Log nguồn — ${nodeName}`,
+      description: `${personName} · ${formatHours(sum(nodeLogs.map((log) => log.minutes)))}`,
+      logs: nodeLogs
+    });
+  };
+
   return (
     <div>
       <div className="border-b border-border px-4 py-3">
@@ -499,18 +442,16 @@ function PersonProjectDetail({
       <TableScroll>
         <table className="w-full min-w-[960px] table-fixed border-separate border-spacing-0">
           <colgroup>
-            <col className="w-[31%]" />
-            <col className="w-[13%]" />
-            <col className="w-[10%]" />
+            <col className="w-[38%]" />
+            <col className="w-[12%]" />
             <col className="w-[20%]" />
-            <col className="w-[8%]" />
-            <col className="w-[8%]" />
+            <col className="w-[10%]" />
+            <col className="w-[10%]" />
             <col className="w-[10%]" />
           </colgroup>
           <thead className="border-b border-border bg-muted/60">
             <tr>
               <Th>Milestone / Stage / Task</Th>
-              <Th>Phụ trách</Th>
               <Th align="center">Trạng thái</Th>
               <Th>Thời gian</Th>
               <Th align="right">Kế hoạch</Th>
@@ -524,16 +465,15 @@ function PersonProjectDetail({
               return (
                 <React.Fragment key={row.project.id}>
                   <tr className="border-b border-border bg-primary/[0.035]">
-                    <td colSpan={7} className="px-4 py-3">
+                    <td colSpan={6} className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
                         <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: WORK_GROUP_COLORS[row.project.workGroup] }} aria-hidden />
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-[12.5px] font-bold text-foreground">{row.project.code} — {row.project.name}</p>
-                          <p className="mt-0.5 text-[10.5px] text-muted-foreground">{PROJECT_STATUS_LABELS[row.project.status as ProjectStatus]} · {loggedTaskCount} task có log</p>
+                          <Link href={`/projects/${encodeURIComponent(row.project.id)}`} className="block truncate text-[12.5px] font-bold text-foreground hover:underline">{row.project.code} — {row.project.name}</Link>
+                          <p className="mt-0.5 text-[10.5px] text-muted-foreground">{projectStatusLabel(row.project.status)} · {loggedTaskCount} task có log</p>
                         </div>
                         <span className="shrink-0 font-mono text-[12px] font-bold tabular-nums text-foreground">{formatHours(row.actualMinutes)}</span>
-                        <Pill tone={projectStatusTone(row.project.status)}>{PROJECT_STATUS_LABELS[row.project.status as ProjectStatus]}</Pill>
                         <button
                           type="button"
                           onClick={() =>
@@ -557,12 +497,12 @@ function PersonProjectDetail({
                       <PersonProjectNodeRow
                         node={milestoneRow.milestone}
                         depth={0}
-                        ownerName={personName}
                         actualMinutes={milestoneRow.actualMinutes}
                         today={dataset.generatedAt}
                         collapsed={collapsed.has(milestoneRow.milestone.id)}
                         hasChildren={milestoneRow.stages.length > 0}
                         onToggle={toggle}
+                        onOpenLogs={() => openNodeLogs(milestoneRow.milestone.name, milestoneRow.stages.flatMap((stageRow) => stageRow.tasks.map((taskRow) => taskRow.task.id)))}
                       />
                       {!collapsed.has(milestoneRow.milestone.id)
                         ? milestoneRow.stages.map((stageRow) => (
@@ -570,12 +510,12 @@ function PersonProjectDetail({
                               <PersonProjectNodeRow
                                 node={stageRow.stage}
                                 depth={1}
-                                ownerName={personName}
                                 actualMinutes={stageRow.actualMinutes}
                                 today={dataset.generatedAt}
                                 collapsed={collapsed.has(stageRow.stage.id)}
                                 hasChildren={stageRow.tasks.length > 0}
                                 onToggle={toggle}
+                                onOpenLogs={() => openNodeLogs(stageRow.stage.name, stageRow.tasks.map((taskRow) => taskRow.task.id))}
                               />
                               {!collapsed.has(stageRow.stage.id)
                                 ? stageRow.tasks.map((taskRow) => (
@@ -583,10 +523,11 @@ function PersonProjectDetail({
                                       key={taskRow.task.id}
                                       node={taskRow.task}
                                       depth={2}
-                                      ownerName={personName}
                                       actualMinutes={taskRow.actualMinutes}
                                       today={dataset.generatedAt}
+                                      projectStatus={row.project.status}
                                       onToggle={toggle}
+                                      onOpenLogs={() => openNodeLogs(taskRow.task.name, [taskRow.task.id])}
                                       taskId={taskRow.task.id}
                                     />
                                   ))
@@ -602,13 +543,12 @@ function PersonProjectDetail({
           </tbody>
           <tfoot className="border-t-2 border-border bg-muted/60">
             <tr>
-              <Td className="font-bold">Tổng cộng {rows.length} dự án</Td>
-              <Td />
+              <Td className="font-bold">Tổng cộng {rows.length} dự án (các task đã liệt kê)</Td>
               <Td />
               <Td />
               <Td align="right" className="font-mono font-bold tabular-nums">{formatHours(sum(rows.map((row) => row.estimateMinutes)))}</Td>
               <Td align="right" className="font-mono font-bold tabular-nums">{formatHours(sum(rows.map((row) => row.actualMinutes)))}</Td>
-              <Td align="right" className="font-mono font-bold tabular-nums">{formatSignedPercent(sum(rows.map((row) => row.estimateMinutes)) > 0 ? ((sum(rows.map((row) => row.actualMinutes)) - sum(rows.map((row) => row.estimateMinutes))) / sum(rows.map((row) => row.estimateMinutes))) * 100 : 0)}</Td>
+              <Td align="right" className="font-mono font-bold tabular-nums">{sum(rows.map((row) => row.estimateMinutes)) > 0 ? formatSignedPercent(((sum(rows.map((row) => row.actualMinutes)) - sum(rows.map((row) => row.estimateMinutes))) / sum(rows.map((row) => row.estimateMinutes))) * 100) : "—"}</Td>
             </tr>
           </tfoot>
         </table>
@@ -624,32 +564,36 @@ type PersonProjectNode = {
   startDate?: string | null;
   dueDate?: string | null;
   estimateMinutes?: number;
+  paused?: boolean;
 };
 
 function PersonProjectNodeRow({
   node,
   depth,
-  ownerName,
   actualMinutes,
   today,
+  projectStatus = null,
   collapsed = false,
   hasChildren = false,
   onToggle,
+  onOpenLogs,
   taskId
 }: {
   node: PersonProjectNode;
   depth: 0 | 1 | 2;
-  ownerName: string;
   actualMinutes: number;
   today: string;
+  projectStatus?: ProjectStatus;
   collapsed?: boolean;
   hasChildren?: boolean;
   onToggle: (id: string) => void;
+  onOpenLogs: () => void;
   taskId?: string;
 }) {
   const estimateMinutes = node.estimateMinutes ?? 0;
   const variancePercent = estimateMinutes > 0 ? ((actualMinutes - estimateMinutes) / estimateMinutes) * 100 : null;
-  const overdue = Boolean(taskId && node.status !== "completed" && node.dueDate && node.dueDate < today);
+  const overPlan = estimateMinutes > 0 && actualMinutes > estimateMinutes;
+  const overdue = Boolean(taskId) && isTaskOverdue({ status: node.status, dueDate: node.dueDate ?? null, paused: node.paused }, projectStatus, today);
   const rowClass = depth === 0 ? "bg-primary/[0.035] font-bold" : depth === 1 ? "bg-muted/[0.12] font-semibold" : "";
 
   return (
@@ -669,14 +613,17 @@ function PersonProjectNodeRow({
           ) : null}
         </span>
       </Td>
-      <Td className="truncate"><span className="font-semibold text-primary">{ownerName}</span></Td>
       <Td align="center"><Pill tone={overdue ? "danger" : nodeStatusTone(node.status)}>{overdue ? "Quá hạn" : NODE_STATUS_LABELS[node.status]}</Pill></Td>
       <Td className="text-[11.5px] leading-snug text-muted-foreground">
         {node.startDate || node.dueDate ? <>{formatDate(node.startDate, "—")} <ArrowRight aria-hidden="true" className="inline h-3 w-3 align-middle" /> {formatDate(node.dueDate, "—")}</> : "—"}
       </Td>
-      <Td align="right" className="whitespace-nowrap font-mono tabular-nums text-muted-foreground">{estimateMinutes > 0 ? formatHours(estimateMinutes) : <span className="text-warning">Chưa có</span>}</Td>
-      <Td align="right" className="whitespace-nowrap font-mono font-semibold tabular-nums">{formatHours(actualMinutes)}</Td>
-      <Td align="right" className="whitespace-nowrap font-mono tabular-nums text-muted-foreground">{variancePercent === null ? "—" : formatSignedPercent(variancePercent)}</Td>
+      <Td align="right" className="whitespace-nowrap font-mono tabular-nums text-muted-foreground">{estimateMinutes > 0 ? formatHours(estimateMinutes) : taskId ? <span className="text-warning">Chưa có</span> : "—"}</Td>
+      <Td align="right" className={`whitespace-nowrap font-mono font-semibold tabular-nums ${overPlan ? "text-destructive" : ""}`}>
+        <button type="button" onClick={onOpenLogs} aria-label={`Mở Time Log nguồn — ${node.name}`} title="Mở Time Log nguồn" className={LOG_LINK_CLASS}>
+          {formatHours(actualMinutes)}
+        </button>
+      </Td>
+      <Td align="right" className={`whitespace-nowrap font-mono tabular-nums ${overPlan ? "font-semibold text-destructive" : "text-muted-foreground"}`}>{variancePercent === null ? "—" : formatSignedPercent(variancePercent)}</Td>
     </tr>
   );
 }

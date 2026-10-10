@@ -7,7 +7,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Copy,
   Download,
   Search,
   SlidersHorizontal,
@@ -433,14 +432,12 @@ function AdvancedFilters({ children, count }: { children: React.ReactNode; count
   );
 }
 
-export function AnalyticsFilterControls({ state, summary, onChange, onReset, onCopyLink, onExportCsv, copied, csvReady, mode = "desktop" }: {
+export function AnalyticsFilterControls({ state, summary, onChange, onReset, onExportCsv, csvReady, mode = "desktop" }: {
   state: AnalyticsUiState;
   summary?: WorkforceProjectsSummaryResponse;
   onChange: (change: Partial<AnalyticsUiState>) => void;
   onReset: () => void;
-  onCopyLink: () => void;
   onExportCsv: () => void;
-  copied: boolean;
   csvReady: boolean;
   mode?: "desktop" | "mobile";
 }) {
@@ -493,10 +490,6 @@ export function AnalyticsFilterControls({ state, summary, onChange, onReset, onC
 
       <div className={`flex flex-wrap items-center gap-1.5 ${inline ? "border-t border-border pt-3" : "ml-auto"}`}>
         {!inline ? <button type="button" onClick={onReset} className="min-h-10 rounded-lg border border-border px-3 text-[12px] font-semibold text-muted-foreground hover:bg-muted hover:text-foreground">Đặt lại</button> : null}
-        <button type="button" onClick={onCopyLink} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-border px-3 text-[12px] font-semibold text-muted-foreground hover:bg-muted hover:text-foreground">
-          {copied ? <Check className="h-3.5 w-3.5 text-success" aria-hidden /> : <Copy className="h-3.5 w-3.5" aria-hidden />}
-          {copied ? "Đã sao chép" : "Sao chép đường dẫn"}
-        </button>
         <button type="button" onClick={onExportCsv} disabled={!csvReady} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-border px-3 text-[12px] font-semibold text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40">
           <Download className="h-3.5 w-3.5" aria-hidden /> Xuất dữ liệu
         </button>

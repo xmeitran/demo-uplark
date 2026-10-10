@@ -1,10 +1,9 @@
-import { Body, Controller, Get, Headers, Inject, Param, Patch, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Headers, Inject, Param, Patch, Post, Query } from "@nestjs/common";
 import type {
   OvertimePlanInput,
   PnlPeriodInput,
   PrincipalContext,
   ReopenPnlPeriodInput,
-  ResourceMonthlyCostInput,
   ReviewTimelineChangeInput,
   SubmitTaskPlanInput,
   TimelineChangeRequestInput
@@ -53,23 +52,24 @@ export class BrdGovernanceController {
     return this.principal(auth, fallback).then((p) => this.governance.reviewOvertimePlan(planId, body, p));
   }
 
-  @Post("resource-costs/monthly")
-  upsertMonthlyCost(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Body() body: ResourceMonthlyCostInput) {
-    return this.principal(auth, fallback).then((p) => this.governance.upsertMonthlyCost(body, p));
-  }
-
   @Post("pnl-periods")
   upsertPnlPeriod(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Body() body: PnlPeriodInput) {
     return this.principal(auth, fallback).then((p) => this.governance.upsertPnlPeriod(body, p));
   }
 
+  /** Removes a project's entered revenue for a month: ?projectId=…&periodKey=YYYY-MM. */
+  @Delete("pnl-periods")
+  removePnlPeriodRevenue(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Query("periodKey") periodKey: string | undefined, @Query("projectId") projectId: string | undefined) {
+    return this.principal(auth, fallback).then((p) => this.governance.removePnlPeriodRevenue({ periodKey, projectId }, p));
+  }
+
   @Get("pnl-periods")
-  getPnlPeriod(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Query("periodKey") periodKey = "") {
-    return this.principal(auth, fallback).then((p) => this.governance.getPnlPeriod(periodKey, p));
+  getPnlPeriod(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Query("periodKey") periodKey = "", @Query("projectId") projectId?: string) {
+    return this.principal(auth, fallback).then((p) => this.governance.getPnlPeriod(periodKey, p, projectId));
   }
 
   @Get("pnl-configurations")
-  getPnlConfiguration(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Query("periodKey") periodKey = "2026-09") {
+  getPnlConfiguration(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Query("periodKey") periodKey: string) {
     return this.principal(auth, fallback).then((p) => this.governance.getPnlConfiguration(periodKey, p));
   }
 
@@ -78,6 +78,7 @@ export class BrdGovernanceController {
     return this.principal(auth, fallback).then((p) => this.governance.upsertPnlConfiguration(body, p));
   }
 
+  /** :periodId is the period row id, or the month key (YYYY-MM) to lock the workspace month even before its row exists. */
   @Post("pnl-periods/:periodId/lock")
   lockPnlPeriod(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Param("periodId") periodId: string) {
     return this.principal(auth, fallback).then((p) => this.governance.lockPnlPeriod(periodId, p));
@@ -86,15 +87,5 @@ export class BrdGovernanceController {
   @Post("pnl-periods/:periodId/reopen")
   reopenPnlPeriod(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Param("periodId") periodId: string, @Body() body: ReopenPnlPeriodInput) {
     return this.principal(auth, fallback).then((p) => this.governance.reopenPnlPeriod(periodId, body, p));
-  }
-
-  @Post("pnl-periods/:periodId/rebuild-allocations")
-  rebuildPnlAllocations(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Param("periodId") periodId: string) {
-    return this.principal(auth, fallback).then((p) => this.governance.rebuildPnlAllocations(periodId, p));
-  }
-
-  @Get("pnl-periods/:periodId/reconciliation")
-  pnlReconciliation(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Param("periodId") periodId: string) {
-    return this.principal(auth, fallback).then((p) => this.governance.pnlReconciliation(periodId, p));
   }
 }

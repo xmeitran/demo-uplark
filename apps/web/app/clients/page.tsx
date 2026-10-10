@@ -1,4 +1,5 @@
 "use client";
+import { PersonLink } from "@/components/person-link";
 import { MoneyAmount } from "@/components/money-amount";
 import { useDialogAccessibility } from "@/hooks/use-dialog-accessibility";
 
@@ -12,7 +13,6 @@ import {
   ChevronDown,
   ChevronUp,
   ChevronsUpDown,
-  Wallet,
   Download,
   LayoutGrid,
   List,
@@ -20,7 +20,6 @@ import {
   Pencil,
   Plus,
   Search,
-  Star,
   Trash2
 } from "lucide-react";
 import Link from "next/link";
@@ -47,10 +46,10 @@ type ClientRow = {
   totalRevenue: number;
   health: number;
   owner: string;
+  ownerId?: string;
   ownerEmail?: string;
   avatarColor: string;
   initials: string;
-  lastActivity: string;
 };
 
 const TIER_CFG = {
@@ -136,10 +135,10 @@ function mapAccountToClient(account: AccountSummary): ClientRow {
     totalRevenue: annualValue,
     health: mapHealth(account.health),
     owner: account.picName ?? "Unassigned",
+    ownerId: account.picUserId,
     ownerEmail: account.picEmail,
     avatarColor: account.picAvatarUrl ? "#2563eb" : colorFor(account.name),
-    initials: initialsFor(account.name),
-    lastActivity: "Synced from accounts API"
+    initials: initialsFor(account.name)
   };
 }
 
@@ -315,7 +314,6 @@ export default function ClientsPage() {
 
   const totalMRR = clientsList.filter((client) => client.status === "Active").reduce((sum, client) => sum + client.mrr, 0);
   const atRisk = clientsList.filter((client) => client.status === "At Risk").length;
-  const avgHealth = clientsList.length > 0 ? Math.round(clientsList.reduce((sum, client) => sum + client.health, 0) / clientsList.length) : 0;
 
   const filterStatusOptions = [
     { value: "all", label: "All Status" },
@@ -334,7 +332,6 @@ export default function ClientsPage() {
 
   const columns: { key: SortKey; label: string; width?: string }[] = [
     { key: "name", label: "Company" },
-    { key: "stage", label: "Stage" },
     { key: "tier", label: "Tier", width: "w-28" },
     { key: "mrr", label: "MRR", width: "w-24" },
     { key: "health", label: "Health", width: "w-32" },
@@ -439,11 +436,11 @@ export default function ClientsPage() {
 
   return (
     <AppShell activeRoute="/clients" title="Clients">
-        <main className="flex-1 overflow-auto p-4 sm:p-6">
-          <div className="mb-6 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
+        <main className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:p-5">
+          <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
             <div>
-              <h1 className="text-xl font-bold text-foreground">Client Accounts</h1>
-              <p className="mt-0.5 text-sm text-muted-foreground">{clientsList.length} accounts · {clientsList.filter((client) => client.status === "Active").length} active</p>
+              <h1 className="!text-xl font-bold text-foreground">Client Accounts</h1>
+              <p className="mt-0.5 text-sm text-muted-foreground">{clientsList.filter((client) => client.status === "Active").length} active</p>
             </div>
             <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
               <button onClick={() => downloadCsv("uplark-clients-filtered.csv", ["Name", "Code", "Stage", "Tier", "Status", "MRR", "Owner"], filtered.map((client) => [client.name, client.code, client.stage, client.tier, client.status, client.mrr, client.owner]))} title="Export the currently loaded and filtered clients" aria-label={`Export ${filtered.length} filtered clients as CSV`} className="flex items-center gap-1.5 rounded-xl border border-border px-3.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted">
@@ -458,24 +455,20 @@ export default function ClientsPage() {
             </div>
           </div>
 
-          <div className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-            {[
-              { label: "Total MRR", value: <MoneyAmount value={totalMRR} />, icon: Wallet, color: "#2563eb", trend: "From accounts annual value" },
-              { label: "Total Clients", value: clientsList.length, icon: Building2, color: "#7c3aed", trend: "Accounts API" },
-              { label: "At Risk", value: atRisk, icon: Star, color: "#d97706", trend: `${atRisk} need attention` },
-              { label: "Avg Health", value: `${avgHealth}%`, icon: Star, color: "#16a34a", trend: "Derived from account health" }
-            ].map((stat) => (
-              <motion.div key={stat.label} whileHover={{ y: -2 }} className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                <div className="mb-2 flex items-center justify-between">
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{stat.label}</p>
-                  <div className="flex h-7 w-7 items-center justify-center rounded-lg" style={{ backgroundColor: `${stat.color}15` }}>
-                    <stat.icon className="h-3.5 w-3.5" style={{ color: stat.color }} />
-                  </div>
-                </div>
-                <p className="font-mono text-2xl font-bold tabular-nums text-foreground">{stat.value}</p>
-                <p className="mt-1 text-[10px] text-muted-foreground">{stat.trend}</p>
-              </motion.div>
-            ))}
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+            <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Total MRR</p>
+              <p className="font-mono text-2xl font-bold tabular-nums text-foreground"><MoneyAmount value={totalMRR} /></p>
+            </div>
+            <button
+              type="button"
+              aria-pressed={statusFilter === "At Risk"}
+              onClick={() => setStatusFilter((current) => (current === "At Risk" ? "all" : "At Risk"))}
+              className={`rounded-xl border bg-card p-4 text-left shadow-sm transition-colors hover:bg-muted/30 ${statusFilter === "At Risk" ? "border-primary ring-1 ring-primary" : "border-border"}`}
+            >
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">At Risk</p>
+              <p className="font-mono text-2xl font-bold tabular-nums text-foreground">{atRisk}</p>
+            </button>
           </div>
 
           <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
@@ -517,7 +510,7 @@ export default function ClientsPage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[920px]">
+                <table className="w-full min-w-[760px]">
                   <thead>
                     <tr className="border-b border-border bg-muted/30">
                       {columns.map((column) => (
@@ -528,7 +521,6 @@ export default function ClientsPage() {
                         </th>
                       ))}
                       <th className="w-40 px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Owner</th>
-                      <th className="w-32 px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Source</th>
                       <th className="w-24 px-4 py-3" />
                     </tr>
                   </thead>
@@ -559,7 +551,6 @@ export default function ClientsPage() {
                                 </div>
                               </Link>
                             </td>
-                            <td className="px-4 py-3.5 text-sm text-foreground">{client.stage}</td>
                             <td className="px-4 py-3.5">
                               <span className="rounded-lg px-2.5 py-1 text-[11px] font-semibold" style={{ backgroundColor: tierCfg.bg, color: tierCfg.color }}>{client.tier}</span>
                             </td>
@@ -581,11 +572,12 @@ export default function ClientsPage() {
                               </span>
                             </td>
                             <td className="px-4 py-3.5">
-                              <p className="text-xs text-muted-foreground">{client.owner}</p>
+                              {client.ownerId ? (
+                                <PersonLink userId={client.ownerId} className="text-xs text-muted-foreground transition-colors hover:text-primary">{client.owner}</PersonLink>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">{client.owner}</p>
+                              )}
                               {client.ownerEmail && <p className="text-[10px] text-muted-foreground/70">{client.ownerEmail}</p>}
-                            </td>
-                            <td className="px-4 py-3.5">
-                              <p className="text-xs text-muted-foreground">{client.lastActivity}</p>
                             </td>
                             <td className="px-4 py-3.5">
                               <div className="flex items-center gap-1">

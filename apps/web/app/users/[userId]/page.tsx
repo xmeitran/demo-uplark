@@ -4,33 +4,22 @@ import { AdminMemberControls } from "@/components/auth/admin-access-controls";
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import {
-  Activity,
-  ArrowLeft,
-  Briefcase,
-  Calendar,
-  CheckCircle2,
-  Clock3,
-  KeyRound,
-  Mail,
-  Shield,
-  Sparkles,
-  UserRound,
-  Users,
-} from "lucide-react";
+import { ArrowLeft, ClipboardList, Mail, Sparkles } from "lucide-react";
 import type {
   AdminAccessMemberResponse,
   AdminAccessMemberSummary,
   ProjectTaskSummary,
   ResourceListResponse,
+  UserProjectParticipationResponse,
   WorkspaceSystemRole,
 } from "@b2b-crm/contracts";
+import { currentVietnamMonthRange } from "@/lib/member-participation";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { businessRoleFromMember, systemRoleLabel } from "@/lib/people-roles";
 
-type ProfileTab = "Overview" | "Activity" | "Projects" | "Tasks";
+type ProfileTab = "Tasks" | "Projects";
 
-const TABS: ProfileTab[] = ["Overview", "Activity", "Projects", "Tasks"];
+const TABS: ProfileTab[] = ["Tasks", "Projects"];
 
 function isProfileTab(value: string | null): value is ProfileTab {
   return Boolean(value && TABS.includes(value as ProfileTab));
@@ -60,6 +49,13 @@ function initials(name: string) {
   return (parts.length > 1 ? parts.slice(-2) : parts).map((part) => part[0]?.toUpperCase()).join("") || "U";
 }
 
+function statusBadge(user: AdminAccessMemberSummary) {
+  if (user.status !== "active") return { label: "Suspended", className: "bg-slate-100 text-slate-600" };
+  if (user.employmentStatus === "ON_LEAVE") return { label: "On leave", className: "bg-amber-50 text-amber-700" };
+  if (user.employmentStatus === "INACTIVE") return { label: "Inactive", className: "bg-slate-100 text-slate-600" };
+  return { label: "Active", className: "bg-emerald-50 text-emerald-700" };
+}
+
 function formatDate(value?: string) {
   if (!value) return "TBD";
   const date = new Date(value);
@@ -78,6 +74,57 @@ function formatDateTime(value?: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+/** EV-035: the user's Active and On Hold projects for the current month. */
+function UserProjectParticipation({ userId }: { userId: string }) {
+  const [period] = useState(() => currentVietnamMonthRange());
+  const [data, setData] = useState<UserProjectParticipationResponse["data"] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setData(null);
+    setError(null);
+    fetch(`/api/project-participation?userId=${encodeURIComponent(userId)}&startDate=${period.startDate}&endDate=${period.endDate}`, { cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(typeof body?.message === "string" ? body.message : `Project participation API returned ${response.status}`);
+        if (!cancelled) setData((body as UserProjectParticipationResponse).data);
+      })
+      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Không tải được dữ liệu tham gia Project"); });
+    return () => { cancelled = true; };
+  }, [userId, period]);
+
+  if (error) return <p role="alert" className="text-xs text-rose-600">{error}</p>;
+  if (!data) return <p className="text-xs text-muted-foreground">Đang tải trạng thái tham gia tháng {period.label}…</p>;
+  const groups = [
+    { title: `Project đang Active (${data.activeProjects.length})`, empty: "Không có Project Active trong kỳ.", items: data.activeProjects.map((project) => ({ ...project, note: `${Math.round(project.actualMinutes / 6) / 10}h trong kỳ` })) },
+    { title: `Project On Hold (${data.onHoldProjects.length})`, empty: "Không có Project On Hold.", items: data.onHoldProjects.map((project) => ({ ...project, note: "" })) }
+  ];
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">Trạng thái tham gia tháng {period.label}</p>
+      <div className="grid gap-4 md:grid-cols-2">
+        {groups.map((group) => (
+          <div key={group.title} className="rounded-xl border border-border bg-card p-5 shadow-sm">
+            <h2 className="!text-sm font-bold text-foreground">{group.title}</h2>
+            {group.items.length ? (
+              <ul className="mt-3 space-y-2">
+                {group.items.map((project) => (
+                  <li key={project.projectId} className="flex items-center justify-between gap-3 text-xs">
+                    <Link href={`/projects/${encodeURIComponent(project.projectId)}`} className="min-w-0 truncate font-semibold text-foreground hover:text-primary hover:underline">{project.code} · {project.name}</Link>
+                    {project.note ? <span className="shrink-0 font-mono text-muted-foreground">{project.note}</span> : null}
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="mt-3 text-xs text-muted-foreground">{group.empty}</p>}
+          </div>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">Khả năng nhận việc mới phải xét toàn bộ Project đang Active.</p>
+    </div>
+  );
 }
 
 function uniquePairs(ids: string[], names: string[]) {
@@ -101,7 +148,7 @@ export default function UserProfilePage() {
   const searchParams = useSearchParams();
   const userId = params?.userId;
   const requestedTab = searchParams.get("tab");
-  const [activeTab, setActiveTab] = useState<ProfileTab>(isProfileTab(requestedTab) ? requestedTab : "Overview");
+  const [activeTab, setActiveTab] = useState<ProfileTab>(isProfileTab(requestedTab) ? requestedTab : "Tasks");
   const [user, setUser] = useState<AdminAccessMemberSummary | null>(null);
   const [tasks, setTasks] = useState<ProjectTaskSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -117,15 +164,21 @@ export default function UserProfilePage() {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await fetch(`/api/admin/users/${encodeURIComponent(userId)}?includeSuspended=true`, { cache: "no-store" });
+        const response = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, { cache: "no-store" });
         if (response.status === 401) {
           window.location.assign(`/login?returnTo=${encodeURIComponent(`/users/${userId}`)}`);
           return;
         }
         if (response.status === 404) {
+          // Old Hồ sơ nhân sự links may carry a Lark User ID instead of the member id.
+          const directory = await fetch("/api/admin/users", { cache: "no-store" });
+          const members = directory.ok ? ((await directory.json()) as { data?: AdminAccessMemberSummary[] }).data ?? [] : [];
+          const match = members.find((member) => member.larkOpenId === userId);
+          if (match && !cancelled) { window.location.replace(`/users/${encodeURIComponent(match.id)}`); return; }
           if (!cancelled) setUser(null);
           return;
         }
+        if (response.status === 403) throw new Error("Chỉ Admin của workspace mới xem được hồ sơ thành viên.");
         if (!response.ok) throw new Error(`User detail API returned ${response.status}`);
         const payload = (await response.json()) as AdminAccessMemberResponse;
         if (!cancelled) setUser(payload.data);
@@ -170,17 +223,18 @@ export default function UserProfilePage() {
   const primaryRole = businessRoleFromMember(user ?? {});
   const workspaceRole: WorkspaceSystemRole = user?.systemRole ?? (user?.roleCodes.includes("FOUNDER_GM") ? "FOUNDER_GM" : user?.roleCodes.includes("WORKSPACE_ADMIN") ? "WORKSPACE_ADMIN" : "WORKSPACE_USER");
   const roleColor = ROLE_COLORS[primaryRole] ?? "#64748b";
+  const status = user ? statusBadge(user) : null;
   const projects = useMemo(() => uniquePairs(user?.projectIds ?? [], user?.projectNames ?? []), [user?.projectIds, user?.projectNames]);
   const accounts = useMemo(() => uniquePairs(user?.accountIds ?? [], user?.accountNames ?? []), [user?.accountIds, user?.accountNames]);
 
   useEffect(() => {
-    setActiveTab(isProfileTab(requestedTab) ? requestedTab : "Overview");
+    setActiveTab(isProfileTab(requestedTab) ? requestedTab : "Tasks");
   }, [requestedTab]);
 
   function handleTabChange(tab: ProfileTab) {
     setActiveTab(tab);
     const nextUrl = new URL(window.location.href);
-    if (tab === "Overview") {
+    if (tab === "Tasks") {
       nextUrl.searchParams.delete("tab");
     } else {
       nextUrl.searchParams.set("tab", tab);
@@ -209,61 +263,40 @@ export default function UserProfilePage() {
 
           {!isLoading && !error && !user && (
             <div className="mt-6 rounded-xl border border-border bg-card p-6 shadow-sm">
-              <h1 className="text-lg font-bold text-foreground">User not found</h1>
+              <h1 className="!text-xl font-bold text-foreground">User not found</h1>
               <p className="mt-1 text-sm text-muted-foreground">This user is not present in the production identity database.</p>
             </div>
           )}
 
           {!isLoading && !error && user && (
-            <div className="mt-5 space-y-5">
-              <section className="rounded-2xl border border-border bg-card shadow-sm">
-                <div className="flex flex-col gap-5 p-5 sm:p-6 xl:flex-row xl:items-center xl:justify-between">
-                  <div className="flex min-w-0 items-center gap-4">
-                    <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-2xl bg-slate-100 ring-1 ring-slate-200">
-                      {user.avatarUrl ? (
-                        <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center text-xl font-bold text-white" style={{ backgroundColor: roleColor }}>
-                          {initials(user.displayName || user.email)}
-                        </div>
-                      )}
-                      <span className="absolute bottom-1 right-1 h-3 w-3 rounded-full border-2 border-card" style={{ backgroundColor: user.status === "active" ? "#16a34a" : "#94a3b8" }} />
-                    </div>
-                    <div className="min-w-0">
-                      <h1 className="truncate text-2xl font-bold tracking-tight text-foreground">{user.displayName || user.email}</h1>
-                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
-                        <span className="truncate">{user.email}</span><span className="text-slate-300">·</span><span>{systemRoleLabel(workspaceRole)}</span>
+            <div className="mt-4 space-y-5">
+              <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-center gap-4">
+                  <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl">
+                    {user.avatarUrl ? (
+                      <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-base font-bold text-white" style={{ backgroundColor: roleColor }}>
+                        {initials(user.displayName || user.email)}
                       </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <span className="inline-flex items-center gap-1.5 rounded-md border border-indigo-100 bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700"><Shield className="h-3.5 w-3.5" /> {primaryRole}</span>
-                        <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 font-mono text-[11px] text-slate-600"><KeyRound className="h-3.5 w-3.5" /> {user.larkOpenId ?? "Internal identity"}</span>
-                      </div>
-                    </div>
+                    )}
                   </div>
-                  <div className="flex flex-wrap items-center gap-3 xl:justify-end">
-                    <div className="min-w-[130px] border-l border-border pl-4">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Trạng thái</p>
-                      <p className="mt-1 inline-flex items-center gap-2 text-sm font-semibold text-foreground"><span className={`h-2.5 w-2.5 rounded-full ${user.status === "active" ? "bg-emerald-500" : "bg-slate-400"}`} />{user.status === "active" ? "Active" : "Suspended"}</p>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h1 className="!text-xl truncate font-bold text-foreground">{user.displayName || user.email}</h1>
+                      <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${status?.className}`}>{status?.label}</span>
                     </div>
-                    <a href={`mailto:${user.email}`} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90"><Mail className="h-4 w-4" /> Gửi email</a>
+                    <p className="mt-0.5 truncate text-sm text-muted-foreground">{user.email}</p>
                   </div>
                 </div>
-              </section>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Link href={`/timesheet?person=${encodeURIComponent(user.id)}`} className="flex items-center gap-1.5 rounded-xl border border-border px-3.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted"><ClipboardList className="h-4 w-4" /> Timesheet</Link>
+                  <a href={`mailto:${user.email}`} className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"><Mail className="h-4 w-4" /> Gửi email</a>
+                </div>
+              </header>
 
-              <section className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card shadow-sm sm:grid-cols-4 sm:divide-y-0">
-                {[
-                  { label: "Project grants", value: projects.length, icon: Briefcase },
-                  { label: "Assigned tasks", value: user.assignedTaskCount ?? tasks.length, icon: CheckCircle2 },
-                  { label: "Active sessions", value: user.activeSessionCount, icon: Activity },
-                  { label: "Joined", value: formatDate(user.createdAt), icon: Calendar },
-                ].map((item) => (
-                  <div key={item.label} className="flex items-center gap-3 p-4">
-                    <div className="hidden h-8 w-8 items-center justify-center rounded-lg bg-slate-50 text-slate-500 sm:flex"><item.icon className="h-4 w-4" /></div>
-                    <div className="min-w-0"><p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{item.label}</p><p className="mt-1 truncate text-base font-bold text-foreground">{item.value}</p></div>
-                  </div>
-                ))}
-              </section>
-
+              <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+              <div className="min-w-0 space-y-5">
               <div className="overflow-x-auto border-b border-border">
                 <nav className="flex min-w-max gap-2">
                   {TABS.map((tab) => (
@@ -285,69 +318,15 @@ export default function UserProfilePage() {
                 </nav>
               </div>
 
-              {activeTab === "Overview" && (
-                <section id="overview-profile-panel" className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_390px]">
-                  <div className="space-y-5">
-                    <section className="rounded-2xl border border-border bg-card shadow-sm">
-                      <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h2 className="text-base font-bold text-foreground">Identity</h2><p className="mt-0.5 text-xs text-muted-foreground">Thông tin định danh đã đồng bộ từ workspace.</p></div><span className="rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">{user.larkOpenId ? "Lark SSO linked" : "Đã xác thực"}</span></div>
-                      <dl className="divide-y divide-border px-5">
-                        <InfoRow label="User ID nội bộ" value={user.id} mono />
-                        <InfoRow label="Email" value={user.email} />
-                        <InfoRow label="Lark User ID" value={user.larkOpenId ?? "Chưa liên kết"} mono />
-                        <InfoRow label="Lark tenant" value={user.larkTenantKey ?? "Chưa liên kết"} mono />
-                        <InfoRow label="Hoạt động gần nhất" value={formatDateTime(user.lastSeenAt)} />
-                      </dl>
-                    </section>
-
-                    <section className="rounded-2xl border border-border bg-card shadow-sm">
-                      <div className="border-b border-border px-5 py-4"><h2 className="text-base font-bold text-foreground">Access &amp; capacity</h2><p className="mt-0.5 text-xs text-muted-foreground">Vai trò nghiệp vụ và năng lực được dùng cho phân bổ công việc.</p></div>
-                      <div className="px-5 py-4"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Vai trò hiện tại</p><div className="mt-2 flex flex-wrap gap-2"><span className="rounded-md border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">{primaryRole}</span><span className="rounded-md border border-indigo-100 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">{systemRoleLabel(workspaceRole)}</span></div></div>
-                      <dl className="divide-y divide-border border-t border-border px-5">
-                        <InfoRow label="Role" value={primaryRole} />
-                        <InfoRow label="Weekly capacity" value={user.resourceWeeklyCapacityMinutes ? `${user.resourceWeeklyCapacityMinutes} phút` : "Chưa gán"} />
-                        <InfoRow label="Billable target" value={user.resourceBillableTargetPercent ? `${user.resourceBillableTargetPercent}%` : "Chưa gán"} />
-                        <InfoRow label="Time entries" value={`${user.timeEntryCount ?? 0}`} />
-                      </dl>
-                      {user.resourceSkills.length ? <div className="flex flex-wrap gap-2 border-t border-border px-5 py-4">{user.resourceSkills.map((skill) => <span key={skill} className="rounded-md bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">{skill}</span>)}</div> : null}
-                    </section>
-                  </div>
-
-                  <div className="space-y-5 xl:sticky xl:top-4">
-                    <AdminMemberControls userId={user.id} status={user.status} currentRole={workspaceRole} employmentStatus={user.employmentStatus} />
-                    <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-                      <div className="flex items-center justify-between"><div><h2 className="text-base font-bold text-foreground">Workspace summary</h2><p className="mt-0.5 text-xs text-muted-foreground">Phạm vi truy cập hiện tại.</p></div><span className={`h-2.5 w-2.5 rounded-full ${user.status === "active" ? "bg-emerald-500" : "bg-slate-400"}`} /></div>
-                      <dl className="mt-4 divide-y divide-border border-y border-border">
-                        <InfoRow label="Workspace role" value={systemRoleLabel(workspaceRole)} />
-                        <InfoRow label="Project grants" value={`${projects.length}`} />
-                        <InfoRow label="Assigned tasks" value={`${user.assignedTaskCount ?? tasks.length}`} />
-                        <InfoRow label="Active sessions" value={`${user.activeSessionCount}`} />
-                      </dl>
-                      <p className="mt-4 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">Cost Rate, P&amp;L và cảnh báo tài chính chỉ hiển thị với Workspace Admin hoặc role tài chính được cấp.</p>
-                    </section>
-                  </div>
-                </section>
-              )}
-
-              {activeTab === "Activity" && (
-                <section id="activity-profile-panel" className="rounded-xl border border-border bg-card p-5 shadow-sm">
-                  <h2 className="text-sm font-bold text-foreground">Identity Activity</h2>
-                  <div className="mt-4 space-y-4">
-                    <TimelineItem icon={Clock3} title="Last active session" description={formatDateTime(user.lastSeenAt)} />
-                    <TimelineItem icon={KeyRound} title={user.larkOpenId ? "Lark SSO linked" : "Lark SSO not linked"} description={user.larkOpenId ?? "User can be linked when SSO profile is available."} />
-                    <TimelineItem icon={UserRound} title="Profile created" description={formatDateTime(user.createdAt)} />
-                  </div>
-                </section>
-              )}
-
               {activeTab === "Projects" && (
                 <section id="projects-profile-panel" className="space-y-4">
+                  {user ? <UserProjectParticipation userId={user.id} /> : null}
                   {projects.length ? (
-                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
                       {projects.map((project) => (
-                        <Link key={project.id} href={`/projects/${project.id}`} className="rounded-xl border border-border bg-card p-5 shadow-sm transition-colors hover:border-primary/40 hover:bg-muted/30">
-                          <p className="text-xs font-bold uppercase text-muted-foreground">Project access</p>
-                          <h3 className="mt-2 truncate text-base font-bold text-foreground">{project.name}</h3>
-                          <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{project.id}</p>
+                        <Link key={project.id} href={`/projects/${project.id}`} className="flex items-center justify-between gap-3 border-b border-border px-5 py-4 transition-colors last:border-b-0 hover:bg-muted/30">
+                          <span className="truncate text-sm font-bold text-foreground">{project.name}</span>
+                          <span className="shrink-0 truncate font-mono text-xs text-muted-foreground">{project.id}</span>
                         </Link>
                       ))}
                     </div>
@@ -360,9 +339,9 @@ export default function UserProfilePage() {
                       <h2 className="text-sm font-bold text-foreground">Account grants</h2>
                       <div className="mt-4 flex flex-wrap gap-2">
                         {accounts.map((account) => (
-                          <span key={account.id} className="rounded-lg bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">
+                          <Link key={account.id} href={`/clients/${account.id}`} className="rounded-lg bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary">
                             {account.name}
-                          </span>
+                          </Link>
                         ))}
                       </div>
                     </div>
@@ -381,7 +360,6 @@ export default function UserProfilePage() {
                   {!isTasksLoading && !tasksError && tasks.length ? (
                     <div className="rounded-xl border border-border bg-card shadow-sm">
                       {tasks.map((task) => {
-                        const taskHref = task.projectId ? `/projects/${task.projectId}?tab=Tasks` : null;
                         const taskContent = (
                           <>
                             <div className="min-w-0">
@@ -395,19 +373,15 @@ export default function UserProfilePage() {
                           </>
                         );
 
-                        return taskHref ? (
+                        return (
                           <Link
                             key={task.id}
-                            href={taskHref}
+                            href={`/tasks/${task.id}`}
                             className="flex flex-col gap-3 border-b border-border p-5 transition-colors last:border-b-0 hover:bg-muted/30 md:flex-row md:items-center md:justify-between"
                             aria-label={`Open task ${task.title}`}
                           >
                             {taskContent}
                           </Link>
-                        ) : (
-                          <div key={task.id} className="flex flex-col gap-3 border-b border-border p-5 last:border-b-0 md:flex-row md:items-center md:justify-between">
-                            {taskContent}
-                          </div>
                         );
                       })}
                     </div>
@@ -417,6 +391,29 @@ export default function UserProfilePage() {
                   )}
                 </section>
               )}
+              </div>
+
+              <aside className="space-y-5 xl:sticky xl:top-4">
+                <section className="rounded-2xl border border-border bg-card shadow-sm">
+                  <h2 className="border-b border-border px-5 py-4 !text-sm font-bold text-foreground">Thuộc tính</h2>
+                  <dl className="divide-y divide-border px-5">
+                    <InfoRow label="Role" value={primaryRole} />
+                    <InfoRow label="System role" value={systemRoleLabel(workspaceRole)} />
+                    <InfoRow label="Lark User ID" value={user.larkOpenId ?? "Chưa liên kết"} mono />
+                    <InfoRow label="Lark tenant" value={user.larkTenantKey ?? "Chưa liên kết"} mono />
+                    <InfoRow label="User ID" value={user.id} mono />
+                    <InfoRow label="Weekly capacity" value={user.resourceWeeklyCapacityMinutes ? `${user.resourceWeeklyCapacityMinutes / 60} h` : "Chưa gán"} />
+                    <InfoRow label="Billable target" value={user.resourceBillableTargetPercent ? `${user.resourceBillableTargetPercent}%` : "Chưa gán"} />
+                    <InfoRow label="Time entries" value={`${user.timeEntryCount ?? 0}`} />
+                    <InfoRow label="Active sessions" value={`${user.activeSessionCount}`} />
+                    <InfoRow label="Joined" value={formatDate(user.createdAt)} />
+                    <InfoRow label="Last active" value={formatDateTime(user.lastSeenAt)} />
+                  </dl>
+                  {user.resourceSkills.length ? <div className="flex flex-wrap gap-2 border-t border-border px-5 py-4">{user.resourceSkills.map((skill) => <span key={skill} className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-bold text-foreground">{skill}</span>)}</div> : null}
+                </section>
+                <AdminMemberControls userId={user.id} status={user.status} currentRole={workspaceRole} employmentStatus={user.employmentStatus} displayRole={primaryRole} costPermissionCodes={user.costPermissionCodes} />
+              </aside>
+              </div>
             </div>
           )}
         </main>
@@ -431,31 +428,9 @@ export default function UserProfilePage() {
 
 function InfoRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="grid grid-cols-[minmax(120px,0.7fr)_minmax(0,1.3fr)] items-center gap-4 py-3 text-sm">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className={`truncate text-right text-foreground sm:text-left ${mono ? "font-mono text-xs" : "font-medium"}`}>{value}</dd>
-    </div>
-  );
-}
-
-function TimelineItem({
-  icon: Icon,
-  title,
-  description,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  description: string;
-}) {
-  return (
-    <div className="flex gap-3">
-      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-        <Icon className="h-4 w-4" />
-      </div>
-      <div className="min-w-0">
-        <p className="text-sm font-bold text-foreground">{title}</p>
-        <p className="mt-1 truncate text-sm text-muted-foreground">{description}</p>
-      </div>
+    <div className="grid grid-cols-3 items-center gap-2 py-3">
+      <dt className="text-xs font-semibold text-muted-foreground">{label}</dt>
+      <dd title={value} className={`col-span-2 truncate text-xs font-bold text-foreground ${mono ? "font-mono" : ""}`}>{value}</dd>
     </div>
   );
 }

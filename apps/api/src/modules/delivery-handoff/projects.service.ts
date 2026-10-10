@@ -1,7 +1,8 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { canViewCost } from "../resource-controls/cost-permissions";
 import { createHash, randomUUID } from "node:crypto";
 import { activeMembershipWhere } from "../identity-access/active-membership";
-import { SubjectStatus, type Prisma } from "@prisma/client";
+import { Prisma, SubjectStatus } from "@prisma/client";
 import type {
   CreateProjectInput,
   CreateProjectMilestoneInput,
@@ -66,7 +67,7 @@ import {
   getDailyActualLogWindow
 } from "./daily-actual-log";
 import { dateOnlyToUtcDate, getLocalDateKeysForTimeRange, lockWorkspaceDayOffDates } from "../workspace-calendar/day-off-time";
-import { isCancelledTaskStatus, isCompletedTaskStatus } from "./task-status";
+import { CLOSED_WORK_STATUSES, isCancelledTaskStatus, isCompletedTaskStatus } from "./task-status";
 import { evaluateMilestoneGate } from "./milestone-gate";
 import {
   countMilestoneEvidence,
@@ -77,11 +78,15 @@ import {
 } from "./milestone-evidence";
 import {
   canApproveMilestoneReviewer,
+  isWorkspaceAdmin,
   DEFAULT_MILESTONE_REVIEWER_MODE,
   MILESTONE_REVIEWER_MODES,
   normalizeMilestoneReviewerMode
 } from "./milestone-reviewer";
 import { buildRuleBasedProjectPlan } from "./project-plan-rules";
+import { isKnownProjectStatus, normalizeProjectStatus, projectStatusFilterValues, validateProjectStatusChange, PROJECT_STATUS_ALIASES } from "./project-status";
+import { deriveMemberParticipation, NON_ACTUAL_TIME_ENTRY_STATUSES, participationWindow } from "./member-participation";
+import { closeProjectWarnings, isWarningSuppressed, MANUAL_CLOSE_ACTION, mapProjectWarning, openOrRefreshProjectWarning, rearmManuallyClosedWarning } from "./project-warnings";
 
 const projectInclude = {
   account: true,
@@ -250,7 +255,6 @@ const PLANNING_STATUS_TRANSITIONS: Record<string, ReadonlySet<string>> = {
   cancelled: new Set()
 };
 const TIME_APPROVAL_STATUSES = new Set(["planned", "submitted", "approved", "done", "rejected"]);
-const COUNTABLE_DAILY_ACTUAL_LOG_STATUSES = ["submitted", "approved", "done"];
 const TIME_REVIEW_STATUSES = new Set(["approved", "rejected"]);
 const TIME_REVIEW_ROLE_CODES = new Set(["FOUNDER_GM", "DELIVERY_LEAD"]);
 const WORKSPACE_DAY_OFF_OVERRIDE_ROLES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN"]);
@@ -263,6 +267,10 @@ const DEFAULT_TIME_ENTRY_TIME_ZONE = "Asia/Ho_Chi_Minh";
 const CANONICAL_PROJECT_ACTIVITY_TYPES = new Set(["work_logged", "work_planned", "task_status_changed"]);
 const ACTIVITY_DISPLAY_TIME_ZONE = "Asia/Ho_Chi_Minh";
 const TASK_ARCHIVE_STATUS = "archived";
+const APPROVED_TIME_ENTRY_STATUSES = ["approved", "done"];
+// Mirrors MANAGER_ROLES in brd-governance.service.ts: the roles that approve task plans and timeline change requests.
+const TASK_PLAN_APPROVER_ROLES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN", "FINANCE_ADMIN", "DX_DIRECTOR", "PM", "BD_LEAD"]);
+const MANUAL_ACTUAL_LOG_MESSAGE = "Kế hoạch đã được đánh dấu hoàn thành nhưng chưa ghi nhận giờ thực tế. Vui lòng log giờ thủ công cho task này.";
 
 function canOverrideWorkspaceDayOff(principal: PrincipalContext) {
   return principal.roleCodes.some((roleCode) => WORKSPACE_DAY_OFF_OVERRIDE_ROLES.has(roleCode));
@@ -352,22 +360,6 @@ const taskAttachmentInclude = {
   fileObject: true
 };
 
-function normalizeProjectStatusFilter(status: string | null) {
-  if (!status) return null;
-  const normalized = status.trim().toLowerCase().replace(/[_\s-]+/g, "_");
-  const map: Record<string, string[]> = {
-    active: ["in_progress", "active", "onboarding", "discovery"],
-    in_progress: ["in_progress", "active", "onboarding", "discovery"],
-    in_review: ["in_review", "review", "acceptance"],
-    planning: ["planning", "not_started", "todo"],
-    on_hold: ["on_hold", "paused", "pause"],
-    paused: ["on_hold", "paused", "pause"],
-    completed: ["completed", "done", "closed"],
-    at_risk: ["at_risk", "blocked", "cancelled"]
-  };
-  return map[normalized] ?? [normalized];
-}
-
 function shouldIncludeArchivedTasks(value: unknown) {
   if (typeof value === "boolean") {
     return value;
@@ -386,6 +378,24 @@ function buildProjectStatusWhere(statuses: string[]): Prisma.ProjectWhereInput {
       status: { equals: status, mode: "insensitive" }
     }))
   };
+}
+
+function participationPeriod(query: any) {
+  const start = optionalDate(query?.startDate, "startDate");
+  const end = optionalDate(query?.endDate, "endDate");
+  if (!start || !end) throw new BadRequestException("startDate và endDate là bắt buộc.");
+  if (end < start) throw new BadRequestException("endDate phải sau hoặc bằng startDate.");
+  // Whole Asia/Ho_Chi_Minh days; `end` is exclusive.
+  return participationWindow(start, end);
+}
+
+/** Last instant covered by a participation period, for echoing the inclusive endDate back to the caller. */
+function periodEndInclusive(period: { end: Date }) {
+  return new Date(period.end.getTime() - 1).toISOString();
+}
+
+function sameInstant(left: Date | null | undefined, right: Date | null | undefined) {
+  return (left?.getTime() ?? null) === (right?.getTime() ?? null);
 }
 
 function formatDeleteBlockers(blockers: ProjectDeleteBlocker[]) {
@@ -964,6 +974,18 @@ function mapStoredProjectActivityToFeedItem(activity: any): ProjectActivityFeedI
 
 type MilestoneTemplateRecord = CreateProjectMilestoneInput[];
 
+export const MAX_TASK_ESTIMATE_MINUTES = 8 * 60;
+
+export function validateTaskEstimateMinutes(value: unknown, path = "estimateMinutes") {
+  if (value === undefined || value === null) return undefined;
+  const estimateMinutes = optionalInteger(value, path);
+  if (estimateMinutes === undefined || estimateMinutes === null) return undefined;
+  if (estimateMinutes < 0 || estimateMinutes > MAX_TASK_ESTIMATE_MINUTES) {
+    throw new BadRequestException(`${path} must be between 0 and ${MAX_TASK_ESTIMATE_MINUTES} minutes (8 hours)`);
+  }
+  return estimateMinutes;
+}
+
 function milestoneTemplateKey(value: unknown, fallback: string) {
   const normalized = String(value ?? "")
     .trim()
@@ -985,11 +1007,7 @@ function normalizeTemplateTasks(value: unknown, path: string, depth = 0): Projec
     const task = rawTask as Record<string, unknown>;
     const title = String(task.title ?? task.name ?? "").trim();
     if (!title) throw new BadRequestException(`${path}[${taskIndex}] needs a title`);
-    const parsedEstimateMinutes = task.estimateMinutes === undefined || task.estimateMinutes === null
-      ? undefined
-      : optionalInteger(task.estimateMinutes, `${path}[${taskIndex}].estimateMinutes`);
-    const estimateMinutes = parsedEstimateMinutes ?? undefined;
-    if (estimateMinutes !== undefined && estimateMinutes < 0) throw new BadRequestException(`${path}[${taskIndex}].estimateMinutes must be non-negative`);
+    const estimateMinutes = validateTaskEstimateMinutes(task.estimateMinutes, `${path}[${taskIndex}].estimateMinutes`);
     return {
       title,
       description: optionalString(task.description, `${path}[${taskIndex}].description`) ?? undefined,
@@ -1081,25 +1099,53 @@ function spreadsheetText(value: unknown) {
   return String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/đ/g, "d").replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-function spreadsheetColumnIndex(header: string[], aliases: string[]) {
+function spreadsheetColumnIndex(header: string[], aliases: string[], excludedAliases: string[] = []) {
+  const exact = header.findIndex((cell) => aliases.includes(spreadsheetText(cell)) && !excludedAliases.includes(spreadsheetText(cell)));
+  if (exact >= 0) return exact;
   return header.findIndex((cell) => aliases.some((alias) => {
     const normalized = spreadsheetText(cell);
-    return normalized === alias || normalized.includes(alias);
+    return !excludedAliases.some((excluded) => normalized === excluded || normalized.includes(excluded))
+      && (normalized === alias || normalized.includes(alias));
   }));
 }
 
-function buildSpreadsheetTemplateDraft(fileName: string, source: string) {
+function splitSpreadsheetRow(rawLine: string) {
+  const delimiter = rawLine.includes("\t") ? "\t" : rawLine.includes(";") ? ";" : ",";
+  const cells: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < rawLine.length; index += 1) {
+    const char = rawLine[index];
+    if (char === '"') {
+      if (quoted && rawLine[index + 1] === '"') { current += '"'; index += 1; }
+      else quoted = !quoted;
+    } else if (char === delimiter && !quoted) {
+      cells.push(current.trim());
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+export function buildSpreadsheetTemplateDraft(fileName: string, source: string) {
   const fallbackMilestone = fileName.replace(/\.(xlsx|xls|csv)$/i, "").replace(/[_-]+/g, " ").trim() || "Imported project";
   const aliases = {
     milestone: ["milestone", "giai doan", "phase", "workstream", "epic", "release", "moc", "nhom tinh nang", "project phase"],
-    stage: ["stage", "activity", "hang muc", "work package", "deliverable", "module", "work item"],
-    task: ["task", "chi tiet cong viec", "mo ta cong viec", "detail"],
-    subtask: ["subtask", "sub task", "sub-task", "cong viec con", "con viec con"],
+    stage: ["stage", "activity", "hang muc", "work package", "module", "workstream", "phase"],
+    task: ["task", "task criteria", "task tieu chi", "task tieu chi hoan thanh", "task criteria complete", "cong viec", "chi tiet cong viec", "mo ta cong viec", "mo ta", "noi dung", "description", "item", "detail", "deliverable", "tieu chi hoan thanh"],
+    subtask: ["subtask", "sub task", "sub-task", "cong viec con", "con viec con", "chi tiet con"],
     project: ["project", "project name", "du an", "ten du an", "initiative"],
   };
   const groups = new Map<string, Map<string, { name: string; tasks: Array<{ title: string; subtasks: Array<{ title: string }> }> }>>();
   const warnings: string[] = [];
   const sheetBlocks: Array<{ name: string; rows: string[][] }> = [];
+  const detectedColumns = new Set<string>();
+  let rowCount = 0;
+  let taskCount = 0;
+  let subtaskCount = 0;
   let currentSheet = "Imported sheet";
   let currentRows: string[][] = [];
   const flushSheet = () => {
@@ -1115,7 +1161,7 @@ function buildSpreadsheetTemplateDraft(fileName: string, source: string) {
       currentSheet = sheetMatch[1].trim() || "Imported sheet";
       continue;
     }
-    currentRows.push(line.split("\t").map((cell) => cell.trim()));
+    currentRows.push(splitSpreadsheetRow(line));
   }
   flushSheet();
   if (!sheetBlocks.length) sheetBlocks.push({ name: "Imported sheet", rows: [] });
@@ -1134,15 +1180,24 @@ function buildSpreadsheetTemplateDraft(fileName: string, source: string) {
     const header = headerIndex >= 0 ? headerCandidate!.normalized : [];
     const milestoneColumn = spreadsheetColumnIndex(header, aliases.milestone);
     const stageColumn = spreadsheetColumnIndex(header, aliases.stage);
-    const taskColumn = spreadsheetColumnIndex(header, aliases.task);
+    const taskColumn = spreadsheetColumnIndex(header, aliases.task, aliases.subtask);
     const subtaskColumn = spreadsheetColumnIndex(header, aliases.subtask);
     const projectColumn = spreadsheetColumnIndex(header, aliases.project);
+    const fallbackTaskColumn = taskColumn >= 0 ? taskColumn : spreadsheetColumnIndex(header, aliases.task, [...aliases.milestone, ...aliases.stage, ...aliases.subtask, ...aliases.project]);
+    const effectiveTaskColumn = taskColumn >= 0 ? taskColumn : fallbackTaskColumn;
     if (headerIndex >= 0) parsedTables += 1;
     if (milestoneColumn >= 0) explicitMilestoneColumn = true;
+    if (milestoneColumn >= 0) detectedColumns.add("Milestone");
+    if (stageColumn >= 0) detectedColumns.add("Stage");
+    if (effectiveTaskColumn >= 0) detectedColumns.add("Task");
+    if (subtaskColumn >= 0) detectedColumns.add("Subtask");
+    if (projectColumn >= 0) detectedColumns.add("Project");
     if (projectColumn >= 0) {
       const projectValue = block.rows.slice(headerIndex + 1).map((row) => row[projectColumn]).find((value) => value?.trim());
       if (projectValue) projectName = projectValue.trim();
     }
+    const projectMarker = block.rows.slice(0, Math.min(block.rows.length, 12)).flat().find((value) => /^project\s*:/i.test(value.trim()));
+    if (projectMarker) projectName = projectMarker.replace(/^project\s*:\s*/i, "").trim() || projectName;
     if (headerIndex < 0) warnings.push(`Không nhận diện được hàng tiêu đề ở sheet “${block.name}”; hệ thống dùng cách đoán cột.`);
     let activeMilestone = block.name !== "Imported sheet" ? block.name : fallbackMilestone;
     let activeStage = "General work";
@@ -1150,6 +1205,8 @@ function buildSpreadsheetTemplateDraft(fileName: string, source: string) {
       const values = row.map((cell) => cell.trim());
       const nonEmpty = values.filter(Boolean);
       if (!nonEmpty.length) continue;
+      rowCount += 1;
+      if (/^project\s*:/i.test(nonEmpty[0])) continue;
       const rowLooksLikeSection = nonEmpty.length === 1 && nonEmpty[0].length < 120 && !/\d{1,4}[\-\/]\d{1,2}/.test(nonEmpty[0]);
       const rawMilestone = milestoneColumn >= 0 ? values[milestoneColumn] : "";
       if (rawMilestone) activeMilestone = rawMilestone;
@@ -1158,23 +1215,27 @@ function buildSpreadsheetTemplateDraft(fileName: string, source: string) {
         continue;
       }
       const stageValue = stageColumn >= 0 ? values[stageColumn] : "";
-      const taskValue = taskColumn >= 0 ? values[taskColumn] : "";
+      const taskValue = effectiveTaskColumn >= 0 ? values[effectiveTaskColumn] : "";
       const subtaskValue = subtaskColumn >= 0 ? values[subtaskColumn] : "";
-      const guessedStage = stageValue || (!taskValue ? nonEmpty.find((value) => value !== activeMilestone && !/^stt$|^no\.?$/i.test(value)) : activeStage) || "";
+      const fallbackDetail = !taskValue && stageValue && values.length > 2
+        ? values.find((value, valueIndex) => value && valueIndex !== milestoneColumn && valueIndex !== stageColumn)
+        : "";
+      const resolvedTask = taskValue || fallbackDetail || "";
+      const guessedStage = stageValue || (!resolvedTask ? nonEmpty.find((value) => value !== activeMilestone && !/^stt$|^no\.?$/i.test(value)) : activeStage) || "";
       if (!guessedStage || /^stt$|^no\.?$/i.test(guessedStage) || /^(status|trang thai|owner|pic|assignee|deadline|due date)$/i.test(guessedStage)) continue;
       if (stageValue) activeStage = stageValue;
       const stage = stageValue || guessedStage;
       const milestone = rawMilestone || activeMilestone || fallbackMilestone;
-      const current = groups.get(milestone) ?? new Map();
+      const current = groups.get(milestone) ?? new Map<string, { name: string; tasks: Array<{ title: string; subtasks: Array<{ title: string }> }> }>();
       const stageRecord = current.get(stage) ?? { name: stage, tasks: [] };
-      if (taskValue && taskValue !== stageValue) {
+      if (resolvedTask && resolvedTask !== stageValue) {
         const previousTask = stageRecord.tasks[stageRecord.tasks.length - 1];
-        const task = previousTask?.title === taskValue ? previousTask : { title: taskValue, subtasks: [] };
-        if (task !== previousTask) stageRecord.tasks.push(task);
-        if (subtaskValue) task.subtasks.push({ title: subtaskValue });
+        const task = previousTask?.title === resolvedTask ? previousTask : { title: resolvedTask, subtasks: [] };
+        if (task !== previousTask) { stageRecord.tasks.push(task); taskCount += 1; }
+        if (subtaskValue && !task.subtasks.some((subtask) => subtask.title === subtaskValue)) { task.subtasks.push({ title: subtaskValue }); subtaskCount += 1; }
       } else if (subtaskValue) {
         const parentTask = stageRecord.tasks[stageRecord.tasks.length - 1];
-        if (parentTask) parentTask.subtasks.push({ title: subtaskValue });
+        if (parentTask && !parentTask.subtasks.some((subtask) => subtask.title === subtaskValue)) { parentTask.subtasks.push({ title: subtaskValue }); subtaskCount += 1; }
         else warnings.push(`Sheet “${block.name}” có Subtask nhưng chưa có Task cha ở milestone “${milestone}”, stage “${stage}”.`);
       }
       else if (!current.has(stage) && stageValue) stageRecord.tasks = [];
@@ -1185,6 +1246,7 @@ function buildSpreadsheetTemplateDraft(fileName: string, source: string) {
   if (sheetBlocks.length > 1) warnings.push(`Đã đọc ${sheetBlocks.length} sheet; hệ thống gộp các bảng theo milestone.`);
   if (!explicitMilestoneColumn) warnings.push("Không thấy cột Milestone/Giai đoạn rõ ràng; hệ thống dùng tên section, tên sheet hoặc tên file để giữ nhóm.");
   if (!parsedTables) warnings.push("Không tìm thấy header chuẩn; nên kiểm tra lại bản nháp trước khi lưu.");
+  if (taskCount === 0) warnings.push("Chưa tạo được Task; hãy kiểm tra cột Task/Nội dung hoặc thêm Task trong bước rà soát.");
   const milestones = Array.from(groups.entries()).map(([name, stages]) => ({
     name,
     stages: Array.from(stages.values()).slice(0, 100)
@@ -1195,7 +1257,17 @@ function buildSpreadsheetTemplateDraft(fileName: string, source: string) {
       projectName,
       description: "Bản nháp được suy luận từ file dự án đã import; hãy rà soát milestone/stage trước khi tạo project.",
       milestones,
-      warnings
+      warnings,
+      stats: {
+        sheetCount: sheetBlocks.length,
+        rowCount,
+        milestoneCount: milestones.length,
+        stageCount: milestones.reduce((total, milestone) => total + milestone.stages.length, 0),
+        taskCount,
+        subtaskCount,
+        detectedColumns: Array.from(detectedColumns),
+        reviewRequired: warnings.length > 0
+      }
     }
   };
 }
@@ -1210,8 +1282,8 @@ export class ProjectsService {
   async listProjects(query: any, principal: PrincipalContext) {
     const pagination = normalizePagination({ limit: query.limit, offset: query.offset });
     const accountId = optionalString(query.accountId, "accountId");
-    const ownerUserId = optionalString(query.ownerUserId, "ownerUserId");
-    const statusAliases = normalizeProjectStatusFilter(optionalString(query.status, "status") ?? null);
+    const ownerUserIds = Array.from(new Set((optionalString(query.ownerUserId, "ownerUserId") ?? "").split(",").map((id) => id.trim()).filter(Boolean)));
+    const statusAliases = projectStatusFilterValues(optionalString(query.status, "status") ?? null);
     const category = optionalString(query.category, "category");
     const search = optionalString(query.q ?? query.search, "q");
     const andFilters: Prisma.ProjectWhereInput[] = [];
@@ -1235,10 +1307,25 @@ export class ProjectsService {
       andFilters.push(buildProjectStatusWhere(statusAliases));
     }
 
+    if (ownerUserIds.length > 0) {
+      // Project has no owner column: the PIC is the owner of its first stage, in the same order mapProjectSummary and projectPermissions use.
+      const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT p."id"
+        FROM "Project" p
+        WHERE p."workspaceId" = ${principal.workspaceId}
+          AND (
+            SELECT s."ownerUserId" FROM "ProjectStage" s
+            WHERE s."projectId" = p."id"
+            ORDER BY s."sortOrder" ASC, s."createdAt" ASC
+            LIMIT 1
+          ) IN (${Prisma.join(ownerUserIds)})
+      `;
+      andFilters.push({ id: { in: rows.map((row) => row.id) } });
+    }
+
     const where: Prisma.ProjectWhereInput = {
       workspaceId: principal.workspaceId,
       ...(accountId ? { accountId } : {}),
-      ...(ownerUserId ? { ownerUserId } : {}),
       ...(andFilters.length > 0 ? { AND: andFilters } : {})
     };
 
@@ -1253,8 +1340,10 @@ export class ProjectsService {
       this.prisma.project.count({ where })
     ]);
 
+    const openWarningCounts = await this.countOpenWarnings(principal.workspaceId, projects.map((project) => project.id));
+
     return {
-      data: projects.map(mapProjectSummary),
+      data: projects.map((project) => ({ ...mapProjectSummary(project), openWarningCount: openWarningCounts[project.id] ?? 0 })),
       meta: {
         principal,
         rowScope: "workspace",
@@ -1361,7 +1450,255 @@ export class ProjectsService {
       throw new NotFoundException("Project not found");
     }
 
-    return mapProjectSummary(project);
+    return { ...mapProjectSummary(project), ...(await this.currentStatusContext(project)) };
+  }
+
+  /** Reason and start of the current status, from the latest history row that led to it. */
+  private async currentStatusContext(project: { id: string; workspaceId: string; status: string }) {
+    if (typeof (this.prisma as any).projectStatusHistory?.findFirst !== "function") return {};
+    const [latest, openWarningCounts] = await Promise.all([
+      this.prisma.projectStatusHistory.findFirst({ where: { projectId: project.id }, orderBy: { changedAt: "desc" } }),
+      this.countOpenWarnings(project.workspaceId, [project.id])
+    ]);
+    const current = latest && latest.toStatus === (normalizeProjectStatus(project.status) ?? project.status) ? latest : null;
+    return {
+      statusReason: current?.reason ?? undefined,
+      statusSince: current?.changedAt.toISOString(),
+      openWarningCount: openWarningCounts[project.id] ?? 0
+    };
+  }
+
+  private async countOpenWarnings(workspaceId: string, projectIds: string[]): Promise<Record<string, number>> {
+    if (!projectIds.length || typeof (this.prisma as any).projectWarning?.groupBy !== "function") return {};
+    const rows = await this.prisma.projectWarning.groupBy({ by: ["projectId"], where: { workspaceId, projectId: { in: projectIds }, status: "open" }, _count: { _all: true } });
+    return Object.fromEntries(rows.map((row) => [row.projectId, row._count._all]));
+  }
+
+  async listProjectStatusHistory(projectId: string, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project status history is internal");
+    await this.ensureProject(projectId, principal.workspaceId);
+    const rows = await this.prisma.projectStatusHistory.findMany({ where: { projectId, workspaceId: principal.workspaceId }, orderBy: { changedAt: "desc" } });
+    const names = await this.userDisplayNames(rows.map((row) => row.changedByUserId));
+    return {
+      data: rows.map((row) => ({
+        id: row.id,
+        projectId: row.projectId,
+        fromStatus: row.fromStatus ?? undefined,
+        toStatus: row.toStatus,
+        reason: row.reason ?? undefined,
+        changedByUserId: row.changedByUserId ?? undefined,
+        changedByDisplayName: row.changedByUserId ? names.get(row.changedByUserId) : undefined,
+        changedAt: row.changedAt.toISOString()
+      }))
+    };
+  }
+
+  private async userDisplayNames(userIds: Array<string | null | undefined>) {
+    const ids = Array.from(new Set(userIds.filter((id): id is string => Boolean(id))));
+    if (!ids.length) return new Map<string, string>();
+    const users = await this.prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, displayName: true } });
+    return new Map(users.map((user) => [user.id, user.displayName]));
+  }
+
+  async listProjectWarnings(projectId: string, query: any, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project warnings are internal");
+    await this.ensureProject(projectId, principal.workspaceId);
+    const status = optionalEnum(query.status, "status", new Set(["open", "closed"]));
+    const warnings = await this.prisma.projectWarning.findMany({
+      where: { projectId, workspaceId: principal.workspaceId, ...(status ? { status } : {}) },
+      include: { events: { orderBy: { at: "asc" } } },
+      // "open" sorts after "closed", so desc puts open warnings first.
+      orderBy: [{ status: "desc" }, { openedAt: "desc" }]
+    });
+    return { data: warnings.map(mapProjectWarning) };
+  }
+
+  async projectWarningCounts(query: any, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project warnings are internal");
+    const projectIds = Array.from(new Set(String(query.projectIds ?? "").split(",").map((id) => id.trim()).filter(Boolean)));
+    const rows = await this.prisma.projectWarning.groupBy({
+      by: ["projectId"],
+      where: { workspaceId: principal.workspaceId, status: "open", ...(projectIds.length ? { projectId: { in: projectIds } } : {}) },
+      _count: { _all: true }
+    });
+    return { data: Object.fromEntries(rows.map((row) => [row.projectId, row._count._all])) };
+  }
+
+  async closeProjectWarning(projectId: string, warningId: string, input: { reason?: string }, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project warnings are internal");
+    await this.ensureProject(projectId, principal.workspaceId);
+    const reason = optionalString(input?.reason, "reason");
+    if (!reason) throw new BadRequestException("Đóng cảnh báo bắt buộc phải nhập lý do.");
+    return this.prisma.$transaction(async (tx) => {
+      await this.assertProjectManager(tx, projectId, principal);
+      const warning = await tx.projectWarning.findFirst({ where: { id: warningId, projectId, workspaceId: principal.workspaceId } });
+      if (!warning) throw new NotFoundException("Project warning not found");
+      if (warning.status !== "open") throw new ConflictException("Cảnh báo này đã được đóng.");
+      await closeProjectWarnings(tx, { projectId, id: warningId }, principal.subjectId, reason, MANUAL_CLOSE_ACTION);
+      await this.auditMutation(tx, principal, "project.warning_closed", "project_warning", warningId, { status: "open" }, { status: "closed", closeReason: reason });
+      return mapProjectWarning(await tx.projectWarning.findUniqueOrThrow({ where: { id: warningId }, include: { events: { orderBy: { at: "asc" } } } }));
+    });
+  }
+
+  /** Every warning a task write can change: NL-03 for the task itself and NL-01 for members who left with open tasks. */
+  private async syncTaskOwnerWarning(client: any, principal: PrincipalContext, task: { id: string; projectId: string | null; stageId?: string | null; title: string; status: string; archivedAt?: Date | null; ownerUserId: string | null; assigneeUserId: string | null }) {
+    await this.syncMissingOwnerWarning(client, principal, {
+      projectId: task.projectId, kind: "task", id: task.id, label: task.title, stageId: task.stageId,
+      hasOwner: Boolean(task.ownerUserId || task.assigneeUserId),
+      isOpen: !task.archivedAt && !CLOSED_WORK_STATUSES.includes(task.status)
+    });
+    if (task.projectId) await this.closeResolvedDepartedMemberWarnings(client, principal, task.projectId);
+  }
+
+  private syncStageOwnerWarning(client: any, principal: PrincipalContext, stage: { id: string; projectId: string; activity: string; status: string; ownerUserId: string | null; milestoneId?: string | null }) {
+    return this.syncMissingOwnerWarning(client, principal, { projectId: stage.projectId, kind: "stage", id: stage.id, label: stage.activity, hasOwner: Boolean(stage.ownerUserId), isOpen: !CLOSED_WORK_STATUSES.includes(stage.status), stageId: stage.id, milestoneId: stage.milestoneId });
+  }
+
+  /** NL-01 closes itself once the departed member has no open task left in the project (reassigned or closed). */
+  private async closeResolvedDepartedMemberWarnings(client: any, principal: PrincipalContext, projectId: string) {
+    if (typeof client?.projectWarning?.findMany !== "function") return;
+    const open = await client.projectWarning.findMany({ where: { projectId, typeCode: "NL-01", status: "open" }, select: { dedupeKey: true } });
+    for (const warning of open ?? []) {
+      const userId = String(warning.dedupeKey).slice("NL-01:".length);
+      const remaining = await client.projectTask.count({
+        where: { workspaceId: principal.workspaceId, projectId, archivedAt: null, status: { notIn: CLOSED_WORK_STATUSES },
+          OR: [{ ownerUserId: userId }, { assigneeUserId: userId }, { taskAssignees: { some: { userId } } }] }
+      });
+      if (!remaining) await closeProjectWarnings(client, { projectId, dedupeKey: warning.dedupeKey }, principal.subjectId, "Task của thành viên đã được phân công lại hoặc đóng");
+    }
+  }
+
+  /** NL-03 for every open task and stage of a project: used when the project leaves planning, where NL-03 is not tracked. */
+  private async syncProjectMissingOwnerWarnings(client: any, principal: PrincipalContext, projectId: string) {
+    if (typeof client?.projectWarning?.findFirst !== "function") return;
+    const [tasks, stages] = await Promise.all([
+      client.projectTask.findMany({ where: { workspaceId: principal.workspaceId, projectId, archivedAt: null, status: { notIn: CLOSED_WORK_STATUSES }, ownerUserId: null, assigneeUserId: null }, select: { id: true, projectId: true, stageId: true, title: true, status: true, archivedAt: true, ownerUserId: true, assigneeUserId: true } }),
+      client.projectStage.findMany({ where: { workspaceId: principal.workspaceId, projectId, ownerUserId: null, status: { notIn: CLOSED_WORK_STATUSES } }, select: { id: true, projectId: true, activity: true, status: true, ownerUserId: true, milestoneId: true } })
+    ]);
+    for (const task of tasks ?? []) {
+      await this.syncMissingOwnerWarning(client, principal, { projectId, kind: "task", id: task.id, label: task.title, stageId: task.stageId, hasOwner: false, isOpen: true });
+    }
+    for (const stage of stages ?? []) await this.syncStageOwnerWarning(client, principal, stage);
+  }
+
+  /**
+   * NL-03: a running task/stage without an owner on a non-planning project. Closed as soon as an owner is set or the work is closed.
+   * A warning a person closed by hand is not reopened by later edits while the work is still ownerless; it is re-armed once an owner was set.
+   */
+  private async syncMissingOwnerWarning(client: any, principal: PrincipalContext, target: {
+    projectId?: string | null; kind: "task" | "stage"; id: string; label: string; hasOwner: boolean; isOpen: boolean; stageId?: string | null; milestoneId?: string | null;
+  }) {
+    if (!target.projectId || typeof client?.projectWarning?.findFirst !== "function") return;
+    const dedupeKey = `NL-03:${target.kind}:${target.id}`;
+    if (target.hasOwner || !target.isOpen) {
+      await closeProjectWarnings(client, { projectId: target.projectId, dedupeKey }, principal.subjectId, target.hasOwner ? "Đã gán người phụ trách" : "Công việc đã đóng");
+      if (target.hasOwner) await rearmManuallyClosedWarning(client, target.projectId, dedupeKey, principal.subjectId, "Đã gán người phụ trách");
+      return;
+    }
+    const project = await client.project.findFirst({ where: { id: target.projectId, workspaceId: principal.workspaceId }, select: { status: true } });
+    if (!project || normalizeProjectStatus(project.status) === "planning") return;
+    if (await isWarningSuppressed(client, target.projectId, dedupeKey)) return;
+    await openOrRefreshProjectWarning(client, {
+      workspaceId: principal.workspaceId,
+      projectId: target.projectId,
+      dedupeKey,
+      typeCode: "NL-03",
+      severity: "high",
+      title: `${target.kind === "task" ? "Task" : "Stage"} chưa có người phụ trách`,
+      detail: `${target.kind === "task" ? "Task" : "Stage"} "${target.label}" đang chạy nhưng chưa có người phụ trách. Cần phân công.`,
+      taskId: target.kind === "task" ? target.id : undefined,
+      stageId: target.stageId,
+      milestoneId: target.milestoneId,
+      actorUserId: principal.subjectId
+    });
+  }
+
+  async listProjectMemberParticipation(projectId: string, query: any, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project member directory is internal");
+    const project = await this.ensureProject(projectId, principal.workspaceId);
+    const period = participationPeriod(query);
+    const members = await this.prisma.projectMember.findMany({
+      where: { workspaceId: principal.workspaceId, projectId },
+      select: { userId: true, user: { select: { displayName: true, email: true, avatarUrl: true, status: true, resourceProfile: { select: { employmentStatus: true } } } } },
+      orderBy: { createdAt: "asc" }
+    });
+    const unique = Array.from(new Map(members.map((member) => [member.userId, member])).values());
+    const participation = await this.computeMemberParticipation(project, unique.map((member) => member.userId), period);
+    return {
+      data: unique.map((member) => ({
+        userId: member.userId,
+        displayName: member.user.displayName,
+        email: member.user.email,
+        avatarUrl: member.user.avatarUrl ?? undefined,
+        employmentStatus: deriveProjectMemberEmploymentStatus(member.user),
+        ...participation.get(member.userId)!
+      })),
+      meta: { projectId, projectStatus: normalizeProjectStatus(project.status) ?? project.status, startDate: period.start.toISOString(), endDate: periodEndInclusive(period) }
+    };
+  }
+
+  /** EV-035: derived per request from project status, actual time entries in the period and open tasks. */
+  private async computeMemberParticipation(project: { id: string; workspaceId: string; status: string }, userIds: string[], period: { start: Date; end: Date }) {
+    const [entries, tasks] = userIds.length ? await Promise.all([
+      this.prisma.taskTimeEntry.groupBy({
+        by: ["userId"],
+        where: { workspaceId: project.workspaceId, task: { projectId: project.id }, userId: { in: userIds }, workDate: { gte: period.start, lt: period.end }, approvalStatus: { notIn: NON_ACTUAL_TIME_ENTRY_STATUSES } },
+        _sum: { minutes: true }
+      }),
+      this.prisma.projectTask.findMany({
+        where: { workspaceId: project.workspaceId, projectId: project.id, archivedAt: null, status: { notIn: CLOSED_WORK_STATUSES },
+          OR: [{ ownerUserId: { in: userIds } }, { assigneeUserId: { in: userIds } }, { taskAssignees: { some: { userId: { in: userIds } } } }] },
+        select: { ownerUserId: true, assigneeUserId: true, plannedStartAt: true, dueAt: true, taskAssignees: { select: { userId: true } } }
+      })
+    ]) : [[], []];
+    const minutesByUser = new Map(entries.map((row) => [row.userId, row._sum.minutes ?? 0]));
+    const projectStatus = normalizeProjectStatus(project.status);
+    const projectOnHold = projectStatus === "on_hold";
+    const projectCompleted = projectStatus === "completed";
+    return new Map(userIds.map((userId) => {
+      const openTasks = tasks.filter((task) => task.ownerUserId === userId || task.assigneeUserId === userId || task.taskAssignees.some((row) => row.userId === userId));
+      const actualMinutes = minutesByUser.get(userId) ?? 0;
+      const { state, reason } = deriveMemberParticipation({ projectOnHold, projectCompleted, actualMinutes, openTasks });
+      return [userId, { participationState: state, participationReason: reason, actualMinutes, openTaskCount: openTasks.length }];
+    }));
+  }
+
+  /** EV-035 "Project Active theo thành viên": projects with actual time in the period, On Hold projects listed apart. */
+  async getUserProjectParticipation(query: any, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project participation is internal");
+    const userId = optionalString(query.userId, "userId") ?? principal.subjectId;
+    if (userId !== principal.subjectId && !isWorkspaceAdmin(principal.roleCodes)) {
+      throw new ForbiddenException("Chỉ Workspace Admin hoặc Founder/GM mới được xem mức tham gia dự án của người khác");
+    }
+    const period = participationPeriod(query);
+    const [entries, onHoldProjects] = await Promise.all([
+      this.prisma.taskTimeEntry.findMany({
+        where: { workspaceId: principal.workspaceId, userId, workDate: { gte: period.start, lt: period.end }, approvalStatus: { notIn: NON_ACTUAL_TIME_ENTRY_STATUSES }, task: { projectId: { not: null } } },
+        select: { minutes: true, task: { select: { projectId: true } } }
+      }),
+      this.prisma.project.findMany({
+        where: { workspaceId: principal.workspaceId, members: { some: { userId, workspaceId: principal.workspaceId } }, ...buildProjectStatusWhere(PROJECT_STATUS_ALIASES.on_hold) },
+        select: { id: true, code: true, name: true, status: true },
+        orderBy: { name: "asc" }
+      })
+    ]);
+    const minutesByProject = new Map<string, number>();
+    for (const entry of entries) minutesByProject.set(entry.task.projectId!, (minutesByProject.get(entry.task.projectId!) ?? 0) + entry.minutes);
+    const loggedProjects = minutesByProject.size ? await this.prisma.project.findMany({
+      where: { workspaceId: principal.workspaceId, id: { in: Array.from(minutesByProject.keys()) } },
+      select: { id: true, code: true, name: true, status: true },
+      orderBy: { name: "asc" }
+    }) : [];
+    const item = (project: { id: string; code: string; name: string; status: string }) => ({ projectId: project.id, code: project.code, name: project.name, status: normalizeProjectStatus(project.status) ?? project.status });
+    return {
+      data: {
+        userId,
+        startDate: period.start.toISOString(),
+        endDate: periodEndInclusive(period),
+        activeProjects: loggedProjects.filter((project) => normalizeProjectStatus(project.status) !== "on_hold").map((project) => ({ ...item(project), actualMinutes: minutesByProject.get(project.id) ?? 0 })),
+        onHoldProjects: onHoldProjects.map(item)
+      }
+    };
   }
 
   async createAiTemplateDraft(rawInput: any, principal: PrincipalContext) {
@@ -1533,6 +1870,10 @@ export class ProjectsService {
     const priority = optionalEnum(input.priority, "priority", PROJECT_PRIORITIES) ?? undefined;
     const tags = normalizeProjectTags(input.tags) ?? [];
     const color = normalizeProjectColor(input.color) ?? undefined;
+    const status = this.parseProjectStatus(input.status) ?? "planning";
+    const statusReason = optionalString(input.statusReason, "statusReason") ?? undefined;
+    const initialStatus = validateProjectStatusChange(undefined, status, statusReason);
+    if (initialStatus.error) throw new BadRequestException(initialStatus.error);
     const usePilotTemplate = input.milestoneMode !== "manual";
     let selectedMilestoneTemplates: readonly any[] = PILOT_PROJECT_MILESTONE_TEMPLATE;
     if (usePilotTemplate) {
@@ -1585,7 +1926,7 @@ export class ProjectsService {
           opportunityId,
           code,
           name,
-          status: input.status?.trim() || "planning",
+          status,
           projectType,
           scopeSummary,
           marginPercent: optionalNumber(input.marginPercent, "marginPercent") ?? undefined,
@@ -1737,6 +2078,9 @@ export class ProjectsService {
         });
       }
 
+      // After the hierarchy is seeded, so NL-02 sees the tasks a project created directly in On Hold already has.
+      await this.recordProjectStatusChange(tx, principal, createdProject.id, { to: initialStatus.to }, statusReason);
+
       const persisted = await tx.project.findFirstOrThrow({
         where: { id: createdProject.id, workspaceId: principal.workspaceId },
         include: projectIncludeForPrincipal(principal)
@@ -1792,10 +2136,17 @@ export class ProjectsService {
     const priority = updatesPriority ? optionalEnum(input.priority, "priority", PROJECT_PRIORITIES) : undefined;
     const tags = updatesTags ? normalizeProjectTags(input.tags) ?? [] : undefined;
     const color = updatesColor ? normalizeProjectColor(input.color) : undefined;
+    const nextStatus = this.parseProjectStatus(input.status);
+    const statusReason = optionalString(input.statusReason, "statusReason") ?? undefined;
 
     const project = await this.prisma.$transaction(async (tx) => {
       await this.lockProjectMembers(tx, principal.workspaceId, projectId);
       await this.assertProjectManager(tx, projectId, principal);
+      // Read under the project lock: two concurrent status changes must each see the other's result,
+      // otherwise both could act on the same stale "from" and leave NL-02 open on a project that is not On Hold.
+      const lockedProject = nextStatus ? await tx.project.findFirst({ where: { id: projectId, workspaceId: principal.workspaceId }, select: { status: true } }) : null;
+      const statusChange = nextStatus ? validateProjectStatusChange((lockedProject ?? existingProject).status, nextStatus, statusReason) : undefined;
+      if (statusChange?.error) throw new BadRequestException(statusChange.error);
 
       await this.ensureActiveWorkspaceUsers(
         tx,
@@ -1814,7 +2165,7 @@ export class ProjectsService {
           opportunityId: updatesOpportunity ? nextOpportunityId : undefined,
           code: optionalString(input.code, "code") ?? undefined,
           name: optionalString(input.name, "name") ?? undefined,
-          status: optionalString(input.status, "status") ?? undefined,
+          status: nextStatus,
           projectType,
           scopeSummary: updatesScope ? scopeSummary : undefined,
           marginPercent: optionalNumber(input.marginPercent, "marginPercent"),
@@ -1823,6 +2174,8 @@ export class ProjectsService {
           color: updatesColor ? color : undefined
         }
       });
+
+      if (statusChange?.changed) await this.recordProjectStatusChange(tx, principal, projectId, statusChange, statusReason);
 
       if (nextAccountId && nextAccountId !== existingProject.accountId) {
         await this.propagateProjectAccount(tx, {
@@ -1842,7 +2195,7 @@ export class ProjectsService {
         const lastStageId = stages[stages.length - 1]?.id;
 
         if (firstStageId) {
-          await tx.projectStage.update({
+          const firstStage = await tx.projectStage.update({
             where: { id: firstStageId },
             data: {
               plannedStartAt: updatesStageStart ? plannedStartAt : undefined,
@@ -1850,6 +2203,7 @@ export class ProjectsService {
               ownerUserId: updatesOwner ? ownerUserId : undefined
             }
           });
+          if (updatesOwner && firstStage) await this.syncStageOwnerWarning(tx, principal, firstStage);
         }
 
         if (lastStageId) {
@@ -1896,8 +2250,55 @@ export class ProjectsService {
     return mapProjectSummary(project);
   }
 
+  /** Rejects anything outside the project status catalogue (legacy aliases are still accepted). */
+  private parseProjectStatus(value: unknown) {
+    const status = optionalString(value, "status") ?? undefined;
+    if (status !== undefined && !isKnownProjectStatus(status)) {
+      throw new BadRequestException(`Trạng thái dự án không hợp lệ: "${status}". Giá trị hợp lệ: Planning, Active, In Review, On Hold, At Risk, Completed.`);
+    }
+    return status;
+  }
+
+  /** `from` is absent for the first row, written when the project is created. */
+  private async recordProjectStatusChange(tx: Prisma.TransactionClient, principal: PrincipalContext, projectId: string, change: { from?: string; to: string }, reason?: string) {
+    // Unit specs mock only the models they exercise.
+    if (typeof (tx as any).projectStatusHistory?.create === "function") {
+      await tx.projectStatusHistory.create({ data: { workspaceId: principal.workspaceId, projectId, fromStatus: change.from, toStatus: change.to, reason, changedByUserId: principal.subjectId } });
+    }
+    await this.auditMutation(tx, principal, "project.status_changed", "project", projectId, { status: change.from ?? null }, { status: change.to, reason: reason ?? null });
+    if (typeof (tx as any).projectWarning?.findFirst !== "function") return;
+    // NL-03 is not tracked while planning, so work that is already ownerless must be flagged when the project leaves it.
+    if (change.from === "planning" && change.to !== "planning") await this.syncProjectMissingOwnerWarnings(tx, principal, projectId);
+
+    const dedupeKey = "NL-02:on-hold-open-tasks";
+    if (change.from === "on_hold") {
+      await closeProjectWarnings(tx, { projectId, dedupeKey }, principal.subjectId, "Project đã thoát On Hold");
+    }
+    if (change.to === "on_hold") {
+      const openTasks = await tx.projectTask.count({
+        where: { workspaceId: principal.workspaceId, projectId, archivedAt: null, status: { notIn: CLOSED_WORK_STATUSES },
+          OR: [{ ownerUserId: { not: null } }, { assigneeUserId: { not: null } }, { taskAssignees: { some: {} } }] }
+      });
+      if (!openTasks) return;
+      const firstStage = await tx.projectStage.findFirst({ where: { workspaceId: principal.workspaceId, projectId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }], select: { ownerUserId: true } });
+      await openOrRefreshProjectWarning(tx, {
+        workspaceId: principal.workspaceId,
+        projectId,
+        dedupeKey,
+        typeCode: "NL-02",
+        severity: "medium",
+        title: "Project On Hold: PM cần rà soát các Task đang mở",
+        detail: `Project chuyển sang On Hold khi thành viên còn ${openTasks} Task đang mở. PM/Project PIC cần quyết định tạm dừng, đổi hạn hoặc phân công lại từng Task.`,
+        ownerUserId: firstStage?.ownerUserId ?? undefined,
+        actorUserId: principal.subjectId
+      });
+    }
+  }
+
   async deleteProject(projectId: string, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Projects are internal");
     const project = await this.ensureProject(projectId, principal.workspaceId);
+    await this.assertProjectManagerOrAdmin(this.prisma, projectId, principal);
     const blockers = await this.getProjectDeleteBlockers(projectId, principal.workspaceId);
     if (blockers.length > 0) {
       throw new BadRequestException(`Project cannot be deleted because it has operational records: ${formatDeleteBlockers(blockers)}. Archive or remove those records first.`);
@@ -1907,7 +2308,8 @@ export class ProjectsService {
       await this.prisma.$transaction([
         this.prisma.projectMember.deleteMany({ where: { projectId, workspaceId: principal.workspaceId } }),
         this.prisma.projectBudget.deleteMany({ where: { projectId, workspaceId: principal.workspaceId } }),
-        this.prisma.project.delete({ where: { id: project.id } })
+        this.prisma.project.delete({ where: { id: project.id } }),
+        this.prisma.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "project.deleted", resource: "project", resourceId: project.id, before: { code: project.code, name: project.name, status: project.status, accountId: project.accountId }, requestId: randomUUID() } })
       ]);
     } catch (error) {
       if (isPrismaForeignKeyError(error)) {
@@ -2145,6 +2547,10 @@ export class ProjectsService {
           reviewerUserId: reviewerMode === "specific_user" ? reviewerUserId : null,
           reviewerApprovedAt: gateConfigurationChanged ? null : undefined,
           reviewerApprovedByUserId: gateConfigurationChanged ? null : undefined,
+          // The earlier request was for the old gate/reviewer: clear it so the next request notifies again.
+          approvalRequestedAt: gateConfigurationChanged ? null : undefined,
+          approvalRequestedByUserId: gateConfigurationChanged ? null : undefined,
+          approvalRequestedByName: gateConfigurationChanged ? null : undefined,
           reviewerRole: input.reviewerRole === undefined ? existing.reviewerRole : optionalString(input.reviewerRole, "reviewerRole") ?? null
         }
       });
@@ -2160,6 +2566,8 @@ export class ProjectsService {
       await this.auditMutation(tx, principal, "project.milestone_gate_updated", "project_milestone", result.id, JSON.parse(JSON.stringify(existing)), JSON.parse(JSON.stringify(result)));
       return result;
     });
+    // Pending notifications still point the previous reviewer at a request that no longer exists.
+    if (gateConfigurationChanged) await this.notifications?.resolveMilestoneNotifications(milestoneId, principal);
     return updated;
   }
 
@@ -2550,6 +2958,7 @@ export class ProjectsService {
       return createdStage;
     })();
 
+    await this.syncMissingOwnerWarning(tx, principal, { projectId: project.id, kind: "stage", id: stage.id, label: stage.activity, hasOwner: Boolean(stage.ownerUserId), isOpen: !CLOSED_WORK_STATUSES.includes(stage.status), stageId: stage.id, milestoneId: stage.milestoneId });
     return mapProjectStageSummary(stage);
     }, { isolationLevel: "Serializable" });
   }
@@ -2655,6 +3064,11 @@ export class ProjectsService {
       }
 
       await this.auditMutation(tx, principal, "project.milestone_updated", "project_stage", stageId, { phase: existingStage.phase, ownerUserId: existingStage.ownerUserId }, JSON.parse(JSON.stringify(data)));
+      // The update above rewrote owner/status on every stage of the milestone, not just this one.
+      const milestoneStages = typeof tx.projectStage.findMany === "function"
+        ? await tx.projectStage.findMany({ where: { projectId, workspaceId: principal.workspaceId, milestoneId: existingStage.milestoneId }, select: { id: true, projectId: true, activity: true, status: true, ownerUserId: true, milestoneId: true } })
+        : [];
+      for (const milestoneStage of milestoneStages ?? []) await this.syncStageOwnerWarning(tx, principal, milestoneStage);
       return mapProjectStageSummary(stage);
     }
 
@@ -2725,6 +3139,7 @@ export class ProjectsService {
         return updated;
       })();
       await this.auditMutation(tx, principal, "project.stage_updated", "project_stage", stageId, { phase: existingStage.phase, ownerUserId: existingStage.ownerUserId }, JSON.parse(JSON.stringify(data)));
+      await this.syncMissingOwnerWarning(tx, principal, { projectId, kind: "stage", id: stageId, label: stage.activity, hasOwner: Boolean(stage.ownerUserId), isOpen: !CLOSED_WORK_STATUSES.includes(stage.status), stageId, milestoneId: stage.milestoneId });
       return mapProjectStageSummary(stage);
     }
 
@@ -2735,6 +3150,7 @@ export class ProjectsService {
     });
 
     await this.auditMutation(tx, principal, "project.stage_updated", "project_stage", stageId, { phase: existingStage.phase, ownerUserId: existingStage.ownerUserId }, JSON.parse(JSON.stringify(data)));
+      await this.syncMissingOwnerWarning(tx, principal, { projectId, kind: "stage", id: stageId, label: stage.activity, hasOwner: Boolean(stage.ownerUserId), isOpen: !CLOSED_WORK_STATUSES.includes(stage.status), stageId, milestoneId: stage.milestoneId });
       return mapProjectStageSummary(stage);
     }, { isolationLevel: "Serializable" });
   }
@@ -2757,10 +3173,16 @@ export class ProjectsService {
     let deletedTaskIds: string[] = [];
 
     await this.prisma.$transaction(async (tx) => {
+      await this.lockProjectMembers(tx, principal.workspaceId, projectId);
+      await this.assertProjectManager(tx, projectId, principal);
       await this.lockProjectHierarchy(tx, projectId, principal.workspaceId);
       const taskIds = await this.collectTaskIdsForStages(tx, stageIds, principal.workspaceId);
       deletedTaskIds = taskIds;
       await this.deleteTaskSubtree(tx, taskIds, principal.workspaceId);
+      await closeProjectWarnings(tx, { projectId, dedupeKey: { in: [...stageIds.map((id) => `NL-03:stage:${id}`), ...taskIds.map((id) => `NL-03:task:${id}`)] } }, principal.subjectId, "Stage/Task đã bị xóa");
+      await this.closeResolvedDepartedMemberWarnings(tx, principal, projectId);
+      await this.auditMutation(tx, principal, scope === "milestone" ? "project.milestone_deleted" : "project.stage_deleted", "project_stage", stage.id,
+        { phase: stage.phase, activity: stage.activity, status: stage.status, ownerUserId: stage.ownerUserId, milestoneId: stage.milestoneId, deletedStageIds: stageIds, deletedTaskIds: taskIds });
       await tx.projectStage.deleteMany({
         where: {
           id: { in: stageIds },
@@ -2829,6 +3251,7 @@ export class ProjectsService {
   }
 
   async createProjectDocument(projectId: string, input: CreateProjectDocumentInput, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project documents can only be changed by internal users");
     const project = await this.ensureProject(projectId, principal.workspaceId);
     const name = nonEmptyString(input.name, "name");
     const artifactType = input.artifactType?.trim() || "project_document";
@@ -2895,6 +3318,7 @@ export class ProjectsService {
   }
 
   async updateProjectDocument(projectId: string, documentId: string, input: UpdateProjectDocumentInput, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project documents can only be changed by internal users");
     const project = await this.ensureProject(projectId, principal.workspaceId);
     await this.ensureProjectDocument(projectId, documentId, principal.workspaceId);
     let milestoneId: string | null | undefined;
@@ -2926,6 +3350,7 @@ export class ProjectsService {
     input: CreateProjectDocumentVersionInput,
     principal: PrincipalContext
   ) {
+    this.assertInternalTaskPrincipal(principal, "Project documents can only be changed by internal users");
     const project = await this.ensureProject(projectId, principal.workspaceId);
     const fileObjectId = nonEmptyString(input.fileObjectId, "fileObjectId");
     const expectedVersion = optionalInteger(input.expectedVersion, "expectedVersion");
@@ -2993,6 +3418,7 @@ export class ProjectsService {
   }
 
   async deleteProjectDocument(projectId: string, documentId: string, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project documents can only be changed by internal users");
     const document = await this.ensureProjectDocument(projectId, documentId, principal.workspaceId);
     await this.prisma.projectArtifact.delete({ where: { id: document.id } });
     return { deleted: true, id: document.id };
@@ -3099,6 +3525,7 @@ export class ProjectsService {
   }
 
   async createProjectActivity(projectId: string, input: CreateProjectActivityInput, principal: PrincipalContext, createdByUserId?: string) {
+    this.assertInternalTaskPrincipal(principal, "Project activities can only be changed by internal users");
     const project = await this.ensureProject(projectId, principal.workspaceId);
 
     const activity = await this.prisma.projectActivity.create({
@@ -3121,6 +3548,7 @@ export class ProjectsService {
   }
 
   async updateProjectActivity(projectId: string, activityId: string, input: UpdateProjectActivityInput, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project activities can only be changed by internal users");
     await this.ensureProjectActivity(projectId, activityId, principal.workspaceId);
 
     const activity = await this.prisma.projectActivity.update({
@@ -3140,6 +3568,7 @@ export class ProjectsService {
   }
 
   async deleteProjectActivity(projectId: string, activityId: string, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project activities can only be changed by internal users");
     const activity = await this.ensureProjectActivity(projectId, activityId, principal.workspaceId);
     await this.prisma.projectActivity.delete({ where: { id: activity.id } });
     return { deleted: true, id: activity.id };
@@ -3179,6 +3608,7 @@ export class ProjectsService {
   }
 
   async createProjectRisk(projectId: string, input: CreateProjectRiskInput, principal: PrincipalContext, createdByUserId?: string) {
+    this.assertInternalTaskPrincipal(principal, "Project risks can only be changed by internal users");
     const project = await this.ensureProject(projectId, principal.workspaceId);
 
     const risk = await this.prisma.projectRisk.create({
@@ -3208,6 +3638,7 @@ export class ProjectsService {
   }
 
   async updateProjectRisk(projectId: string, riskId: string, input: UpdateProjectRiskInput, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project risks can only be changed by internal users");
     const existingRisk = await this.ensureProjectRisk(projectId, riskId, principal.workspaceId);
     const project = await this.ensureProject(projectId, principal.workspaceId);
 
@@ -3239,6 +3670,7 @@ export class ProjectsService {
   }
 
   async deleteProjectRisk(projectId: string, riskId: string, principal: PrincipalContext) {
+    this.assertInternalTaskPrincipal(principal, "Project risks can only be changed by internal users");
     const risk = await this.ensureProjectRisk(projectId, riskId, principal.workspaceId);
     await this.prisma.projectRisk.delete({ where: { id: risk.id } });
     return { deleted: true, id: risk.id };
@@ -3296,6 +3728,7 @@ export class ProjectsService {
   }
 
   async createTask(input: CreateProjectTaskInput, principal: PrincipalContext, createdByUserId?: string) {
+    this.assertInternalTaskPrincipal(principal, "Tasks can only be created by internal users");
     if (hasInputKey(input, "sortOrder")) {
       throw new BadRequestException("sortOrder can only be changed through the hierarchy order endpoint");
     }
@@ -3315,6 +3748,9 @@ export class ProjectsService {
     }
 
     const normalized = await this.normalizeTaskScope(input, principal.workspaceId);
+    const gateStageId = normalized.stageId
+      ?? (normalized.parentTaskId ? (await this.prisma.projectTask.findFirst({ where: { id: normalized.parentTaskId, workspaceId: principal.workspaceId }, select: { stageId: true } }))?.stageId : undefined);
+    await this.assertMilestoneUnlocked(this.prisma, principal.workspaceId, gateStageId, "tạo task");
     const ownerUserId = optionalString(input.ownerUserId, "ownerUserId") ?? undefined;
     const assigneeUserId = optionalString(input.assigneeUserId, "assigneeUserId") ?? undefined;
     const requestedAssigneeUserIds = optionalStringArray(input.assigneeUserIds, "assigneeUserIds") ?? [];
@@ -3356,7 +3792,7 @@ export class ProjectsService {
       ownerTeamId: optionalString(input.ownerTeamId, "ownerTeamId") ?? undefined,
       plannedStartAt: plannedStartAt ?? undefined,
       dueAt: dueAt ?? undefined,
-      estimateMinutes: optionalInteger(input.estimateMinutes, "estimateMinutes") ?? 0,
+      estimateMinutes: validateTaskEstimateMinutes(input.estimateMinutes) ?? 0,
       customerVisible: optionalBoolean(input.customerVisible, "customerVisible") ?? false,
       createdByUserId,
       startedAt: requestedStatus === "in_progress" ? createdStatusAt : undefined,
@@ -3364,46 +3800,41 @@ export class ProjectsService {
       cancelledAt: isCancelledTaskStatus(requestedStatus) ? createdStatusAt : undefined
     };
 
-    const task = normalized.projectId && normalized.stageId && !normalized.parentTaskId
-      ? await this.prisma.$transaction(async (tx) => {
-          await this.lockProjectHierarchy(tx, normalized.projectId!, principal.workspaceId);
-          const lastTask = await tx.projectTask.findFirst({
-            where: {
-              workspaceId: principal.workspaceId,
-              projectId: normalized.projectId,
-              stageId: normalized.stageId,
-              parentTaskId: null,
-              archivedAt: null
-            },
-            orderBy: [{ sortOrder: "desc" }, { id: "desc" }],
-            select: { sortOrder: true }
-          });
-          const created = await tx.projectTask.create({
-            data: {
-              ...data,
-              sortOrder: (lastTask?.sortOrder ?? 0) + 10
-            },
-            include: taskInclude
-          });
-          await this.syncTaskAssignees(tx, principal.workspaceId, created.id, assigneeUserIds, primaryAssigneeUserId);
-          await tx.project.update({
-            where: { id: normalized.projectId! },
-            data: { hierarchyOrderVersion: { increment: 1 } }
-          });
-          return created;
-        }, { isolationLevel: "Serializable" })
-      : await this.prisma.projectTask.create({
-          data: { ...data, sortOrder: 10 },
-          include: taskInclude
+    const inHierarchy = Boolean(normalized.projectId && normalized.stageId && !normalized.parentTaskId);
+    // One transaction for the task, its assignees and its warnings, so a failed step never leaves a half-created task.
+    const taskResult = await this.prisma.$transaction(async (tx) => {
+      let sortOrder = 10;
+      if (inHierarchy) {
+        await this.lockProjectHierarchy(tx, normalized.projectId!, principal.workspaceId);
+        const lastTask = await tx.projectTask.findFirst({
+          where: {
+            workspaceId: principal.workspaceId,
+            projectId: normalized.projectId,
+            stageId: normalized.stageId,
+            parentTaskId: null,
+            archivedAt: null
+          },
+          orderBy: [{ sortOrder: "desc" }, { id: "desc" }],
+          select: { sortOrder: true }
         });
-
-    if (assigneeUserIds.length > 0) {
-      await this.syncTaskAssignees(this.prisma, principal.workspaceId, task.id, assigneeUserIds, primaryAssigneeUserId);
-    }
-    const hydratedTask = typeof this.prisma.projectTask.findUnique === "function"
-      ? await this.prisma.projectTask.findUnique({ where: { id: task.id }, include: taskInclude })
-      : null;
-    const taskResult = hydratedTask ?? task;
+        sortOrder = (lastTask?.sortOrder ?? 0) + 10;
+      }
+      const created = await tx.projectTask.create({ data: { ...data, sortOrder }, include: taskInclude });
+      await this.syncTaskAssignees(tx, principal.workspaceId, created.id, assigneeUserIds, primaryAssigneeUserId);
+      if (inHierarchy) {
+        await tx.project.update({
+          where: { id: normalized.projectId! },
+          data: { hierarchyOrderVersion: { increment: 1 } }
+        });
+      }
+      const hydrated = typeof tx.projectTask.findUnique === "function"
+        ? await tx.projectTask.findUnique({ where: { id: created.id }, include: taskInclude })
+        : null;
+      const result = hydrated ?? created;
+      await this.syncTaskOwnerWarning(tx, principal, result);
+      return result;
+    }, inHierarchy ? { isolationLevel: "Serializable" } : undefined);
+    const task = taskResult;
 
     if (isCompletedTaskStatus(requestedStatus)) {
       await this.evaluateMilestoneGateForTask(taskResult, principal);
@@ -3493,7 +3924,9 @@ export class ProjectsService {
         ownerTeamId: optionalString(input.ownerTeamId, "ownerTeamId"),
         plannedStartAt: optionalDate(input.plannedStartAt, "plannedStartAt"),
         dueAt: optionalDate(input.dueAt, "dueAt"),
-        estimateMinutes: optionalInteger(input.estimateMinutes, "estimateMinutes") ?? undefined,
+        estimateMinutes: hasInputKey(input, "estimateMinutes")
+          ? validateTaskEstimateMinutes(input.estimateMinutes)
+          : undefined,
         customerVisible: optionalBoolean(input.customerVisible, "customerVisible") ?? undefined,
         completedAt: requestedStatus == null
           ? undefined
@@ -3544,9 +3977,23 @@ export class ProjectsService {
       const nextPrimaryAssigneeUserId = hasAssigneeList
         ? (assigneeUserId ?? nextAssigneeUserIds[0] ?? null)
         : assigneeUserId;
-      const assignmentChanged = hasAssigneeList
+      // Handing a task to another owner is a transfer too, whichever way the assignees were sent.
+      const ownerChanged = hasInputKey(input, "ownerUserId") && (ownerUserId ?? null) !== current.ownerUserId;
+      const assignmentChanged = ownerChanged || (hasAssigneeList
         ? nextAssigneeUserIds.join("|") !== currentAssigneeUserIds.join("|") || nextPrimaryAssigneeUserId !== current.assigneeUserId
-        : (hasInputKey(input, "assigneeUserId") && assigneeUserId !== current.assigneeUserId) || (hasInputKey(input, "ownerUserId") && ownerUserId !== current.ownerUserId);
+        : hasInputKey(input, "assigneeUserId") && assigneeUserId !== current.assigneeUserId);
+      if (current.planApprovalStatus === "APPROVED" && !principal.roleCodes.some((roleCode) => TASK_PLAN_APPROVER_ROLES.has(roleCode))) {
+        const nextStart = optionalDate(input.plannedStartAt, "plannedStartAt");
+        const nextDue = optionalDate(input.dueAt, "dueAt");
+        const nextEstimate = validateTaskEstimateMinutes(input.estimateMinutes);
+        // undefined means "not sent": only a value that differs from the approved plan is a change.
+        const planChanged = (nextStart !== undefined && !sameInstant(nextStart, current.plannedStartAt))
+          || (nextDue !== undefined && !sameInstant(nextDue, current.dueAt))
+          || (nextEstimate !== undefined && nextEstimate !== current.estimateMinutes);
+        if (planChanged) {
+          throw new ConflictException("Kế hoạch của task đã được duyệt và khóa. Hãy gửi yêu cầu thay đổi timeline (Timeline Change Request) để đổi ngày bắt đầu, hạn hoàn thành hoặc estimate.");
+        }
+      }
       const destinationProjectId = scope.projectId === undefined ? current.projectId : scope.projectId;
       const projectChanged = destinationProjectId !== current.projectId;
       if (projectChanged) {
@@ -3578,6 +4025,7 @@ export class ProjectsService {
         await tx.taskStatusHistory.create({ data: { workspaceId: principal.workspaceId, taskId: current.id, accountId: current.accountId, projectId: current.projectId, fromStatus: current.status, toStatus: requestedStatus, changedByUserId: principal.subjectId, changedAt: new Date(), reason: "Task updated" } });
       }
       const updated = await tx.projectTask.update({ where: { id: taskId }, data, include: taskInclude });
+      await this.syncTaskOwnerWarning(tx, principal, updated);
       await this.auditMutation(
         tx,
         principal,
@@ -3684,8 +4132,13 @@ export class ProjectsService {
       this.prisma.taskAttachment.count({ where: { taskId: task.id, workspaceId: principal.workspaceId } })
     ]);
 
-    if (subtaskCount + historyCount + timeEntryCount + planningBlockCount + commentCount + attachmentCount > 0) {
+    const hasHistory = subtaskCount + historyCount + timeEntryCount + planningBlockCount + commentCount + attachmentCount > 0;
+    // A hard delete cannot be undone, so only a project manager or workspace admin gets one; for everyone else the task is archived.
+    if (hasHistory || !(await this.canManageProjectOrAdmin(this.prisma, task.projectId, principal))) {
       const archivedAt = new Date();
+      const archiveNote = hasHistory
+        ? { history: "Task archived instead of deleted because it has operational history", task: "Deleted from UI; preserved because task has operational history" }
+        : { history: "Task archived instead of deleted: only a project manager or workspace admin can delete permanently", task: "Deleted from UI; archived because only a project manager or workspace admin can delete permanently" };
       const hierarchyMembershipChanges = Boolean(
         task.projectId
         && task.stageId
@@ -3735,7 +4188,7 @@ export class ProjectsService {
               toStatus: TASK_ARCHIVE_STATUS,
               changedByUserId: principal.subjectId,
               changedAt: archivedAt,
-              reason: "Task archived instead of deleted because it has operational history"
+              reason: archiveNote.history
             }
           });
           await tx.projectTask.update({
@@ -3744,10 +4197,11 @@ export class ProjectsService {
               status: TASK_ARCHIVE_STATUS,
               archivedAt,
               archivedByUserId: principal.subjectId,
-              archiveReason: "Deleted from UI; preserved because task has operational history",
+              archiveReason: archiveNote.task,
               cancelledAt: task.cancelledAt ?? archivedAt
             }
           });
+          await this.afterTaskArchived(tx, principal, task, archivedAt);
           await tx.project.update({
             where: { id: task.projectId! },
             data: { hierarchyOrderVersion: { increment: 1 } }
@@ -3779,7 +4233,7 @@ export class ProjectsService {
             toStatus: TASK_ARCHIVE_STATUS,
             changedByUserId: principal.subjectId,
             changedAt: archivedAt,
-            reason: "Task archived instead of deleted because it has operational history"
+            reason: archiveNote.history
           }
         });
         await tx.projectTask.update({
@@ -3788,10 +4242,11 @@ export class ProjectsService {
             status: TASK_ARCHIVE_STATUS,
             archivedAt,
             archivedByUserId: principal.subjectId,
-            archiveReason: "Deleted from UI; preserved because task has operational history",
+            archiveReason: archiveNote.task,
             cancelledAt: task.cancelledAt ?? archivedAt
           }
         });
+        await this.afterTaskArchived(tx, principal, task, archivedAt);
       });
 
       return {
@@ -3802,25 +4257,33 @@ export class ProjectsService {
       };
     }
 
-    if (task.projectId && task.stageId && task.parentTaskId === null) {
-      await this.prisma.$transaction(async (tx) => {
-        await this.lockProjectHierarchy(tx, task.projectId!, principal.workspaceId);
-        await tx.projectTask.delete({ where: { id: task.id } });
+    const inHierarchy = Boolean(task.projectId && task.stageId && task.parentTaskId === null);
+    await this.prisma.$transaction(async (tx) => {
+      if (inHierarchy) await this.lockProjectHierarchy(tx, task.projectId!, principal.workspaceId);
+      await tx.projectTask.delete({ where: { id: task.id } });
+      if (inHierarchy) {
         await tx.project.update({
           where: { id: task.projectId! },
           data: { hierarchyOrderVersion: { increment: 1 } }
         });
-      }, { isolationLevel: "Serializable" });
-    } else {
-      await this.prisma.projectTask.delete({ where: { id: task.id } });
-    }
+      }
+      if (task.projectId) {
+        await closeProjectWarnings(tx, { projectId: task.projectId, dedupeKey: `NL-03:task:${task.id}` }, principal.subjectId, "Task đã bị xóa");
+        await this.closeResolvedDepartedMemberWarnings(tx, principal, task.projectId);
+      }
+      await this.auditMutation(tx, principal, "task.deleted", "task", task.id, { title: task.title, projectId: task.projectId, stageId: task.stageId, status: task.status, ownerUserId: task.ownerUserId, assigneeUserId: task.assigneeUserId });
+    }, inHierarchy ? { isolationLevel: "Serializable" } : undefined);
 
     return { deleted: true, archived: false, id: task.id };
   }
 
   async transitionTask(taskId: string, input: TransitionProjectTaskInput, principal: PrincipalContext, changedByUserId?: string) {
+    // No portal write is intended here: a customer could otherwise set any status string and backdate changedAt.
+    this.assertInternalTaskPrincipal(principal, "Task status can only be changed by internal users");
     const existing = await this.ensureTaskForPrincipal(taskId, principal);
     const toStatus = nonEmptyString(input.status, "status");
+    // Nothing changed: no history row, no timestamps touched.
+    if (toStatus === existing.status) return this.getTask(taskId, principal);
     const changedAt = optionalDate(input.changedAt, "changedAt") ?? new Date();
 
     const task = await this.prisma.$transaction(async (tx) => {
@@ -3838,7 +4301,7 @@ export class ProjectsService {
         }
       });
 
-      return tx.projectTask.update({
+      const updated = await tx.projectTask.update({
         where: { id: existing.id },
         data: {
           status: toStatus,
@@ -3848,6 +4311,8 @@ export class ProjectsService {
         },
         include: taskInclude
       });
+      await this.syncTaskOwnerWarning(tx, principal, updated);
+      return updated;
     });
 
     if (isCompletedTaskStatus(toStatus)) {
@@ -3886,6 +4351,7 @@ export class ProjectsService {
     if (projectId) where.projectId = projectId;
     if (taskId) where.taskId = taskId;
     if (status) where.status = status;
+    Object.assign(where, this.timeRecordVisibilityWhere(principal));
 
     const [blocks, total] = await Promise.all([
       this.prisma.taskPlanningBlock.findMany({
@@ -3939,7 +4405,10 @@ export class ProjectsService {
     }
 
     const block = await this.prisma.$transaction(async (tx) => {
-      await this.ensureActiveWorkspaceUsers(tx, principal.workspaceId, principal.tenantKey, [userId]);
+      if (task.projectId) {
+        await this.lockProjectMembers(tx, principal.workspaceId, task.projectId);
+        await this.ensureProjectAssignmentUsers(tx, principal.workspaceId, principal.tenantKey, task.projectId, [userId]);
+      } else await this.ensureActiveWorkspaceUsers(tx, principal.workspaceId, principal.tenantKey, [userId]);
       const planningDayKeys = getLocalDateKeysForTimeRange(startAt, endAt, startAt);
       await lockWorkspaceDayOffDates(tx, principal.workspaceId, planningDayKeys);
       if (!canOverrideWorkspaceDayOff(principal) && typeof tx.workspaceDayOff?.findFirst === "function") {
@@ -4047,14 +4516,18 @@ export class ProjectsService {
     if (targetStatus === "completed") {
       this.assertCanMaterializePlanningActual(existing.userId, principal);
     }
+    if (targetStatus === "cancelled" && existing.userId !== principal.subjectId && !(await this.canManageProject(this.prisma, existing.projectId, principal))) {
+      throw new ForbiddenException("Chỉ người được lập kế hoạch hoặc PM của dự án mới được hủy khối kế hoạch này");
+    }
+
+    let actualLogWarning: string | undefined;
+    const withActualLogWarning = (block: any) => ({ ...mapTaskPlanningBlockSummary(block), ...(actualLogWarning ? { actualLogWarning } : {}) });
 
     if (existing.status === targetStatus) {
       if (targetStatus === "completed") {
-        await this.prisma.$transaction(async (tx) => {
-          await this.materializePlanningActual(tx, existing, changedByUserId ?? principal.subjectId);
-        });
+        actualLogWarning = await this.prisma.$transaction((tx) => this.materializePlanningActual(tx, existing, principal));
       }
-      return mapTaskPlanningBlockSummary(existing);
+      return withActualLogWarning(existing);
     }
     if (!PLANNING_STATUS_TRANSITIONS[existing.status]?.has(targetStatus)) {
       throw new ConflictException(`Task planning block cannot transition from ${existing.status} to ${targetStatus}`);
@@ -4081,7 +4554,7 @@ export class ProjectsService {
         }
         if (current.status === targetStatus) {
           if (targetStatus === "completed") {
-            await this.materializePlanningActual(tx, current, changedByUserId ?? principal.subjectId);
+            actualLogWarning = await this.materializePlanningActual(tx, current, principal);
           }
           return current;
         }
@@ -4097,7 +4570,7 @@ export class ProjectsService {
       }
 
       if (targetStatus === "completed") {
-        await this.materializePlanningActual(tx, changed, changedByUserId ?? principal.subjectId);
+        actualLogWarning = await this.materializePlanningActual(tx, changed, principal);
       }
 
       const requestId = `task-planning-block:${existing.id}:${targetStatus}:${expectedUpdatedAt.toISOString()}`;
@@ -4137,7 +4610,7 @@ export class ProjectsService {
       return changed;
     });
 
-    return mapTaskPlanningBlockSummary(transitioned);
+    return withActualLogWarning(transitioned);
   }
 
   async listTaskTimeEntries(query: any, principal: PrincipalContext) {
@@ -4175,6 +4648,7 @@ export class ProjectsService {
     if (projectId) where.projectId = projectId;
     if (taskId) where.taskId = taskId;
     if (approvalStatus) where.approvalStatus = approvalStatus;
+    Object.assign(where, this.timeRecordVisibilityWhere(principal));
 
     const [entries, total] = await Promise.all([
       this.prisma.taskTimeEntry.findMany({
@@ -4222,18 +4696,32 @@ export class ProjectsService {
     this.assertInternalTaskPrincipal(principal, "Task time entries are internal");
     const entry = await this.prisma.taskTimeEntry.findFirst({
       where: { id: entryId, workspaceId: principal.workspaceId },
-      select: { id: true }
+      select: { id: true, userId: true, taskId: true, projectId: true, minutes: true, workDate: true, approvalStatus: true, billable: true, reviewedByUserId: true }
     });
     if (!entry) {
       throw new NotFoundException("Task time entry not found");
     }
 
     await this.prisma.$transaction(async (tx) => {
+      // Founder/GM, Workspace Admin and the project's manager may delete any entry; the author until a reviewer has approved it
+      // (entries are created "approved" by default, so the status alone would lock every author out).
+      if (!(await this.canManageProjectOrAdmin(tx, entry.projectId, principal))) {
+        if (entry.userId !== principal.subjectId) {
+          throw new ForbiddenException("Bạn chỉ được xóa time log của chính mình. Time log của người khác do PM dự án, Workspace Admin hoặc Founder/GM xóa.");
+        }
+        if (entry.reviewedByUserId && APPROVED_TIME_ENTRY_STATUSES.includes(String(entry.approvalStatus ?? "").toLowerCase())) {
+          throw new ForbiddenException("Time log đã được duyệt nên bạn không thể tự xóa. Hãy nhờ PM dự án, Workspace Admin hoặc Founder/GM.");
+        }
+      }
       await tx.projectCost.updateMany({
         where: { taskTimeEntryId: entry.id, workspaceId: principal.workspaceId },
         data: { taskTimeEntryId: null }
       });
       await tx.taskTimeEntry.delete({ where: { id: entry.id } });
+      await this.auditMutation(tx, principal, "task.time_entry_deleted", "task_time_entry", entry.id, {
+        userId: entry.userId, taskId: entry.taskId, projectId: entry.projectId, minutes: entry.minutes,
+        workDate: entry.workDate?.toISOString?.() ?? null, approvalStatus: entry.approvalStatus, billable: entry.billable
+      });
     });
 
     return { deleted: true, id: entry.id };
@@ -4333,146 +4821,214 @@ export class ProjectsService {
       }
     }
     const workDate = startAt ?? optionalDate(input.workDate, "workDate") ?? new Date();
-    const dailyLogWindow = getDailyActualLogWindow(workDate);
-    const dayOffDateKeys = getLocalDateKeysForTimeRange(startAt, endAt, workDate);
     const timeZone = optionalString(input.timeZone, "timeZone") ?? DEFAULT_TIME_ENTRY_TIME_ZONE;
     if (timeZone.length > 80) {
       throw new BadRequestException("timeZone must be 80 characters or fewer");
     }
+    this.assertTimeEntryWindow(startAt, endAt, timeZone);
     const workType = optionalString(input.workType, "workType") ?? "delivery";
     if (workType.length > 80) {
       throw new BadRequestException("workType must be 80 characters or fewer");
     }
     const note = optionalString(input.note, "note") ?? undefined;
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      if (task.projectId) {
-        await this.lockProjectMembers(tx, principal.workspaceId, task.projectId);
-        await this.ensureProjectAssignmentUsers(tx, principal.workspaceId, principal.tenantKey, task.projectId, [userId]);
-      } else await this.ensureActiveWorkspaceUsers(tx, principal.workspaceId, principal.tenantKey, [userId]);
-      await lockWorkspaceDayOffDates(tx, principal.workspaceId, dayOffDateKeys);
-      const dayOff = typeof tx.workspaceDayOff?.findFirst === "function"
-        ? await tx.workspaceDayOff.findFirst({
-            where: { workspaceId: principal.workspaceId, isActive: true, date: { in: dayOffDateKeys.map(dateOnlyToUtcDate) } },
-            orderBy: { date: "asc" },
-            select: { id: true, date: true, name: true }
-          })
-        : null;
-      if (dayOff && !canOverrideWorkspaceDayOff(principal)) {
-        throw new ConflictException(workspaceDayOffMessage(dayOff));
-      }
-      if (minutes > 480) {
-        throw new BadRequestException("Daily log cannot exceed 8 office hours; log approved overtime separately");
-      }
-      // Serialize the per-user/day write before reading the current total. Without
-      // this lock, two concurrent entries can both observe the same remaining
-      // capacity and push the daily total past the 8-hour limit.
-      const dailyLogLockScope = JSON.stringify([principal.workspaceId, userId, dailyLogWindow.localDate]);
-      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dailyLogLockScope}, 0))::text`;
-      if (!dayOff) {
-        const dailyMinutes = typeof tx.taskTimeEntry.aggregate === "function" ? await tx.taskTimeEntry.aggregate({
-          where: {
-            workspaceId: principal.workspaceId,
-            userId,
-            approvalStatus: { not: "rejected" },
-            OR: [
-              { startAt: { gte: dailyLogWindow.startAt, lt: dailyLogWindow.endAt } },
-              { startAt: null, workDate: { gte: dailyLogWindow.startAt, lt: dailyLogWindow.endAt } }
-            ]
-          },
-          _sum: { minutes: true }
-        }) : { _sum: { minutes: 0 } };
-        if ((dailyMinutes._sum.minutes ?? 0) + minutes > 480) {
-          throw new ConflictException("Daily log cannot exceed 8 office hours; create an approved overtime plan for the remainder");
-        }
-      }
-
-      await this.promoteTaskForActualWork(tx, {
-        taskId: task.id,
-        workspaceId: principal.workspaceId,
-        changedByUserId: principal.subjectId,
-        occurredAt: workDate
-      });
-
-      const created = await tx.taskTimeEntry.create({
-        data: {
-          workspaceId: principal.workspaceId,
-          taskId: task.id,
-          accountId: task.accountId,
-          projectId: task.projectId,
-          userId,
-          workDate,
-          startAt,
-          endAt,
-          timeZone,
-          minutes,
-          regularMinutes: minutes,
-          overtimeMinutes: 0,
-          billable: optionalBoolean(input.billable, "billable") ?? true,
-          dayOffId: dayOff?.id,
-          workType,
-          taskTypeLayer1: task.taskTypeLayer1,
-          taskTypeLayer2: task.taskTypeLayer2,
-          approvalStatus: normalizeActualWorkApprovalStatus(optionalEnum(input.approvalStatus, "approvalStatus", TIME_APPROVAL_STATUSES)),
-          note
-        },
-        include: taskTimeEntryInclude
-      });
-
-      if (task.projectId) {
-        await tx.projectActivity.create({
-          data: {
-            workspaceId: principal.workspaceId,
-            projectId: task.projectId,
-            accountId: task.accountId,
-            activityType: "work_logged",
-            subject: `Logged work: ${task.title}`,
-            note: [`${minutes} minutes logged as ${workType}`, note].filter(Boolean).join("\n"),
-            target: task.title,
-            occurredAt: startAt ?? workDate,
-            status: "active",
-            createdByUserId: principal.subjectId
-          }
-        });
-      }
-
-      await this.auditMutation(tx, principal, "task.time_logged", "task_time_entry", created.id, undefined, { performerUserId: userId, taskId: task.id, minutes, workDate: workDate.toISOString() });
-      const dailyActualLogAggregate = await tx.taskTimeEntry.aggregate({
-        where: {
-          workspaceId: principal.workspaceId,
-          userId,
-          approvalStatus: { in: COUNTABLE_DAILY_ACTUAL_LOG_STATUSES },
-          OR: [
-            {
-              startAt: {
-                gte: dailyLogWindow.startAt,
-                lt: dailyLogWindow.endAt
-              }
-            },
-            {
-              startAt: null,
-              workDate: {
-                gte: dailyLogWindow.startAt,
-                lt: dailyLogWindow.endAt
-              }
-            }
-          ]
-        },
-        _sum: { minutes: true }
-      });
-
-      return {
-        entry: created,
-        dailyActualLog: buildDailyActualLogStatus(
-          dailyLogWindow.localDate,
-          dailyActualLogAggregate._sum.minutes ?? 0
-        )
-      };
-    });
+    const result = await this.prisma.$transaction((tx) => this.writeTimeEntry(tx, principal, task, {
+      userId, startAt, endAt, workDate, timeZone, minutes, workType, note,
+      billable: optionalBoolean(input.billable, "billable") ?? true,
+      approvalStatus: normalizeActualWorkApprovalStatus(optionalEnum(input.approvalStatus, "approvalStatus", TIME_APPROVAL_STATUSES))
+    }));
 
     return {
       ...mapTaskTimeEntrySummary(result.entry),
       dailyActualLog: result.dailyActualLog
+    };
+  }
+
+  /** The 07:00–19:00 same-day window every time entry must fit in. */
+  private assertTimeEntryWindow(startAt: Date | null | undefined, endAt: Date | null | undefined, timeZone: string) {
+    if (startAt && endAt) {
+      try {
+        const timeParts = (value: Date) => Object.fromEntries(new Intl.DateTimeFormat("en-GB", {
+          timeZone,
+          hour: "2-digit",
+          minute: "2-digit",
+          hourCycle: "h23"
+        }).formatToParts(value).filter(({ type }) => type === "hour" || type === "minute").map(({ type, value: partValue }) => [type, Number(partValue)]));
+        const startLocal = timeParts(startAt);
+        const endLocal = timeParts(endAt);
+        const startMinutes = startLocal.hour * 60 + startLocal.minute;
+        const endMinutes = endLocal.hour * 60 + endLocal.minute;
+        if (startMinutes < 7 * 60 || endMinutes > 19 * 60 || endMinutes <= startMinutes) {
+          throw new BadRequestException("Time entry window must be within 07:00–19:00 and end after start");
+        }
+      } catch (error) {
+        if (error instanceof BadRequestException) throw error;
+        throw new BadRequestException("timeZone must be a valid IANA time zone");
+      }
+    }
+  }
+
+  /**
+   * The one place a time entry is written: membership, day-off, daily cap, task-plan cap and milestone lock are all checked
+   * before the first write, so a caller may catch a rule violation without leaving anything behind.
+   */
+  private async writeTimeEntry(
+    tx: Prisma.TransactionClient,
+    principal: PrincipalContext,
+    task: { id: string; accountId: string; projectId: string | null; stageId?: string | null; title: string; estimateMinutes?: number | null; taskTypeLayer1?: string | null; taskTypeLayer2?: string | null },
+    entry: { userId: string; startAt?: Date | null; endAt?: Date | null; workDate: Date; timeZone: string; minutes: number; workType: string; note?: string; billable: boolean; approvalStatus: string; sourcePlanningBlockId?: string }
+  ) {
+    const { userId, startAt, endAt, workDate, timeZone, minutes, workType, note } = entry;
+    const dailyLogWindow = getDailyActualLogWindow(workDate);
+    const dayOffDateKeys = getLocalDateKeysForTimeRange(startAt, endAt, workDate);
+    await this.assertMilestoneUnlocked(tx, principal.workspaceId, task.stageId, "log giờ");
+    if (task.projectId) {
+      await this.lockProjectMembers(tx, principal.workspaceId, task.projectId);
+      await this.ensureProjectAssignmentUsers(tx, principal.workspaceId, principal.tenantKey, task.projectId, [userId]);
+    } else await this.ensureActiveWorkspaceUsers(tx, principal.workspaceId, principal.tenantKey, [userId]);
+    await lockWorkspaceDayOffDates(tx, principal.workspaceId, dayOffDateKeys);
+    const dayOff = typeof tx.workspaceDayOff?.findFirst === "function"
+      ? await tx.workspaceDayOff.findFirst({
+          where: { workspaceId: principal.workspaceId, isActive: true, date: { in: dayOffDateKeys.map(dateOnlyToUtcDate) } },
+          orderBy: { date: "asc" },
+          select: { id: true, date: true, name: true }
+        })
+      : null;
+    if (dayOff && !canOverrideWorkspaceDayOff(principal)) {
+      throw new ConflictException(workspaceDayOffMessage(dayOff));
+    }
+    if (minutes > 480) {
+      throw new BadRequestException("Daily log cannot exceed 8 office hours; log approved overtime separately");
+    }
+    // Serialize the per-user/day write before reading the current total. Without
+    // this lock, two concurrent entries can both observe the same remaining
+    // capacity and push the daily total past the 8-hour limit.
+    const dailyLogLockScope = JSON.stringify([principal.workspaceId, userId, dailyLogWindow.localDate]);
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dailyLogLockScope}, 0))::text`;
+    if (!dayOff) {
+      const dailyMinutes = typeof tx.taskTimeEntry.aggregate === "function" ? await tx.taskTimeEntry.aggregate({
+        where: {
+          workspaceId: principal.workspaceId,
+          userId,
+          approvalStatus: { notIn: NON_ACTUAL_TIME_ENTRY_STATUSES },
+          OR: [
+            { startAt: { gte: dailyLogWindow.startAt, lt: dailyLogWindow.endAt } },
+            { startAt: null, workDate: { gte: dailyLogWindow.startAt, lt: dailyLogWindow.endAt } }
+          ]
+        },
+        _sum: { minutes: true }
+      }) : { _sum: { minutes: 0 } };
+      if ((dailyMinutes._sum.minutes ?? 0) + minutes > 480) {
+        throw new ConflictException("Daily log cannot exceed 8 office hours; create an approved overtime plan for the remainder");
+      }
+    }
+
+    const taskEstimateMinutes = Math.max(0, Number(task.estimateMinutes ?? 0));
+    if (taskEstimateMinutes > 0) {
+      // Serialize task-level writes as well as the existing daily-capacity check.
+      // This keeps two concurrent requests from both consuming the same remaining plan.
+      const taskLogLockScope = JSON.stringify([principal.workspaceId, task.id, "actual"]);
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${taskLogLockScope}, 0))::text`;
+      const taskMinutes = typeof tx.taskTimeEntry.aggregate === "function"
+        ? await tx.taskTimeEntry.aggregate({
+            where: {
+              workspaceId: principal.workspaceId,
+              taskId: task.id,
+              approvalStatus: { notIn: NON_ACTUAL_TIME_ENTRY_STATUSES }
+            },
+            _sum: { minutes: true }
+          })
+        : { _sum: { minutes: 0 } };
+      const currentTaskMinutes = Math.max(0, Number(taskMinutes._sum.minutes ?? 0));
+      if (currentTaskMinutes + minutes > taskEstimateMinutes) {
+        const remainingTaskMinutes = Math.max(0, taskEstimateMinutes - currentTaskMinutes);
+        throw new ConflictException(
+          `Task actual time cannot exceed planned time. Remaining: ${remainingTaskMinutes} minutes`
+        );
+      }
+    }
+
+    await this.promoteTaskForActualWork(tx, {
+      taskId: task.id,
+      workspaceId: principal.workspaceId,
+      changedByUserId: principal.subjectId,
+      occurredAt: workDate
+    });
+
+    const created = await tx.taskTimeEntry.create({
+      data: {
+        workspaceId: principal.workspaceId,
+        taskId: task.id,
+        accountId: task.accountId,
+        projectId: task.projectId,
+        userId,
+        workDate,
+        startAt,
+        endAt,
+        timeZone,
+        minutes,
+        regularMinutes: minutes,
+        overtimeMinutes: 0,
+        billable: entry.billable,
+        dayOffId: dayOff?.id,
+        workType,
+        taskTypeLayer1: task.taskTypeLayer1,
+        taskTypeLayer2: task.taskTypeLayer2,
+        approvalStatus: entry.approvalStatus,
+        note,
+        sourcePlanningBlockId: entry.sourcePlanningBlockId
+      },
+      include: taskTimeEntryInclude
+    });
+
+    if (task.projectId) {
+      await tx.projectActivity.create({
+        data: {
+          workspaceId: principal.workspaceId,
+          projectId: task.projectId,
+          accountId: task.accountId,
+          activityType: "work_logged",
+          subject: `Logged work: ${task.title}`,
+          note: [`${minutes} minutes logged as ${workType}`, note].filter(Boolean).join("\n"),
+          target: task.title,
+          occurredAt: startAt ?? workDate,
+          status: "active",
+          createdByUserId: principal.subjectId
+        }
+      });
+    }
+
+    await this.auditMutation(tx, principal, "task.time_logged", "task_time_entry", created.id, undefined, { performerUserId: userId, taskId: task.id, minutes, workDate: workDate.toISOString() });
+    const dailyActualLogAggregate = await tx.taskTimeEntry.aggregate({
+      where: {
+        workspaceId: principal.workspaceId,
+        userId,
+        approvalStatus: { notIn: NON_ACTUAL_TIME_ENTRY_STATUSES },
+        OR: [
+          {
+            startAt: {
+              gte: dailyLogWindow.startAt,
+              lt: dailyLogWindow.endAt
+            }
+          },
+          {
+            startAt: null,
+            workDate: {
+              gte: dailyLogWindow.startAt,
+              lt: dailyLogWindow.endAt
+            }
+          }
+        ]
+      },
+      _sum: { minutes: true }
+    });
+
+    return {
+      entry: created,
+      dailyActualLog: buildDailyActualLogStatus(
+        dailyLogWindow.localDate,
+        dailyActualLogAggregate._sum.minutes ?? 0
+      )
     };
   }
 
@@ -4755,6 +5311,51 @@ export class ProjectsService {
     if (!permissions.canManage) throw new ForbiddenException("Only the project PIC, a project Delivery Lead, or Founder/GM can manage this project");
   }
 
+  /** Tasks and blocks outside any project fall back to Founder/GM. */
+  private async canManageProject(client: Prisma.TransactionClient, projectId: string | null | undefined, principal: PrincipalContext) {
+    if (principal.subjectType !== "internal_user") return false;
+    return projectId ? (await this.projectPermissions(client, projectId, principal)).canManage : principal.roleCodes.includes("FOUNDER_GM");
+  }
+
+  private async canManageProjectOrAdmin(client: Prisma.TransactionClient, projectId: string | null | undefined, principal: PrincipalContext) {
+    if (principal.subjectType !== "internal_user") return false;
+    return isWorkspaceAdmin(principal.roleCodes) || this.canManageProject(client, projectId, principal);
+  }
+
+  private async assertProjectManagerOrAdmin(client: Prisma.TransactionClient, projectId: string, principal: PrincipalContext) {
+    if (!(await this.canManageProjectOrAdmin(client, projectId, principal))) {
+      throw new ForbiddenException("Chỉ PIC dự án, Delivery Lead của dự án, Workspace Admin hoặc Founder/GM mới được thực hiện thao tác này");
+    }
+  }
+
+  /** A locked milestone opens only when the previous one is approved; until then nothing may be added to or logged in it. */
+  private async assertMilestoneUnlocked(client: any, workspaceId: string, stageId: string | null | undefined, action: string) {
+    if (!stageId || typeof client?.projectStage?.findFirst !== "function") return;
+    const stage = await client.projectStage.findFirst({ where: { id: stageId, workspaceId }, select: { milestone: { select: { name: true, gateStatus: true } } } });
+    if (stage?.milestone?.gateStatus === "locked") {
+      throw new ConflictException(`Milestone "${stage.milestone.name}" đang khóa cho đến khi milestone trước được duyệt, nên chưa thể ${action}.`);
+    }
+  }
+
+  /**
+   * Founder/GM, Workspace Admin and anyone allowed to see cost (P&L needs every hour) read planning blocks and time entries of the whole workspace.
+   * Any other internal user reads their own rows plus those of projects they are a member of or lead a stage in.
+   */
+  private timeRecordVisibilityWhere(principal: PrincipalContext) {
+    if (isWorkspaceAdmin(principal.roleCodes) || canViewCost(principal)) return {};
+    const memberOrLead: Prisma.ProjectWhereInput = { OR: [
+      { members: { some: { userId: principal.subjectId, workspaceId: principal.workspaceId } } },
+      { stages: { some: { ownerUserId: principal.subjectId } } }
+    ] };
+    return { AND: [{ OR: [{ userId: principal.subjectId }, { task: { project: memberOrLead } }] }] };
+  }
+
+  /** NL-03 closes with the task; the archive is audited like any other task change. */
+  private async afterTaskArchived(tx: Prisma.TransactionClient, principal: PrincipalContext, task: { id: string; projectId: string | null; stageId?: string | null; title: string; status: string; ownerUserId: string | null; assigneeUserId: string | null }, archivedAt: Date) {
+    await this.syncTaskOwnerWarning(tx, principal, { ...task, status: TASK_ARCHIVE_STATUS, archivedAt });
+    await this.auditMutation(tx, principal, "task.archived", "task", task.id, { status: task.status }, { status: TASK_ARCHIVE_STATUS, archivedAt: archivedAt.toISOString() });
+  }
+
   async listProjectMembers(projectId: string, query: any, principal: PrincipalContext) {
     this.assertInternalTaskPrincipal(principal, "Project member directory is internal");
     await this.ensureProject(projectId, principal.workspaceId);
@@ -4764,15 +5365,21 @@ export class ProjectsService {
       projectMembers: { some: { workspaceId: principal.workspaceId, projectId } },
       ...(q ? { OR: [{ displayName: { contains: q, mode: "insensitive" } }, { email: { contains: q, mode: "insensitive" } }] } : {})
     };
+    // EV-035: participation is only derivable for a period; without one the directory is unchanged.
+    const period = query.startDate || query.endDate ? participationPeriod(query) : undefined;
     const [users, total, permissions] = await Promise.all([
       this.prisma.user.findMany({ where, select: { id: true, displayName: true, email: true, avatarUrl: true, status: true,
         resourceProfile: { select: { employmentStatus: true } },
         roleBindings: { where: { workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, ...activeMembershipWhere() }, select: { role: { select: { code: true } } } } }, orderBy: [{ displayName: "asc" }, { id: "asc" }], skip: pagination.offset, take: pagination.limit }),
       this.prisma.user.count({ where }), this.projectPermissions(this.prisma, projectId, principal)
     ]);
+    const participation = period
+      ? await this.computeMemberParticipation(await this.ensureProject(projectId, principal.workspaceId), users.map((user) => user.id), period)
+      : undefined;
     return { data: users.map((user) => {
       const employmentStatus = deriveProjectMemberEmploymentStatus(user);
       return {
+        ...participation?.get(user.id),
         userId: user.id,
         displayName: user.displayName,
         email: user.email,
@@ -4945,10 +5552,34 @@ export class ProjectsService {
       const removed = Array.from(new Set(existing.map((row) => row.userId))).filter((id) => !uniqueUserIds.includes(id));
       if (removed.length) {
         const [tasks, stages] = await Promise.all([
-          tx.projectTask.count({ where: { workspaceId: input.workspaceId, projectId: input.projectId, archivedAt: null, status: { notIn: ["completed", "done", "cancelled", "closed"] }, OR: [{ ownerUserId: { in: removed } }, { assigneeUserId: { in: removed } }] } }),
-          tx.projectStage.count({ where: { workspaceId: input.workspaceId, projectId: input.projectId, ownerUserId: { in: removed }, status: { notIn: ["completed", "done", "cancelled", "closed"] } } })
+          tx.projectTask.count({ where: { workspaceId: input.workspaceId, projectId: input.projectId, archivedAt: null, status: { notIn: CLOSED_WORK_STATUSES }, OR: [{ ownerUserId: { in: removed } }, { assigneeUserId: { in: removed } }] } }),
+          tx.projectStage.count({ where: { workspaceId: input.workspaceId, projectId: input.projectId, ownerUserId: { in: removed }, status: { notIn: CLOSED_WORK_STATUSES } } })
         ]);
         if (tasks || stages) throw new ConflictException("Transfer the member's active tasks and milestones before removing them from the project");
+        // The block above covers owner/primary assignee; co-assignees can still leave with open tasks -> NL-01.
+        if (input.principal && typeof (tx as any).projectWarning?.findFirst === "function") {
+          const coAssigned = await tx.projectTaskAssignee.groupBy({
+            by: ["userId"],
+            where: { workspaceId: input.workspaceId, userId: { in: removed }, task: { projectId: input.projectId, archivedAt: null, status: { notIn: CLOSED_WORK_STATUSES } } },
+            _count: { _all: true }
+          });
+          const names = coAssigned.length ? new Map((await tx.user.findMany({ where: { id: { in: coAssigned.map((row) => row.userId) } }, select: { id: true, displayName: true } })).map((user) => [user.id, user.displayName])) : new Map<string, string>();
+          for (const row of coAssigned) {
+            await openOrRefreshProjectWarning(tx, {
+              workspaceId: input.workspaceId,
+              projectId: input.projectId,
+              dedupeKey: `NL-01:${row.userId}`,
+              typeCode: "NL-01",
+              severity: "high",
+              title: "Thành viên rời Project Team khi còn Task đang mở",
+              detail: `${names.get(row.userId) ?? row.userId} đã bị gỡ khỏi Project Team khi còn ${row._count._all} Task đang mở (đồng phụ trách). PM cần phân công lại.`,
+              actorUserId: input.principal.subjectId
+            });
+          }
+        }
+      }
+      if (input.principal && uniqueUserIds.length) {
+        await closeProjectWarnings(tx, { projectId: input.projectId, dedupeKey: { in: uniqueUserIds.map((id) => `NL-01:${id}`) } }, input.principal.subjectId, "Thành viên đã được thêm lại vào Project Team");
       }
       if (input.principal) await this.auditMutation(tx, input.principal, "project.members_changed", "project", input.projectId, { memberUserIds: Array.from(new Set(existing.map((row) => row.userId))) }, { memberUserIds: uniqueUserIds });
     }
@@ -5534,12 +6165,14 @@ export class ProjectsService {
     }
   }
 
+  /**
+   * Turns a completed planning block into a time entry through the same rules as a manual log.
+   * Returns a message when a rule rejects it: the block stays completed and the hours must be logged by hand.
+   */
   private async materializePlanningActual(tx: Prisma.TransactionClient, block: {
     id: string;
     workspaceId: string;
     taskId: string;
-    accountId: string;
-    projectId: string | null;
     userId: string;
     startAt: Date;
     endAt: Date;
@@ -5547,35 +6180,32 @@ export class ProjectsService {
     billable?: boolean | null;
     workType?: string | null;
     notes?: string | null;
-  }, changedByUserId?: string) {
-    await this.promoteTaskForActualWork(tx, {
-      taskId: block.taskId,
-      workspaceId: block.workspaceId,
-      changedByUserId,
-      occurredAt: block.startAt
-    });
-
-    await tx.taskTimeEntry.upsert({
-      where: { sourcePlanningBlockId: block.id },
-      create: {
-        workspaceId: block.workspaceId,
-        taskId: block.taskId,
-        accountId: block.accountId,
-        projectId: block.projectId,
+  }, principal: PrincipalContext): Promise<string | undefined> {
+    const existingEntry = await tx.taskTimeEntry.findUnique({ where: { sourcePlanningBlockId: block.id }, select: { id: true } });
+    if (existingEntry) return undefined;
+    const task = await tx.projectTask.findFirst({ where: { id: block.taskId, workspaceId: block.workspaceId } });
+    if (!task) throw new NotFoundException("Task not found");
+    try {
+      this.assertTimeEntryWindow(block.startAt, block.endAt, DEFAULT_TIME_ENTRY_TIME_ZONE);
+      await this.writeTimeEntry(tx, principal, task, {
         userId: block.userId,
-        workDate: block.startAt,
         startAt: block.startAt,
         endAt: block.endAt,
+        workDate: block.startAt,
         timeZone: DEFAULT_TIME_ENTRY_TIME_ZONE,
         minutes: block.plannedMinutes,
-        billable: block.billable ?? true,
         workType: block.workType ?? "delivery",
-        approvalStatus: DEFAULT_TIME_ENTRY_APPROVAL_STATUS,
         note: block.notes ?? undefined,
+        billable: block.billable ?? true,
+        approvalStatus: DEFAULT_TIME_ENTRY_APPROVAL_STATUS,
         sourcePlanningBlockId: block.id
-      },
-      update: {}
-    });
+      });
+      return undefined;
+    } catch (error) {
+      // writeTimeEntry rejects before its first write, so the block's completion in this transaction is still safe to commit.
+      if (error instanceof HttpException && !(error instanceof NotFoundException)) return `${MANUAL_ACTUAL_LOG_MESSAGE} (${error.message})`;
+      throw error;
+    }
   }
 
   private async promoteTaskForActualWork(tx: Prisma.TransactionClient, input: {

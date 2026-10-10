@@ -3,7 +3,10 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "@/lib/auth";
 import { authRequest } from "@/lib/native-auth-client";
 import { CustomDropdown } from "@/components/crm-workspace/tasks-workbench";
-import { MANUAL_WORKSPACE_ROLE_OPTIONS } from "@/lib/people-roles";
+import { UserPlus, X } from "lucide-react";
+import { ModalLayer } from "@/components/modal-layer";
+import { CrmMultiSelect } from "@/components/crm-workspace/crm-select";
+import { BUSINESS_ROLE_OPTIONS, MANUAL_WORKSPACE_ROLE_OPTIONS } from "@/lib/people-roles";
 import { AuthField, authButton, authInput } from "./account-form";
 import type { EmploymentStatus } from "@b2b-crm/contracts";
 const invitationRoles = MANUAL_WORKSPACE_ROLE_OPTIONS;
@@ -19,9 +22,12 @@ export function AdminInvitations() {
   async function create(e:FormEvent){e.preventDefault();setBusy(true);setError("");setMessage("");try{await authRequest("admin/invitations",{email,displayName,roleCode});setEmail("");setName("");setMessage("Invitation created. Delivery is handled by your workspace email service.");await load();}catch(e){setError(e instanceof Error?e.message:"Unable to invite.");}finally{setBusy(false);}}
   async function revoke(id:string){setBusy(true);setError("");try{await authRequest(`admin/invitations/${encodeURIComponent(id)}/revoke`,{});await load();setMessage("Invitation revoked. Its link can no longer be used.");}catch(e){setError(e instanceof Error?e.message:"Unable to revoke.");}finally{setBusy(false);}}
   if(!allowed) return null;
-  return <section className="mb-5 rounded-xl border border-border bg-card p-4">
-    <button className="min-h-11 text-sm font-semibold text-primary" aria-expanded={open} onClick={()=>setOpen(!open)}>{open?"Close invitations":"Invite team members"}</button>
-    {open && <div className="mt-3 space-y-4">
+  return <>
+    <button type="button" className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90" onClick={()=>setOpen(true)}><UserPlus className="h-4 w-4" /> Invite member</button>
+    {open && <ModalLayer initialFocusSelector='input[type="email"]' onClose={()=>setOpen(false)}><div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={()=>setOpen(false)}>
+    <div role="dialog" aria-modal="true" aria-labelledby="invite-member-title" className="flex max-h-[90dvh] w-full max-w-2xl flex-col overflow-visible rounded-2xl border border-border bg-card shadow-2xl" onClick={e=>e.stopPropagation()}>
+    <div className="flex items-center justify-between border-b border-border bg-muted/20 px-6 py-4"><h2 id="invite-member-title" className="text-base font-bold text-foreground">Invite member</h2><button type="button" aria-label="Close" className="min-h-11 min-w-11 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" onClick={()=>setOpen(false)}><X className="mx-auto h-4 w-4" /></button></div>
+    <div className="space-y-4 p-6">
       <p className="text-xs text-muted-foreground">Invite a colleague with the least access they need. To resend, revoke the old invitation and create a new one.</p>
       <form className="grid gap-3 md:grid-cols-2" onSubmit={create}>
         <AuthField label="Email"><input type="email" required className={authInput} value={email} onChange={e=>setEmail(e.target.value)}/></AuthField>
@@ -30,9 +36,9 @@ export function AdminInvitations() {
         <button disabled={busy} className={`${authButton} self-end`}>Create invitation</button>
       </form>
       {error&&<p role="alert" className="text-sm text-destructive">{error}</p>}{message&&<p role="status" className="text-sm text-success">{message}</p>}
-      <div className="space-y-2">{rows.length===0?<p className="text-xs text-muted-foreground">No invitations yet.</p>:rows.map(r=><div key={r.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3"><div><p className="text-sm font-medium">{r.email}</p><p className="text-xs text-muted-foreground">{r.roleCode} · {r.status} · Expires {new Date(r.expiresAt).toLocaleDateString()}</p></div>{r.status.toLowerCase()==="pending"&&<button disabled={busy} className="min-h-11 text-sm text-destructive" onClick={()=>void revoke(r.id)}>Revoke invitation</button>}</div>)}</div>
-    </div>}
-  </section>;
+      <div className="max-h-56 space-y-2 overflow-y-auto">{rows.length===0?<p className="text-xs text-muted-foreground">No invitations yet.</p>:rows.map(r=><div key={r.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3"><div><p className="text-sm font-medium">{r.email}</p><p className="text-xs text-muted-foreground">{r.roleCode} · {r.status} · Expires {new Date(r.expiresAt).toLocaleDateString()}</p></div>{r.status.toLowerCase()==="pending"&&<button disabled={busy} className="min-h-11 text-sm text-destructive" onClick={()=>void revoke(r.id)}>Revoke invitation</button>}</div>)}</div>
+    </div></div></div></ModalLayer>}
+  </>;
 }
 const employmentStatusOptions = [
   { value: "ACTIVE", label: "Đang làm việc", subtext: "Được phép truy cập workspace" },
@@ -40,10 +46,30 @@ const employmentStatusOptions = [
   { value: "INACTIVE", label: "Đã nghỉ việc", subtext: "Ngừng truy cập workspace" },
 ];
 
-export function AdminMemberControls({userId,status,currentRole,employmentStatus="ACTIVE"}:{userId:string;status:string;currentRole:string;employmentStatus?:EmploymentStatus}) {
+const businessRoleOptions = BUSINESS_ROLE_OPTIONS.map((role) => ({ value: role, label: role }));
+const costPermissionOptions = [{ value: "COST_VIEW", label: "Xem" }, { value: "COST_EDIT", label: "Sửa" }, { value: "COST_APPROVE", label: "Duyệt" }, { value: "COST_EXPORT", label: "Xuất" }];
+const ALL_COST_PERMISSIONS = ["COST_VIEW", "COST_EDIT", "COST_APPROVE", "COST_EXPORT"];
+const controlLabel = "block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
+
+export function AdminMemberControls({userId,status,currentRole,employmentStatus="ACTIVE",displayRole,costPermissionCodes=[]}:{userId:string;status:string;currentRole:string;employmentStatus?:EmploymentStatus;displayRole:string;costPermissionCodes?:readonly string[]}) {
   const {user}=useAuth();
   const [roleCode,setRole]=useState(currentRole);
   const [workStatus,setWorkStatus]=useState<EmploymentStatus>(employmentStatus);
+  const [businessRole,setBusinessRole]=useState(displayRole);
+  // Founder/GM always has full cost access; everyone else needs an explicit COST_* grant.
+  const [costCodes,setCostCodes]=useState<string[]>(currentRole==="FOUNDER_GM"?ALL_COST_PERMISSIONS:[...costPermissionCodes]);
+  const [costMessage,setCostMessage]=useState("");
+  // Saves the whole set: the API replaces every COST_* grant with exactly these codes.
+  async function changeCostPermissions(permissionCodes:string[]){
+    const previous=costCodes;
+    setCostCodes(permissionCodes);setBusy(true);setError("");setCostMessage("");
+    try{
+      const response=await fetch(`/api/admin/users/${encodeURIComponent(userId)}/cost-permissions`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({permissionCodes})});
+      const payload=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error(payload.message??"Không thể cập nhật nhóm quyền chi phí.");
+      setCostMessage("Đã cập nhật quyền P&L.");
+    }catch(e){setCostCodes(previous);setError(e instanceof Error?e.message:"Không thể cập nhật nhóm quyền chi phí.");}finally{setBusy(false);}
+  }
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
   const [confirm,setConfirm]=useState<"profile"|"deactivate"|"reactivate"|"revoke-sessions"|null>(null);
@@ -56,7 +82,7 @@ export function AdminMemberControls({userId,status,currentRole,employmentStatus=
           method: "PATCH",
           credentials: "same-origin",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ systemRole: roleCode, employmentStatus: workStatus }),
+          body: JSON.stringify({ ...(businessRole !== displayRole ? { displayRole: businessRole } : {}), systemRole: roleCode, employmentStatus: workStatus }),
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.message || "Không thể lưu thông tin thành viên.");
@@ -75,23 +101,33 @@ export function AdminMemberControls({userId,status,currentRole,employmentStatus=
     }catch(e){setError(e instanceof Error?e.message:"Unable to update member.");}finally{setBusy(false);}
   }
   if(!user?.roleCodes?.some((role) => role === "FOUNDER_GM" || role === "WORKSPACE_ADMIN"))return null;
-  return <section className="rounded-2xl border border-indigo-100 bg-white p-5 shadow-sm">
-    <div className="flex items-start justify-between gap-3"><div><h2 className="text-base font-bold text-slate-900">Workspace access</h2><p className="mt-1 text-xs leading-5 text-slate-500">Quản lý quyền truy cập theo workspace. Thay đổi sẽ thu hồi session hiện tại của user.</p></div><span className="rounded-md bg-indigo-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-indigo-700">Admin only</span></div>
+  return <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+    <h2 className="!text-sm font-bold text-foreground">Workspace access</h2>
+    <p className="mt-0.5 text-xs text-muted-foreground">Chỉ admin thấy mục này. Đổi vai trò sẽ thu hồi session hiện tại của user.</p>
     <div className="mt-4 space-y-2">
-      <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500">Vai trò trong workspace</label>
+      <label className={controlLabel}>Vai trò nghiệp vụ</label>
+      <CustomDropdown label="" value={businessRole} options={businessRoleOptions} onChange={setBusinessRole}/>
+    </div>
+    <div className="mt-4 space-y-2">
+      <label className={controlLabel}>Vai trò trong workspace</label>
       <CustomDropdown label="" value={roleCode} options={workspaceRoles} onChange={setRole}/>
     </div>
     <div className="mt-4 space-y-2">
-      <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500">Trạng thái làm việc</label>
+      <label className={controlLabel}>Trạng thái làm việc</label>
       <CustomDropdown label="" value={workStatus} options={employmentStatusOptions} onChange={(value) => setWorkStatus(value as EmploymentStatus)}/>
     </div>
     <div className="mt-4 grid gap-2 sm:grid-cols-2">
-      <button className={authButton} disabled={busy||(roleCode===currentRole&&workStatus===employmentStatus)} onClick={()=>setConfirm("profile")}>{busy?"Đang lưu…":"Lưu thay đổi"}</button>
-      <button disabled={busy} className="min-h-11 rounded-xl border border-border px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50" onClick={()=>setConfirm(status==="active"?"deactivate":"reactivate")}>{status==="active"?"Tạm khóa truy cập":"Khôi phục truy cập"}</button>
+      <button className={authButton} disabled={busy||(roleCode===currentRole&&workStatus===employmentStatus&&businessRole===displayRole)} onClick={()=>setConfirm("profile")}>{busy?"Đang lưu…":"Lưu thay đổi"}</button>
+      <button disabled={busy} className="min-h-11 rounded-xl border border-border px-3 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted" onClick={()=>setConfirm(status==="active"?"deactivate":"reactivate")}>{status==="active"?"Tạm khóa truy cập":"Khôi phục truy cập"}</button>
     </div>
-    <button disabled={busy} className="mt-2 min-h-10 w-full rounded-xl px-3 text-xs font-semibold text-slate-500 transition hover:bg-slate-50 hover:text-red-600" onClick={()=>setConfirm("revoke-sessions")}>Thu hồi tất cả session</button>
-    <p className="mt-4 rounded-xl border border-blue-100 bg-blue-50/70 p-3 text-xs leading-5 text-blue-800">Hệ thống luôn giữ lại ít nhất một Founder/GM và không cho phép tài khoản đang đăng nhập tự hạ quyền.</p>
-    {confirm&&<div role="alert" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-sm font-medium text-amber-900">Xác nhận {confirm==="profile"?"lưu role và trạng thái làm việc":confirm.replaceAll("-"," ")}?</p><div className="mt-3 flex gap-2"><button disabled={busy} className={authButton} onClick={()=>void execute()}>Xác nhận</button><button className="min-h-11 px-3 text-sm font-semibold text-slate-600" onClick={()=>setConfirm(null)}>Hủy</button></div></div>}
-    {error&&<p role="alert" className="mt-3 text-sm text-red-600">{error}</p>}
+    <button disabled={busy} className="mt-2 min-h-10 w-full rounded-xl px-3 text-xs font-semibold text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onClick={()=>setConfirm("revoke-sessions")}>Thu hồi tất cả session</button>
+    <div className="mt-4 space-y-2 border-t border-border pt-4">
+      <label className={controlLabel}>Quyền P&amp;L</label>
+      <CrmMultiSelect ariaLabel="Quyền P&L" searchable={false} placeholder="Chưa cấp" selectedCountLabel={(count)=>count===4?"Toàn quyền":`${count} quyền`} disabled={busy||currentRole==="FOUNDER_GM"||status!=="active"} options={costPermissionOptions} values={costCodes} onChange={(values)=>void changeCostPermissions(values)}/>
+      {currentRole==="FOUNDER_GM"?<p className="text-xs text-muted-foreground">Founder/GM luôn có toàn quyền chi phí.</p>:status!=="active"?<p className="text-xs text-muted-foreground">Khôi phục truy cập trước khi cấp quyền P&amp;L.</p>:null}
+      {costMessage&&<p role="status" className="text-xs text-success">{costMessage}</p>}
+    </div>
+    {confirm&&<div role="alert" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-sm font-medium text-amber-900">Xác nhận {confirm==="profile"?"lưu role và trạng thái làm việc":confirm.replaceAll("-"," ")}?</p><div className="mt-3 flex gap-2"><button disabled={busy} className={authButton} onClick={()=>void execute()}>Xác nhận</button><button className="min-h-11 px-3 text-sm font-semibold text-muted-foreground" onClick={()=>setConfirm(null)}>Hủy</button></div></div>}
+    {error&&<p role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
   </section>;
 }

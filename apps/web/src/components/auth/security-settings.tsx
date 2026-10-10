@@ -1,12 +1,12 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { authRequest } from "@/lib/native-auth-client";
 import { useAuth } from "@/lib/auth";
 import { AuthField, authButton, authInput } from "./account-form";
 type Account = { email: string; displayName: string; avatarUrl?: string; emailVerified: boolean; passwordEnabled: boolean; mfaEnabled: boolean; identities: { provider: string }[] };
 type Session = { id: string; current: boolean; createdAt: string; lastSeenAt: string; expiresAt: string; userAgent?: string; authMethod?: string };
-export function SecuritySettings() {
+export function SecuritySettings({ sessionSlot }: { sessionSlot?: ReactNode } = {}) {
   const { refresh, logout } = useAuth();
   const [account, setAccount] = useState<Account | null>(null); const [sessions, setSessions] = useState<Session[]>([]);
   const [name, setName] = useState(""); const [password, setPassword] = useState(""); const [nextPassword, setNextPassword] = useState(""); const [code, setCode] = useState("");
@@ -54,11 +54,12 @@ export function SecuritySettings() {
           {recovery.length > 0 && <div className="space-y-2 rounded-xl border border-border p-4"><p className="text-sm font-semibold">Recovery codes — shown once</p><pre className="whitespace-pre-wrap select-all text-sm">{recovery.join("\n")}</pre><button className="text-sm text-primary" onClick={() => setRecovery([])}>I saved these codes</button></div>}
         </div>
       </div>
-      <div className="space-y-3 border-t border-border pt-5"><div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-semibold">Active sessions</h3><button disabled={busy} className="min-h-11 rounded-xl border border-border px-3 text-sm" onClick={() => void run(async () => { await authRequest("sessions/revoke-others", {}); }, "Other sessions signed out.")}>Sign out other devices</button></div>
+      <div id="phien-dang-nhap" className="scroll-mt-4 space-y-3 border-t border-border pt-5"><div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-semibold">Active sessions</h3><button disabled={busy} className="min-h-11 rounded-xl border border-border px-3 text-sm" onClick={() => void run(async () => { await authRequest("sessions/revoke-others", {}); }, "Other sessions signed out.")}>Sign out other devices</button></div>
         {sessions.map(s => <div key={s.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border p-3"><div className="min-w-0"><p className="text-sm font-medium">{s.current ? "This browser" : "Another device"} · {s.authMethod || "Session"}</p><p className="max-w-xl break-all text-xs text-muted-foreground">{s.userAgent || "Browser details unavailable"}</p><p className="text-xs text-muted-foreground">Last active {new Date(s.lastSeenAt || s.createdAt).toLocaleString()} · Expires {new Date(s.expiresAt).toLocaleString()}</p></div><button disabled={busy} className="min-h-11 text-sm text-destructive" onClick={() => s.current ? void logout() : void run(async () => { await authRequest(`sessions/${encodeURIComponent(s.id)}/revoke`, {}); }, "Session signed out.")}>Sign out</button></div>)}
       </div>
     </>}
     </fieldset>
+    {sessionSlot}
   </section>;
 }
 

@@ -1,4 +1,5 @@
 "use client";
+import { PersonLink } from "@/components/person-link";
 import { MoneyAmount } from "@/components/money-amount";
 
 
@@ -11,16 +12,9 @@ import {
   Briefcase,
   Building2,
   Calendar,
-  CheckCircle2,
-  Wallet,
-  ExternalLink,
-  FileText,
-  Globe,
   Mail,
-  MapPin,
   Phone,
   Star,
-  TrendingUp,
   Users,
 } from "lucide-react";
 import Link from "next/link";
@@ -28,7 +22,7 @@ import { useParams } from "next/navigation";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import type { AccountSummary, ContactSummary, ProjectSummary, ResourceListResponse } from "@b2b-crm/contracts";
 
-const TABS = ["Overview", "Contacts", "Projects", "Deals", "Activity", "Documents"] as const;
+const TABS = ["Projects", "Contacts"] as const;
 type Tab = (typeof TABS)[number];
 
 type ClientDetailState = {
@@ -143,7 +137,7 @@ function ProjectRow({ project, accent }: { project: ProjectSummary; accent: stri
 export default function ClientDetailPage() {
   const params = useParams<{ clientId: string }>();
   const clientId = params?.clientId ?? "";
-  const [tab, setTab] = useState<Tab>("Overview");
+  const [tab, setTab] = useState<Tab>("Projects");
   const [state, setState] = useState<ClientDetailState>({
     account: null,
     contacts: [],
@@ -213,7 +207,14 @@ export default function ClientDetailPage() {
   const health = healthMeta(account?.health);
   const totalTasks = state.projects.reduce((sum, project) => sum + (project.taskCount ?? 0), 0);
   const completedTasks = state.projects.reduce((sum, project) => sum + (project.completedTaskCount ?? 0), 0);
-  const activeProjects = state.projects.filter(project => !["completed", "done", "cancelled"].includes(project.status.toLowerCase())).length;
+  const taskPercent = totalTasks ? Math.round((completedTasks / totalTasks) * 100) : 0;
+  const projectList = state.projects.length ? (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      {state.projects.map(project => <ProjectRow key={project.id} project={project} accent={colorForId(project.id)} />)}
+    </div>
+  ) : (
+    <EmptyState icon={Briefcase} title="No production projects yet" description="This client has no projects in the current workspace. The page no longer fabricates placeholder project rows." />
+  );
 
   if (state.loading || state.error || !account) {
     return (
@@ -223,7 +224,7 @@ export default function ClientDetailPage() {
               <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-xl border border-border bg-card text-muted-foreground">
                 {state.loading ? <Building2 className="h-7 w-7" /> : <AlertCircle className="h-7 w-7" />}
               </div>
-              <h1 className="text-2xl font-black text-foreground">{state.loading ? "Loading client..." : state.error || "Client not found"}</h1>
+              <h1 className="!text-xl font-black text-foreground">{state.loading ? "Loading client..." : state.error || "Client not found"}</h1>
               <p className="mt-3 text-sm leading-6 text-muted-foreground">
                 {state.loading ? "Resolving the account workspace from production CRM data." : "This client does not exist in the production CRM workspace."}
               </p>
@@ -240,157 +241,91 @@ export default function ClientDetailPage() {
 
   return (
     <AppShell activeRoute="/clients" title="Client Detail">
-        <main className="flex-1 overflow-auto">
-          <div className="px-4 pt-4 sm:px-6">
-            <Link href="/clients" className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
-              <ArrowLeft className="h-3.5 w-3.5" /> Back to Clients
-            </Link>
-          </div>
+        <main className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:p-5">
+          <Link href="/clients" className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
+            <ArrowLeft className="h-3.5 w-3.5" /> Back to Clients
+          </Link>
 
-          <section className="mx-4 mt-4 rounded-2xl border border-border bg-card p-4 shadow-sm sm:mx-6 sm:p-6">
-            <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
-              <div className="flex min-w-0 items-start gap-4">
-                <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl text-2xl font-black text-white shadow-sm" style={{ backgroundColor: accent }}>
-                  {initialsFor(account.name)}
+          <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-base font-bold text-white shadow-sm" style={{ backgroundColor: accent }}>
+                {initialsFor(account.name)}
+              </div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="!text-xl truncate font-bold text-foreground">{account.name}</h1>
+                  <span className="rounded-full px-2.5 py-1 text-[11px] font-bold" style={{ backgroundColor: health.bg, color: health.color }}>
+                    {health.label}
+                  </span>
                 </div>
-                <div className="min-w-0">
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <h1 className="truncate text-2xl font-black tracking-tight text-foreground">{account.name}</h1>
-                    <span className="rounded-lg px-2 py-0.5 text-[10px] font-bold" style={{ backgroundColor: health.bg, color: health.color }}>
-                      {health.label}
+                <p className="mt-0.5 truncate text-sm text-muted-foreground">{account.code} · {account.ownerTeam}</p>
+              </div>
+            </div>
+            {account.picEmail && (
+              <a href={`mailto:${account.picEmail}`} className="flex items-center gap-1.5 rounded-xl border border-border px-3.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted">
+                <Mail className="h-4 w-4" /> Email PIC
+              </a>
+            )}
+          </header>
+
+          <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+            <div className="min-w-0 space-y-5">
+              <div className="overflow-x-auto">
+                <div className="flex min-w-max border-b border-border">
+                  {TABS.map(item => (
+                    <button
+                      key={item}
+                      type="button"
+                      aria-pressed={tab === item}
+                      onClick={() => setTab(item)}
+                      className={`relative px-4 py-3 text-sm font-semibold transition-colors ${tab === item ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                    >
+                      {item}
+                      {tab === item && <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full" style={{ backgroundColor: accent }} />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {tab === "Projects" && projectList}
+
+              {tab === "Contacts" && (
+                state.contacts.length ? (
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    {state.contacts.map(contact => <ContactCard key={contact.id} contact={contact} accent={colorForId(contact.id)} />)}
+                  </div>
+                ) : (
+                  <EmptyState icon={Users} title="No production contacts yet" description="This account has no synced contacts in the CRM database. Add contacts through the client workspace before operating this tab." />
+                )
+              )}
+            </div>
+
+            <aside className="xl:sticky xl:top-4">
+              <section className="rounded-2xl border border-border bg-card shadow-sm">
+                <h2 className="border-b border-border px-5 py-4 !text-sm font-bold text-foreground">Account Info</h2>
+                <dl className="divide-y divide-border px-5">
+                  <InfoRow label="Annual Value"><MoneyAmount value={account.annualValue ?? 0} /></InfoRow>
+                  <InfoRow label="Stage">{stageLabel(account.stage)}</InfoRow>
+                  <InfoRow label="PIC">
+                    {account.picUserId && account.picName ? (
+                      <PersonLink userId={account.picUserId} className="transition-colors hover:text-primary">{account.picName}</PersonLink>
+                    ) : (account.picName || "Unassigned")}
+                  </InfoRow>
+                  <InfoRow label="PIC email">{account.picEmail || "Not set"}</InfoRow>
+                  <InfoRow label="Owner team">{account.ownerTeam}</InfoRow>
+                  <InfoRow label="Projects">{state.projects.length}</InfoRow>
+                  <InfoRow label="Tasks done">
+                    <span className="flex items-center gap-2">
+                      <span className="font-mono tabular-nums">{completedTasks}/{totalTasks}</span>
+                      <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                        <span className="block h-full rounded-full bg-emerald-600" style={{ width: `${taskPercent}%` }} />
+                      </span>
                     </span>
-                    <span className="rounded-lg bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
-                      {stageLabel(account.stage)}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1.5"><Building2 className="h-3.5 w-3.5" />{account.code}</span>
-                    <span className="flex items-center gap-1.5"><Users className="h-3.5 w-3.5" />PIC: {account.picName || "Unassigned"}</span>
-                    {account.picEmail && <span className="flex items-center gap-1.5"><Mail className="h-3.5 w-3.5" />{account.picEmail}</span>}
-                    <span className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" />{account.ownerTeam}</span>
-                  </div>
-                  {account.commercialNote && <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">{account.commercialNote}</p>}
-                </div>
-              </div>
-              <div className="flex w-full flex-wrap items-center gap-2 md:w-auto md:shrink-0 md:justify-end">
-                {account.picEmail && (
-                  <a href={`mailto:${account.picEmail}`} className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3.5 py-2.5 text-xs font-semibold text-muted-foreground hover:bg-muted">
-                    <Mail className="h-3.5 w-3.5" /> Email PIC
-                  </a>
-                )}
-                <Link href={`/projects?accountId=${encodeURIComponent(account.id)}`} className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-semibold text-white shadow-sm" style={{ backgroundColor: accent }}>
-                  <Briefcase className="h-4 w-4" /> View Projects
-                </Link>
-              </div>
-            </div>
-
-            <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-              {[
-                { icon: Wallet, label: "Annual Value", value: <MoneyAmount value={(account.annualValue) ?? 0} />, color: "#2563eb" },
-                { icon: Briefcase, label: "Projects", value: state.projects.length, color: "#7c3aed" },
-                { icon: CheckCircle2, label: "Completed Tasks", value: `${completedTasks}/${totalTasks}`, color: "#16a34a" },
-                { icon: TrendingUp, label: "Active Projects", value: activeProjects, color: "#d97706" },
-              ].map(item => (
-                <div key={item.label} className="rounded-xl border border-border bg-background p-4">
-                  <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg" style={{ backgroundColor: `${item.color}15` }}>
-                    <item.icon className="h-4 w-4" style={{ color: item.color }} />
-                  </div>
-                  <p className="text-lg font-black text-foreground">{item.value}</p>
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{item.label}</p>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <div className="overflow-x-auto px-4 sm:px-6">
-            <div className="mt-6 flex min-w-max border-b border-border">
-              {TABS.map(item => (
-                <button
-                  key={item}
-                  onClick={() => setTab(item)}
-                  className={`relative px-4 py-3 text-sm font-semibold transition-colors ${tab === item ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                >
-                  {item}
-                  {tab === item && <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full" style={{ backgroundColor: accent }} />}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="px-4 py-5 sm:px-6">
-            {tab === "Overview" && (
-              <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-                <section className="rounded-xl border border-border bg-card p-5 shadow-sm lg:col-span-2">
-                  <h2 className="mb-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Operational Health</h2>
-                  <div className="space-y-4">
-                    {[
-                      { label: "Account health", score: health.score, color: health.color },
-                      { label: "Project delivery", score: state.projects.length ? Math.round(state.projects.reduce((sum, project) => sum + (project.progressPercent ?? 0), 0) / state.projects.length) : 0, color: accent },
-                      { label: "Task completion", score: totalTasks ? Math.round((completedTasks / totalTasks) * 100) : 0, color: "#16a34a" },
-                    ].map(item => (
-                      <div key={item.label}>
-                        <div className="mb-1 flex justify-between text-xs font-semibold">
-                          <span className="text-foreground">{item.label}</span>
-                          <span className="font-mono" style={{ color: item.color }}>{item.score}%</span>
-                        </div>
-                        <div className="h-2 overflow-hidden rounded-full bg-muted">
-                          <div className="h-full rounded-full" style={{ width: `${item.score}%`, backgroundColor: item.color }} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-                <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
-                  <h2 className="mb-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Account Info</h2>
-                  <div className="space-y-3 text-xs">
-                    {[
-                      ["Code", account.code],
-                      ["Stage", stageLabel(account.stage)],
-                      ["Owner team", account.ownerTeam],
-                      ["PIC", account.picName || "Unassigned"],
-                      ["PIC email", account.picEmail || "Not set"],
-                    ].map(([label, value]) => (
-                      <div key={label} className="flex justify-between gap-4">
-                        <span className="text-muted-foreground">{label}</span>
-                        <span className="text-right font-semibold text-foreground">{value}</span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              </div>
-            )}
-
-            {tab === "Contacts" && (
-              state.contacts.length ? (
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {state.contacts.map(contact => <ContactCard key={contact.id} contact={contact} accent={colorForId(contact.id)} />)}
-                </div>
-              ) : (
-                <EmptyState icon={Users} title="No production contacts yet" description="This account has no synced contacts in the CRM database. Add contacts through the client workspace before operating this tab." />
-              )
-            )}
-
-            {tab === "Projects" && (
-              state.projects.length ? (
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                  {state.projects.map(project => <ProjectRow key={project.id} project={project} accent={colorForId(project.id)} />)}
-                </div>
-              ) : (
-                <EmptyState icon={Briefcase} title="No production projects yet" description="This client has no projects in the current workspace. The page no longer fabricates placeholder project rows." />
-              )
-            )}
-
-            {tab === "Deals" && (
-              <EmptyState icon={Wallet} title="Deals are not populated for this client yet" description="Opportunity/deal detail records are not exposed on this visible client route yet, so this tab is intentionally empty instead of showing demo renewals or fake close dates." />
-            )}
-
-            {tab === "Activity" && (
-              <EmptyState icon={TrendingUp} title="No client activity timeline yet" description="Activity will appear here after production audit/event records are wired to client accounts. Seed timeline entries were removed from this core route." />
-            )}
-
-            {tab === "Documents" && (
-              <EmptyState icon={FileText} title="No client documents yet" description="Artifacts for client accounts are not persisted for this page yet. Upload actions are hidden until they write to the production artifact API." />
-            )}
+                  </InfoRow>
+                </dl>
+                {account.commercialNote && <p className="border-t border-border px-5 py-4 text-xs leading-5 text-muted-foreground">{account.commercialNote}</p>}
+              </section>
+            </aside>
           </div>
         </main>
 
@@ -399,5 +334,14 @@ export default function ClientDetailPage() {
           <span className="text-[11px] text-muted-foreground">Legal pages are not published yet.</span>
         </footer>
     </AppShell>
+  );
+}
+
+function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-3 items-center gap-2 py-3">
+      <dt className="text-xs font-semibold text-muted-foreground">{label}</dt>
+      <dd className="col-span-2 truncate text-xs font-bold text-foreground">{children}</dd>
+    </div>
   );
 }

@@ -14,15 +14,13 @@
 import {
   eachDate,
   isWorkingDay,
-  isoWeekKey,
   monthBounds,
-  monthOf,
-  startOfIsoWeek
-} from "./timesheet-mock-data";
+  monthOf
+} from "./timesheet-dates";
+import { isClosedNodeStatus, isTaskOverdue } from "./timesheet-status";
 import type {
   MemberState,
   MilestoneNode,
-  NodeStatus,
   Person,
   ProjectNode,
   StageNode,
@@ -139,7 +137,8 @@ export function buildPersonMonthSummaries(
         standardMinutes,
         completionPercent,
         missingMinutes: Math.max(0, standardMinutes - actualMinutes),
-        daysLogged: loggedDays.size,
+        // Working days only, so "x/y ngày" can never exceed y because of weekend logs.
+        daysLogged: workingDays.length - missingDays.length,
         workingDays: workingDays.length,
         missingDays,
         projectCount: new Set(personLogs.map((log) => log.projectId)).size,
@@ -173,6 +172,9 @@ export function buildMonthlyKpis(
 ): MonthlyKpis {
   const workingDays = workingDaysInMonth(filters.month, dataset.holidays, dataset.generatedAt);
   const actualMinutes = sum(logs.map((log) => log.minutes));
+  // Completeness is judged on the people in scope only: hours of former/inactive
+  // users stay in the total but must not fill anyone else's standard hours.
+  const scopedActualMinutes = sum(summaries.map((item) => item.actualMinutes));
   const standardMinutes = sum(summaries.map((item) => item.standardMinutes));
   const possibleDays = summaries.length * workingDays.length;
   const loggedDays = sum(summaries.map((item) => item.daysLogged));
@@ -180,327 +182,14 @@ export function buildMonthlyKpis(
   return {
     actualMinutes,
     standardMinutes,
-    completionPercent: standardMinutes > 0 ? (actualMinutes / standardMinutes) * 100 : 0,
-    missingMinutes: Math.max(0, standardMinutes - actualMinutes),
+    completionPercent: standardMinutes > 0 ? (scopedActualMinutes / standardMinutes) * 100 : 0,
+    missingMinutes: Math.max(0, standardMinutes - scopedActualMinutes),
     projectCount: new Set(logs.map((log) => log.projectId)).size,
     peopleCount: summaries.length,
     workingDays: workingDays.length,
     dayCoveragePercent: possibleDays > 0 ? (loggedDays / possibleDays) * 100 : 0,
     billablePercent: actualMinutes > 0 ? (sum(logs.filter((log) => log.billable).map((log) => log.minutes)) / actualMinutes) * 100 : 0
   };
-}
-
-/* ── Daily / weekly series (MTS-01, DTS-01, WTS-01) ─────────────────────── */
-
-export interface DayBucket {
-  date: string;
-  label: string;
-  actualMinutes: number;
-  standardMinutes: number;
-  isWorkingDay: boolean;
-  entryCount: number;
-  peopleLogged: number;
-}
-
-export function buildDailySeries(
-  dataset: TimesheetDataset,
-  filters: TimesheetFilters,
-  logs: TimeLog[],
-  summaries: PersonMonthSummary[]
-): DayBucket[] {
-  const { start, end } = monthBounds(filters.month);
-  const cap = dataset.generatedAt < end ? dataset.generatedAt : end;
-  const perDayStandard = sum(summaries.map((item) => item.person.standardMinutesPerDay * item.person.contractRatio));
-  const byDate = new Map<string, TimeLog[]>();
-  for (const log of logs) {
-    const bucket = byDate.get(log.date);
-    if (bucket) bucket.push(log);
-    else byDate.set(log.date, [log]);
-  }
-
-  return eachDate(start, cap).map((iso) => {
-    const dayLogs = byDate.get(iso) ?? [];
-    const working = isWorkingDay(iso, dataset.holidays);
-    return {
-      date: iso,
-      label: `${Number(iso.slice(8, 10))}/${Number(iso.slice(5, 7))}`,
-      actualMinutes: sum(dayLogs.map((log) => log.minutes)),
-      standardMinutes: working ? Math.round(perDayStandard) : 0,
-      isWorkingDay: working,
-      entryCount: dayLogs.length,
-      peopleLogged: new Set(dayLogs.map((log) => log.personId)).size
-    } satisfies DayBucket;
-  });
-}
-
-export interface WeekBucket {
-  weekKey: string;
-  label: string;
-  startDate: string;
-  actualMinutes: number;
-  standardMinutes: number;
-  workingDays: number;
-  daysLogged: number;
-  compliancePercent: number;
-}
-
-export function buildWeeklySeries(
-  dataset: TimesheetDataset,
-  filters: TimesheetFilters,
-  days: DayBucket[]
-): WeekBucket[] {
-  const grouped = new Map<string, DayBucket[]>();
-  for (const day of days) {
-    const key = isoWeekKey(day.date);
-    const bucket = grouped.get(key);
-    if (bucket) bucket.push(day);
-    else grouped.set(key, [day]);
-  }
-
-  return Array.from(grouped.entries())
-    .map(([weekKey, bucketDays]) => {
-      const workingDays = bucketDays.filter((day) => day.isWorkingDay);
-      const actualMinutes = sum(bucketDays.map((day) => day.actualMinutes));
-      const standardMinutes = sum(workingDays.map((day) => day.standardMinutes));
-      return {
-        weekKey,
-        label: `Tuần ${weekKey.slice(-2)}`,
-        startDate: startOfIsoWeek(bucketDays[0].date),
-        actualMinutes,
-        standardMinutes,
-        workingDays: workingDays.length,
-        daysLogged: workingDays.filter((day) => day.actualMinutes > 0).length,
-        compliancePercent: standardMinutes > 0 ? (actualMinutes / standardMinutes) * 100 : 0
-      } satisfies WeekBucket;
-    })
-    .sort((a, b) => a.startDate.localeCompare(b.startDate));
-}
-
-/* ── Cumulative flow + cycle time (Jira §4.2 reporting standards) ───────── */
-
-const FLOW_STATES: NodeStatus[] = ["not_started", "waiting", "in_progress", "blocked", "completed"];
-
-export interface FlowDayPoint {
-  date: string;
-  label: string;
-  not_started: number;
-  waiting: number;
-  in_progress: number;
-  blocked: number;
-  completed: number;
-  /** Items started but not finished — the band thickness that matters. */
-  wip: number;
-  /** Total items created up to this day. */
-  total: number;
-}
-
-export interface CumulativeFlowResult {
-  points: FlowDayPoint[];
-  /** Mean WIP across the covered days. */
-  averageWip: number;
-  /** Items completed inside the covered range. */
-  throughput: number;
-  /** Items completed per calendar week inside the range. */
-  throughputPerWeek: number;
-  /** Days where the blocked band grew — bottleneck evidence. */
-  blockedGrowthDays: number;
-  peakBlocked: number;
-}
-
-/**
- * Cumulative flow: how many items sit in each workflow state on each day.
- *
- * Rendered as a stacked area, so the total height is everything created so far,
- * each band's thickness is the WIP in that state, and the slope of the
- * `completed` band is throughput. A band that stays thick over time is the
- * bottleneck — that is the whole point of the diagram.
- */
-export function buildCumulativeFlow(
-  dataset: TimesheetDataset,
-  filters: TimesheetFilters
-): CumulativeFlowResult {
-  const { start, end } = monthBounds(filters.month);
-  const cap = dataset.generatedAt < end ? dataset.generatedAt : end;
-  const days = eachDate(start, cap);
-
-  const events = dataset.statusEvents
-    .filter((event) => filters.projectId === "all" || event.projectId === filters.projectId)
-    .slice()
-    .sort((a, b) => a.changedAt.localeCompare(b.changedAt));
-
-  // Replay the whole history so a task created before the month still counts.
-  const stateByTask = new Map<string, NodeStatus>();
-  let cursor = 0;
-  const points: FlowDayPoint[] = [];
-
-  const applyUpTo = (dateInclusive: string) => {
-    while (cursor < events.length && events[cursor].changedAt <= dateInclusive) {
-      stateByTask.set(events[cursor].taskId, events[cursor].toStatus);
-      cursor += 1;
-    }
-  };
-
-  for (const date of days) {
-    applyUpTo(date);
-    const counts: Record<NodeStatus, number> = { not_started: 0, waiting: 0, in_progress: 0, blocked: 0, completed: 0 };
-    for (const state of stateByTask.values()) counts[state] += 1;
-    points.push({
-      date,
-      label: `${Number(date.slice(8, 10))}/${Number(date.slice(5, 7))}`,
-      ...counts,
-      wip: counts.in_progress + counts.blocked,
-      total: stateByTask.size
-    });
-  }
-
-  const completedInRange = events.filter(
-    (event) => event.toStatus === "completed" && event.changedAt >= start && event.changedAt <= cap
-  ).length;
-  const weeks = Math.max(1, days.length / 7);
-
-  let blockedGrowthDays = 0;
-  for (let index = 1; index < points.length; index += 1) {
-    if (points[index].blocked > points[index - 1].blocked) blockedGrowthDays += 1;
-  }
-
-  return {
-    points,
-    averageWip: points.length > 0 ? sum(points.map((point) => point.wip)) / points.length : 0,
-    throughput: completedInRange,
-    throughputPerWeek: completedInRange / weeks,
-    blockedGrowthDays,
-    peakBlocked: points.reduce((acc, point) => Math.max(acc, point.blocked), 0)
-  };
-}
-
-export interface CycleTimePoint {
-  taskId: string;
-  taskName: string;
-  projectCode: string;
-  /** Completion date — the x axis. */
-  completedAt: string;
-  /** Days from first `in_progress` to `completed` — the y axis. */
-  cycleDays: number;
-  /** Numeric x for the scatter plot (days since range start). */
-  x: number;
-  /** Rolling mean of the last `ROLLING_WINDOW` completions, in order. */
-  rollingAverage: number;
-  outlier: boolean;
-}
-
-export interface ControlChartResult {
-  points: CycleTimePoint[];
-  mean: number;
-  median: number;
-  standardDeviation: number;
-  /** mean + 2σ — the upper control limit. */
-  upperLimit: number;
-  outliers: number;
-  /** Days covered, used to label the x axis. */
-  days: string[];
-  /**
-   * Control limits computed from a handful of points are noise. Below this many
-   * completions the limits are shown but must be labelled as provisional.
-   */
-  sampleAdequate: boolean;
-}
-
-/** Minimum completions before mean ± 2σ limits are worth acting on. */
-export const CONTROL_CHART_MIN_SAMPLE = 12;
-
-const ROLLING_WINDOW = 5;
-
-/**
- * Control chart: cycle time per completed item, with a rolling average and an
- * upper control limit at mean + 2σ.
- *
- * Used for stability and forecasting: tight scatter under the limit means the
- * process is predictable, so cycle time can be used to forecast. Points above
- * the limit are the ones worth a post-mortem — not the average.
- *
- * Cycle time is measured from the first `in_progress` transition, NOT from task
- * creation: time sitting in the backlog is lead time, and conflating the two
- * flatters the delivery process.
- */
-export function buildControlChart(
-  dataset: TimesheetDataset,
-  filters: TimesheetFilters
-): ControlChartResult {
-  const { start, end } = monthBounds(filters.month);
-  const cap = dataset.generatedAt < end ? dataset.generatedAt : end;
-  const days = eachDate(start, cap);
-
-  const taskMeta = new Map<string, { name: string; projectCode: string }>();
-  for (const project of dataset.projects) {
-    if (filters.projectId !== "all" && project.id !== filters.projectId) continue;
-    for (const milestone of project.milestones) {
-      for (const stage of milestone.stages) {
-        for (const task of stage.tasks) taskMeta.set(task.id, { name: task.name, projectCode: project.code });
-      }
-    }
-  }
-
-  const startedAt = new Map<string, string>();
-  const completedAt = new Map<string, string>();
-  for (const event of dataset.statusEvents.slice().sort((a, b) => a.changedAt.localeCompare(b.changedAt))) {
-    if (!taskMeta.has(event.taskId)) continue;
-    if (event.toStatus === "in_progress" && !startedAt.has(event.taskId)) startedAt.set(event.taskId, event.changedAt);
-    if (event.toStatus === "completed") completedAt.set(event.taskId, event.changedAt);
-  }
-
-  const raw = [...completedAt.entries()]
-    .filter(([taskId, done]) => done >= start && done <= cap && startedAt.has(taskId))
-    .map(([taskId, done]) => {
-      const began = startedAt.get(taskId) as string;
-      return {
-        taskId,
-        taskName: taskMeta.get(taskId)?.name ?? taskId,
-        projectCode: taskMeta.get(taskId)?.projectCode ?? "",
-        completedAt: done,
-        cycleDays: Math.max(1, daysBetweenISO(began, done)),
-        x: daysBetweenISO(start, done)
-      };
-    })
-    .sort((a, b) => a.completedAt.localeCompare(b.completedAt));
-
-  const values = raw.map((item) => item.cycleDays);
-  const mean = values.length > 0 ? sum(values) / values.length : 0;
-  const variance = values.length > 0 ? sum(values.map((value) => (value - mean) ** 2)) / values.length : 0;
-  const standardDeviation = Math.sqrt(variance);
-  const upperLimit = mean + 2 * standardDeviation;
-
-  const points = raw.map((item, index) => {
-    const window = values.slice(Math.max(0, index - ROLLING_WINDOW + 1), index + 1);
-    return {
-      ...item,
-      rollingAverage: Math.round((sum(window) / window.length) * 10) / 10,
-      outlier: item.cycleDays > upperLimit
-    } satisfies CycleTimePoint;
-  });
-
-  return {
-    points,
-    mean: Math.round(mean * 10) / 10,
-    median: Math.round(median(values) * 10) / 10,
-    standardDeviation: Math.round(standardDeviation * 10) / 10,
-    upperLimit: Math.round(upperLimit * 10) / 10,
-    outliers: points.filter((point) => point.outlier).length,
-    days,
-    sampleAdequate: points.length >= CONTROL_CHART_MIN_SAMPLE
-  };
-}
-
-function daysBetweenISO(fromISO: string, toISO: string): number {
-  return Math.round(
-    (new Date(`${toISO}T00:00:00Z`).getTime() - new Date(`${fromISO}T00:00:00Z`).getTime()) / 86_400_000
-  );
-}
-
-function median(values: readonly number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
 }
 
 /* ── Per-person × per-day load matrix ───────────────────────────────────── */
@@ -616,113 +305,6 @@ export function logsForPersonDay(logs: TimeLog[], personId: string, date: string
     .sort((a, b) => b.minutes - a.minutes);
 }
 
-/* ── Weekly planned-vs-actual effort per task ───────────────────────────── */
-
-export interface WeeklyEffortPerTaskPoint {
-  weekKey: string;
-  label: string;
-  startDate: string;
-  /** Tasks that carry an estimate AND were worked on during the week. */
-  taskCount: number;
-  /** Tasks worked on in the week that have no estimate (excluded from averages). */
-  excludedTaskCount: number;
-  /** Average entered estimate of those tasks. */
-  plannedMinutesPerTask: number | null;
-  /** Average total effort logged on those same tasks, up to the end of the week. */
-  actualMinutesPerTask: number | null;
-  /** actual / planned, as a percentage. 100% = effort matches the plan. */
-  matchPercent: number | null;
-  /** % of tasks worked on in the week that carry an estimate. */
-  estimateCoveragePercent: number;
-}
-
-/**
- * Weekly "is our effort per task matching the plan?" series.
- *
- * Both lines are measured on the SAME denominator — the set of tasks worked on
- * during that week that carry an entered estimate — so they are directly
- * comparable:
- *   • planned  = average `estimateMinutes` of those tasks (whole-task plan)
- *   • actual   = average effort logged on those tasks from the start of the
- *                range through the end of that week (whole-task consumption)
- *
- * Tasks with no estimate are excluded from both averages and reported
- * separately, so a project with poor estimate coverage cannot silently make the
- * plan line look better than it is.
- *
- * The result is a direct plan-versus-consumption comparison for the selected range.
- */
-export function buildWeeklyEffortPerTask(
-  dataset: TimesheetDataset,
-  logs: TimeLog[],
-  weeks: WeekBucket[]
-): WeeklyEffortPerTaskPoint[] {
-  const estimateByTask = new Map<string, number>();
-  for (const project of dataset.projects) {
-    for (const milestone of project.milestones) {
-      for (const stage of milestone.stages) {
-        for (const task of stage.tasks) estimateByTask.set(task.id, task.estimateMinutes);
-      }
-    }
-  }
-
-  return weeks.map((week) => {
-    const weekEnd = addDaysISO(week.startDate, 7);
-    const tasksInWeek = new Set<string>();
-    for (const log of logs) {
-      if (log.date >= week.startDate && log.date < weekEnd) tasksInWeek.add(log.taskId);
-    }
-
-    const withEstimate = [...tasksInWeek].filter((taskId) => (estimateByTask.get(taskId) ?? 0) > 0);
-    const excluded = tasksInWeek.size - withEstimate.length;
-
-    if (withEstimate.length === 0) {
-      return {
-        weekKey: week.weekKey,
-        label: week.label,
-        startDate: week.startDate,
-        taskCount: 0,
-        excludedTaskCount: excluded,
-        plannedMinutesPerTask: null,
-        actualMinutesPerTask: null,
-        matchPercent: null,
-        estimateCoveragePercent: tasksInWeek.size === 0 ? 0 : 0
-      } satisfies WeeklyEffortPerTaskPoint;
-    }
-
-    const taskIds = new Set(withEstimate);
-    const cumulativeByTask = new Map<string, number>();
-    for (const log of logs) {
-      if (!taskIds.has(log.taskId)) continue;
-      if (log.date >= weekEnd) continue; // effort to date, through the end of this week
-      cumulativeByTask.set(log.taskId, (cumulativeByTask.get(log.taskId) ?? 0) + log.minutes);
-    }
-
-    const plannedTotal = sum(withEstimate.map((taskId) => estimateByTask.get(taskId) ?? 0));
-    const actualTotal = sum(withEstimate.map((taskId) => cumulativeByTask.get(taskId) ?? 0));
-    const planned = plannedTotal / withEstimate.length;
-    const actual = actualTotal / withEstimate.length;
-
-    return {
-      weekKey: week.weekKey,
-      label: week.label,
-      startDate: week.startDate,
-      taskCount: withEstimate.length,
-      excludedTaskCount: excluded,
-      plannedMinutesPerTask: Math.round(planned),
-      actualMinutesPerTask: Math.round(actual),
-      matchPercent: planned > 0 ? (actual / planned) * 100 : null,
-      estimateCoveragePercent: tasksInWeek.size > 0 ? (withEstimate.length / tasksInWeek.size) * 100 : 0
-    } satisfies WeeklyEffortPerTaskPoint;
-  });
-}
-
-function addDaysISO(iso: string, days: number): string {
-  const date = new Date(`${iso}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
 /* ── Work-group split (MTS-03) ──────────────────────────────────────────── */
 
 export interface WorkGroupSlice {
@@ -747,6 +329,7 @@ export function buildWorkGroupSplit(logs: TimeLog[]): WorkGroupSlice[] {
 export interface PersonProjectRow {
   project: ProjectNode;
   actualMinutes: number;
+  /** Estimate of the tasks listed for this person only, never the whole project's. */
   estimateMinutes: number;
   taskCount: number;
   milestones: Array<{
@@ -786,7 +369,7 @@ export function buildPersonProjectRows(dataset: TimesheetDataset, logs: TimeLog[
       return {
         project,
         actualMinutes,
-        estimateMinutes: projectEstimateMinutes(project),
+        estimateMinutes: sum(milestones.flatMap((m) => m.stages.flatMap((s) => s.tasks.map((row) => row.task.estimateMinutes)))),
         taskCount: sum(milestones.flatMap((m) => m.stages.map((s) => s.tasks.length))),
         milestones
       } satisfies PersonProjectRow;
@@ -807,8 +390,15 @@ export function projectTasks(project: ProjectNode): TaskNode[] {
 export interface ProjectSummaryRow {
   project: ProjectNode;
   estimateMinutes: number;
+  /** Hours in the viewed period (the filtered logs). */
   actualMinutes: number;
+  /** Every hour of the project inside the loaded data window, whatever the period filter. */
+  allTimeActualMinutes: number;
+  /** False when the loaded window may start after the project did: all-time figures are then "trong dữ liệu đã tải". */
+  coversWholeProject: boolean;
+  /** All-time actual − estimate. */
   varianceMinutes: number;
+  /** All-time actual ÷ estimate; 0 when there is no estimate (see `risk`). */
   consumptionPercent: number;
   /** PTS-05 guard: % of tasks that actually carry an estimate. */
   estimateCoveragePercent: number;
@@ -818,11 +408,11 @@ export interface ProjectSummaryRow {
   overdueTaskCount: number;
   milestoneCount: number;
   activeMemberCount: number;
-  onHoldMemberCount: number;
+  onLeaveMemberCount: number;
   loggingMemberCount: number;
   deadline: string | null;
-  /** PTS-04 signal. */
-  risk: "ok" | "watch" | "over";
+  /** PTS-04 signal on the all-time figures; `no_estimate` = nothing to compare against. */
+  risk: "ok" | "watch" | "over" | "no_estimate";
 }
 
 export function buildProjectSummaries(
@@ -838,6 +428,10 @@ export function buildProjectSummaries(
     bucket.add(log.personId);
     peopleByProject.set(log.projectId, bucket);
   }
+  const allTimeMinutesByProject = new Map<string, number>();
+  for (const log of dataset.logs) {
+    allTimeMinutesByProject.set(log.projectId, (allTimeMinutesByProject.get(log.projectId) ?? 0) + log.minutes);
+  }
 
   return dataset.projects
     .map((project) => {
@@ -845,25 +439,28 @@ export function buildProjectSummaries(
       const estimateMinutes = projectEstimateMinutes(project);
       const actualMinutes = minutesByProject.get(project.id) ?? 0;
       const withEstimate = tasks.filter((task) => task.estimateMinutes > 0).length;
-      const consumptionPercent = estimateMinutes > 0 ? (actualMinutes / estimateMinutes) * 100 : 0;
+      const allTimeActualMinutes = allTimeMinutesByProject.get(project.id) ?? 0;
+      const consumptionPercent = estimateMinutes > 0 ? (allTimeActualMinutes / estimateMinutes) * 100 : 0;
 
       return {
         project,
         estimateMinutes,
         actualMinutes,
-        varianceMinutes: actualMinutes - estimateMinutes,
+        allTimeActualMinutes,
+        coversWholeProject: !dataset.windowStart || (project.startDate !== null && project.startDate >= dataset.windowStart),
+        varianceMinutes: allTimeActualMinutes - estimateMinutes,
         consumptionPercent,
         estimateCoveragePercent: tasks.length > 0 ? (withEstimate / tasks.length) * 100 : 0,
         taskCount: tasks.length,
         completedTaskCount: tasks.filter((task) => task.status === "completed").length,
         blockedTaskCount: tasks.filter((task) => task.status === "blocked").length,
-        overdueTaskCount: tasks.filter((task) => task.status !== "completed" && task.dueDate !== null && task.dueDate < today).length,
+        overdueTaskCount: tasks.filter((task) => isTaskOverdue(task, project.status, today)).length,
         milestoneCount: project.milestones.length,
         activeMemberCount: project.members.filter((member) => member.state === "active").length,
-        onHoldMemberCount: project.members.filter((member) => member.state === "on_hold").length,
+        onLeaveMemberCount: project.members.filter((member) => member.state === "on_leave").length,
         loggingMemberCount: peopleByProject.get(project.id)?.size ?? 0,
         deadline: project.deadline,
-        risk: consumptionPercent > 100 ? "over" : consumptionPercent > 85 ? "watch" : "ok"
+        risk: estimateMinutes <= 0 ? "no_estimate" : consumptionPercent > 100 ? "over" : consumptionPercent > 85 ? "watch" : "ok"
       } satisfies ProjectSummaryRow;
     })
     .sort((a, b) => b.actualMinutes - a.actualMinutes);
@@ -877,30 +474,47 @@ export interface ProjectBreakdownNode {
   ownerId: string | null;
   ownerName: string | null;
   estimateMinutes: number;
+  /** Hours in the viewed period. */
   actualMinutes: number;
+  /** Hours inside the whole loaded window; the variance is measured on this, never on one period. */
+  allTimeActualMinutes: number;
   variancePercent: number | null;
   startDate: string | null;
   dueDate: string | null;
+  /** Tasks only: see isTaskOverdue. */
+  overdue?: boolean;
   children?: ProjectBreakdownNode[];
 }
 
-/** PTS-02: Estimate + Actual at every level of Milestone → Stage → Task. */
+/**
+ * PTS-02: Estimate + Actual at every level of Milestone → Stage → Task.
+ * `logs` are the viewed period's; `allLogs` every loaded log, used for the variance against the estimate.
+ */
 export function buildProjectBreakdown(
   project: ProjectNode,
   logs: TimeLog[],
-  people: Person[]
+  people: Person[],
+  today: string,
+  allLogs: TimeLog[] = logs
 ): ProjectBreakdownNode[] {
   const nameById = new Map(people.map((person) => [person.id, person.name]));
-  const minutesByTask = new Map<string, number>();
-  for (const log of logs) {
-    if (log.projectId !== project.id) continue;
-    minutesByTask.set(log.taskId, (minutesByTask.get(log.taskId) ?? 0) + log.minutes);
-  }
+  const minutesOf = (source: TimeLog[]) => {
+    const byTask = new Map<string, number>();
+    for (const log of source) {
+      if (log.projectId !== project.id) continue;
+      byTask.set(log.taskId, (byTask.get(log.taskId) ?? 0) + log.minutes);
+    }
+    return byTask;
+  };
+  const minutesByTask = minutesOf(logs);
+  const allTimeByTask = minutesOf(allLogs);
+  const variance = (allTime: number, estimate: number) => (estimate > 0 ? ((allTime - estimate) / estimate) * 100 : null);
 
   return project.milestones.map((milestone) => {
     const stageNodes: ProjectBreakdownNode[] = milestone.stages.map((stage) => {
       const taskNodes: ProjectBreakdownNode[] = stage.tasks.map((task) => {
         const actual = minutesByTask.get(task.id) ?? 0;
+        const allTime = allTimeByTask.get(task.id) ?? 0;
         return {
           id: task.id,
           name: task.name,
@@ -910,13 +524,16 @@ export function buildProjectBreakdown(
           ownerName: task.assigneeId ? nameById.get(task.assigneeId) ?? null : null,
           estimateMinutes: task.estimateMinutes,
           actualMinutes: actual,
-          variancePercent: task.estimateMinutes > 0 ? ((actual - task.estimateMinutes) / task.estimateMinutes) * 100 : null,
+          allTimeActualMinutes: allTime,
+          variancePercent: variance(allTime, task.estimateMinutes),
           startDate: task.startDate,
-          dueDate: task.dueDate
+          dueDate: task.dueDate,
+          overdue: isTaskOverdue(task, project.status, today)
         };
       });
       const estimate = sum(taskNodes.map((node) => node.estimateMinutes));
       const actual = sum(taskNodes.map((node) => node.actualMinutes));
+      const allTime = sum(taskNodes.map((node) => node.allTimeActualMinutes));
       return {
         id: stage.id,
         name: stage.name,
@@ -926,7 +543,8 @@ export function buildProjectBreakdown(
         ownerName: stage.ownerId ? nameById.get(stage.ownerId) ?? null : null,
         estimateMinutes: estimate,
         actualMinutes: actual,
-        variancePercent: estimate > 0 ? ((actual - estimate) / estimate) * 100 : null,
+        allTimeActualMinutes: allTime,
+        variancePercent: variance(allTime, estimate),
         startDate: stage.startDate,
         dueDate: stage.dueDate,
         children: taskNodes
@@ -935,6 +553,7 @@ export function buildProjectBreakdown(
 
     const estimate = sum(stageNodes.map((node) => node.estimateMinutes));
     const actual = sum(stageNodes.map((node) => node.actualMinutes));
+    const allTime = sum(stageNodes.map((node) => node.allTimeActualMinutes));
     return {
       id: milestone.id,
       name: milestone.name,
@@ -944,7 +563,8 @@ export function buildProjectBreakdown(
       ownerName: milestone.picId ? nameById.get(milestone.picId) ?? null : null,
       estimateMinutes: estimate,
       actualMinutes: actual,
-      variancePercent: estimate > 0 ? ((actual - estimate) / estimate) * 100 : null,
+      allTimeActualMinutes: allTime,
+      variancePercent: variance(allTime, estimate),
       startDate: milestone.startDate,
       dueDate: milestone.dueDate,
       children: stageNodes
@@ -956,9 +576,9 @@ export function buildProjectBreakdown(
 
 export interface ProjectMemberRow {
   person: Person;
-  role: string;
+  role?: string;
   state: MemberState;
-  joinedAt: string;
+  joinedAt?: string;
   actualMinutes: number;
   openTaskCount: number;
   lastLoggedDate: string | null;
@@ -985,7 +605,7 @@ export function buildProjectMemberRows(
       state: member.state,
       joinedAt: member.joinedAt,
       actualMinutes: sum(memberLogs.map((log) => log.minutes)),
-      openTaskCount: tasks.filter((task) => task.assigneeId === member.personId && task.status !== "completed").length,
+      openTaskCount: tasks.filter((task) => task.assigneeId === member.personId && !isClosedNodeStatus(task.status)).length,
       lastLoggedDate: dates.length > 0 ? dates[dates.length - 1] : null
     });
   }
@@ -1029,7 +649,7 @@ export function buildProjectReadiness(
           key: "deadline",
           label: "Có deadline dự án",
           passed: project.deadline !== null,
-          detail: project.deadline ?? "Chưa đặt deadline"
+          detail: project.deadline ?? "Chưa có ngày kết thúc kế hoạch"
         },
         {
           key: "milestone",

@@ -1,4 +1,5 @@
-import { buildProjectSummaries } from "./timesheet-selectors";
+import { isWorkingDay, monthOf } from "./timesheet-dates";
+import { buildProjectSummaries, peopleInScope, type TimesheetFilters } from "./timesheet-selectors";
 import type { TimeLog, TimesheetDataset } from "./timesheet-types";
 
 export type TimesheetAlertTone = "danger" | "warning" | "info";
@@ -11,14 +12,22 @@ export interface TimesheetAlert {
   count: number;
 }
 
-/** Build the compact alert strip used by the group Timesheet views. */
-export function buildTimesheetAlerts(dataset: TimesheetDataset, logs: TimeLog[], today: string): TimesheetAlert[] {
-  const summaries = buildProjectSummaries(dataset, logs, today);
+/**
+ * Build the compact alert strip used by the group Timesheet views.
+ * Every count follows the active filters: project filter for task/plan alerts,
+ * department/person filters for "chưa ghi giờ hôm nay" — which only exists when
+ * the viewed period contains today and today is a working day.
+ */
+export function buildTimesheetAlerts(dataset: TimesheetDataset, logs: TimeLog[], today: string, filters: TimesheetFilters): TimesheetAlert[] {
+  const summaries = buildProjectSummaries(dataset, logs, today).filter((row) => filters.projectId === "all" || row.project.id === filters.projectId);
   const overdueTasks = summaries.reduce((total, row) => total + row.overdueTaskCount, 0);
   const blockedTasks = summaries.reduce((total, row) => total + row.blockedTaskCount, 0);
+  // All-time actual vs all-time estimate (see buildProjectSummaries), not the period's hours.
   const overPlanProjects = summaries.filter((row) => row.risk === "over").length;
-  const loggedToday = new Set(logs.filter((log) => log.date === today).map((log) => log.personId));
-  const missingPeople = dataset.people.filter((person) => person.active && !loggedToday.has(person.id)).length;
+  // Anyone with an entry today has logged, whatever project/work-group filter narrows `logs`.
+  const loggedToday = new Set(dataset.logs.filter((log) => log.date === today).map((log) => log.personId));
+  const todayInPeriod = monthOf(today) === filters.month && isWorkingDay(today, dataset.holidays);
+  const missingPeople = todayInPeriod ? peopleInScope(dataset, filters).filter((person) => !loggedToday.has(person.id)).length : 0;
 
   const alerts: TimesheetAlert[] = [];
   if (missingPeople > 0) alerts.push({ id: "missing-logs", tone: "warning", label: "nhân sự chưa ghi giờ hôm nay", detail: "Kiểm tra bảng giờ cá nhân", count: missingPeople });

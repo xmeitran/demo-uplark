@@ -1,4 +1,7 @@
 "use client";
+import { apiErrorMessage, isNetworkFailure, readApiError } from "@/lib/api-error";
+import { isActualTimeEntry } from "@/lib/time-entry-actual";
+import { PersonLink } from "@/components/person-link";
 import { useTaskPeople } from "@/hooks/use-task-people";
 import { TaskChangeHistory } from "./task-change-history";
 import { ArrowLeft, ArrowRight } from "lucide-react";
@@ -602,6 +605,7 @@ export function TaskDetailWorkbench({
   const [planningCompletionError, setPlanningCompletionError] = useState<string | null>(null);
 
   // Global editing state and draft inputs state
+  const [historyTab, setHistoryTab] = useState<"status" | "changes">("status");
   const [isGlobalEditing, setIsGlobalEditing] = useState(false);
   const [showConfirmEditModal, setShowConfirmEditModal] = useState(false);
   const [showConfirmSaveModal, setShowConfirmSaveModal] = useState(false);
@@ -940,7 +944,7 @@ export function TaskDetailWorkbench({
         body: JSON.stringify(body)
       });
 
-      if (!response.ok) throw new Error();
+      if (!response.ok) throw await readApiError(response);
       const savedTask = (await response.json()) as ProjectTaskSummary;
 
       const editHistoryItem = {
@@ -967,9 +971,10 @@ export function TaskDetailWorkbench({
       syncTasks(updated);
       setIsGlobalEditing(false);
       triggerToast(`Đã cập nhật công việc "${formatTaskTitle(taskInput.title)}".`, "success");
-    } catch (max) {
-      if (!canUseOfflineDrafts) {
-        triggerToast(productionWriteFailureMessage(), "danger");
+    } catch (error) {
+      // An API rejection is shown with its own message and never kept as an offline draft; only network failures are.
+      if (!canUseOfflineDrafts || !isNetworkFailure(error)) {
+        triggerToast(apiErrorMessage(error, productionWriteFailureMessage()), "danger");
         return;
       }
 
@@ -1091,7 +1096,7 @@ export function TaskDetailWorkbench({
         body: JSON.stringify(body)
       });
 
-      if (!response.ok) throw new Error();
+      if (!response.ok) throw await readApiError(response);
       const savedTask = (await response.json()) as ProjectTaskSummary;
 
       const editHistoryItem = {
@@ -1118,9 +1123,10 @@ export function TaskDetailWorkbench({
       syncTasks(updated);
       setShowEditModal(false);
       triggerToast(`Đã cập nhật công việc "${formatTaskTitle(taskInput.title)}".`, "success");
-    } catch {
-      if (!canUseOfflineDrafts) {
-        triggerToast(productionWriteFailureMessage(), "danger");
+    } catch (error) {
+      // An API rejection is shown with its own message and never kept as an offline draft; only network failures are.
+      if (!canUseOfflineDrafts || !isNetworkFailure(error)) {
+        triggerToast(apiErrorMessage(error, productionWriteFailureMessage()), "danger");
         return;
       }
 
@@ -1170,7 +1176,7 @@ export function TaskDetailWorkbench({
         body: JSON.stringify(body)
       });
 
-      if (!response.ok) throw new Error();
+      if (!response.ok) throw await readApiError(response);
       transitionAccepted = true;
       const responseTask = await response.json() as ProjectTaskSummary;
       if (responseTask.id !== taskId || responseTask.status !== newStatus) {
@@ -1197,14 +1203,15 @@ export function TaskDetailWorkbench({
       syncTasks(updated);
       setShowTransitionModal(false);
       triggerToast(`Đã chuyển trạng thái sang "${getStatusLabel(newStatus)}".`, "success");
-    } catch {
+    } catch (error) {
       if (transitionAccepted) {
         setShowTransitionModal(false);
         triggerToast("Backend đã nhận yêu cầu chuyển trạng thái, nhưng chưa xác minh được trạng thái đã lưu. Hãy tải lại trước khi thao tác tiếp.", "danger");
         return;
       }
-      if (!canUseOfflineDrafts) {
-        triggerToast(productionWriteFailureMessage(), "danger");
+      // An API rejection is shown with its own message and never kept as an offline draft; only network failures are.
+      if (!canUseOfflineDrafts || !isNetworkFailure(error)) {
+        triggerToast(apiErrorMessage(error, productionWriteFailureMessage()), "danger");
         return;
       }
 
@@ -1271,7 +1278,7 @@ export function TaskDetailWorkbench({
           body: JSON.stringify(body)
         });
 
-        if (!response.ok) throw new Error();
+        if (!response.ok) throw await readApiError(response);
         const savedPlanningBlock = await response.json() as TaskPlanningBlockSummary;
 
         const selectedAssignee = workspaceAssigneeOptions.find(opt => opt.value === savedPlanningBlock.userId);
@@ -1295,9 +1302,9 @@ export function TaskDetailWorkbench({
         setShowLogModal(false);
         triggerToast(`Đã lưu kế hoạch thời gian: ${formatTaskMinutes(logInput.minutes)} cho ${userDisplayName} và đồng bộ Calendar.`, "success");
       } catch (error) {
-        if (!canUseOfflineDrafts) {
+        if (!canUseOfflineDrafts || !isNetworkFailure(error)) {
           console.error("Failed to create task planning block", error);
-          triggerToast(productionWriteFailureMessage(), "danger");
+          triggerToast(apiErrorMessage(error, productionWriteFailureMessage()), "danger");
           return;
         }
 
@@ -1369,7 +1376,7 @@ export function TaskDetailWorkbench({
         body: JSON.stringify(body)
       });
 
-      if (!response.ok) throw new Error();
+      if (!response.ok) throw await readApiError(response);
       const savedEntry = await response.json() as CreateTaskTimeEntryResponse;
       if (!savedEntry?.id) {
         setShowLogModal(false);
@@ -1431,7 +1438,7 @@ export function TaskDetailWorkbench({
       const updated = localTasks.map(t => {
         if (t.id === taskId) {
           const entries = [...(t.timeEntries || []), newEntry];
-          const totalLogged = entries.reduce((acc, curr) => acc + (curr.approvalStatus !== "planned" ? curr.minutes : 0), 0);
+          const totalLogged = entries.reduce((acc, curr) => acc + (isActualTimeEntry(curr) ? curr.minutes : 0), 0);
           return {
             ...t,
             timeEntries: entries,
@@ -1462,9 +1469,10 @@ export function TaskDetailWorkbench({
         return;
       }
       triggerToast(`Đã ghi ${formatTaskMinutes(logInput.minutes)} làm việc${completionReadBack ? " và hoàn thành công việc" : ""}.`, "success");
-    } catch {
-      if (!canUseOfflineDrafts) {
-        triggerToast(productionWriteFailureMessage(), "danger");
+    } catch (error) {
+      // An API rejection is shown with its own message and never kept as an offline draft; only network failures are.
+      if (!canUseOfflineDrafts || !isNetworkFailure(error)) {
+        triggerToast(apiErrorMessage(error, productionWriteFailureMessage()), "danger");
         return;
       }
 
@@ -1508,7 +1516,7 @@ export function TaskDetailWorkbench({
       const updated = localTasks.map(t => {
         if (t.id === taskId) {
           const entries = [...(t.timeEntries || []), newEntry];
-          const totalLogged = entries.reduce((acc, curr) => acc + (curr.approvalStatus !== "planned" ? curr.minutes : 0), 0);
+          const totalLogged = entries.reduce((acc, curr) => acc + (isActualTimeEntry(curr) ? curr.minutes : 0), 0);
           return {
             ...t,
             status: offlineNextStatus || t.status,
@@ -1889,7 +1897,6 @@ export function TaskDetailWorkbench({
     const rightDate = new Date(right.startAt ?? right.workDate ?? right.createdAt).getTime();
     return rightDate - leftDate;
   });
-  const effortPercent = estimateMinutes > 0 ? Math.min(100, Math.round((loggedMinutes / estimateMinutes) * 100)) : 0;
   const statusClass = getStatusClass(currentTask.status);
   const priorityClass = getPriorityTone(currentTask.priority);
   const displayTitle = formatTaskTitle(currentTask.title);
@@ -1929,8 +1936,8 @@ export function TaskDetailWorkbench({
         <main className="flex-1 overflow-auto bg-[#f5f7fa]">
           <div className="flex w-full flex-col gap-5 px-3 py-4 sm:px-6 sm:py-6">
 
-            {projectPeople.loading && <p role="status">Loading project members…</p>}
-            {projectPeople.error && <div role="alert">{projectPeople.error} <button onClick={projectPeople.refresh}>Retry loading project members</button></div>}
+            {projectPeople.loading && <p role="status">Đang tải thành viên dự án…</p>}
+            {projectPeople.error && <div role="alert">{projectPeople.error} <button onClick={projectPeople.refresh}>Tải lại thành viên dự án</button></div>}
             {taskDetailSyncError ? (
               <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800">
                 {taskDetailSyncError}
@@ -2027,16 +2034,6 @@ export function TaskDetailWorkbench({
 
                 {/* Action buttons */}
                 <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:shrink-0 xl:justify-end">
-                  <Link
-                    href={backUrl}
-                    className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-all active:scale-[0.98]"
-                  >
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M19 12H5"/>
-                      <path d="M12 19l-7-7 7-7"/>
-                    </svg>
-                    Quay lại danh sách
-                  </Link>
                   {isGlobalEditing ? (
                     <>
                       <button
@@ -2107,80 +2104,6 @@ export function TaskDetailWorkbench({
                   )}
                 </div>
               </div>
-
-              {/* Meta bar */}
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-2 pt-3 border-t border-slate-100 text-[11px] text-slate-500">
-                <div className="flex items-center gap-1.5">
-                  <ShopifyIcon name="users" size={11} />
-                  <span className="font-semibold text-slate-700">{currentTask.accountName}</span>
-                </div>
-                {currentTask.projectName && (
-                  <div className="flex items-center gap-1.5">
-                    <ShopifyIcon name="briefcase" size={11} />
-                    <span className="font-semibold text-slate-700">{currentTask.projectName}</span>
-                  </div>
-                )}
-                <div className="flex items-center gap-1.5">
-                  <ShopifyIcon name="users" size={11} />
-                  <span>Phụ trách:</span>
-                  <span className="font-semibold text-slate-700">{displayAssignee}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <ShopifyIcon name="clock" size={11} />
-                  <span className="font-semibold text-slate-700">{formatTaskMinutes(loggedMinutes)}</span>
-                  <span className="text-slate-400">/ {formatTaskMinutes(estimateMinutes)}</span>
-                  {estimateMinutes > 0 && (
-                    <span className="inline-block h-1.5 w-14 rounded-full bg-slate-100 overflow-hidden align-middle">
-                      <span className="block h-full rounded-full bg-indigo-500 transition-all" style={{ width: `${effortPercent}%` }} />
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <ShopifyIcon name="calendar" size={11} />
-                  <span>Hạn chót:</span>
-                  <span className={`font-semibold ${currentTask.overdue ? "text-red-500" : "text-slate-700"}`}>{formatTaskDate(currentTask.dueAt)}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* ── ② Quick Stats Bar ────────────────────────────────────────────────── */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
-              {[
-                {
-                  icon: <ShopifyIcon name="clock" size={16} />,
-                  bg: "bg-indigo-50", color: "text-indigo-600",
-                  label: "Đã ghi", value: formatTaskMinutes(loggedMinutes)
-                },
-                {
-                  icon: <ShopifyIcon name="target" size={16} />,
-                  bg: "bg-violet-50", color: "text-violet-600",
-                  label: "Ước tính", value: estimateMinutes ? formatTaskMinutes(estimateMinutes) : "—"
-                },
-                {
-                  icon: <ShopifyIcon name="check" size={16} />,
-                  bg: "bg-emerald-50", color: "text-emerald-600",
-                  label: "Subtasks", value: `${completedSubtasks}/${subtasks.length}`
-                },
-                {
-                  icon: <ShopifyIcon name="calendar" size={16} />,
-                  bg: currentTask.overdue ? "bg-red-50" : "bg-amber-50",
-                  color: currentTask.overdue ? "text-red-500" : "text-amber-600",
-                  label: "Hạn chót", value: formatTaskDate(currentTask.dueAt)
-                }
-              ].map(stat => (
-                <div
-                  key={stat.label}
-                  className="bg-white border border-slate-100 rounded-2xl px-4 py-3.5 shadow-[0_1px_4px_rgba(0,0,0,0.04)] flex items-center gap-3"
-                >
-                  <div className={`h-9 w-9 shrink-0 rounded-xl ${stat.bg} ${stat.color} flex items-center justify-center`}>
-                    {stat.icon}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{stat.label}</p>
-                    <p className="text-sm font-bold text-slate-800 truncate">{stat.value}</p>
-                  </div>
-                </div>
-              ))}
             </div>
 
             {/* ── ③ Two-column layout ──────────────────────────────────────────────── */}
@@ -2201,14 +2124,6 @@ export function TaskDetailWorkbench({
                       </div>
                       <div className="text-xs font-bold text-slate-700 tracking-wide">Mô tả chi tiết</div>
                     </div>
-                    {!isGlobalEditing && (
-                      <button
-                        onClick={() => setShowConfirmEditModal(true)}
-                        className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700 px-2 py-1 rounded-lg hover:bg-indigo-50 transition-colors"
-                      >
-                        Chỉnh sửa
-                      </button>
-                    )}
                   </div>
                   <div className="px-6 py-5">
                     {isGlobalEditing ? (
@@ -2408,259 +2323,207 @@ export function TaskDetailWorkbench({
                   </div>
                 </div>
 
-                {/* Time Logs + Status History */}
-                <div className="grid gap-5 md:grid-cols-2">
-
-                  {/* Time Logs */}
-                  <div className="bg-white border border-slate-100 rounded-2xl shadow-[0_1px_4px_rgba(0,0,0,0.04)] overflow-hidden flex flex-col">
-                    <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100">
-                      <div className="flex items-center gap-2">
-                        <div className="h-5 w-5 rounded-lg bg-violet-50 flex items-center justify-center text-violet-600">
-                          <ShopifyIcon name="clock" size={11} />
-                        </div>
-                        <div className="text-xs font-bold text-slate-700 tracking-wide">Giờ đã ghi</div>
+                {/* Time Logs */}
+                <div className="bg-white border border-slate-100 rounded-2xl shadow-[0_1px_4px_rgba(0,0,0,0.04)] overflow-hidden flex flex-col">
+                  <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <div className="h-5 w-5 rounded-lg bg-violet-50 flex items-center justify-center text-violet-600">
+                        <ShopifyIcon name="clock" size={11} />
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-bold text-slate-700">{formatTaskMinutes(loggedMinutes)} thực tế</span>
-                        <span className="text-[10px] text-slate-400">/ {formatTaskMinutes(estimateMinutes)} kế hoạch</span>
-                      </div>
+                      <div className="text-xs font-bold text-slate-700 tracking-wide">Giờ đã ghi</div>
                     </div>
-
-                    {estimateMinutes > 0 && (
-                      <div className="px-5 pt-3 pb-2.5 bg-slate-50/50 border-b border-slate-100/80 flex flex-col gap-1.5">
-                        <div className="flex items-center justify-between text-[10px] font-semibold text-slate-500">
-                          <span>Hiệu suất thực tế so với kế hoạch</span>
-                          <span className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${
-                            loggedMinutes > estimateMinutes
-                              ? "bg-amber-100 text-amber-800 border border-amber-200"
-                              : loggedMinutes === estimateMinutes
-                              ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
-                              : "bg-indigo-50 text-indigo-700 border border-indigo-100"
-                          }`}>
-                            {Math.round((loggedMinutes / estimateMinutes) * 100)}%
-                          </span>
-                        </div>
-                        <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-all duration-500 ${
-                              loggedMinutes > estimateMinutes ? "bg-amber-500 animate-pulse" : "bg-indigo-600"
-                            }`}
-                            style={{ width: `${Math.min(100, (loggedMinutes / estimateMinutes) * 100)}%` }}
-                          />
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="px-5 py-4 flex-1">
-                      {timeHistoryEntries.length > 0 ? (
-                        <div className="flex flex-col gap-2 max-h-[220px] overflow-auto p-0.5">
-                          {timeHistoryEntries.map((entry: any) => {
-                              const isPlanned = entry.entryKind === "planning";
-                              const isApproved = entry.approvalStatus === "approved";
-                              const isRejected = entry.approvalStatus === "rejected";
-                              const entryDisplayName = formatAssigneeName(entry.userId, entry.userDisplayName);
-                              const entryAvatarUrl =
-                                entry.userAvatarUrl ||
-                                workspaceAssigneeOptions.find((option) => option.value === entry.userId)?.avatarUrl;
-
-                              // Work type pill config (hex, matches LogWorkModal dropdown)
-                              const WORK_TYPE_PILL: Record<string, { bg: string; color: string; label: string }> = {
-                                delivery:       { bg: "#dbeafe", color: "#1d4ed8", label: "Triển khai" },
-                                consulting:     { bg: "#f3e8ff", color: "#7e22ce", label: "Tư vấn KH" },
-                                meeting:        { bg: "#e0f2fe", color: "#0369a1", label: "Họ p" },
-                                training:       { bg: "#d1fae5", color: "#065f46", label: "Đào tạo" },
-                                support:        { bg: "#fef3c7", color: "#92400e", label: "Hỗ trợ" },
-                                blueprint:      { bg: "#ede9fe", color: "#6d28d9", label: "Thiết kế" },
-                                rework:         { bg: "#fee2e2", color: "#b91c1c", label: "Làm lại" },
-                                internal_admin: { bg: "#f1f5f9", color: "#475569", label: "Nội bộ" },
-                                kh_c:           { bg: "#e0e7ff", color: "#3730a3", label: "KH C" },
-                              };
-                              const wtPill = WORK_TYPE_PILL[(entry.workType ?? "").toLowerCase()]
-                                ?? { bg: "#f1f5f9", color: "#64748b", label: getWorkTypeLabel(entry.workType) };
-
-                              // Approval status config — hex values match calendar blockColors exactly
-                              const approvalConfig = isPlanned
-                                ? {
-                                    bg: "#dbeafe",
-                                    color: "#1d4ed8",
-                                    label: entry.planningStatus === "completed"
-                                      ? "Kế hoạch hoàn tất"
-                                      : entry.planningStatus === "cancelled"
-                                      ? "Kế hoạch đã hủy"
-                                      : "Kế hoạch"
-                                  }
-                                : isApproved
-                                ? { bg: "#d1fae5", color: "#065f46", label: "Đã duyệt" }
-                                : isRejected
-                                ? { bg: "#f1f5f9", color: "#475569", label: "Từ chối" }
-                                : { bg: "#fef3c7", color: "#92400e", label: "Chờ duyệt" };
-
-                              return (
-                                <div
-                                  key={entry.id}
-                                  data-planning-block-id={isPlanned ? entry.id : undefined}
-                                  data-time-entry-id={!isPlanned ? entry.id : undefined}
-                                  onClick={() => {
-                                    setPlanningCompletionError(null);
-                                    setSelectedTimeEntry(entry);
-                                  }}
-                                  className={`p-3 rounded-xl border transition-all cursor-pointer ${
-                                    isPlanned
-                                      ? "bg-slate-50/60 border-dashed border-slate-200 hover:bg-slate-100/60"
-                                      : "bg-white border-slate-100 hover:border-indigo-200 hover:shadow-md hover:shadow-indigo-50"
-                                  }`}
-                                >
-                                  <div className="flex items-start gap-3">
-                                    {/* Avatar */}
-                                    <div className={`shrink-0 h-8 w-8 rounded-full overflow-hidden flex items-center justify-center text-[10px] font-bold ${
-                                      isPlanned ? "bg-indigo-100 text-indigo-800" : "bg-indigo-50 text-indigo-700"
-                                    }`}>
-                                      {entryAvatarUrl ? (
-                                        <img src={entryAvatarUrl} alt={entryDisplayName} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
-                                      ) : (
-                                        initialForName(entryDisplayName || entry.userId)
-                                      )}
-                                    </div>
-
-                                    {/* Content */}
-                                    <div className="flex-1 min-w-0">
-                                      {/* Row 1: Name + hours */}
-                                      <div className="flex items-start justify-between gap-2">
-                                        <span className="text-xs font-semibold text-slate-700 truncate">{entryDisplayName}</span>
-                                        <div className="flex items-center gap-1.5 shrink-0">
-                                          <span className={`text-xs font-bold ${isPlanned ? "text-indigo-500" : "text-indigo-600"}`}>
-                                            {formatTaskMinutes(entry.minutes)}
-                                          </span>
-                                          {/* Delete entry button */}
-                                          <button
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              setDeleteTimeEntryError(null);
-                                              setConfirmDeleteEntry(entry.sourcePlanningBlockId
-                                                ? { ...entry, deleteKind: "planning-source" }
-                                                : entry);
-                                            }}
-                                            title={isPlanned || entry.sourcePlanningBlockId
-                                              ? "Xóa lịch kế hoạch, giữ giờ thực tế"
-                                              : "Xóa giờ thực tế"}
-                                            aria-label={isPlanned || entry.sourcePlanningBlockId
-                                              ? "Xóa lịch kế hoạch, giữ giờ thực tế"
-                                              : "Xóa giờ thực tế"}
-                                            className="flex min-h-11 min-w-11 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-400 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2 cursor-pointer"
-                                          >
-                                            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-                                            </svg>
-                                          </button>
-                                        </div>
-                                      </div>
-
-                                      {/* Row 2: Date + badges */}
-                                      <div className="flex items-center flex-wrap gap-1.5 mt-1">
-                                        <span className="text-[10px] text-slate-400 font-medium">
-                                          📅 {formatVietnamDate(entry.startAt ?? entry.workDate)} · {formatTimeEntryWindow(entry)}
-                                        </span>
-                                        {/* Approval status */}
-                                        <span
-                                          className="inline-flex rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide"
-                                          style={{ background: approvalConfig.bg, color: approvalConfig.color }}
-                                        >
-                                          {approvalConfig.label}
-                                        </span>
-                                        {/* Work type */}
-                                        {entry.workType && (
-                                          <span
-                                            className="inline-flex rounded-full px-1.5 py-px text-[9px] font-semibold"
-                                            style={{ background: wtPill.bg, color: wtPill.color }}
-                                          >
-                                            {wtPill.label}
-                                          </span>
-                                        )}
-                                        {/* Billable */}
-                                        {entry.billable !== undefined && (
-                                          <span className={`inline-flex rounded-full px-1.5 py-px text-[9px] font-medium ${
-                                            entry.billable ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"
-                                          }`}>
-                                            {entry.billingExemptReason ? "Ngày nghỉ · không tính phí" : entry.billable ? "💰 Tính phí" : "Không tính phí"}
-                                          </span>
-                                        )}
-                                      </div>
-
-                                      {/* Row 3: Description / note */}
-                                      {entry.note && (
-                                        <p className="mt-1.5 text-[10px] text-slate-500 italic leading-relaxed line-clamp-3">
-                                          {entry.note}
-                                        </p>
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                          })}
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-center gap-2.5 py-8 text-center">
-                          <div className="h-10 w-10 rounded-2xl bg-slate-50 flex items-center justify-center text-slate-300">
-                            <ShopifyIcon name="clock" size={18} />
-                          </div>
-                          <p className="text-xs text-slate-400">Chưa có kế hoạch hoặc giờ thực tế nào.</p>
-                          <button
-                            onClick={() => setShowLogModal(true)}
-                            className="rounded-xl bg-indigo-50 hover:bg-indigo-100 px-4 py-1.5 text-xs font-semibold text-indigo-600 transition-colors"
-                          >
-                            Ghi giờ đầu tiên
-                          </button>
-                        </div>
-                      )}
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-slate-700">{formatTaskMinutes(loggedMinutes)} thực tế</span>
+                      <span className="text-[10px] text-slate-400">/ {formatTaskMinutes(estimateMinutes)} kế hoạch</span>
                     </div>
                   </div>
 
-                  {/* Status History */}
-                  <div className="bg-white border border-slate-100 rounded-2xl shadow-[0_1px_4px_rgba(0,0,0,0.04)] overflow-hidden flex flex-col">
-                    <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100">
-                      <div className="flex items-center gap-2">
-                        <div className="h-5 w-5 rounded-lg bg-amber-50 flex items-center justify-center text-amber-600">
-                          <ShopifyIcon name="trend" size={11} />
-                        </div>
-                        <div className="text-xs font-bold text-slate-700 tracking-wide">Lịch sử trạng thái</div>
+                  {estimateMinutes > 0 && (
+                    <div className="px-5 pt-3 pb-2.5 bg-slate-50/50 border-b border-slate-100/80 flex flex-col gap-1.5">
+                      <div className="flex items-center justify-between text-[10px] font-semibold text-slate-500">
+                        <span>Hiệu suất thực tế so với kế hoạch</span>
+                        <span className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${
+                          loggedMinutes > estimateMinutes
+                            ? "bg-amber-100 text-amber-800 border border-amber-200"
+                            : loggedMinutes === estimateMinutes
+                            ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                            : "bg-indigo-50 text-indigo-700 border border-indigo-100"
+                        }`}>
+                          {Math.round((loggedMinutes / estimateMinutes) * 100)}%
+                        </span>
+                      </div>
+                      <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            loggedMinutes > estimateMinutes ? "bg-amber-500 animate-pulse" : "bg-indigo-600"
+                          }`}
+                          style={{ width: `${Math.min(100, (loggedMinutes / estimateMinutes) * 100)}%` }}
+                        />
                       </div>
                     </div>
-                    <div className="px-5 py-4 flex-1">
-                      {currentTask.statusHistory && currentTask.statusHistory.length > 0 ? (
-                        <ol className="flex flex-col max-h-[240px] overflow-auto">
-                          {currentTask.statusHistory.map((hist: any, index: number) => (
-                            <li key={hist.id} className="flex items-start gap-3 pb-3 last:pb-0">
-                              <div className="relative flex flex-col items-center shrink-0 mt-1">
-                                <div className="h-2 w-2 rounded-full bg-indigo-500" />
-                                {index < (currentTask.statusHistory?.length ?? 0) - 1 && (
-                                  <div className="w-px flex-1 bg-slate-100 mt-1 min-h-[18px]" />
-                                )}
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-start justify-between gap-2">
-                                  <span className="text-xs font-semibold text-slate-700 leading-snug">
-                                    {hist.fromStatus
-                                      ? <>{getStatusLabel(hist.fromStatus)} <ArrowRight aria-hidden="true" className="inline h-3 w-3 align-middle" /> {getStatusLabel(hist.toStatus)}</>
-                                      : getStatusLabel(hist.toStatus)}
-                                  </span>
-                                  <time className="text-[10px] text-slate-400 shrink-0 mt-px">
-                                    {new Date(hist.changedAt).toLocaleDateString("vi-VN")}
-                                  </time>
+                  )}
+
+                  <div className="px-5 py-4 flex-1">
+                    {timeHistoryEntries.length > 0 ? (
+                      <div className="flex flex-col gap-2 max-h-[220px] overflow-auto p-0.5">
+                        {timeHistoryEntries.map((entry: any) => {
+                            const isPlanned = entry.entryKind === "planning";
+                            const isApproved = entry.approvalStatus === "approved";
+                            const isRejected = entry.approvalStatus === "rejected";
+                            const entryDisplayName = formatAssigneeName(entry.userId, entry.userDisplayName);
+                            const entryAvatarUrl =
+                              entry.userAvatarUrl ||
+                              workspaceAssigneeOptions.find((option) => option.value === entry.userId)?.avatarUrl;
+
+                            // Work type pill config (hex, matches LogWorkModal dropdown)
+                            const WORK_TYPE_PILL: Record<string, { bg: string; color: string; label: string }> = {
+                              delivery:       { bg: "#dbeafe", color: "#1d4ed8", label: "Triển khai" },
+                              consulting:     { bg: "#f3e8ff", color: "#7e22ce", label: "Tư vấn KH" },
+                              meeting:        { bg: "#e0f2fe", color: "#0369a1", label: "Họ p" },
+                              training:       { bg: "#d1fae5", color: "#065f46", label: "Đào tạo" },
+                              support:        { bg: "#fef3c7", color: "#92400e", label: "Hỗ trợ" },
+                              blueprint:      { bg: "#ede9fe", color: "#6d28d9", label: "Thiết kế" },
+                              rework:         { bg: "#fee2e2", color: "#b91c1c", label: "Làm lại" },
+                              internal_admin: { bg: "#f1f5f9", color: "#475569", label: "Nội bộ" },
+                              kh_c:           { bg: "#e0e7ff", color: "#3730a3", label: "KH C" },
+                            };
+                            const wtPill = WORK_TYPE_PILL[(entry.workType ?? "").toLowerCase()]
+                              ?? { bg: "#f1f5f9", color: "#64748b", label: getWorkTypeLabel(entry.workType) };
+
+                            // Approval status config — hex values match calendar blockColors exactly
+                            const approvalConfig = isPlanned
+                              ? {
+                                  bg: "#dbeafe",
+                                  color: "#1d4ed8",
+                                  label: entry.planningStatus === "completed"
+                                    ? "Kế hoạch hoàn tất"
+                                    : entry.planningStatus === "cancelled"
+                                    ? "Kế hoạch đã hủy"
+                                    : "Kế hoạch"
+                                }
+                              : isApproved
+                              ? { bg: "#d1fae5", color: "#065f46", label: "Đã duyệt" }
+                              : isRejected
+                              ? { bg: "#f1f5f9", color: "#475569", label: "Từ chối" }
+                              : { bg: "#fef3c7", color: "#92400e", label: "Chờ duyệt" };
+
+                            return (
+                              <div
+                                key={entry.id}
+                                data-planning-block-id={isPlanned ? entry.id : undefined}
+                                data-time-entry-id={!isPlanned ? entry.id : undefined}
+                                onClick={() => {
+                                  setPlanningCompletionError(null);
+                                  setSelectedTimeEntry(entry);
+                                }}
+                                className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                                  isPlanned
+                                    ? "bg-slate-50/60 border-dashed border-slate-200 hover:bg-slate-100/60"
+                                    : "bg-white border-slate-100 hover:border-indigo-200 hover:shadow-md hover:shadow-indigo-50"
+                                }`}
+                              >
+                                <div className="flex items-start gap-3">
+                                  {/* Avatar */}
+                                  <div className={`shrink-0 h-8 w-8 rounded-full overflow-hidden flex items-center justify-center text-[10px] font-bold ${
+                                    isPlanned ? "bg-indigo-100 text-indigo-800" : "bg-indigo-50 text-indigo-700"
+                                  }`}>
+                                    {entryAvatarUrl ? (
+                                      <img src={entryAvatarUrl} alt={entryDisplayName} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                                    ) : (
+                                      initialForName(entryDisplayName || entry.userId)
+                                    )}
+                                  </div>
+
+                                  {/* Content */}
+                                  <div className="flex-1 min-w-0">
+                                    {/* Row 1: Name + hours */}
+                                    <div className="flex items-start justify-between gap-2">
+                                      <span className="text-xs font-semibold text-slate-700 truncate">{entryDisplayName}</span>
+                                      <div className="flex items-center gap-1.5 shrink-0">
+                                        <span className={`text-xs font-bold ${isPlanned ? "text-indigo-500" : "text-indigo-600"}`}>
+                                          {formatTaskMinutes(entry.minutes)}
+                                        </span>
+                                        {/* Delete entry button */}
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setDeleteTimeEntryError(null);
+                                            setConfirmDeleteEntry(entry.sourcePlanningBlockId
+                                              ? { ...entry, deleteKind: "planning-source" }
+                                              : entry);
+                                          }}
+                                          title={isPlanned || entry.sourcePlanningBlockId
+                                            ? "Xóa lịch kế hoạch, giữ giờ thực tế"
+                                            : "Xóa giờ thực tế"}
+                                          aria-label={isPlanned || entry.sourcePlanningBlockId
+                                            ? "Xóa lịch kế hoạch, giữ giờ thực tế"
+                                            : "Xóa giờ thực tế"}
+                                          className="flex min-h-11 min-w-11 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-400 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2 cursor-pointer"
+                                        >
+                                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                            <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                                          </svg>
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {/* Row 2: Date + badges */}
+                                    <div className="flex items-center flex-wrap gap-1.5 mt-1">
+                                      <span className="text-[10px] text-slate-400 font-medium">
+                                        📅 {formatVietnamDate(entry.startAt ?? entry.workDate)} · {formatTimeEntryWindow(entry)}
+                                      </span>
+                                      {/* Approval status */}
+                                      <span
+                                        className="inline-flex rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide"
+                                        style={{ background: approvalConfig.bg, color: approvalConfig.color }}
+                                      >
+                                        {approvalConfig.label}
+                                      </span>
+                                      {/* Work type */}
+                                      {entry.workType && (
+                                        <span
+                                          className="inline-flex rounded-full px-1.5 py-px text-[9px] font-semibold"
+                                          style={{ background: wtPill.bg, color: wtPill.color }}
+                                        >
+                                          {wtPill.label}
+                                        </span>
+                                      )}
+                                      {/* Billable */}
+                                      {entry.billable !== undefined && (
+                                        <span className={`inline-flex rounded-full px-1.5 py-px text-[9px] font-medium ${
+                                          entry.billable ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"
+                                        }`}>
+                                          {entry.billingExemptReason ? "Ngày nghỉ · không tính phí" : entry.billable ? "💰 Tính phí" : "Không tính phí"}
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    {/* Row 3: Description / note */}
+                                    {entry.note && (
+                                      <p className="mt-1.5 text-[10px] text-slate-500 italic leading-relaxed line-clamp-3">
+                                        {entry.note}
+                                      </p>
+                                    )}
+                                  </div>
                                 </div>
-                                {hist.reason && <p className="mt-0.5 text-[10px] text-slate-400 italic">{hist.reason}</p>}
                               </div>
-                            </li>
-                          ))}
-                        </ol>
-                      ) : (
-                        <div className="flex flex-col items-center gap-2.5 py-8 text-center">
-                          <div className="h-10 w-10 rounded-2xl bg-slate-50 flex items-center justify-center text-slate-300">
-                            <ShopifyIcon name="trend" size={18} />
-                          </div>
-                          <p className="text-xs text-slate-400">Chưa có lịch sử chuyển đổi.</p>
+                            );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center gap-2.5 py-8 text-center">
+                        <div className="h-10 w-10 rounded-2xl bg-slate-50 flex items-center justify-center text-slate-300">
+                          <ShopifyIcon name="clock" size={18} />
                         </div>
-                      )}
-                    </div>
+                        <p className="text-xs text-slate-400">Chưa có kế hoạch hoặc giờ thực tế nào.</p>
+                        <button
+                          onClick={() => setShowLogModal(true)}
+                          className="rounded-xl bg-indigo-50 hover:bg-indigo-100 px-4 py-1.5 text-xs font-semibold text-indigo-600 transition-colors"
+                        >
+                          Ghi giờ đầu tiên
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -2796,7 +2659,11 @@ export function TaskDetailWorkbench({
                       {isGlobalEditing ? (
                         <CustomDropdown label="" value={draftAccountId} options={accounts.data.map((a: any) => ({ value: a.id, label: a.name, icon: "person" }))} onChange={(val: string) => setDraftAccountId(val)} />
                       ) : (
-                        <p className="text-xs font-semibold text-slate-800 truncate">{currentTask.accountName}</p>
+                        currentTask.accountId ? (
+                          <Link href={`/clients/${encodeURIComponent(currentTask.accountId)}`} className="block text-xs font-semibold text-slate-800 truncate hover:text-indigo-600 hover:underline">{currentTask.accountName}</Link>
+                        ) : (
+                          <p className="text-xs font-semibold text-slate-800 truncate">{currentTask.accountName}</p>
+                        )
                       )}
                     </div>
 
@@ -2806,7 +2673,11 @@ export function TaskDetailWorkbench({
                       {isGlobalEditing ? (
                         <CustomDropdown label="" value={draftProjectId} options={[{ value: "none", label: "Chưa gắn dự án", icon: "alert-circle" }, ...projects.data.filter((p: any) => p.accountId === draftAccountId).map((p: any) => ({ value: p.id, label: p.name, icon: "order" }))]} onChange={(val: string) => setDraftProjectId(val)} />
                       ) : (
-                        <p className="text-xs font-semibold text-slate-800 truncate">{currentTask.projectName || <span className="font-normal italic text-slate-400">Chưa gắn</span>}</p>
+                        currentTask.projectId && currentTask.projectName ? (
+                          <Link href={`/projects/${encodeURIComponent(currentTask.projectId)}?tab=Tasks`} className="block text-xs font-semibold text-slate-800 truncate hover:text-indigo-600 hover:underline">{currentTask.projectName}</Link>
+                        ) : (
+                          <p className="text-xs font-semibold text-slate-800 truncate">{currentTask.projectName || <span className="font-normal italic text-slate-400">Chưa gắn</span>}</p>
+                        )
                       )}
                     </div>
 
@@ -2832,7 +2703,11 @@ export function TaskDetailWorkbench({
                               initialForName(displayAssignee)
                             )}
                           </div>
-                          <p className="text-xs font-semibold text-slate-800 truncate">{displayAssignee}</p>
+                          {assignedPeople[0]?.userId ? (
+                            <PersonLink userId={assignedPeople[0].userId} className="text-xs font-semibold text-slate-800 truncate hover:text-indigo-600 hover:underline">{displayAssignee}</PersonLink>
+                          ) : (
+                            <p className="text-xs font-semibold text-slate-800 truncate">{displayAssignee}</p>
+                          )}
                         </div>
                       )}
                     </div>
@@ -2960,7 +2835,7 @@ export function TaskDetailWorkbench({
                         </label>
                       ) : (
                         <span className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[10px] font-bold ${currentTask.customerVisible ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
-                          {currentTask.customerVisible ? "🌐 Portal" : "🔒 Nội bộ"}
+                          {currentTask.customerVisible ? "Portal" : "Nội bộ"}
                         </span>
                       )}
                     </div>
@@ -2979,12 +2854,77 @@ export function TaskDetailWorkbench({
                   </div>
                 </div>
 
-                <TaskChangeHistory
-                  taskId={currentTask.id}
-                  principal={principal}
-                  people={projectPeople.members}
-                  revision={`${currentTask.updatedAt ?? ""}:${currentTask.statusHistory?.length ?? 0}:${currentTask.ownerUserId ?? ""}:${currentTask.assigneeUserId ?? ""}:${currentTask.assigneeUserIds?.join(",") ?? ""}`}
-                />
+                {/* History: status | changes */}
+                <div className="flex flex-col gap-2">
+                  <div className="flex gap-1 self-start rounded-xl border border-slate-100 bg-white p-1" role="group" aria-label="Lịch sử">
+                    {([["status", "Trạng thái"], ["changes", "Cập nhật"]] as const).map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        aria-pressed={historyTab === key}
+                        onClick={() => setHistoryTab(key)}
+                        className={`rounded-lg px-3 py-1 text-[11px] font-semibold transition-colors ${historyTab === key ? "bg-indigo-50 text-indigo-700" : "text-slate-500 hover:bg-slate-50"}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                {/* Status History */}
+                <div className={`bg-white border border-slate-100 rounded-2xl shadow-[0_1px_4px_rgba(0,0,0,0.04)] overflow-hidden flex flex-col ${historyTab === "status" ? "" : "hidden"}`}>
+                  <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <div className="h-5 w-5 rounded-lg bg-amber-50 flex items-center justify-center text-amber-600">
+                        <ShopifyIcon name="trend" size={11} />
+                      </div>
+                      <div className="text-xs font-bold text-slate-700 tracking-wide">Lịch sử trạng thái</div>
+                    </div>
+                  </div>
+                  <div className="px-5 py-4 flex-1">
+                    {currentTask.statusHistory && currentTask.statusHistory.length > 0 ? (
+                      <ol className="flex flex-col max-h-[240px] overflow-auto">
+                        {currentTask.statusHistory.map((hist: any, index: number) => (
+                          <li key={hist.id} className="flex items-start gap-3 pb-3 last:pb-0">
+                            <div className="relative flex flex-col items-center shrink-0 mt-1">
+                              <div className="h-2 w-2 rounded-full bg-indigo-500" />
+                              {index < (currentTask.statusHistory?.length ?? 0) - 1 && (
+                                <div className="w-px flex-1 bg-slate-100 mt-1 min-h-[18px]" />
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="text-xs font-semibold text-slate-700 leading-snug">
+                                  {hist.fromStatus
+                                    ? <>{getStatusLabel(hist.fromStatus)} <ArrowRight aria-hidden="true" className="inline h-3 w-3 align-middle" /> {getStatusLabel(hist.toStatus)}</>
+                                    : getStatusLabel(hist.toStatus)}
+                                </span>
+                                <time className="text-[10px] text-slate-400 shrink-0 mt-px">
+                                  {new Date(hist.changedAt).toLocaleDateString("vi-VN")}
+                                </time>
+                              </div>
+                              {hist.reason && <p className="mt-0.5 text-[10px] text-slate-400 italic">{hist.reason}</p>}
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <div className="flex flex-col items-center gap-2.5 py-8 text-center">
+                        <div className="h-10 w-10 rounded-2xl bg-slate-50 flex items-center justify-center text-slate-300">
+                          <ShopifyIcon name="trend" size={18} />
+                        </div>
+                        <p className="text-xs text-slate-400">Chưa có lịch sử chuyển đổi.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                  <div className={historyTab === "changes" ? "" : "hidden"}>
+                    <TaskChangeHistory
+                      taskId={currentTask.id}
+                      principal={principal}
+                      people={projectPeople.members}
+                      revision={`${currentTask.updatedAt ?? ""}:${currentTask.statusHistory?.length ?? 0}:${currentTask.ownerUserId ?? ""}:${currentTask.assigneeUserId ?? ""}:${currentTask.assigneeUserIds?.join(",") ?? ""}`}
+                    />
+                  </div>
+                </div>
 
               </aside>
             </div>

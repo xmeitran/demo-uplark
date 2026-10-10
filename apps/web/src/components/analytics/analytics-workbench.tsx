@@ -7,7 +7,6 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   BarChart3,
-  Download,
   Filter,
   RefreshCw,
   X
@@ -95,7 +94,11 @@ export function AnalyticsWorkbench() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const state = useMemo(() => parseAnalyticsSearchParams(new URLSearchParams(searchParams.toString())), [searchParams]);
+  // The detail table grouping follows the active view tab; a stale `by` param is ignored.
+  const state = useMemo(() => {
+    const parsed = parseAnalyticsSearchParams(new URLSearchParams(searchParams.toString()));
+    return { ...parsed, by: defaultBreakdownByForView(parsed.view) };
+  }, [searchParams]);
 
   const summaryQuery = useMemo(() => buildAnalyticsApiQuery(state), [state]);
   const breakdownQuery = useMemo(() => buildBreakdownApiQuery(state), [state]);
@@ -104,7 +107,6 @@ export function AnalyticsWorkbench() {
   const [breakdownSlot, setBreakdownSlot] = useState<FetchSlot<WorkforceProjectsBreakdownResponse>>({ status: "loading" });
   const [summaryRetryToken, setSummaryRetryToken] = useState(0);
   const [breakdownRetryToken, setBreakdownRetryToken] = useState(0);
-  const [copied, setCopied] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [mobileFilterDraft, setMobileFilterDraft] = useState<AnalyticsUiState | null>(null);
   const mobileFilterTriggerRef = useRef<HTMLButtonElement>(null);
@@ -208,16 +210,6 @@ export function AnalyticsWorkbench() {
     commit({ ...ANALYTICS_DEFAULT_STATE, view: state.view, by: defaultBreakdownByForView(state.view) });
   }, [commit, state.view]);
 
-  const copyLink = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setCopied(false);
-    }
-  }, []);
-
   const summary = summarySlot.data;
   const breakdown = breakdownSlot.data;
   const range = resolvePresetRange(state);
@@ -270,30 +262,27 @@ export function AnalyticsWorkbench() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <header className="rounded-2xl border border-border bg-gradient-to-br from-card via-card to-primary/5 p-5 shadow-sm sm:p-6" data-testid="analytics-page-header">
-        <p className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">ANALYTICS · WORKSPACE INSIGHTS</p>
-        <h1 className="mt-1 text-2xl font-black tracking-tight text-foreground sm:text-3xl">Phân tích vận hành</h1>
-        <p className="mt-1 max-w-3xl text-sm text-muted-foreground">Theo dõi giờ làm, mức độ sử dụng nguồn lực và hiệu suất dự án trong cùng một màn hình.</p>
+      <header className="flex flex-col items-start justify-between gap-3 rounded-2xl border border-border bg-gradient-to-br from-card via-card to-primary/5 p-5 shadow-sm sm:flex-row sm:items-center sm:p-6" data-testid="analytics-page-header">
+        <div>
+          <h1 className="!text-xl font-bold text-foreground">Phân tích vận hành</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">Theo dõi giờ làm, mức độ sử dụng nguồn lực và hiệu suất dự án trong cùng một màn hình.</p>
+        </div>
+        {summary ? (
+          <p className="shrink-0 text-xs text-muted-foreground">
+            {summary.meta.range.from.slice(0, 10)} → {exclusiveEndDateToInclusiveEndDate(summary.meta.range.to.slice(0, 10)) ?? summary.meta.range.to.slice(0, 10)} · Giờ Việt Nam · cập nhật {new Date(summary.meta.generatedAt).toLocaleTimeString("vi-VN")}
+          </p>
+        ) : null}
       </header>
 
       {/* View tabs */}
-      <div className="space-y-2">
-        <WorkspaceTabBar
-          items={VIEW_TABS}
-          value={state.view}
-          onChange={setView}
-          ariaLabel="Chế độ xem phân tích"
-          idPrefix="analytics"
-          className="w-full"
-        />
-        <div className="flex min-h-5 items-center justify-end px-1 text-[11px] text-muted-foreground">
-          {summary ? (
-            <span>
-              {summary.meta.range.from.slice(0, 10)} → {exclusiveEndDateToInclusiveEndDate(summary.meta.range.to.slice(0, 10)) ?? summary.meta.range.to.slice(0, 10)} · Giờ Việt Nam · cập nhật {new Date(summary.meta.generatedAt).toLocaleTimeString("vi-VN")}
-            </span>
-          ) : null}
-        </div>
-      </div>
+      <WorkspaceTabBar
+        items={VIEW_TABS}
+        value={state.view}
+        onChange={setView}
+        ariaLabel="Chế độ xem phân tích"
+        idPrefix="analytics"
+        className="w-full"
+      />
 
       {/* Desktop filter bar */}
       <div className="hidden lg:block">
@@ -302,9 +291,7 @@ export function AnalyticsWorkbench() {
           summary={summary}
           onChange={applyFilterChange}
           onReset={resetFilters}
-          onCopyLink={copyLink}
           onExportCsv={exportCsv}
-          copied={copied}
           csvReady={Boolean(breakdown && breakdown.rows.length > 0)}
         />
       </div>
@@ -353,9 +340,7 @@ export function AnalyticsWorkbench() {
                   summary={summary}
                   onChange={(change) => setMobileFilterDraft((current) => current ? { ...current, ...change, cursor: undefined } : current)}
                   onReset={() => setMobileFilterDraft({ ...ANALYTICS_DEFAULT_STATE, view: state.view, by: defaultBreakdownByForView(state.view) })}
-                  onCopyLink={copyLink}
                   onExportCsv={exportCsv}
-                  copied={copied}
                   csvReady={Boolean(breakdown && breakdown.rows.length > 0)}
                 />
               </div>
@@ -380,6 +365,8 @@ export function AnalyticsWorkbench() {
       </div>
 
       <ActiveFilterChips state={state} summary={summary} onChange={applyFilterChange} />
+
+      <DataQualityPanel summary={summary} />
 
       {/* Stale / error banners keep last-good evidence visible */}
       {summarySlot.isStale ? (
@@ -425,18 +412,14 @@ export function AnalyticsWorkbench() {
             <ResourcesView summary={summary} slot={summarySlot} onRetry={() => setSummaryRetryToken((token) => token + 1)} />
           ) : null}
 
-          <DataQualityPanel summary={summary} />
-
           <BreakdownTable
             state={state}
             slot={breakdownSlot}
-            onChangeBy={(by) => applyFilterChange({ by })}
             onChangeSort={(sort, direction) => applyFilterChange({ sort, direction })}
             onNextPage={goNextPage}
             onPreviousPage={goPreviousPage}
             hasPrevious={Boolean(state.cursor)}
             onRetry={() => setBreakdownRetryToken((token) => token + 1)}
-            onExportCsv={exportCsv}
           />
         </>
       )}
@@ -923,11 +906,11 @@ function ResourcesView({ summary, slot, onRetry }: {
       allocationMinutes: allocation,
       scheduledMinutes: (row.metrics.scheduledMinutes as number) ?? 0,
       reviewedMinutes: (row.metrics.reviewedApprovedMinutes as number) ?? 0,
-      overbooked: capacity !== null && allocation > capacity
+      overbooked: capacity !== null && allocation > capacity,
+      href: row.href
     };
   });
   const overbooked = rows.filter((row) => row.overbooked);
-  const quality = summary?.quality;
 
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
@@ -967,18 +950,12 @@ function ResourcesView({ summary, slot, onRetry }: {
               overbooked.map((row) => (
                 <p key={row.id} className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 font-semibold text-foreground">
                   <AlertTriangle className="mr-1.5 inline h-3.5 w-3.5 text-destructive" aria-hidden />
-                  {row.label}: phân bổ {formatHours(row.allocationMinutes)} &gt; năng lực {formatHours(row.capacityMinutes)}
+                  {row.href ? <Link href={row.href as any} className="text-primary hover:underline">{row.label}</Link> : row.label}: phân bổ {formatHours(row.allocationMinutes)} &gt; năng lực {formatHours(row.capacityMinutes)}
                 </p>
               ))
             ) : (
               <p className="text-muted-foreground">Không phát hiện nhân sự quá tải trong nhóm hiển thị.</p>
             )}
-            {quality ? (
-              <ul className="mt-1 space-y-1 text-[12px] text-muted-foreground">
-                <li>• {quality.usersMissingCapacity} người chưa có dữ liệu năng lực khả dụng.</li>
-                <li>• Hồ sơ thành viên hiệu lực: {quality.membershipCoverage.covered}/{quality.membershipCoverage.total}.</li>
-              </ul>
-            ) : null}
           </div>
         </ChartCard>
       </div>
@@ -1002,13 +979,15 @@ function DataQualityPanel({ summary }: { summary?: WorkforceProjectsSummaryRespo
   if (items.length === 0) return null;
 
   return (
-    <section aria-label="Chất lượng dữ liệu" className="rounded-xl border border-border bg-card p-4">
-      <h3 className="text-[13px] font-bold text-foreground">Chất lượng &amp; độ phủ dữ liệu</h3>
-      <ul className="mt-2 grid grid-cols-1 gap-1 text-[12.5px] text-muted-foreground md:grid-cols-2">
+    <details aria-label="Chất lượng dữ liệu" className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-[12.5px]">
+      <summary className="cursor-pointer font-semibold text-foreground">
+        <AlertTriangle className="mr-1.5 inline h-3.5 w-3.5 text-warning" aria-hidden />
+        {items.length} lưu ý về dữ liệu
+      </summary>
+      <ul className="mt-2 grid grid-cols-1 gap-1 text-muted-foreground md:grid-cols-2">
         {items.map((item) => <li key={item}>• {item}</li>)}
       </ul>
-      <p className="mt-2 text-[10.5px] text-muted-foreground">Biểu đồ, chỉ số và bảng chi tiết sử dụng cùng phạm vi lọc và quy tắc tính.</p>
-    </section>
+    </details>
   );
 }
 
@@ -1079,16 +1058,14 @@ function formatCell(key: AnalyticsMetricKey, value: number | null | undefined): 
   return value.toLocaleString("vi-VN");
 }
 
-function BreakdownTable({ state, slot, onChangeBy, onChangeSort, onNextPage, onPreviousPage, hasPrevious, onRetry, onExportCsv }: {
+function BreakdownTable({ state, slot, onChangeSort, onNextPage, onPreviousPage, hasPrevious, onRetry }: {
   state: AnalyticsUiState;
   slot: FetchSlot<WorkforceProjectsBreakdownResponse>;
-  onChangeBy: (by: AnalyticsBreakdownBy) => void;
   onChangeSort: (sort: AnalyticsUiState["sort"], direction: "asc" | "desc") => void;
   onNextPage: () => void;
   onPreviousPage: () => void;
   hasPrevious: boolean;
   onRetry: () => void;
-  onExportCsv: () => void;
 }) {
   const data = slot.data;
   const rows = data?.rows ?? [];
@@ -1098,35 +1075,14 @@ function BreakdownTable({ state, slot, onChangeBy, onChangeSort, onNextPage, onP
     <section aria-label="Bảng chi tiết" className="rounded-xl border border-border bg-card">
       <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">
         <h3 className="text-[14px] font-bold text-foreground">Bảng chi tiết</h3>
-        <div role="group" aria-label="Nhóm theo" className="flex items-center gap-1 rounded-lg border border-border p-0.5">
-          {([
-            ["user", "Nhân sự"],
-            ["project", "Dự án"],
-            ["department", "Phòng ban"],
-            ["team", "Nhóm"]
-          ] as Array<[AnalyticsBreakdownBy, string]>).map(([by, label]) => (
-            <button
-              key={by}
-              type="button"
-              onClick={() => onChangeBy(by)}
-              aria-pressed={state.by === by}
-              className={`rounded-md px-2 py-1 text-[12px] font-semibold ${state.by === by ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
         {slot.status === "updating" ? <span className="text-[11px] font-semibold text-muted-foreground" role="status">Đang cập nhật…</span> : null}
         {slot.isStale ? (
           <button type="button" onClick={onRetry} className="inline-flex items-center gap-1 rounded-md border border-warning/40 bg-warning/10 px-2 py-1 text-[11px] font-semibold text-warning">
             <RefreshCw className="h-3 w-3" aria-hidden /> Dữ liệu cũ — thử lại
           </button>
         ) : null}
-        <span className="ml-auto flex items-center gap-2 text-[12px] text-muted-foreground">
+        <span className="ml-auto text-[12px] text-muted-foreground">
           {data ? `${data.meta.totalRows} dòng · trang ${rows.length} dòng` : null}
-          <button type="button" onClick={onExportCsv} disabled={rows.length === 0} className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[12px] font-semibold text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40">
-            <Download className="h-3.5 w-3.5" aria-hidden /> Xuất dữ liệu
-          </button>
         </span>
       </div>
 
@@ -1212,10 +1168,7 @@ function BreakdownTable({ state, slot, onChangeBy, onChangeSort, onNextPage, onP
         )}
       </div>
 
-      <div className="flex items-center justify-between border-t border-border p-3">
-        <p className="text-[11px] text-muted-foreground">
-          {data ? `Dữ liệu từ ${data.meta.range.from.slice(0, 10)} đến ${exclusiveEndDateToInclusiveEndDate(data.meta.range.to.slice(0, 10)) ?? data.meta.range.to.slice(0, 10)}` : null}
-        </p>
+      <div className="flex items-center justify-end border-t border-border p-3">
         <div className="flex items-center gap-1.5">
           <button
             type="button"

@@ -1,6 +1,8 @@
 "use client";
 
+import { PersonLink } from "@/components/person-link";
 import React, { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   Banknote,
   Briefcase,
@@ -11,16 +13,14 @@ import {
   ExternalLink,
   FileText,
   GraduationCap,
-  Hash,
   LifeBuoy,
-  X,
   Users
 } from "lucide-react";
 import { formatDate, formatHours } from "./timesheet-format";
+import { projectStatusLabel } from "@/lib/project-status";
 import {
   WORK_GROUP_LABELS,
   NODE_STATUS_LABELS,
-  PROJECT_STATUS_LABELS,
   type TimeLog,
   type TimesheetDataset,
   type WorkGroup
@@ -67,9 +67,10 @@ export function LogDrawer({
   onClose: () => void;
   currentUserId?: string;
 }) {
-  const [selectedLog, setSelectedLog] = useState<TimeLog | null>(null);
+  // One level of drill-down: a log row expands in place inside the drawer.
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   useEffect(() => {
-    if (!request) setSelectedLog(null);
+    setExpandedLogId(null);
   }, [request]);
   const peopleById = useMemo(() => new Map(dataset.people.map((person) => [person.id, person])), [dataset.people]);
   const projectsById = useMemo(() => new Map(dataset.projects.map((project) => [project.id, project])), [dataset.projects]);
@@ -158,11 +159,14 @@ export function LogDrawer({
                     const person = peopleById.get(entry.personId);
                     const project = projectsById.get(entry.projectId);
                     const GroupIcon = WORK_GROUP_ICONS[entry.workGroup];
+                    const expanded = expandedLogId === entry.id;
                     return (
-                      <li key={entry.id} className="flex items-stretch">
+                      <li key={entry.id}>
+                        <div className="flex items-stretch">
                         <button
                           type="button"
-                          onClick={() => setSelectedLog(entry)}
+                          onClick={() => setExpandedLogId(expanded ? null : entry.id)}
+                          aria-expanded={expanded}
                           className="flex min-w-0 flex-1 items-start gap-3 px-4 py-2.5 text-left transition-colors hover:bg-primary/[0.04] focus-visible:bg-primary/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30"
                           aria-label={`Xem chi tiết log ${entry.id}`}
                         >
@@ -202,7 +206,7 @@ export function LogDrawer({
                                   Tính phí
                                 </span>
                               ) : null}
-                              <span className="ml-auto text-[10px] font-semibold text-primary">Xem chi tiết →</span>
+                              <span className="ml-auto text-[10px] font-semibold text-primary">{expanded ? "Thu gọn" : "Xem chi tiết →"}</span>
                             </div>
 
                             {entry.note ? (
@@ -220,6 +224,10 @@ export function LogDrawer({
                         >
                           <ExternalLink className="h-3.5 w-3.5" aria-hidden />
                         </a>
+                        </div>
+                        {expanded ? (
+                          <TimeLogDetail log={entry} person={person} project={project} task={taskDetails.get(`${entry.projectId}:${entry.taskId}`)} />
+                        ) : null}
                       </li>
                     );
                   })}
@@ -232,91 +240,59 @@ export function LogDrawer({
         </>
       )}
 
-      <TimeLogDetailModal
-        log={selectedLog}
-        person={selectedLog ? peopleById.get(selectedLog.personId) : undefined}
-        project={selectedLog ? projectsById.get(selectedLog.projectId) : undefined}
-        task={selectedLog ? taskDetails.get(`${selectedLog.projectId}:${selectedLog.taskId}`) : undefined}
-        onClose={() => setSelectedLog(null)}
-      />
     </Drawer>
   );
 }
 
-function TimeLogDetailModal({
+function TimeLogDetail({
   log,
   person,
   project,
-  task,
-  onClose
+  task
 }: {
-  log: TimeLog | null;
+  log: TimeLog;
   person?: TimesheetDataset["people"][number];
   project?: TimesheetDataset["projects"][number];
   task?: { milestoneName: string; stageName: string; taskName: string; taskCode: string; status: keyof typeof NODE_STATUS_LABELS; estimateMinutes: number; assigneeId: string | null };
-  onClose: () => void;
 }) {
-  if (!log) return null;
   return (
-    <div className="fixed inset-0 z-[70] flex justify-end" role="dialog" aria-modal="true" aria-label="Chi tiết time log">
-      <button type="button" aria-label="Đóng chi tiết time log" onClick={onClose} className="absolute inset-0 bg-overlay/70" />
-      <div className="relative flex h-full w-full max-w-xl flex-col border-l border-border bg-card shadow-2xl">
-        <header className="flex items-start justify-between gap-3 border-b border-border p-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-primary">
-              <Clock className="h-4 w-4" aria-hidden />
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em]">Time log detail</span>
-            </div>
-            <h2 className="mt-1 text-lg font-bold text-foreground">{person?.name ?? log.personId}</h2>
-            <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{log.id} · {formatDate(log.date)}</p>
-          </div>
-          <button type="button" aria-label="Đóng bảng chi tiết" onClick={onClose} className="rounded-md border border-border p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
-            <X className="h-4 w-4" aria-hidden />
-          </button>
-        </header>
-
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <DetailMetric label="Thời lượng" value={formatHours(log.minutes)} tone="primary" />
-            <DetailMetric label="Nhóm việc" value={WORK_GROUP_LABELS[log.workGroup]} />
-            <DetailMetric label="Tính phí" value={log.billable ? "Có" : "Không"} />
-            <DetailMetric label="Ngày ghi nhận" value={formatDate(log.date)} />
-          </div>
-
-          <DetailSection title="Nhân sự">
-            <DetailRow label="Họ tên" value={person?.name ?? "Chưa mapping"} />
-            <DetailRow label="Lark user ID" value={log.personId} mono />
-              <DetailRow label="Phòng ban" value={person?.departmentId ? formatDepartmentLabel(person.departmentId, "Chưa có dữ liệu") : "Chưa có dữ liệu"} />
-            <DetailRow label="Vai trò" value={person?.role ?? "Chưa có dữ liệu"} />
-          </DetailSection>
-
-          <DetailSection title="Dự án">
-            <DetailRow label="Dự án" value={project ? `${project.code} — ${project.name}` : "Chưa mapping"} />
-            <DetailRow label="Project ID" value={log.projectId} mono />
-            <DetailRow label="Khách hàng / account" value={project?.accountName ?? "Chưa có dữ liệu"} />
-            <DetailRow label="Trạng thái" value={project ? PROJECT_STATUS_LABELS[project.status] : "Chưa có dữ liệu"} />
-          </DetailSection>
-
-          <DetailSection title="Công việc">
-            <DetailRow label="Milestone" value={task?.milestoneName ?? log.milestoneId} />
-            <DetailRow label="Stage" value={task?.stageName ?? log.stageId} />
-            <DetailRow label="Task" value={task ? `${task.taskCode} — ${task.taskName}` : log.taskId} />
-            <DetailRow label="Trạng thái task" value={task ? NODE_STATUS_LABELS[task.status] : "Chưa mapping"} />
-            <DetailRow label="Estimate" value={task && task.estimateMinutes > 0 ? formatHours(task.estimateMinutes) : "Chưa có estimate"} />
-          </DetailSection>
-
-          <DetailSection title="Ghi chú">
-            <p className="rounded-xl border border-border bg-muted/25 p-3 text-[12px] leading-relaxed text-foreground">
-              {log.note || "Không có ghi chú cho dòng log này."}
-            </p>
-          </DetailSection>
-
-          <p className="mt-4 inline-flex items-start gap-1.5 text-[10.5px] leading-relaxed text-muted-foreground">
-            <Hash className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
-            Chi tiết này được mở trực tiếp từ dòng log live <span className="font-mono">{log.id}</span>; không suy diễn từ tổng hợp.
-          </p>
-        </div>
+    <div className="border-t border-border bg-muted/20 px-4 pb-4 pt-3" role="region" aria-label="Chi tiết time log">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <DetailMetric label="Thời lượng" value={formatHours(log.minutes)} tone="primary" />
+        <DetailMetric label="Nhóm việc" value={WORK_GROUP_LABELS[log.workGroup]} />
+        <DetailMetric label="Tính phí" value={log.billable ? "Có" : "Không"} />
+        <DetailMetric label="Ngày ghi nhận" value={formatDate(log.date)} />
       </div>
+
+      <DetailSection title="Nhân sự">
+        <DetailRow label="Họ tên" value={person ? <PersonLink userId={person.id} className="text-primary hover:underline">{person.name}</PersonLink> : "Chưa mapping"} />
+        <DetailRow label="Lark user ID" value={log.personId} mono />
+        <DetailRow label="Phòng ban" value={person?.departmentId ? formatDepartmentLabel(person.departmentId, "Chưa có dữ liệu") : "Chưa có dữ liệu"} />
+        <DetailRow label="Vai trò" value={person?.role ?? "Chưa có dữ liệu"} />
+      </DetailSection>
+
+      <DetailSection title="Dự án">
+        <DetailRow label="Dự án" value={project ? <Link href={`/projects/${encodeURIComponent(project.id)}`} className="text-primary hover:underline">{project.code} — {project.name}</Link> : "Chưa mapping"} />
+        <DetailRow label="Project ID" value={log.projectId} mono />
+        <DetailRow label="Khách hàng / account" value={project?.accountName ?? "Chưa có dữ liệu"} />
+        <DetailRow label="Trạng thái" value={project ? projectStatusLabel(project.status) : "Chưa có dữ liệu"} />
+      </DetailSection>
+
+      <DetailSection title="Công việc">
+        <DetailRow label="Milestone" value={task?.milestoneName ?? log.milestoneId} />
+        <DetailRow label="Stage" value={task?.stageName ?? log.stageId} />
+        <DetailRow label="Task" value={task ? `${task.taskCode} — ${task.taskName}` : log.taskId} />
+        <DetailRow label="Trạng thái task" value={task ? NODE_STATUS_LABELS[task.status] : "Chưa mapping"} />
+        <DetailRow label="Estimate" value={task && task.estimateMinutes > 0 ? formatHours(task.estimateMinutes) : "Chưa có estimate"} />
+      </DetailSection>
+
+      <DetailSection title="Ghi chú">
+        <p className="rounded-xl border border-border bg-muted/25 p-3 text-[12px] leading-relaxed text-foreground">
+          {log.note || "Không có ghi chú cho dòng log này."}
+        </p>
+      </DetailSection>
+
+      <p className="mt-3 font-mono text-[10.5px] text-muted-foreground">{log.id}</p>
     </div>
   );
 }
@@ -330,7 +306,7 @@ function DetailSection({ title, children }: { title: string; children: React.Rea
   );
 }
 
-function DetailRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+function DetailRow({ label, value, mono = false }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
     <div className="flex items-start justify-between gap-4 px-3 py-2.5 text-[12px]">
       <span className="shrink-0 text-muted-foreground">{label}</span>

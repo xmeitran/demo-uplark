@@ -1,10 +1,12 @@
 /**
  * Domain types for the Timesheet feature (spec 35).
  *
- * These mirror the shape the real API will eventually return so that swapping
- * `timesheet-mock-data` for live fetches touches only the data layer. Every
- * duration is stored in MINUTES (same unit as `TaskTimeEntry.minutes`).
+ * Built from the live API by `timesheet-live-data`. Every duration is stored in
+ * MINUTES (same unit as `TaskTimeEntry.minutes`).
  */
+
+import type { ProjectStatusCode } from "@/lib/project-status";
+import { TASK_STATUS_LABEL } from "@/components/crm-workspace/task-display-helpers";
 
 /** MTS-03 work-group taxonomy. Replaces the free-text `workType` column. */
 export type WorkGroup =
@@ -33,54 +35,30 @@ export const WORK_GROUP_LABELS: Record<WorkGroup, string> = {
   other: "Khác"
 };
 
-export type ProjectStatus =
-  | "discovery"
-  | "onboarding"
-  | "in_review"
-  | "planning"
-  | "in_progress"
-  | "acceptance"
-  | "paused"
-  | "at_risk"
-  | "completed";
+/** Canonical Project Status (see @/lib/project-status); null = unknown, shown as "Chưa xác định". */
+export type ProjectStatus = ProjectStatusCode | null;
 
-export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
-  discovery: "Khảo sát",
-  onboarding: "Khởi động",
-  in_review: "Đang rà soát",
-  planning: "Lập kế hoạch",
-  in_progress: "Đang thực hiện",
-  acceptance: "Nghiệm thu",
-  paused: "Tạm dừng",
-  at_risk: "Có rủi ro",
-  completed: "Đã hoàn thành"
-};
-
-export type NodeStatus = "not_started" | "waiting" | "in_progress" | "blocked" | "completed";
+/** `cancelled` covers cancelled/archived/skipped work: closed, never open or overdue. */
+export type NodeStatus = "not_started" | "waiting" | "in_progress" | "blocked" | "completed" | "cancelled";
 
 export const NODE_STATUS_LABELS: Record<NodeStatus, string> = {
-  not_started: "Chưa bắt đầu",
+  not_started: TASK_STATUS_LABEL.notStarted,
   waiting: "Đang chờ",
-  in_progress: "Đang làm",
+  in_progress: TASK_STATUS_LABEL.inProgress,
   blocked: "Bị chặn",
-  completed: "Đã hoàn thành"
+  completed: TASK_STATUS_LABEL.completed,
+  cancelled: "Đã hủy"
 };
 
-/** Status labels used by the Project page for milestones and stages. */
-export const WORKFLOW_STATUS_LABELS: Record<NodeStatus, string> = {
-  not_started: "Sắp tới",
-  waiting: "Đang chờ",
-  in_progress: "Đang làm",
-  blocked: "Có rủi ro",
-  completed: "Đã hoàn thành"
-};
-
-/** Member participation state inside a project (PTS-03). */
-export type MemberState = "active" | "on_hold" | "released";
+/**
+ * HR employment state of a project member. NOT the participation state: that is
+ * derived per period by the API (EV-035, see fetchProjectMemberParticipation).
+ */
+export type MemberState = "active" | "on_leave" | "released";
 
 export const MEMBER_STATE_LABELS: Record<MemberState, string> = {
-  active: "Đang tham gia",
-  on_hold: "Tạm dừng",
+  active: "Đang làm việc",
+  on_leave: "Đang nghỉ",
   released: "Đã rời"
 };
 
@@ -113,6 +91,8 @@ export interface TaskNode {
   assigneeId: string | null;
   estimateMinutes: number;
   status: NodeStatus;
+  /** Raw status was `paused`: shown as not started, and not overdue while its project is On Hold. */
+  paused?: boolean;
   startDate: string | null;
   dueDate: string | null;
   completedDate: string | null;
@@ -142,9 +122,10 @@ export interface MilestoneNode {
 
 export interface ProjectMember {
   personId: string;
-  role: string;
+  /** Project role / join date: only set when the member payload carries them. */
+  role?: string;
   state: MemberState;
-  joinedAt: string;
+  joinedAt?: string;
 }
 
 export interface ProjectNode {
@@ -155,6 +136,9 @@ export interface ProjectNode {
   status: ProjectStatus;
   workGroup: WorkGroup;
   picId: string;
+  /** Planned start of the project; null when the payload has none. */
+  startDate: string | null;
+  /** Planned end date of the project. */
   deadline: string | null;
   members: ProjectMember[];
   milestones: MilestoneNode[];
@@ -175,31 +159,16 @@ export interface TimeLog {
   note: string;
 }
 
-/**
- * One workflow transition of a task, mirroring the production
- * `TaskStatusHistory` model. Cumulative-flow and cycle-time analysis are
- * impossible without this — a task's current status alone cannot say when it
- * entered that status.
- */
-export interface TaskStatusEvent {
-  id: string;
-  taskId: string;
-  projectId: string;
-  /** ISO date `YYYY-MM-DD`. */
-  changedAt: string;
-  fromStatus: NodeStatus | null;
-  toStatus: NodeStatus;
-  changedByUserId: string | null;
-}
-
 /** Everything a Timesheet screen needs, in one bundle. */
 export interface TimesheetDataset {
+  /** "Today" as an Asia/Ho_Chi_Minh date key. */
   generatedAt: string;
+  /** First day (date key) of the loaded time-entry window; logs before it are not in `logs`. */
+  windowStart?: string;
   departments: Department[];
   people: Person[];
   projects: ProjectNode[];
   logs: TimeLog[];
-  statusEvents: TaskStatusEvent[];
   /** Vietnamese public holidays inside the covered range (`YYYY-MM-DD`). */
   holidays: string[];
   months: string[];

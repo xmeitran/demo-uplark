@@ -502,7 +502,7 @@ test.describe("interaction audit remediation", () => {
     await page.getByRole("option", { name: "Critical", exact: true }).click();
     const statusField = page.getByText("Trạng thái", { exact: true }).locator("..");
     await statusField.getByRole("button").click();
-    await page.getByRole("option", { name: "Có rủi ro", exact: true }).click();
+    await page.getByRole("option", { name: "At Risk", exact: true }).click();
 
     await page.getByRole("button", { name: `IQ ${workspaceUser.displayName}` }).click();
     await page.getByRole("button", { name: "Select project color #059669" }).click();

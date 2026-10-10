@@ -292,6 +292,7 @@ export class NativeAuthService {
     const email = emailInput(body?.email), roleCode = stringInput(body?.roleCode, "roleCode");
     const allowed = ["FOUNDER_GM", "WORKSPACE_ADMIN", "WORKSPACE_USER"];
     if (!allowed.includes(roleCode)) throw new BadRequestException("Invalid invitation role");
+    if (roleCode === "FOUNDER_GM" && !principal.roleCodes.includes("FOUNDER_GM")) throw new ForbiddenException("Chỉ Founder/GM mới được mời thành viên với vai trò Founder/GM");
     if (!principal.workspaceId) throw new ForbiddenException("Workspace required");
     const token = randomAuthToken(); const expiresAt = new Date(Date.now() + 48 * 3600000);
     const invitation = await this.prisma.$transaction(async tx => {

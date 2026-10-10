@@ -15,7 +15,7 @@ describe("canonical product route readiness", () => {
     expect(new Set(PRODUCT_ROUTES.map((route) => route.id)).size).toBe(PRODUCT_ROUTES.length);
     expect(new Set(PRODUCT_ROUTES.map((route) => route.href)).size).toBe(PRODUCT_ROUTES.length);
     expect(PRODUCTION_VISIBLE_ROUTES).toEqual([
-      "/", "/projects", "/calendar", "/resource-mgmt", "/project-controls", "/people", "/users", "/clients", "/settings", "/analytics", "/timesheet", "/pnl"
+      "/", "/projects", "/calendar", "/resource-mgmt", "/project-controls", "/users", "/clients", "/settings", "/analytics", "/timesheet", "/pnl"
     ]);
     expect(PRODUCTION_DISABLED_ROUTES).toContain("/notes");
     expect(SYSTEM_ROUTES).toEqual(["/login", "/signup", "/unavailable", "/dashboard", "/workspace"]);

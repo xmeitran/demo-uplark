@@ -12,7 +12,9 @@ import type {
   TaskTimeEntrySummary
 } from "@b2b-crm/contracts";
 import { toIso, toMoneyNumber } from "../../shared/http/request-context";
-import { isCompletedTaskStatus } from "./task-status";
+import { isClosedWorkStatus, isCompletedTaskStatus } from "./task-status";
+import { sumActualMinutes } from "./member-participation";
+import { normalizeProjectStatus } from "./project-status";
 
 export function mapProjectSummary(project: any): ProjectSummary {
   const tasks = project.tasks ?? [];
@@ -22,7 +24,7 @@ export function mapProjectSummary(project: any): ProjectSummary {
   const activeBudget = project.budgets?.[0];
   const completedTaskCount = tasks.filter((task: any) => isCompletedTaskStatus(task.status)).length;
   const plannedMinutes = tasks.reduce((sum: number, task: any) => sum + Number(task.estimateMinutes ?? 0), 0);
-  const loggedMinutes = tasks.reduce((sum: number, task: any) => sum + sumMinutes(task.timeEntries), 0);
+  const loggedMinutes = tasks.reduce((sum: number, task: any) => sum + sumActualMinutes(task.timeEntries), 0);
   const approvedMinutes = tasks.reduce((sum: number, task: any) => sum + sumMinutes(
     (task.timeEntries ?? []).filter((entry: any) => normalizeTaskTimeEntryApprovalStatus(entry.approvalStatus) === "approved")
   ), 0);
@@ -59,6 +61,7 @@ export function mapProjectSummary(project: any): ProjectSummary {
     code: project.code,
     name: project.name,
     status: project.status,
+    statusCode: normalizeProjectStatus(project.status) ?? undefined,
     projectType: project.projectType ?? project.opportunity?.stage ?? "delivery",
     scopeSummary: project.scopeSummary ?? firstStage?.scopeSummary ?? undefined,
     marginPercent: toMoneyNumber(project.marginPercent),
@@ -327,7 +330,7 @@ export function mapProjectRiskSummary(risk: any): ProjectRiskSummary {
 }
 
 export function mapTaskSummary(task: any): ProjectTaskSummary {
-  const loggedMinutes = sumMinutes(task.timeEntries);
+  const loggedMinutes = sumActualMinutes(task.timeEntries);
   const approvedMinutes = sumMinutes((task.timeEntries ?? []).filter((entry: any) => normalizeTaskTimeEntryApprovalStatus(entry.approvalStatus) === "approved"));
   const assignees: Array<{ userId: string; displayName?: string; avatarUrl?: string }> = Array.from(new Map<string, { userId: string; displayName?: string; avatarUrl?: string }>([
     ...(Array.isArray(task.taskAssignees) ? task.taskAssignees
@@ -388,7 +391,7 @@ export function mapTaskSummary(task: any): ProjectTaskSummary {
     archivedAt: toIso(task.archivedAt),
     archivedByUserId: task.archivedByUserId ?? undefined,
     archiveReason: task.archiveReason ?? undefined,
-    overdue: Boolean(task.dueAt && !["done", "cancelled", "archived"].includes(task.status) && !task.archivedAt && new Date(task.dueAt) < new Date()),
+    overdue: Boolean(task.dueAt && !isClosedWorkStatus(task.status) && !task.archivedAt && new Date(task.dueAt) < new Date()),
     cycleTimeDays: cycleTimeDays(task.startedAt, task.completedAt),
     customerVisible: task.customerVisible,
     createdAt: toIso(task.createdAt) ?? new Date().toISOString(),

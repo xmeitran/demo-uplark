@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTimesheetDateRanges, projectMemberState, resolveTaskStatus, TIMESHEET_HISTORY_DAYS } from "./timesheet-live-data";
+import { buildTimesheetDateRanges, dateOnly, projectMemberState, resolveTaskStatus, selectableTimesheetMonths, TIMESHEET_HISTORY_DAYS, timesheetWindowStart, yearsBetween } from "./timesheet-live-data";
 import { normalizeNodeStatus } from "./timesheet-status";
 
 describe("timesheet history ranges", () => {
@@ -27,10 +27,10 @@ describe("timesheet history ranges", () => {
 describe("live timesheet status mapping", () => {
   it.each([
     ["ACTIVE", "active"],
-    ["ON_LEAVE", "on_hold"],
+    ["ON_LEAVE", "on_leave"],
     ["INACTIVE", "released"],
     ["SUSPENDED", "released"]
-  ])("maps employment status %s to member state %s", (employmentStatus, expected) => {
+  ])("maps employment status %s to HR member state %s", (employmentStatus, expected) => {
     expect(projectMemberState(employmentStatus)).toBe(expected);
   });
 
@@ -46,5 +46,27 @@ describe("live timesheet status mapping", () => {
     expect(resolveTaskStatus("todo", "in_progress")).toBe("todo");
     expect(resolveTaskStatus("completed", "in_progress")).toBe("completed");
     expect(resolveTaskStatus(undefined, "completed")).toBe("completed");
+  });
+});
+
+describe("timesheet calendar rules", () => {
+  it("reads dates as Asia/Ho_Chi_Minh days, not UTC slices", () => {
+    // 18:00Z on the 30th is already 01:00 on the 1st in Vietnam.
+    expect(dateOnly("2026-09-30T18:00:00.000Z")).toBe("2026-10-01");
+    expect(dateOnly("2026-09-30")).toBe("2026-09-30");
+    expect(dateOnly(undefined)).toBeNull();
+    expect(timesheetWindowStart(new Date("2026-10-10T18:00:00.000Z"))).toBe("2025-10-11");
+  });
+
+  it("leaves the partly loaded oldest month out of the period picker and always offers the current month", () => {
+    const months = selectableTimesheetMonths(["2025-10-20", "2025-11-03", "2026-09-30"], "2025-10-11", "2026-10-11");
+    expect(months).toEqual(["2025-11", "2026-09", "2026-10"]);
+    // A window that starts on the 1st loads that month completely.
+    expect(selectableTimesheetMonths(["2025-10-20"], "2025-10-01", "2026-10-11")).toContain("2025-10");
+  });
+
+  it("asks for day-offs of every year the window touches", () => {
+    expect(yearsBetween("2025-10-11", "2026-10-12")).toEqual([2025, 2026]);
+    expect(yearsBetween("2026-01-01", "2026-12-31")).toEqual([2026]);
   });
 });

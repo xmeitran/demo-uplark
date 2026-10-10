@@ -355,6 +355,14 @@ export default function DashboardPage() {
   const dashboardAiInputRef = useRef<HTMLInputElement | null>(null);
   const displayName = user?.name ?? "Workspace";
 
+  // Keep every "New Project" entry point on the dashboard in one flow.
+  // The sidebar and the header button should never grow separate modal logic.
+  const openCreateProject = () => {
+    setDashboardError(null);
+    setDashboardAiError(null);
+    setIsCreateOpen(true);
+  };
+
   const handleDashboardExcelImport = async (file: File) => {
     setDashboardAiBusy(true);
     setDashboardAiError(null);
@@ -371,7 +379,7 @@ export default function DashboardPage() {
           rows.push(`SHEET: ${sheet.name}`);
           sheet.eachRow((row) => {
             const values = Array.isArray(row.values) ? row.values.slice(1) : [];
-            if (values.some((value) => String(value ?? "").trim())) rows.push(values.map((value) => String(value ?? "").replace(/\t/g, " ")).join("\t"));
+            if (values.some((value) => String(value ?? "").trim())) rows.push(values.map((value) => String(value ?? "").replace(/[\t\r\n]+/g, " • ")).join("\t"));
           });
         });
         body.text = rows.join("\n");
@@ -640,7 +648,7 @@ export default function DashboardPage() {
   };
 
   return (
-    <AppShell activeRoute="/" onCreateProjectClick={() => setIsCreateOpen(true)} title="Dashboard">
+    <AppShell activeRoute="/" onCreateProjectClick={openCreateProject} title="Dashboard">
         <main className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-5">
 
           {/* Greeting */}
@@ -654,8 +662,10 @@ export default function DashboardPage() {
             </div>
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setIsCreateOpen(true)}
+                type="button"
+                onClick={openCreateProject}
                 className="hidden sm:flex items-center gap-1.5 px-3.5 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-semibold shadow-sm shadow-primary/15 transition-colors"
+                data-testid="dashboard-add-project"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>Add New Project</span>
@@ -719,7 +729,7 @@ export default function DashboardPage() {
                       key={action.label}
                       whileHover={{ scale: 1.04 }}
                       whileTap={{ scale: 0.96 }}
-                      onClick={() => setIsCreateOpen(true)}
+                      onClick={openCreateProject}
                       aria-label="Create a new project"
                       className="flex flex-col items-center gap-1.5 py-3 rounded-xl border border-border hover:bg-muted/70 hover:border-primary/20 transition-all w-full"
                     >

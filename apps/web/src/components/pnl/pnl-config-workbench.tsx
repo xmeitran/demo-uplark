@@ -1,31 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Check, ChevronRight, CircleAlert, LockKeyhole, Plus, Save, Settings2, SlidersHorizontal } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowLeft, Check, CircleAlert, LockKeyhole, Save, Settings2 } from "lucide-react";
 import { AppShell } from "@/components/constructor-x/app-shell";
+import { FormulaItemsEditor, ParametersEditor, type CalcItem, type CalcParameter } from "./pnl-calculator-setup";
 import { CrmSelect } from "@/components/crm-workspace/crm-select";
 
-type ConfigTab = "items" | "parameters" | "pool" | "period" | "templates";
-type Source = "Thủ công" | "Hệ thống" | "Công thức" | "Phân bổ quỹ" | "Tổng nhóm";
-
-type PnlItem = {
-  code: string;
-  label: string;
-  group: "Doanh thu" | "Chi phí" | "Kết quả" | "Chỉ số";
-  source: Source;
-  round: number;
-  parent?: string;
-  active: boolean;
-  children?: boolean;
-  unit?: "Tiền" | "Giờ" | "Tỷ lệ" | "Số lượng";
-  sign?: "Cộng" | "Trừ";
-  formula?: string;
-  effectiveFrom?: string;
-  required?: boolean;
-};
-
-type Parameter = { code: string; label: string; type: string; value: string; scope: string };
+type ConfigTab = "items" | "parameters" | "pool" | "period";
 type PoolCriteria = "Theo giờ tính P&L" | "Theo doanh thu" | "Theo số nhân sự" | "Chia đều" | "Nhập tay từng dự án";
 
 function currentPnlPeriodKey() {
@@ -47,45 +29,12 @@ function periodEnd(periodKey: string) {
   return new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
 }
 
+// The system only calculates: every number and formula on this screen is entered by the user.
 const TABS: Array<{ id: ConfigTab; label: string; description: string }> = [
-  { id: "items", label: "1. Khoản mục", description: "Cây số liệu P&L" },
-  { id: "parameters", label: "2. Tham số", description: "Đơn giá và tỷ lệ" },
-  { id: "pool", label: "3. Phân bổ quỹ", description: "Chi phí dùng chung" },
-  { id: "period", label: "4. Chốt kỳ", description: "Snapshot và khóa số" },
-  { id: "templates", label: "5. Mẫu áp dụng", description: "Theo loại project" }
-];
-
-const DEFAULT_ITEMS: PnlItem[] = [
-  { code: "DOANHTHU", label: "Doanh thu", group: "Doanh thu", source: "Tổng nhóm", round: 5, children: true, active: true, unit: "Tiền", sign: "Cộng", effectiveFrom: "2026-09-01" },
-  { code: "DOANHTHU.LIC", label: "Doanh thu ghi nhận kỳ", group: "Doanh thu", source: "Hệ thống", round: 2, parent: "DOANHTHU", active: true, unit: "Tiền", sign: "Cộng", formula: "DOANH_THU_GHI_NHAN_KY", effectiveFrom: "2026-09-01", required: true },
-  { code: "CP", label: "Chi phí", group: "Chi phí", source: "Tổng nhóm", round: 5, children: true, active: true, unit: "Tiền", sign: "Trừ", effectiveFrom: "2026-09-01" },
-  { code: "CP.LUONG", label: "Chi phí nhân sự", group: "Chi phí", source: "Tổng nhóm", round: 5, parent: "CP", children: true, active: true, unit: "Tiền", sign: "Trừ", effectiveFrom: "2026-09-01" },
-  { code: "CP.LUONG.BD", label: "Chi phí BD", group: "Chi phí", source: "Công thức", round: 3, parent: "CP.LUONG", active: true, unit: "Tiền", sign: "Trừ", formula: "GIỜ_BD × ĐƠN_GIÁ_GIỜ", effectiveFrom: "2026-09-01" },
-  { code: "CP.LUONG.PM", label: "Chi phí PM", group: "Chi phí", source: "Công thức", round: 3, parent: "CP.LUONG", active: true, unit: "Tiền", sign: "Trừ", formula: "GIỜ_PM × ĐƠN_GIÁ_GIỜ", effectiveFrom: "2026-09-01" },
-  { code: "CP.LUONG.DX", label: "Chi phí Delivery / DX", group: "Chi phí", source: "Công thức", round: 3, parent: "CP.LUONG", active: true, unit: "Tiền", sign: "Trừ", formula: "TỔNG_THEO(vai_trò)", effectiveFrom: "2026-09-01" },
-  { code: "CP.LUONG.CS", label: "Chi phí Customer Success", group: "Chi phí", source: "Công thức", round: 3, parent: "CP.LUONG", active: true, unit: "Tiền", sign: "Trừ", formula: "TỔNG_THEO(vai_trò)", effectiveFrom: "2026-09-01" },
-  { code: "CP.PHUCLOI", label: "Chi phí phúc lợi", group: "Chi phí", source: "Tổng nhóm", round: 5, parent: "CP", children: true, active: true, unit: "Tiền", sign: "Trừ", effectiveFrom: "2026-09-01" },
-  { code: "CP.HOATDONG", label: "Chi phí hoạt động", group: "Chi phí", source: "Tổng nhóm", round: 5, parent: "CP", children: true, active: true, unit: "Tiền", sign: "Trừ", effectiveFrom: "2026-09-01" },
-  { code: "CP.VANPHONG", label: "Chi phí văn phòng", group: "Chi phí", source: "Tổng nhóm", round: 5, parent: "CP", children: true, active: true, unit: "Tiền", sign: "Trừ", effectiveFrom: "2026-09-01" },
-  { code: "CP.BANHANG", label: "Chi phí bán hàng", group: "Chi phí", source: "Tổng nhóm", round: 5, parent: "CP", children: true, active: true, unit: "Tiền", sign: "Trừ", effectiveFrom: "2026-09-01" },
-  { code: "CP.BANHANG.HH", label: "Hoa hồng bán hàng", group: "Chi phí", source: "Công thức", round: 4, parent: "CP.BANHANG", active: true, unit: "Tiền", sign: "Trừ", formula: "DOANHTHU × TY_LE_HOA_HONG_BD", effectiveFrom: "2026-09-01" },
-  { code: "CP.VANHANH", label: "Chi phí vận hành", group: "Chi phí", source: "Tổng nhóm", round: 5, parent: "CP", children: true, active: true, unit: "Tiền", sign: "Trừ", effectiveFrom: "2026-09-01" },
-  { code: "CP.VANHANH.AI", label: "Chi phí công cụ AI", group: "Chi phí", source: "Phân bổ quỹ", round: 4, parent: "CP", active: true, unit: "Tiền", sign: "Trừ", formula: "PHÂN_BỔ(QUY.AI)", effectiveFrom: "2026-09-01" },
-  { code: "LN.GOP", label: "Lợi nhuận gộp", group: "Kết quả", source: "Công thức", round: 6, active: true, unit: "Tiền", sign: "Cộng", formula: "DOANHTHU − REBATE", effectiveFrom: "2026-09-01" },
-  { code: "EBIT", label: "EBIT", group: "Kết quả", source: "Công thức", round: 6, active: true, unit: "Tiền", sign: "Cộng", formula: "LN.GOP − CP", effectiveFrom: "2026-09-01" },
-  { code: "EBIT.LUYKE", label: "EBIT lũy kế", group: "Kết quả", source: "Công thức", round: 6, active: true, unit: "Tiền", sign: "Cộng", formula: "CỘNG_DỒN(EBIT)", effectiveFrom: "2026-09-01" },
-  { code: "TL.CP", label: "Tỷ lệ chi phí", group: "Chỉ số", source: "Công thức", round: 6, active: true, unit: "Tỷ lệ", sign: "Cộng", formula: "TỶ_LỆ(CP; DOANHTHU)", effectiveFrom: "2026-09-01" },
-  { code: "TL.EBIT", label: "Biên EBIT", group: "Chỉ số", source: "Công thức", round: 6, active: true, unit: "Tỷ lệ", sign: "Cộng", formula: "TỶ_LỆ(EBIT; DOANHTHU)", effectiveFrom: "2026-09-01" }
-];
-
-const DEFAULT_PARAMETERS: Parameter[] = [
-  { code: "TY_LE_HOA_HONG_BD", label: "Tỷ lệ hoa hồng bán hàng", type: "Tỷ lệ", value: "5%", scope: "Theo khách hàng" },
-  { code: "LUONG_THANG_CHUAN", label: "Lương tháng quy đổi đơn giá giờ", type: "Tiền", value: "10.000.000 ₫", scope: "Theo nhân sự" },
-  { code: "GIO_CONG_CHUAN_THANG", label: "Giờ công chuẩn tháng", type: "Số", value: "176 giờ", scope: "Toàn công ty" },
-  { code: "TY_GIA_USD", label: "Tỷ giá USD sang VNĐ", type: "Tỷ giá", value: "26.300 ₫", scope: "Toàn công ty · Theo tháng" },
-  { code: "PHI_CONG_CU_AI_THANG", label: "Phí công cụ AI mỗi tháng", type: "Tiền", value: "200 USD", scope: "Toàn công ty · Theo tháng" },
-  { code: "GIO_BD_DINH_MUC", label: "Giờ BD định mức / dự án", type: "Số", value: "3 giờ", scope: "Theo loại dự án" },
-  { code: "GIO_PM_DINH_MUC", label: "Giờ PM định mức / dự án", type: "Số", value: "16 giờ", scope: "Theo loại dự án" }
+  { id: "parameters", label: "1. Tham số", description: "Số bạn tự nhập cho tháng" },
+  { id: "items", label: "2. Khoản tính theo công thức", description: "Chi phí tính từ tham số" },
+  { id: "pool", label: "3. Quỹ dùng chung", description: "Chi phí chung chia cho project" },
+  { id: "period", label: "4. Chốt kỳ", description: "Khóa số của tháng" }
 ];
 
 function Badge({ children, tone = "slate" }: { children: React.ReactNode; tone?: "blue" | "green" | "amber" | "slate" | "rose" }) {
@@ -93,60 +42,30 @@ function Badge({ children, tone = "slate" }: { children: React.ReactNode; tone?:
   return <span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${colors[tone]}`}>{children}</span>;
 }
 
-function ItemsTab({ items, selectedCode, periodKey, onSelect, onAdd, onSourceChange }: { items: PnlItem[]; selectedCode: string; periodKey: string; onSelect: (code: string) => void; onAdd: () => void; onSourceChange: (code: string, source: Source) => void }) {
-  const selected = items.find((item) => item.code === selectedCode) ?? items[0];
-  const blockers = items.filter((item) => item.children && item.source !== "Tổng nhóm");
-  return <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,.9fr)]">
-    <section className="overflow-hidden rounded-xl border border-border bg-card">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3"><div><h2 className="font-semibold">Cây khoản mục</h2><p className="mt-0.5 text-xs text-muted-foreground">Mã giữ ổn định sau khi đã có dữ liệu kỳ khoá.</p></div><button type="button" onClick={onAdd} className="inline-flex items-center gap-1.5 rounded-lg border border-primary/20 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/5"><Plus className="h-3.5 w-3.5" /> Thêm khoản mục</button></div>
-      <div className="divide-y divide-border/70">{items.map((item) => <button key={item.code} type="button" onClick={() => onSelect(item.code)} className={`flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-muted/40 ${selectedCode === item.code ? "bg-blue-50/70" : ""}`}><ChevronRight className={`h-4 w-4 shrink-0 text-muted-foreground ${item.parent ? "ml-5" : ""}`} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-semibold text-foreground">{item.label}</span><Badge tone={item.active ? "green" : "slate"}>{item.active ? "Đang dùng" : "Ngừng dùng"}</Badge></div><p className="mt-0.5 text-[11px] text-muted-foreground">{item.code} · {item.group} · Vòng {item.round}</p></div><Badge tone="blue">{item.source}</Badge></button>)}</div>
-      {blockers.length > 0 && <div className="flex items-start gap-2 border-t border-amber-100 bg-amber-50/70 px-4 py-3 text-xs text-amber-900"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0" /><span>Quy tắc kiểm tra đã bật: khoản mục có con phải dùng <strong>Tổng nhóm</strong>. Hiện có {blockers.length} dòng cần rà soát.</span></div>}
-    </section>
-    <section className="rounded-xl border border-border bg-card p-4">
-      <div className="flex items-center justify-between"><div><p className="text-[11px] font-bold uppercase tracking-[.14em] text-primary">Chi tiết khoản mục</p><h2 className="mt-1 text-lg font-bold">{selected?.label}</h2></div><Badge tone="blue">{selected?.code}</Badge></div>
-      <div className="mt-5 grid gap-4 sm:grid-cols-2"><label className="text-xs font-semibold text-muted-foreground">Mã khoản mục<input value={selected?.code ?? ""} readOnly className="mt-1 h-10 w-full rounded-lg border border-border bg-muted/20 px-3 font-mono text-xs text-foreground" /></label><label className="text-xs font-semibold text-muted-foreground">Tên hiển thị<input value={selected?.label ?? ""} readOnly className="mt-1 h-10 w-full rounded-lg border border-border bg-muted/20 px-3 text-sm text-foreground" /></label><label className="text-xs font-semibold text-muted-foreground">Khoản mục cha<input value={selected?.parent ?? "Cấp 1"} readOnly className="mt-1 h-10 w-full rounded-lg border border-border bg-muted/20 px-3 text-sm text-foreground" /></label><label className="text-xs font-semibold text-muted-foreground">Nhóm báo cáo<input value={selected?.group ?? ""} readOnly className="mt-1 h-10 w-full rounded-lg border border-border bg-muted/20 px-3 text-sm text-foreground" /></label><div><span className="text-xs font-semibold text-muted-foreground">Nguồn số</span><CrmSelect className="mt-1" options={["Thủ công", "Hệ thống", "Công thức", "Phân bổ quỹ", "Tổng nhóm"].map((source) => ({ value: source, label: source }))} value={selected?.source ?? ""} onChange={(value) => onSourceChange(selected?.code ?? "", value as Source)} /></div><label className="text-xs font-semibold text-muted-foreground">Vòng tính<input value={`Vòng ${selected?.round ?? 1}`} readOnly className="mt-1 h-10 w-full rounded-lg border border-border bg-muted/20 px-3 text-sm text-foreground" /></label><label className="text-xs font-semibold text-muted-foreground">Đơn vị<input value={selected?.unit ?? "Tiền"} readOnly className="mt-1 h-10 w-full rounded-lg border border-border bg-muted/20 px-3 text-sm text-foreground" /></label><label className="text-xs font-semibold text-muted-foreground">Dấu<input value={selected?.sign ?? "Cộng"} readOnly className="mt-1 h-10 w-full rounded-lg border border-border bg-muted/20 px-3 text-sm text-foreground" /></label></div>
-      <div className="mt-4 rounded-lg border border-border bg-muted/20 p-3"><p className="text-xs font-semibold text-muted-foreground">Công thức / quy tắc</p><code className="mt-2 block text-sm text-foreground">{selected?.formula || (selected?.source === "Tổng nhóm" ? "TỔNG_THEO(khoản_mục, con_trực_tiếp)" : selected?.source === "Phân bổ quỹ" ? "PHÂN_BỔ(QUY.AI, theo_giờ_P&L)" : selected?.source === "Hệ thống" ? "DOANH_THU_GHI_NHẬN_KỲ" : "GIỜ_TÍNH_PL × ĐƠN_GIÁ_GIỜ")}</code></div>
-      <div className="mt-4 flex flex-wrap gap-2"><Badge tone="slate">Hiệu lực từ: {selected?.effectiveFrom ?? `${periodKey}-01`}</Badge><Badge tone="slate">{selected?.required ? "Bắt buộc có số" : "Không bắt buộc"}</Badge><Badge tone="slate">Mã không đổi sau khi khóa kỳ</Badge></div>
-    </section>
-  </div>;
+type PoolShare = { projectId: string; projectName: string; amount: number };
+
+function PoolTab({ total, periodKey, criteria, shares, disabled, setTotal, setCriteria }: { total: number; periodKey: string; criteria: PoolCriteria; shares: PoolShare[]; disabled: boolean; setTotal: (value: number) => void; setCriteria: (value: PoolCriteria) => void }) {
+  const money = new Intl.NumberFormat("vi-VN");
+  const allocated = shares.reduce((sum, share) => sum + share.amount, 0);
+  return <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"><section className="rounded-xl border border-border bg-card p-4"><p className="text-[11px] font-bold uppercase tracking-[.14em] text-primary">{periodLabel(periodKey)}</p><h2 className="mt-1 !text-lg font-bold">Quỹ chi phí dùng chung</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">Chi phí không thuộc riêng project nào (ví dụ công cụ AI, phần mềm dùng chung). Hệ thống chia tổng quỹ của tháng cho các project có giờ đã duyệt trong tháng và cộng vào chi phí của từng project.</p><div className="mt-5 grid gap-3 sm:grid-cols-2"><label className="text-xs font-semibold text-muted-foreground" htmlFor="pool-total">Tổng quỹ của tháng (₫)<input id="pool-total" inputMode="numeric" autoComplete="off" disabled={disabled} value={total ? money.format(total) : ""} placeholder="0" onChange={(event) => setTotal(Number(event.target.value.replace(/[^\d]/g, "")) || 0)} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-right font-mono text-sm disabled:opacity-60" /></label><div><span className="text-xs font-semibold text-muted-foreground">Chia theo</span><CrmSelect className="mt-1" disabled={disabled} options={[{ value: "Theo giờ tính P&L", label: "Giờ đã duyệt của project" }, { value: "Theo doanh thu", label: "Doanh thu kế hoạch" }, { value: "Theo số nhân sự", label: "Số nhân sự có giờ" }, { value: "Chia đều", label: "Chia đều" }, { value: "Nhập tay từng dự án", label: "Không tự chia" }]} value={criteria} onChange={(value) => setCriteria(value as PoolCriteria)} /></div></div><p className="mt-4 text-xs text-muted-foreground">{criteria === "Nhập tay từng dự án" ? "Quỹ sẽ không được cộng vào project nào. Nhập từng khoản ở Nhập chi phí → Chi phí khác nếu muốn tự chia." : "Bấm Lưu thiết lập để áp dụng; bảng bên cạnh cho thấy kết quả theo số đã lưu."}</p></section><section className="overflow-hidden rounded-xl border border-border bg-card"><div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3"><h2 className="!text-sm font-bold">Phân bổ đang áp dụng</h2><Badge tone={allocated > 0 ? "green" : "slate"}>{allocated > 0 ? money.format(allocated) + " ₫" : "Chưa phân bổ"}</Badge></div>{shares.length ? <div className="max-h-80 overflow-y-auto"><table className="w-full text-left text-sm"><thead className="bg-muted/30 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3">Project</th><th className="px-4 py-3 text-right">Được chia</th></tr></thead><tbody className="divide-y divide-border/70">{shares.map((share) => <tr key={share.projectId}><td className="px-4 py-3"><Link href={"/pnl/" + encodeURIComponent(share.projectId) + "?period=" + periodKey} className="font-semibold hover:text-primary">{share.projectName}</Link></td><td className="px-4 py-3 text-right font-mono font-semibold">{money.format(share.amount)} ₫</td></tr>)}</tbody></table></div> : disabled ? <p className="px-4 py-6 text-sm text-muted-foreground">Tháng đã chốt: phần quỹ của từng project đã nằm trong số “Chi phí khác đã chốt” và không tách lại được. Mở lại kỳ để xem phân bổ theo dữ liệu hiện tại.</p> : <p className="px-4 py-6 text-sm text-muted-foreground">Chưa có project nào được chia quỹ trong {"tháng " + periodLabel(periodKey)}. Quỹ chỉ được chia khi đã lưu tổng quỹ lớn hơn 0 và có project có giờ đã duyệt trong tháng.</p>}</section></div>;
 }
 
-function ParametersTab({ parameters, periodKey, onChange }: { parameters: Parameter[]; periodKey: string; onChange: (code: string, value: string) => void }) {
-  return <section className="overflow-hidden rounded-xl border border-border bg-card"><div className="flex items-center gap-2 border-b border-border px-4 py-3"><SlidersHorizontal className="h-4 w-4 text-primary" /><div><h2 className="font-semibold">Tham số có hiệu lực</h2><p className="mt-0.5 text-xs text-muted-foreground">Không hardcode số trong công thức; phạm vi hẹp hơn được ưu tiên.</p></div></div><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-muted/30 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3">Mã</th><th className="px-4 py-3">Tên</th><th className="px-4 py-3">Kiểu</th><th className="px-4 py-3">Giá trị</th><th className="px-4 py-3">Phạm vi</th><th className="px-4 py-3">Hiệu lực</th></tr></thead><tbody className="divide-y divide-border/70">{parameters.map((parameter) => <tr key={parameter.code}><td className="px-4 py-3 font-mono text-xs font-semibold text-primary">{parameter.code}</td><td className="px-4 py-3 font-medium">{parameter.label}</td><td className="px-4 py-3"><Badge tone="slate">{parameter.type}</Badge></td><td className="px-4 py-3"><input aria-label={parameter.code} value={parameter.value} onChange={(event) => onChange(parameter.code, event.target.value)} className="h-9 w-36 rounded-lg border border-border bg-background px-2.5 text-sm font-semibold" /></td><td className="px-4 py-3 text-xs text-muted-foreground">{parameter.scope}</td><td className="px-4 py-3 text-xs text-muted-foreground">{periodLabel(periodKey)}</td></tr>)}</tbody></table></div></section>;
-}
-
-function PoolTab({ allocated, total, periodKey, criteria, setAllocated, setCriteria }: { allocated: number; total: number; periodKey: string; criteria: PoolCriteria; setAllocated: (value: number) => void; setCriteria: (value: PoolCriteria) => void }) {
-  const remaining = total - allocated;
-  return <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]"><section className="rounded-xl border border-border bg-card p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-[11px] font-bold uppercase tracking-[.14em] text-primary">QUY.AI · Tháng {periodLabel(periodKey)}</p><h2 className="mt-1 text-lg font-bold">Phí công cụ AI</h2><p className="mt-1 text-xs text-muted-foreground">Khoản mục đích: CP.VANHANH.AI · Tiêu chí: {criteria.toLowerCase()}.</p></div><Badge tone={remaining === 0 ? "green" : "amber"}>{remaining === 0 ? "Đã chia" : "Nháp"}</Badge></div><div className="mt-5 grid gap-3 sm:grid-cols-3"><div className="rounded-lg bg-muted/30 p-3"><p className="text-xs text-muted-foreground">Tổng quỹ</p><p className="mt-1 font-bold">{new Intl.NumberFormat("vi-VN").format(total)} ₫</p></div><div className="rounded-lg bg-muted/30 p-3"><p className="text-xs text-muted-foreground">Đã phân bổ</p><p className="mt-1 font-bold text-emerald-700">{new Intl.NumberFormat("vi-VN").format(allocated)} ₫</p></div><div className="rounded-lg bg-muted/30 p-3"><p className="text-xs text-muted-foreground">Còn lại</p><p className={`mt-1 font-bold ${remaining ? "text-amber-700" : "text-emerald-700"}`}>{new Intl.NumberFormat("vi-VN").format(remaining)} ₫</p></div></div><div className="mt-5 h-3 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${Math.min(100, total > 0 ? (allocated / total) * 100 : 0)}%` }} /></div><div className="mt-5 grid gap-3 sm:grid-cols-2"><label className="text-xs font-semibold text-muted-foreground">Đã phân bổ quỹ dùng chung<input type="number" min={0} max={total} value={allocated} onChange={(event) => setAllocated(Math.min(total, Math.max(0, Number(event.target.value) || 0)))} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm" /></label><div><span className="text-xs font-semibold text-muted-foreground">Tiêu chí</span><CrmSelect className="mt-1" options={["Theo giờ tính P&L", "Theo doanh thu", "Theo số nhân sự", "Chia đều", "Nhập tay từng dự án"].map((value) => ({ value, label: value }))} value={criteria} onChange={(value) => setCriteria(value as PoolCriteria)} /></div></div></section><aside className="rounded-xl border border-amber-100 bg-amber-50/70 p-4 text-sm text-amber-950"><div className="flex items-center gap-2 font-semibold"><CircleAlert className="h-4 w-4 text-amber-600" /> Chặn chốt kỳ</div><p className="mt-2 text-xs leading-5">Tổng tiền đã chia phải bằng đúng tổng quỹ. Còn thiếu <strong>{new Intl.NumberFormat("vi-VN").format(Math.max(remaining, 0))} ₫</strong> nên nút chốt kỳ vẫn bị khóa.</p></aside></div>;
-}
-
-function ConfigurationOverview({ items, parameters, poolTotal, allocated, periodStatus, periodKey, onSelectTab }: { items: PnlItem[]; parameters: Parameter[]; poolTotal: number; allocated: number; periodStatus: string | null; periodKey: string; onSelectTab: (tab: ConfigTab) => void }) {
-  const activeItems = items.filter((item) => item.active).length;
-  const formulaItems = items.filter((item) => item.active && item.source === "Công thức").length;
-  const poolMatched = poolTotal === allocated;
-  const periodText = periodStatus === "LOCKED" ? "Đã chốt" : periodStatus === "CLOSING" ? "Đang chốt" : periodStatus === "OPEN" ? "Đang mở" : "Chưa tạo";
-  const checks: Array<{ tab: ConfigTab; label: string; value: string; note: string; tone: "blue" | "green" | "amber" }> = [
-    { tab: "items", label: "Cấu trúc P&L", value: String(activeItems), note: "khoản mục đang dùng", tone: "blue" },
-    { tab: "parameters", label: "Tham số đầu vào", value: String(parameters.length), note: "giá trị hiệu lực", tone: "blue" },
-    { tab: "pool", label: "Quỹ dùng chung", value: poolMatched ? "Đã khớp" : "Còn lệch", note: poolMatched ? "có thể đi tiếp" : "cần phân bổ hết", tone: poolMatched ? "green" : "amber" },
-    { tab: "period", label: "Trạng thái kỳ", value: periodText, note: "Kỳ " + periodLabel(periodKey), tone: periodStatus === "OPEN" || periodStatus === "LOCKED" ? "green" : "amber" }
-  ];
-  return <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm" aria-label="Trạng thái cấu hình P&L">
-    <div className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
-      <div><p className="text-[11px] font-bold uppercase tracking-[.14em] text-primary">Bảng điều khiển cấu hình</p><h2 className="mt-1 text-lg font-bold">Để tab P&L hiển thị đúng</h2><p className="mt-1 text-xs text-muted-foreground">Đi theo thứ tự: cấu trúc khoản mục → nguồn số → quỹ dùng chung → chốt kỳ. P&L chỉ đọc dữ liệu sau khi các bước này hợp lệ.</p></div>
-      <div className="flex shrink-0 items-center gap-2"><Badge tone={formulaItems ? "green" : "amber"}>{formulaItems} công thức</Badge><Badge tone={periodStatus === "LOCKED" ? "green" : "slate"}>{periodLabel(periodKey)}</Badge></div>
-    </div>
-    <div className="grid gap-px bg-border sm:grid-cols-2 xl:grid-cols-4">{checks.map((check, index) => <button key={check.tab} type="button" onClick={() => onSelectTab(check.tab)} className="bg-card p-4 text-left transition hover:bg-blue-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40"><div className="flex items-start justify-between gap-3"><span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-muted-foreground"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px]">{index + 1}</span>{check.label}</span><Badge tone={check.tone}>{check.value}</Badge></div><p className="mt-3 text-sm font-semibold">{check.note}</p><p className="mt-1 text-xs text-muted-foreground">Mở bước này để kiểm tra →</p></button>)}</div>
-  </section>;
-}
 function PnlConfigPage() {
-  const [periodKey] = useState(currentPnlPeriodKey);
-  const [tab, setTab] = useState<ConfigTab>("items");
-  const [items, setItems] = useState(DEFAULT_ITEMS);
-  const [selectedCode, setSelectedCode] = useState(DEFAULT_ITEMS[0].code);
-  const [parameters, setParameters] = useState(DEFAULT_PARAMETERS);
-  const [allocated, setAllocated] = useState(0);
-  const [poolTotal, setPoolTotal] = useState(5260000);
+  const [periodKey, setPeriodKey] = useState(currentPnlPeriodKey);
+  const [tab, setTab] = useState<ConfigTab>("parameters");
+  const [parameters, setParameters] = useState<CalcParameter[]>([]);
+  const [calcItems, setCalcItems] = useState<CalcItem[]>([]);
+  // Items saved by the earlier item-tree screen: kept untouched in the saved setup, never calculated.
+  const [legacyItems, setLegacyItems] = useState<unknown[]>([]);
+  const [results, setResults] = useState<Record<string, number>>({});
+  const [formulaErrors, setFormulaErrors] = useState<string[]>([]);
+  const [poolTotal, setPoolTotal] = useState(0);
+  const [shares, setShares] = useState<PoolShare[]>([]);
+  const [missingRateMinutes, setMissingRateMinutes] = useState(0);
+  const [missingRevenueCount, setMissingRevenueCount] = useState(0);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [reopenReason, setReopenReason] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
   const [poolCriteria, setPoolCriteria] = useState<PoolCriteria>("Theo giờ tính P&L");
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -166,16 +85,12 @@ function PnlConfigPage() {
       if (!periodResponse.ok) throw new Error(periodPayload?.message ?? "Không tải được trạng thái kỳ P&L.");
       if (!active) return;
       const data = configurationPayload?.data;
+      applySetup(data);
       if (data) {
-        if (Array.isArray(data.items)) {
-          setItems(data.items);
-          setSelectedCode(data.items[0]?.code ?? "");
-        }
-        if (Array.isArray(data.parameters)) setParameters(data.parameters);
-        if (data.pool && typeof data.pool.allocated === "number") setAllocated(Math.max(0, data.pool.allocated));
-        if (data.pool && typeof data.pool.total === "number" && data.pool.total > 0) setPoolTotal(data.pool.total);
+        setPoolTotal(data.pool && typeof data.pool.total === "number" && data.pool.total > 0 ? data.pool.total : 0);
         if (data.pool && typeof data.pool.criteria === "string") setPoolCriteria(data.pool.criteria as PoolCriteria);
       }
+      else setPoolTotal(0);
       const period = periodPayload?.data;
       setPeriodId(period?.id ?? null);
       setPeriodStatus(period?.status ?? null);
@@ -183,41 +98,87 @@ function PnlConfigPage() {
       if (active) setSaveError(error instanceof Error ? error.message : "Không tải được cấu hình P&L.");
     });
     return () => { active = false; };
-  }, [periodKey]);
+  }, [periodKey, reloadKey]);
+  // What the saved settings produce for the month: the pool shares and any hours still missing a cost rate.
+  useEffect(() => {
+    let active = true;
+    fetch(`/api/project-controls/pl-summary?period=${encodeURIComponent(periodKey)}`, { cache: "no-store" })
+      .then(async (response) => response.ok ? await response.json() as { data?: Array<{ projectId: string; projectName: string; sharedCostAmount?: number; missingRateMinutes?: number; revenueBasis?: string; totalCostAmount?: number; calculatedItems?: Array<{ code: string; amount: number }> }>; meta?: { formulaErrors?: string[] } } : { data: [] })
+      .then((payload) => { if (!active) return; const rows = payload.data ?? []; const totals: Record<string, number> = {}; for (const row of rows) for (const item of row.calculatedItems ?? []) totals[item.code] = (totals[item.code] ?? 0) + item.amount; setResults(totals); setFormulaErrors(payload.meta?.formulaErrors ?? []); setShares(rows.filter((row) => (row.sharedCostAmount ?? 0) > 0).map((row) => ({ projectId: row.projectId, projectName: row.projectName, amount: row.sharedCostAmount ?? 0 })).sort((left, right) => right.amount - left.amount)); setMissingRateMinutes(rows.reduce((sum, row) => sum + (row.missingRateMinutes ?? 0), 0)); setMissingRevenueCount(rows.filter((row) => row.revenueBasis === "none" && (row.totalCostAmount ?? 0) > 0).length); })
+      .catch(() => { if (active) { setShares([]); setMissingRateMinutes(0); setMissingRevenueCount(0); setResults({}); setFormulaErrors([]); } });
+    return () => { active = false; };
+  }, [periodKey, reloadKey]);
+  function applySetup(data: { items?: unknown; parameters?: unknown } | null | undefined) {
+    const savedItems = Array.isArray(data?.items) ? data.items as Array<Record<string, unknown>> : [];
+    const isCalcItem = (item: Record<string, unknown>) => typeof item?.formula === "string" && typeof item.category === "string" && typeof item.code === "string";
+    setCalcItems(savedItems.filter(isCalcItem).map((item) => ({ code: String(item.code), label: typeof item.label === "string" ? item.label : "", category: item.category as CalcItem["category"], formula: String(item.formula), active: item.active !== false })));
+    setLegacyItems(savedItems.filter((item) => !isCalcItem(item)));
+    setParameters((Array.isArray(data?.parameters) ? data.parameters as Array<Record<string, unknown>> : []).map((parameter) => ({ code: typeof parameter?.code === "string" ? parameter.code.toUpperCase() : "", label: typeof parameter?.label === "string" ? parameter.label : "", value: typeof parameter?.value === "string" ? parameter.value : parameter?.value === undefined ? "" : String(parameter.value) })));
+  }
+  const copyPreviousMonth = async () => {
+    const [year, month] = periodKey.split("-").map(Number);
+    const previous = new Date(Date.UTC(year, month - 2, 1)).toISOString().slice(0, 7);
+    setSaveError(null); setNotice(null);
+    try {
+      const response = await fetch(`/api/pnl-configurations?periodKey=${previous}`, { cache: "no-store" });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.message ?? "Không tải được thiết lập tháng trước.");
+      if (!payload?.data) { setSaveError(`Tháng ${periodLabel(previous)} chưa có thiết lập để chép.`); return; }
+      applySetup(payload.data);
+      if (payload.data.pool && typeof payload.data.pool.total === "number") setPoolTotal(Math.max(0, payload.data.pool.total));
+      if (payload.data.pool && typeof payload.data.pool.criteria === "string") setPoolCriteria(payload.data.pool.criteria as PoolCriteria);
+      setNotice(`Đã chép tham số, công thức và quỹ từ tháng ${periodLabel(previous)}. Kiểm tra lại rồi bấm Lưu thiết lập để áp dụng.`);
+    } catch (error) { setSaveError(error instanceof Error ? error.message : "Không tải được thiết lập tháng trước."); }
+  };
   const selectedTab = TABS.find((item) => item.id === tab) ?? TABS[0];
-  const canLock = allocated === poolTotal;
-  const itemCount = useMemo(() => items.filter((item) => item.active).length, [items]);
-  const addItem = () => { const code = `CP.MOI.${items.length + 1}`; setItems((current) => [...current, { code, label: "Khoản mục mới", group: "Chi phí", source: "Thủ công", round: 1, parent: "CP", active: true }]); setSelectedCode(code); setTab("items"); };
-  const changeSource = (code: string, source: Source) => setItems((current) => current.map((item) => item.code === code ? { ...item, source } : item));
+  const isLocked = periodStatus === "LOCKED";
   const save = async () => {
     if (periodStatus === "LOCKED") {
       setSaveError("Kỳ P&L đã khóa, không thể sửa cấu hình. Hãy mở lại kỳ trước khi thay đổi.");
       return;
     }
-    const invalidItems = items.filter((item) => item.children && item.source !== "Tổng nhóm");
-    if (invalidItems.length) {
-      setSaveError(`Không thể lưu: ${invalidItems.map((item) => item.code).join(", ")} có khoản mục con nhưng chưa dùng nguồn “Tổng nhóm”.`);
-      return;
-    }
+    const unnamed = calcItems.find((item) => !item.label.trim());
+    if (unnamed) { setTab("items"); setSaveError("Đặt tên cho mọi khoản tính theo công thức trước khi lưu."); return; }
     setSaving(true); setSaveError(null);
     try {
-      const configResponse = await fetch("/api/pnl-configurations", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ periodKey, items, parameters, pool: { total: poolTotal, allocated, criteria: poolCriteria }, templates: ["Dự án khách hàng", "Dự án nội bộ", "Đào tạo"] }) });
+      const configResponse = await fetch("/api/pnl-configurations", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ periodKey, items: [...legacyItems, ...calcItems.map((item) => ({ ...item, label: item.label.trim(), source: "Công thức" }))], parameters: parameters.filter((parameter) => parameter.code || parameter.label || parameter.value), pool: { total: poolTotal, allocated: 0, criteria: poolCriteria }, templates: ["Dự án khách hàng", "Dự án nội bộ", "Đào tạo"] }) });
       if (!configResponse.ok) { const payload = await configResponse.json().catch(() => ({})); throw new Error(payload?.message ?? "Không thể lưu cấu hình P&L"); }
-      const response = await fetch("/api/pnl-periods", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ periodKey, periodStart: `${periodKey}-01`, periodEnd: periodEnd(periodKey), currency: "VND", revenueAmount: 0 }) });
+      const response = await fetch("/api/pnl-periods", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ periodKey, periodStart: `${periodKey}-01`, periodEnd: periodEnd(periodKey), currency: "VND" }) });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload?.message ?? "Không thể lưu kỳ P&L");
-      setPeriodId(payload?.data?.id ?? null); setPeriodStatus(payload?.data?.status ?? "OPEN"); setSaved(true); window.setTimeout(() => setSaved(false), 2400);
+      setPeriodId(payload?.data?.id ?? null); setPeriodStatus(payload?.data?.status ?? "OPEN"); setSaved(true); setReloadKey((value) => value + 1); window.setTimeout(() => setSaved(false), 2400);
     } catch (error) { setSaveError(error instanceof Error ? error.message : "Không thể lưu kỳ P&L"); }
     finally { setSaving(false); }
   };
   const lockPeriod = async () => {
-    if (!periodId) return;
-    setSaving(true); setSaveError(null);
-      try { const response = await fetch(`/api/pnl-periods/${encodeURIComponent(periodId)}/lock`, { method: "POST" }); const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload?.message ?? "Không thể chốt kỳ"); setPeriodStatus(payload?.data?.status ?? "LOCKED"); setSaved(true); }
-    catch (error) { setSaveError(error instanceof Error ? error.message : "Không thể chốt kỳ"); }
+    if (!window.confirm(`Chốt tháng ${periodLabel(periodKey)}? Sau khi chốt, cost rate, chi phí, doanh thu nhập tay và thiết lập của tháng này bị khóa cho tới khi mở lại kỳ.`)) return;
+    setSaving(true); setSaveError(null); setNotice(null);
+    try {
+      // Without a saved setup there is no period row yet: lock by month key and the API creates it.
+      const response = await fetch(`/api/pnl-periods/${encodeURIComponent(periodId ?? periodKey)}/lock`, { method: "POST" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        // The API refuses to lock while parameters or formulas fail, and returns the list.
+        if (Array.isArray(payload?.formulaErrors)) setFormulaErrors(payload.formulaErrors);
+        throw new Error(response.status === 403 ? "Cần quyền Duyệt chi phí hoặc Founder/GM để chốt kỳ." : payload?.message ?? "Không thể chốt kỳ");
+      }
+      setPeriodId(payload?.data?.id ?? periodId); setPeriodStatus(payload?.data?.status ?? "LOCKED"); setNotice(`Đã chốt tháng ${periodLabel(periodKey)}: lưu số của ${payload?.meta?.snapshotProjects ?? 0} project.`); setReloadKey((value) => value + 1);
+    } catch (error) { setSaveError(error instanceof Error ? error.message : "Không thể chốt kỳ"); }
     finally { setSaving(false); }
   };
-  return <AppShell activeRoute="/admin" title="Thiết lập P&L"><main data-testid="pnl-config" className="min-h-0 flex-1 overflow-y-auto bg-background p-4 sm:p-6"><div className="mx-auto max-w-[1500px] space-y-5"><header className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><Link href="/admin" className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground hover:text-primary"><ArrowLeft className="h-4 w-4" /> Quay lại Admin</Link><p className="mt-4 text-[11px] font-bold uppercase tracking-[.16em] text-primary">Admin · Finance Governance</p><h1 className="mt-1 text-2xl font-extrabold tracking-tight sm:text-3xl">Thiết lập P&amp;L</h1><p className="mt-2 max-w-3xl text-sm text-muted-foreground">Quản lý khoản mục, nguồn số, tham số, quỹ dùng chung và kỳ khóa. Báo cáo chỉ đọc dữ liệu đã được cấu hình và đối soát.</p></div><div className="flex items-center gap-2"><Badge tone="green">{itemCount} khoản mục đang dùng</Badge><button type="button" onClick={() => void save()} disabled={saving || periodStatus === "LOCKED"} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-3.5 text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-60"><Save className="h-4 w-4" /> {saving ? "Đang lưu…" : saved ? "Đã lưu" : periodStatus === "LOCKED" ? "Kỳ đã khóa" : "Lưu bản nháp"}</button></div></div></header><ConfigurationOverview items={items} parameters={parameters} poolTotal={poolTotal} allocated={allocated} periodStatus={periodStatus} periodKey={periodKey} onSelectTab={setTab} />{saveError ? <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />{saveError}</div> : null}<nav aria-label="Thiết lập P&L" className="grid gap-2 rounded-xl border border-border bg-card p-2 sm:grid-cols-2 lg:grid-cols-5">{TABS.map((item) => <button key={item.id} type="button" onClick={() => setTab(item.id)} className={`rounded-lg px-3 py-3 text-left transition ${tab === item.id ? "bg-blue-50 text-primary" : "hover:bg-muted/50"}`}><span className="block text-sm font-semibold">{item.label}</span><span className="mt-0.5 block text-[11px] text-muted-foreground">{item.description}</span></button>)}</nav><div className="flex items-center gap-2 text-xs text-muted-foreground"><Settings2 className="h-4 w-4" /> {selectedTab.label} · Kỳ hiệu lực {periodLabel(periodKey)}</div>{tab === "items" && <ItemsTab items={items} selectedCode={selectedCode} periodKey={periodKey} onSelect={setSelectedCode} onAdd={addItem} onSourceChange={changeSource} />}{tab === "parameters" && <ParametersTab parameters={parameters} periodKey={periodKey} onChange={(code, value) => setParameters((current) => current.map((item) => item.code === code ? { ...item, value } : item))} />}{tab === "pool" && <PoolTab allocated={allocated} total={poolTotal} periodKey={periodKey} criteria={poolCriteria} setAllocated={setAllocated} setCriteria={setPoolCriteria} />}{tab === "period" && <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]"><div className="rounded-xl border border-border bg-card p-5"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><Check className="h-5 w-5" /></span><div><p className="text-[11px] font-bold uppercase tracking-[.14em] text-primary">Kỳ {periodLabel(periodKey)}</p><h2 className="mt-1 text-lg font-bold">{periodStatus ?? "Chưa tạo"}</h2><p className="mt-1 text-xs text-muted-foreground">{periodStatus === "LOCKED" ? "Kỳ đã khóa; cần mở lại trước khi chỉnh sửa." : "Có thể ghi giờ, nhập chi phí và chỉnh tham số."}</p></div></div><div className="mt-6 grid gap-3 sm:grid-cols-3"><div className="rounded-lg bg-muted/30 p-3"><p className="text-xs text-muted-foreground">Kỳ tiếp theo</p><p className="mt-1 font-semibold">Sắp tới</p></div><div className="rounded-lg bg-muted/30 p-3"><p className="text-xs text-muted-foreground">Snapshot</p><p className="mt-1 font-semibold">{periodStatus === "LOCKED" ? "Đã chốt" : "Chưa chốt"}</p></div><div className="rounded-lg bg-muted/30 p-3"><p className="text-xs text-muted-foreground">Quỹ dùng chung</p><p className="mt-1 font-semibold">{canLock ? "Đã khớp" : "Còn lệch"}</p></div></div></div><aside className="rounded-xl border border-border bg-card p-5"><div className="flex items-center gap-2 font-semibold"><LockKeyhole className="h-4 w-4 text-primary" /> Chốt kỳ</div><p className="mt-2 text-xs leading-5 text-muted-foreground">Hệ thống lưu cứng tham số, đơn giá giờ và cách chia quỹ tại thời điểm chốt.</p><button type="button" disabled={!canLock || !periodId || saving || periodStatus === "LOCKED"} onClick={() => void lockPeriod()} className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 text-sm font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40"><LockKeyhole className="h-4 w-4" /> {periodStatus === "LOCKED" ? "Đã chốt kỳ" : canLock ? `Chốt kỳ ${periodLabel(periodKey)}` : "Cần khớp quỹ trước"}</button></aside></section>}{tab === "templates" && <section className="grid gap-4 md:grid-cols-3">{["Dự án khách hàng", "Dự án nội bộ", "Đào tạo"].map((template) => <article key={template} className="rounded-xl border border-border bg-card p-5"><p className="text-[11px] font-bold uppercase tracking-[.14em] text-primary">Mẫu mặc định</p><h2 className="mt-2 text-lg font-bold">{template}</h2><p className="mt-2 text-sm text-muted-foreground">Áp dụng cây Doanh thu → Chi phí → Kết quả và giữ nguồn số theo loại dự án.</p><div className="mt-4 flex flex-wrap gap-2"><Badge tone="blue">11 khoản mục</Badge><Badge tone="green">Đang dùng</Badge></div><button type="button" className="mt-5 inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-semibold hover:bg-muted/50">Xem mẫu <ChevronRight className="h-3.5 w-3.5" /></button></article>)}</section>}</div></main></AppShell>;
+  const reopenPeriod = async () => {
+    if (!periodId) return;
+    if (!reopenReason.trim()) { setSaveError("Nhập lý do mở lại kỳ."); return; }
+    setSaving(true); setSaveError(null); setNotice(null);
+    try {
+      const response = await fetch(`/api/pnl-periods/${encodeURIComponent(periodId)}/reopen`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reason: reopenReason.trim() }) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(response.status === 403 ? "Cần quyền Duyệt chi phí hoặc Founder/GM để mở lại kỳ." : payload?.message ?? "Không thể mở lại kỳ");
+      setPeriodStatus(payload?.data?.status ?? "REOPENED"); setReopenReason(""); setNotice(`Đã mở lại tháng ${periodLabel(periodKey)}. Số liệu của tháng được tính lại theo dữ liệu hiện tại.`); setReloadKey((value) => value + 1);
+    } catch (error) { setSaveError(error instanceof Error ? error.message : "Không thể mở lại kỳ"); }
+    finally { setSaving(false); }
+  };
+  return <AppShell activeRoute="/admin" title="Thiết lập P&L"><main data-testid="pnl-config" className="min-h-0 flex-1 overflow-y-auto bg-background p-4 sm:p-6"><div className="mx-auto max-w-[1500px] space-y-5"><header className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><Link href="/admin" className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground hover:text-primary"><ArrowLeft className="h-4 w-4" /> Quay lại Admin</Link><p className="mt-4 text-[11px] font-bold uppercase tracking-[.16em] text-primary">Admin · Finance Governance</p><h1 className="!text-xl mt-1 font-extrabold tracking-tight">Thiết lập P&amp;L</h1><p className="mt-2 max-w-3xl text-sm text-muted-foreground">Bạn nhập tham số và công thức của từng tháng; hệ thống chỉ tính. Giờ, cost rate và chi phí nhập tay được lấy tự động.</p></div><div className="flex flex-wrap items-center gap-2"><label className="sr-only" htmlFor="pnl-config-month">Tháng thiết lập</label><input id="pnl-config-month" type="month" value={periodKey} onChange={(event) => { if (event.target.value) { setPeriodKey(event.target.value); setNotice(null); setSaveError(null); } }} className="h-10 rounded-lg border border-border bg-background px-3 text-sm font-semibold" /><button type="button" disabled={isLocked} onClick={() => void copyPreviousMonth()} className="inline-flex h-10 items-center gap-2 rounded-lg border border-border px-3.5 text-sm font-medium text-muted-foreground hover:bg-muted disabled:opacity-50">Chép từ tháng trước</button><Link href="/pnl/costs" className="inline-flex h-10 items-center gap-2 rounded-lg border border-border px-3.5 text-sm font-medium text-muted-foreground hover:bg-muted">Nhập chi phí</Link><Link href="/pnl" className="inline-flex h-10 items-center gap-2 rounded-lg border border-border px-3.5 text-sm font-medium text-muted-foreground hover:bg-muted">Xem P&amp;L</Link><button type="button" onClick={() => void save()} disabled={saving || periodStatus === "LOCKED"} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-3.5 text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-60"><Save className="h-4 w-4" /> {saving ? "Đang lưu…" : saved ? "Đã lưu" : periodStatus === "LOCKED" ? "Kỳ đã chốt" : "Lưu thiết lập"}</button></div></div></header>{saveError ? <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />{saveError}</div> : null}{notice ? <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">{notice}</p> : null}{formulaErrors.length ? <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"><p className="font-semibold">Có {formulaErrors.length} chỗ trong thiết lập đã lưu chưa tính được. Các khoản này đang bị bỏ ra khỏi P&amp;L cho tới khi sửa, và tháng chưa chốt được:</p><ul className="mt-2 list-disc space-y-1 pl-5 text-xs">{formulaErrors.slice(0, 8).map((message) => <li key={message}>{message}</li>)}</ul></div> : null}<nav aria-label="Thiết lập P&L" className="grid gap-2 rounded-xl border border-border bg-card p-2 sm:grid-cols-2 lg:grid-cols-4">{TABS.map((item) => <button key={item.id} type="button" onClick={() => setTab(item.id)} className={`rounded-lg px-3 py-3 text-left transition ${tab === item.id ? "bg-blue-50 text-primary" : "hover:bg-muted/50"}`}><span className="block text-sm font-semibold">{item.label}</span><span className="mt-0.5 block text-[11px] text-muted-foreground">{item.description}</span></button>)}</nav><div className="flex items-center gap-2 text-xs text-muted-foreground"><Settings2 className="h-4 w-4" /> {selectedTab.label} · Kỳ hiệu lực {periodLabel(periodKey)}</div>{tab === "parameters" && <ParametersEditor parameters={parameters} disabled={isLocked} onChange={setParameters} />}{tab === "items" && <FormulaItemsEditor items={calcItems} parameters={parameters} results={results} disabled={isLocked} onChange={setCalcItems} />}{tab === "pool" && <PoolTab total={poolTotal} periodKey={periodKey} criteria={poolCriteria} shares={shares} disabled={isLocked} setTotal={setPoolTotal} setCriteria={setPoolCriteria} />}{tab === "period" && <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]"><div className="rounded-xl border border-border bg-card p-5"><div className="flex items-center gap-3"><span className={`flex h-10 w-10 items-center justify-center rounded-xl ${isLocked ? "bg-emerald-50 text-emerald-700" : "bg-muted text-muted-foreground"}`}>{isLocked ? <LockKeyhole className="h-5 w-5" /> : <Check className="h-5 w-5" />}</span><div><p className="text-[11px] font-bold uppercase tracking-[.14em] text-primary">{periodLabel(periodKey)}</p><h2 className="mt-1 !text-lg font-bold">{isLocked ? "Đã chốt" : periodStatus === "REOPENED" ? "Đã mở lại" : "Đang mở"}</h2><p className="mt-1 text-xs text-muted-foreground">{isLocked ? "P&L của tháng dùng số đã lưu lúc chốt. Cost rate, chi phí, doanh thu nhập tay và thiết lập của tháng đang bị khóa." : "Số liệu của tháng đang được tính trực tiếp từ dữ liệu hiện tại và còn có thể thay đổi."}</p></div></div>{!isLocked && missingRateMinutes > 0 ? <p role="status" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">Còn {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 1 }).format(missingRateMinutes / 60)}h đã duyệt chưa có cost rate trong tháng này. Nếu chốt bây giờ, chi phí của số giờ đó sẽ không nằm trong số đã chốt. <Link href={"/pnl/costs?periodKey=" + periodKey} className="font-bold underline underline-offset-2">Nhập cost rate</Link></p> : null}{!isLocked && missingRevenueCount > 0 ? <p role="status" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">{missingRevenueCount} project có chi phí trong tháng nhưng chưa nhập doanh thu của tháng. Nếu chốt bây giờ, doanh thu của các project đó được chốt là 0. <Link href={"/pnl?period=" + periodKey} className="font-bold underline underline-offset-2">Mở P&amp;L tháng này</Link></p> : null}<ul className="mt-5 space-y-2 text-sm text-muted-foreground"><li>Khi chốt, hệ thống lưu doanh thu, chi phí nhân sự, chi phí nhập tay, tổng chi phí và EBIT của từng project. Quỹ được chia và các khoản tính theo công thức được chốt chung thành một số “Chi phí khác đã chốt”, không tách lại từng khoản.</li><li>Sau khi chốt, giờ được duyệt thêm hay chi phí nhập muộn không làm đổi số của tháng.</li><li>Mở lại kỳ cần ghi lý do và được lưu vào nhật ký.</li></ul></div><aside className="rounded-xl border border-border bg-card p-5">{isLocked ? <><div className="flex items-center gap-2 font-semibold"><LockKeyhole className="h-4 w-4 text-primary" /> Mở lại kỳ</div><label className="mt-3 block text-xs font-semibold text-muted-foreground" htmlFor="reopen-reason">Lý do mở lại<textarea id="reopen-reason" rows={3} value={reopenReason} onChange={(event) => setReopenReason(event.target.value)} placeholder="Ví dụ: bổ sung hóa đơn phần mềm tháng này" className="mt-1 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm font-normal text-foreground" /></label><button type="button" disabled={saving || !periodId} onClick={() => void reopenPeriod()} className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-border px-3 text-sm font-semibold text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40">Mở lại {"tháng " + periodLabel(periodKey)}</button></> : <><div className="flex items-center gap-2 font-semibold"><LockKeyhole className="h-4 w-4 text-primary" /> Chốt kỳ</div><p className="mt-2 text-xs leading-5 text-muted-foreground">Chốt để khóa số của tháng. Cần quyền Duyệt chi phí hoặc Founder/GM. Không chốt được khi còn tham số hoặc công thức báo lỗi.</p><button type="button" disabled={saving || formulaErrors.length > 0} onClick={() => void lockPeriod()} className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 text-sm font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40"><LockKeyhole className="h-4 w-4" /> Chốt {"tháng " + periodLabel(periodKey)}</button></>}</aside></section>}</div></main></AppShell>;
 }
 
 export { PnlConfigPage };

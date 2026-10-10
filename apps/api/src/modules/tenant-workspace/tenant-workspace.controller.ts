@@ -9,9 +9,11 @@ export class TenantWorkspaceController {
     @Inject(PrincipalService) private readonly principals: PrincipalService
   ) {}
 
+  /** Session required: the login screen does not call this, and the list is scoped to the caller's own tenant. */
   @Get()
-  listWorkspaces(@Query("tenantKey") tenant?: string) {
-    return this.workspaces.listWorkspaces({ tenantKey: tenant });
+  async listWorkspaces(@Headers("authorization") authorization?: string, @Query("principal") principalFallback?: string) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.workspaces.listWorkspaces({ tenantKey: principal.tenantKey });
   }
 
   @Get("current")

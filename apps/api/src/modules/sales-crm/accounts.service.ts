@@ -1,4 +1,5 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import type { CreateAccountContactInput, CreateAccountInput, PrincipalContext, UpdateAccountContactInput, UpdateAccountInput } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import {
@@ -18,6 +19,13 @@ const accountInclude = {
 const contactInclude = {
   account: true
 };
+
+const ACCOUNT_DELETE_ROLE_CODES = ["FOUNDER_GM", "WORKSPACE_ADMIN"];
+
+/** Portal users only read the accounts they were granted; every account/contact write is internal. */
+function assertInternalAccountWriter(principal: PrincipalContext) {
+  if (principal.subjectType !== "internal_user") throw new ForbiddenException("Chỉ người dùng nội bộ mới được thay đổi khách hàng và liên hệ");
+}
 
 @Injectable()
 export class AccountsService {
@@ -78,6 +86,7 @@ export class AccountsService {
   }
 
   async createAccount(input: CreateAccountInput, principal: PrincipalContext) {
+    assertInternalAccountWriter(principal);
     const code = nonEmptyString(input.code, "code").toUpperCase();
     const name = nonEmptyString(input.name, "name");
     const annualValue = optionalNumber(input.annualValue, "annualValue") ?? 0;
@@ -100,6 +109,7 @@ export class AccountsService {
   }
 
   async updateAccount(accountId: string, input: UpdateAccountInput, principal: PrincipalContext) {
+    assertInternalAccountWriter(principal);
     await this.ensureAccount(accountId, principal.workspaceId);
 
     const account = await this.prisma.account.update({
@@ -119,7 +129,11 @@ export class AccountsService {
   }
 
   async deleteAccount(accountId: string, principal: PrincipalContext) {
+    assertInternalAccountWriter(principal);
     const account = await this.ensureAccount(accountId, principal.workspaceId);
+    if (account.picUserId !== principal.subjectId && !principal.roleCodes.some((role) => ACCOUNT_DELETE_ROLE_CODES.includes(role))) {
+      throw new ForbiddenException("Chỉ PIC của khách hàng, Workspace Admin hoặc Founder/GM mới được xóa khách hàng");
+    }
     const relatedCounts = await this.prisma.$transaction([
       this.prisma.project.count({ where: { accountId, workspaceId: principal.workspaceId } }),
       this.prisma.opportunity.count({ where: { accountId } }),
@@ -130,7 +144,10 @@ export class AccountsService {
       throw new BadRequestException("Account has operational records and cannot be deleted");
     }
 
-    await this.prisma.account.delete({ where: { id: account.id } });
+    await this.prisma.$transaction([
+      this.prisma.account.delete({ where: { id: account.id } }),
+      this.prisma.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "account.deleted", resource: "account", resourceId: account.id, before: { code: account.code, name: account.name, stage: account.stage, picUserId: account.picUserId }, requestId: randomUUID() } })
+    ]);
     return { deleted: true, id: account.id };
   }
 
@@ -161,6 +178,7 @@ export class AccountsService {
   }
 
   async createContact(accountId: string, input: CreateAccountContactInput, principal: PrincipalContext) {
+    assertInternalAccountWriter(principal);
     await this.ensureAccount(accountId, principal.workspaceId);
 
     const contact = await this.prisma.contact.create({
@@ -180,6 +198,7 @@ export class AccountsService {
   }
 
   async updateContact(accountId: string, contactId: string, input: UpdateAccountContactInput, principal: PrincipalContext) {
+    assertInternalAccountWriter(principal);
     await this.ensureContact(accountId, contactId, principal.workspaceId);
 
     const contact = await this.prisma.contact.update({
@@ -198,6 +217,7 @@ export class AccountsService {
   }
 
   async deleteContact(accountId: string, contactId: string, principal: PrincipalContext) {
+    assertInternalAccountWriter(principal);
     const contact = await this.ensureContact(accountId, contactId, principal.workspaceId);
     await this.prisma.contact.delete({ where: { id: contact.id } });
 

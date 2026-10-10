@@ -26,6 +26,7 @@ import {
 } from "@/lib/frontend-data-store";
 import {
   fetchAccountOptions,
+  fetchLiveProjectById,
   fetchLiveProjects,
   isUnauthorizedLiveProjectsError,
   mapProjectSummaryToUiProject,
@@ -40,7 +41,7 @@ import {
   type WorkspaceUserOption
 } from "@/lib/workspace-users";
 import { downloadCsv } from "@/lib/csv-export";
-import { uiProjectDateToIso } from "@/lib/project-date";
+import { projectDueSortValue, uiProjectDateToIso } from "@/lib/project-date";
 import { systemRoleLabel } from "@/lib/people-roles";
 import { loadExcelWorkbook } from "@/lib/excel-import";
 import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-tab-bar";
@@ -80,6 +81,7 @@ const STATUS_CFG = {
   "On Hold":   { color:"#64748b", bg:"#f1f5f9", icon:Clock },
   "Completed": { color:"#16a34a", bg:"#f0fdf4", icon:CheckCircle2 },
   "At Risk":   { color:"#dc2626", bg:"#fee2e2", icon:AlertCircle },
+  "Chưa xác định": { color:"#64748b", bg:"#f1f5f9", icon:Clock },
 };
 
 const PRIORITY_CFG = {
@@ -111,22 +113,48 @@ type DraftMilestone = {
   stages: { name: string; tasks?: ProjectTaskTemplateInput[] }[];
 };
 
+type DraftStats = {
+  sheetCount: number;
+  rowCount: number;
+  milestoneCount: number;
+  stageCount: number;
+  taskCount: number;
+  subtaskCount: number;
+  detectedColumns: string[];
+  reviewRequired: boolean;
+};
+
+const EMPTY_MANUAL_MILESTONES = [""];
+const EMPTY_MANUAL_STAGES = [[""]];
+const EMPTY_MANUAL_STAGE_TASKS: ProjectTaskTemplateInput[][][] = [[[]]];
+
 function countTemplateTasks(tasks: ProjectTaskTemplateInput[]): number {
-  return tasks.reduce((total, task) => total + 1 + countTemplateTasks(task.subtasks ?? []), 0);
+  return tasks.length;
 }
 
 function countTemplateSubtasks(tasks: ProjectTaskTemplateInput[]): number {
   return tasks.reduce((total, task) => total + (task.subtasks?.length ?? 0) + countTemplateSubtasks(task.subtasks ?? []), 0);
 }
 
+function SavedMilestoneHierarchy({ template }: { template?: ProjectMilestoneTemplateSummary }) {
+  if (!template) return <div className="rounded-xl border border-dashed border-border bg-background px-4 py-6 text-center text-xs text-muted-foreground">Chưa có template Admin khả dụng.</div>;
+  const stageCount = template.milestones.reduce((total, milestone) => total + milestone.stages.length, 0);
+  const taskCount = template.milestones.reduce((total, milestone) => total + milestone.stages.reduce((stageTotal, stage) => stageTotal + (stage.tasks?.length ?? 0), 0), 0);
+  const subtaskCount = template.milestones.reduce((total, milestone) => total + milestone.stages.reduce((stageTotal, stage) => stageTotal + (stage.tasks ?? []).reduce((taskTotal, task) => taskTotal + countTemplateSubtasks(task.subtasks ?? []), 0), 0), 0);
+  return <div className="overflow-hidden rounded-xl border border-slate-200 bg-white" aria-label={`Cấu trúc template ${template.name}`}>
+    <div className="border-b border-slate-200 px-4 py-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary">Template đã chọn</p><h5 className="mt-1 truncate text-sm font-bold text-slate-900">{template.name}</h5><p className="mt-0.5 text-[11px] text-slate-500">Cấu trúc này sẽ được copy vào project mới.</p></div><span className="shrink-0 text-[10px] font-semibold text-primary">Đã lưu</span></div><div className="mt-3 flex flex-wrap gap-3 text-[10px] text-slate-500">{[`${template.milestones.length} milestone`, `${stageCount} stage`, `${taskCount} task`, `${subtaskCount} subtask`].map((label) => <span key={label}>{label}</span>)}</div></div>
+    <div className="max-h-[29rem] overflow-y-auto px-4 py-2" role="list" aria-label="Cây milestone template">{template.milestones.map((milestone, milestoneIndex) => <article key={`${template.key}-${milestone.name}-${milestoneIndex}`} className="border-b border-slate-100 py-3 last:border-b-0" role="listitem"><div className="flex items-start gap-2"><span className="mt-0.5 w-7 shrink-0 text-[10px] font-bold text-primary">M{milestoneIndex + 1}</span><div className="min-w-0 flex-1"><div className="flex items-baseline justify-between gap-3"><h6 className="text-xs font-bold text-slate-900">{milestone.name}</h6><span className="shrink-0 text-[10px] text-slate-400">{milestone.stages.length} stage</span></div><div className="mt-2 border-l border-slate-200 pl-3">{milestone.stages.map((stage, stageIndex) => <div key={`${milestone.name}-${stage.activity}-${stageIndex}`} className="pb-2 last:pb-0"><div className="flex items-baseline justify-between gap-3"><p className="text-[11px] font-semibold text-slate-700"><span className="mr-1.5 font-bold text-indigo-500">S{stageIndex + 1}</span>{stage.activity}</p><span className="shrink-0 text-[10px] text-slate-400">{stage.tasks?.length ?? 0} task</span></div>{stage.tasks?.length ? <div className="mt-1 space-y-0.5 pl-7">{stage.tasks.map((task, taskIndex) => <div key={`${stage.activity}-${task.title}-${taskIndex}`} className="text-[10px] leading-relaxed text-slate-600"><span className="mr-1 font-semibold text-slate-400">T{taskIndex + 1}</span>{task.title}{task.subtasks?.length ? <div className="pl-5 text-[9px] text-slate-400">{task.subtasks.map((subtask, subtaskIndex) => <div key={`${task.title}-${subtask.title}-${subtaskIndex}`}><span className="mr-1 text-indigo-400">ST{subtaskIndex + 1}</span>{subtask.title}</div>)}</div> : null}</div>)}</div> : null}</div>)}</div></div></div></article>)}</div>
+  </div>;
+}
+
 function DraftHierarchyTree({ milestones }: { milestones: DraftMilestone[] }) {
   return (
-    <div className="max-h-80 space-y-3 overflow-y-auto pr-1" aria-label="Cấu trúc bản nháp project">
+    <div className="min-h-0 space-y-3 pr-1" aria-label="Cấu trúc bản nháp project">
       {milestones.map((milestone, milestoneIndex) => {
         const stageCount = milestone.stages.length;
         const taskCount = milestone.stages.reduce((total, stage) => total + countTemplateTasks(stage.tasks ?? []), 0);
         return (
-          <section key={`${milestone.name}-${milestoneIndex}`} className="rounded-xl border border-border bg-background p-2.5">
+          <section key={`${milestone.name}-${milestoneIndex}`} className="rounded-xl border border-slate-200 bg-white p-2.5">
             <div className="flex items-start gap-2">
               <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-[10px] font-bold text-primary">M{milestoneIndex + 1}</span>
               <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-bold">{milestone.name}</p><p className="mt-0.5 text-[9px] text-muted-foreground">{stageCount} stage · {taskCount} task</p></div>
@@ -135,10 +163,10 @@ function DraftHierarchyTree({ milestones }: { milestones: DraftMilestone[] }) {
               {milestone.stages.length ? milestone.stages.map((stage, stageIndex) => {
                 const tasks = stage.tasks ?? [];
                 return (
-                  <div key={`${stage.name}-${stageIndex}`} className="rounded-lg border border-indigo-100 bg-indigo-50/35 p-2">
-                    <div className="flex items-center gap-2"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-indigo-100 text-[9px] font-bold text-indigo-700">S{stageIndex + 1}</span><span className="min-w-0 flex-1 truncate text-[10px] font-semibold text-indigo-950">{stage.name}</span><span className="shrink-0 rounded-full bg-background px-1.5 py-0.5 text-[9px] text-indigo-700">{tasks.length} task</span></div>
-                    <div className="mt-1.5 space-y-1 border-l-2 border-indigo-200 pl-2">
-                      {tasks.length ? tasks.map((task, taskIndex) => <div key={`${task.title}-${taskIndex}`} className="rounded-md border border-border/70 bg-background px-2 py-1.5"><div className="flex items-start gap-1.5"><span className="mt-0.5 text-[9px] font-bold text-primary">T{taskIndex + 1}</span><p className="min-w-0 flex-1 text-[10px] font-medium leading-relaxed">{task.title}</p>{task.subtasks?.length ? <span className="shrink-0 text-[9px] text-muted-foreground">{task.subtasks.length} sub</span> : null}</div>{task.subtasks?.length ? <div className="mt-1 space-y-1 border-l-2 border-primary/15 pl-2">{task.subtasks.map((subtask, subtaskIndex) => <div key={`${subtask.title}-${subtaskIndex}`} className="flex gap-1.5 text-[9px] leading-relaxed text-muted-foreground"><span className="font-semibold text-primary/70">ST{subtaskIndex + 1}</span><span>{subtask.title}</span></div>)}</div> : null}</div>) : <p className="px-1 py-1 text-[10px] italic text-muted-foreground">Chưa có task</p>}
+                  <div key={`${stage.name}-${stageIndex}`} className="rounded-lg border border-slate-200 bg-slate-50/80 p-2">
+                    <div className="flex items-center gap-2"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-blue-100 text-[9px] font-bold text-blue-700">S{stageIndex + 1}</span><span className="min-w-0 flex-1 truncate text-[10px] font-semibold text-slate-900">{stage.name}</span><span className="shrink-0 rounded-full bg-white px-1.5 py-0.5 text-[9px] text-slate-500">{tasks.length} task</span></div>
+                    <div className="mt-1.5 space-y-1 border-l-2 border-blue-100 pl-2">
+                      {tasks.length ? tasks.map((task, taskIndex) => <div key={`${task.title}-${taskIndex}`} className="rounded-md border border-slate-200 bg-white px-2 py-1.5"><div className="flex items-start gap-1.5"><span className="mt-0.5 text-[9px] font-bold text-primary">T{taskIndex + 1}</span><p className="min-w-0 flex-1 text-[10px] font-medium leading-relaxed text-slate-800">{task.title}</p>{task.subtasks?.length ? <span className="shrink-0 text-[9px] text-slate-400">{task.subtasks.length} sub</span> : null}</div>{task.subtasks?.length ? <div className="mt-1 space-y-1 border-l-2 border-blue-100 pl-2">{task.subtasks.map((subtask, subtaskIndex) => <div key={`${subtask.title}-${subtaskIndex}`} className="flex gap-1.5 text-[9px] leading-relaxed text-slate-500"><span className="font-semibold text-blue-600">ST{subtaskIndex + 1}</span><span>{subtask.title}</span></div>)}</div> : null}</div>) : <p className="px-1 py-1 text-[10px] italic text-slate-400">Chưa có task</p>}
                     </div>
                   </div>
                 );
@@ -276,7 +304,7 @@ function ProjectCard({
   return (
     <Link href={`/projects/${encodeURIComponent(project.id)}?returnTo=${encodeURIComponent(returnTo)}`} className="block h-full group">
       <motion.div layout initial={{ opacity:0, scale:0.96 }} animate={{ opacity:1, scale:1 }} whileHover={{ y:-3 }}
-        className="min-w-0 bg-card border border-border rounded-xl p-5 shadow-sm hover:shadow-md transition-all cursor-pointer flex h-full flex-col gap-4">
+        className={`min-w-0 ${(project.openWarningCount ?? 0) > 0 ? "bg-red-50/50" : "bg-card"} border border-border rounded-xl p-5 shadow-sm hover:shadow-md transition-all cursor-pointer flex h-full flex-col gap-4`}>
         {/* Top */}
         <div className="flex min-w-0 items-start justify-between gap-3">
           <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -331,6 +359,7 @@ function ProjectCard({
             <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md" style={{ backgroundColor:sc.bg, color:sc.color }}>
               <sc.icon className="w-3 h-3" />{formatProjectStatusLabel(project.status)}
             </span>
+            {(project.openWarningCount ?? 0) > 0 ? <span title={`${project.openWarningCount} cảnh báo đang mở`} aria-label={`${project.openWarningCount} cảnh báo đang mở`} className="shrink-0 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{project.openWarningCount}</span> : null}
             <button
               onClick={(e) => {
                 e.preventDefault();
@@ -381,12 +410,12 @@ function ProjectCard({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const STATUS_OPTIONS = [
-  { value: "Active", label: "Đang triển khai", color: "#16a34a" },
-  { value: "In Review", label: "Đang rà soát", color: "#2563eb" },
-  { value: "Planning", label: "Lập kế hoạch", color: "#0891b2" },
-  { value: "On Hold", label: "Tạm dừng", color: "#64748b" },
-  { value: "At Risk", label: "Có rủi ro", color: "#dc2626" },
-  { value: "Completed", label: "Đã hoàn thành", color: "#16a34a" },
+  { value: "Active", label: "Active", color: "#16a34a" },
+  { value: "In Review", label: "In Review", color: "#2563eb" },
+  { value: "Planning", label: "Planning", color: "#0891b2" },
+  { value: "On Hold", label: "On Hold", color: "#64748b" },
+  { value: "At Risk", label: "At Risk", color: "#dc2626" },
+  { value: "Completed", label: "Completed", color: "#16a34a" },
 ];
 
 const PRIORITY_OPTIONS = [
@@ -873,6 +902,17 @@ export default function ProjectsPage() {
   const [workspaceUsersError, setWorkspaceUsersError] = useState<string | null>(null);
   const [pushedIds, setPushedIds] = useState<string[]>([]);
   const [view, setView]         = useState<ProjectListView>(urlState.view);
+  const [warningOnly, setWarningOnly] = useState(false);
+  const [warningCounts, setWarningCounts] = useState<Record<string, number> | null>(null);
+  const [warnedProjects, setWarnedProjects] = useState<Project[] | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/project-warnings/counts", { cache: "no-store", credentials: "same-origin", signal: controller.signal })
+      .then(response => response.ok ? response.json() as Promise<{ data?: Record<string, number> }> : Promise.reject(new Error(String(response.status))))
+      .then(body => setWarningCounts(body.data ?? {}))
+      .catch(() => { if (!controller.signal.aborted) setWarningCounts(null); });
+    return () => controller.abort();
+  }, []);
   const [query, setQuery]       = useState(urlState.query);
   const [statusFilter, setStatusFilter]   = useState(urlState.statusFilter);
   const [categoryFilter, setCategoryFilter] = useState(urlState.categoryFilter);
@@ -1073,7 +1113,7 @@ export default function ProjectsPage() {
   const [projectMilestoneStageTasks, setProjectMilestoneStageTasks] = useState<ProjectTaskTemplateInput[][][]>(PILOT_PROJECT_MILESTONES.map(() => [[]]));
   const [aiImportBusy, setAiImportBusy] = useState(false);
   const [aiImportError, setAiImportError] = useState<string | null>(null);
-  const [aiDraft, setAiDraft] = useState<{ sourceFileName: string; projectName: string; description: string; milestones: DraftMilestone[]; warnings: string[] } | null>(null);
+  const [aiDraft, setAiDraft] = useState<{ sourceFileName: string; projectName: string; description: string; milestones: DraftMilestone[]; warnings: string[]; stats?: DraftStats } | null>(null);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const aiImportInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -1145,17 +1185,37 @@ export default function ProjectsPage() {
     ...workspaceUsers.map((member) => ({ value: member.id, label: member.name, avatarUrl: member.avatarUrl, initials: member.initials, color: member.color })),
   ], [workspaceUsers]);
 
+  // EV-065: the warning line and filter are workspace-wide. Counts come from /api/project-warnings/counts
+  // ({ projectId: openCount }); only if that call fails do they fall back to the loaded page (and say so).
+  const warnedProjectIds = useMemo(
+    () => warningCounts
+      ? Object.keys(warningCounts).filter(id => warningCounts[id] > 0)
+      : projectsList.filter(p => (p.openWarningCount ?? 0) > 0).map(p => p.id),
+    [warningCounts, projectsList]
+  );
+  const warningProjectCount = warnedProjectIds.length;
+  const warningOnlyActive = warningOnly && warningProjectCount > 0;
+  // With the filter on, the warned projects are loaded by id — not picked out of the current page of 10.
+  // ponytail: one request per warned project; switch to an ids= list query if the API grows one.
+  useEffect(() => {
+    if (!warningOnlyActive || !warningCounts) { setWarnedProjects(null); return; }
+    const controller = new AbortController();
+    Promise.all(warnedProjectIds.map(id => fetchLiveProjectById(id, { signal: controller.signal })))
+      .then(projects => setWarnedProjects(projects.flatMap(project => project ? [{ ...project, openWarningCount: warningCounts[project.id] }] : [])))
+      .catch(() => { if (!controller.signal.aborted) setWarnedProjects(null); });
+    return () => controller.abort();
+  }, [warningOnlyActive, warningCounts, warnedProjectIds]);
   const filtered = useMemo(() => {
-    let list = projectsList;
+    let list = warningOnlyActive ? warnedProjects ?? projectsList.filter(p => (p.openWarningCount ?? 0) > 0) : projectsList;
     list = [...list].sort((a, b) => {
-      const map: Record<SortKey, number | string> = { name:a.name, status:a.status, progress:a.progress, budget:a.budget, dueDate:a.dueDate, priority: ["Critical","High","Medium","Low"].indexOf(a.priority) };
-      const mapB: Record<SortKey, number | string> = { name:b.name, status:b.status, progress:b.progress, budget:b.budget, dueDate:b.dueDate, priority: ["Critical","High","Medium","Low"].indexOf(b.priority) };
+      const map: Record<SortKey, number | string> = { name:a.name, status:a.status, progress:a.progress, budget:a.budget, dueDate:projectDueSortValue(a), priority: ["Critical","High","Medium","Low"].indexOf(a.priority) };
+      const mapB: Record<SortKey, number | string> = { name:b.name, status:b.status, progress:b.progress, budget:b.budget, dueDate:projectDueSortValue(b), priority: ["Critical","High","Medium","Low"].indexOf(b.priority) };
       const va = map[sortKey], vb = mapB[sortKey];
       if (typeof va === "number" && typeof vb === "number") return sortDir === "asc" ? va - vb : vb - va;
       return sortDir === "asc" ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
     });
     return list;
-  }, [projectsList, sortKey, sortDir]);
+  }, [projectsList, sortKey, sortDir, warningOnlyActive, warnedProjects]);
 
   // KPI stats
   const totalBudget = useMemo(() => projectsList.reduce((s, p) => s + p.budget, 0), [projectsList]);
@@ -1217,7 +1277,7 @@ export default function ProjectsPage() {
           rows.push(`SHEET: ${sheet.name}`);
           sheet.eachRow((row) => {
             const values = Array.isArray(row.values) ? row.values.slice(1) : [];
-            if (values.some((value) => String(value ?? "").trim())) rows.push(values.map((value) => String(value ?? "").replace(/\t/g, " ")).join("\t"));
+            if (values.some((value) => String(value ?? "").trim())) rows.push(values.map((value) => String(value ?? "").replace(/[\t\r\n]+/g, " • ")).join("\t"));
           });
         });
         body.text = rows.join("\n");
@@ -1250,7 +1310,6 @@ export default function ProjectsPage() {
     setProjectMilestoneStages(aiDraft.milestones.map((milestone) => milestone.stages.length ? milestone.stages.map((stage) => stage.name) : [`${milestone.name} - Stage 1`]));
     setProjectMilestoneStageTasks(aiDraft.milestones.map((milestone) => milestone.stages.length ? milestone.stages.map((stage) => stage.tasks ?? []) : [[]]));
     setMilestoneMode("manual");
-    setAiDraft(null);
   };
 
   const applySavedMilestoneTemplate = (milestones: ProjectMilestoneTemplateSummary["milestones"]) => {
@@ -1259,11 +1318,20 @@ export default function ProjectsPage() {
     setProjectMilestoneStageTasks(milestones.map((milestone) => milestone.stages.length ? milestone.stages.map((stage) => stage.tasks ?? []) : [[]]));
   };
 
+  const switchToManualMilestones = () => {
+    setMilestoneMode("manual");
+    setProjectMilestones([...EMPTY_MANUAL_MILESTONES]);
+    setProjectMilestoneStages(EMPTY_MANUAL_STAGES.map((stages) => [...stages]));
+    setProjectMilestoneStageTasks(EMPTY_MANUAL_STAGE_TASKS.map((milestoneTasks) => milestoneTasks.map((stageTasks) => [...stageTasks])));
+  };
+
   useEffect(() => {
     if (milestoneMode !== "auto") return;
     const selected = milestoneTemplates.find((template) => template.key === milestoneTemplateKey) ?? milestoneTemplates.find((template) => template.key === "pilot-v1");
     if (selected) applySavedMilestoneTemplate(selected.milestones);
   }, [milestoneMode, milestoneTemplateKey, milestoneTemplates]);
+
+  const selectedMilestoneTemplate = milestoneTemplates.find((template) => template.key === milestoneTemplateKey) ?? milestoneTemplates.find((template) => template.key === "pilot-v1");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1285,6 +1353,12 @@ export default function ProjectsPage() {
       if (!Number.isFinite(parsedBudget) || parsedBudget < 0) {
         throw new Error("Budget must be a valid positive number.");
       }
+      if (milestoneMode === "manual" && !projectMilestones.some((milestone) => milestone.trim())) {
+        throw new Error("Thêm ít nhất một milestone hoặc chọn template đã lưu.");
+      }
+      if (!projectMilestones.some((milestone) => milestone.trim())) {
+        throw new Error("Thêm ít nhất một milestone hoặc chọn template đã lưu.");
+      }
       const response = await postProject(createAttempt.current, {
           accountId: selectedAccount.accountId,
           name: name.trim(),
@@ -1301,12 +1375,15 @@ export default function ProjectsPage() {
           createStageTemplate: true,
           milestoneMode,
           milestoneTemplateKey: milestoneMode === "auto" ? milestoneTemplateKey : undefined,
-          manualMilestones: projectMilestones.map((milestone, index) => ({
-            name: milestone.trim(),
-            sortOrder: (index + 1) * 10,
-            requiredDocumentCount: 0,
-            stages: (projectMilestoneStages[index] ?? [`${milestone.trim()} - Stage 1`]).filter(Boolean).map((stage, stageIndex) => ({ activity: stage.trim(), phase: milestone.trim(), sortOrder: (stageIndex + 1) * 10, tasks: projectMilestoneStageTasks[index]?.[stageIndex] ?? [] }))
-          }))
+          manualMilestones: projectMilestones.flatMap((milestone, index) => {
+            const name = milestone.trim();
+            if (!name) return [];
+            const stages = (projectMilestoneStages[index] ?? []).flatMap((stage, stageIndex) => {
+              const activity = stage.trim();
+              return activity ? [{ activity, phase: name, sortOrder: (stageIndex + 1) * 10, tasks: projectMilestoneStageTasks[index]?.[stageIndex] ?? [] }] : [];
+            });
+            return [{ name, sortOrder: (index + 1) * 10, requiredDocumentCount: 0, stages }];
+          })
       });
 
       if (!response.ok) {
@@ -1347,6 +1424,7 @@ export default function ProjectsPage() {
       setProjectMilestones(PILOT_PROJECT_MILESTONES);
       setProjectMilestoneStages(PILOT_PROJECT_MILESTONES.map((milestone) => [`${milestone} - Stage 1`]));
       setProjectMilestoneStageTasks(PILOT_PROJECT_MILESTONES.map(() => [[]]));
+      setAiDraft(null);
     } catch (error) {
       setProjectsError(error instanceof Error ? error.message : "Could not create project");
     } finally {
@@ -1505,8 +1583,8 @@ export default function ProjectsPage() {
           {/* KPI row */}
           <div className="mb-4 grid shrink-0 grid-cols-2 gap-3 sm:mb-6 sm:gap-4 xl:grid-cols-4">
             {[
-              { label:"Total Budget",  value:<MoneyAmount value={totalBudget} />, icon:Wallet,  color:"#2563eb" },
-              { label:"Total Spent",   value:<MoneyAmount value={totalSpent} />,  icon:TrendingUp,  color:"#7c3aed" },
+              { label:"Total Budget · trang này",  value:<MoneyAmount value={totalBudget} />, icon:Wallet,  color:"#2563eb" },
+              { label:"Total Spent · trang này",   value:<MoneyAmount value={totalSpent} />,  icon:TrendingUp,  color:"#7c3aed" },
               { label:"Active Loaded", value:active,                               icon:CheckCircle2,color:"#16a34a" },
               { label:"At Risk Loaded",value:atRisk,                               icon:AlertCircle, color:"#dc2626" },
             ].map(s => (
@@ -1535,6 +1613,13 @@ export default function ProjectsPage() {
               className="w-full"
             />
           </div>
+
+          {warningProjectCount > 0 && (
+            <button type="button" aria-pressed={warningOnlyActive} onClick={() => setWarningOnly(value => !value)}
+              className="mb-4 shrink-0 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-left text-sm font-medium text-red-700">
+              Hiện đang có {warningProjectCount} Project có cảnh báo{warningCounts ? " trong toàn workspace" : " trên trang này"}{warningOnlyActive ? " · đang lọc, bấm để xem tất cả" : ""}
+            </button>
+          )}
 
           {/* Filters */}
           <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm" data-testid="projects-stable-shell">
@@ -1639,7 +1724,6 @@ export default function ProjectsPage() {
                   pushedIds={pushedIds}
                   sortKey={sortKey}
                   sortDir={sortDir}
-                  storageKey={`project_sheet_preferences:${pushedProjectOwnerKey}`}
                   onSort={handleSort}
                   onTogglePush={handleTogglePush}
                   onEdit={(project) => {
@@ -1701,7 +1785,7 @@ export default function ProjectsPage() {
                       const sc = STATUS_CFG[p.status];
 
                       return (
-                        <div key={p.id} className="flex items-center group">
+                        <div key={p.id} className={`flex items-center group${(p.openWarningCount ?? 0) > 0 ? " rounded-lg bg-red-50/50" : ""}`}>
                           {/* Left Column: Project Summary info */}
                           <div className="w-72 shrink-0 pr-4 flex items-center gap-3">
                             <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${p.color}15` }}>
@@ -1712,6 +1796,7 @@ export default function ProjectsPage() {
                               <span className="text-[10px] text-muted-foreground block truncate">{p.client} · {p.category}</span>
                             </div>
                             <span className="text-[9px] font-bold px-2 py-0.5 rounded-lg shrink-0" style={{ backgroundColor: sc.bg, color: sc.color }}>{formatProjectStatusLabel(p.status)}</span>
+                            {(p.openWarningCount ?? 0) > 0 ? <span title={`${p.openWarningCount} cảnh báo đang mở`} aria-label={`${p.openWarningCount} cảnh báo đang mở`} className="shrink-0 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{p.openWarningCount}</span> : null}
                           </div>
 
                           {/* Right Column: Month grid with the Gantt pill */}
@@ -1761,9 +1846,9 @@ export default function ProjectsPage() {
             {/* Footer */}
             <div className="flex min-h-[3.75rem] shrink-0 items-center justify-between border-t border-border bg-muted/20 px-4 py-3" data-testid="projects-pagination-footer">
               <p className="text-xs text-muted-foreground">
-                Showing <span className="font-semibold text-foreground">{projectPageRangeLabel(projectPagination)}</span>
+                Showing <span className="font-semibold text-foreground">{warningOnlyActive && warnedProjects ? `${warnedProjects.length} Project có cảnh báo (toàn workspace)` : projectPageRangeLabel(projectPagination)}</span>
               </p>
-              <ProjectPaginationControls pagination={projectPagination} onPageChange={handleProjectPageChange} />
+              {warningOnlyActive && warnedProjects ? null : <ProjectPaginationControls pagination={projectPagination} onPageChange={handleProjectPageChange} />}
             </div>
           </div>
         </main>
@@ -1785,7 +1870,7 @@ export default function ProjectsPage() {
                 initial={{ opacity: 0, scale: 0.95, y: 16 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 16 }}
-                className={`bg-card border border-border rounded-2xl w-full ${aiPanelOpen ? "max-w-6xl" : "max-w-2xl"} overflow-visible shadow-2xl flex flex-col max-h-[90dvh]`}
+                className={`bg-card border border-border rounded-2xl w-full ${aiPanelOpen ? "max-w-7xl" : "max-w-2xl"} overflow-visible shadow-2xl flex flex-col max-h-[90dvh]`}
               >
                 {/* Modal Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-muted/20">
@@ -1811,6 +1896,7 @@ export default function ProjectsPage() {
                 {/* Modal Body */}
                 <div className="flex min-h-0 flex-1">
                 <form onSubmit={handleSubmit} className="min-w-0 flex-1 overflow-y-auto p-6 space-y-4">
+                  <input ref={aiImportInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleAiImport(file); }} />
                   {projectsError && <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{projectsError}{accountOptions.length === 0 && <button type="button" className="ml-2 underline" onClick={() => setAccountLoadRevision(value => value + 1)}>Retry loading clients</button>}</div>}
                   {loadingAccounts && <p role="status">Loading clients…</p>}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1909,55 +1995,38 @@ export default function ProjectsPage() {
                   </div>
 
                   <section className="rounded-2xl border border-border bg-muted/15 p-4 space-y-3" aria-labelledby="create-project-milestone-title">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                      <h4 id="create-project-milestone-title" className="text-sm font-bold text-foreground">Milestone format & điều kiện chuyển tiếp</h4>
-                      <p className="mt-1 text-xs text-muted-foreground">Chọn mẫu pilot chuẩn hoặc tự đặt milestone. Admin có thể bổ sung số hồ sơ và điều kiện duyệt trong Project Sheet.</p>
-                      </div>
-                      <div className="shrink-0">
-                        <input ref={aiImportInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleAiImport(file); }} />
-                        <button type="button" disabled={aiImportBusy} onClick={() => aiImportInputRef.current?.click()} className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-50">
-                          {aiImportBusy ? "Đang đọc…" : "Import Excel"}
-                        </button>
-                      </div>
-                    </div>
-                    {aiImportError ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{aiImportError}</div> : null}
-                    {aiDraft ? <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-3 text-xs text-indigo-950">
-                      <div className="flex items-center justify-between gap-2"><strong>Template tạm từ {aiDraft.sourceFileName}</strong><button type="button" className="font-semibold text-primary hover:underline" onClick={applyAiDraft}>Dùng template này</button></div>
-                      <p className="mt-1">{aiDraft.projectName || "Chưa nhận diện tên project"} · {aiDraft.milestones.length} milestone</p>
-                      <ul className="mt-2 list-disc pl-4 space-y-0.5">{aiDraft.milestones.slice(0, 8).map((milestone) => <li key={milestone.name}><span className="font-semibold">{milestone.name}</span>{milestone.stages.length ? <span className="text-indigo-800"> · {milestone.stages.map((stage) => `${stage.name}${stage.tasks?.length ? ` (${stage.tasks.length} task)` : ""}`).join(" · ")}</span> : ""}</li>)}</ul>
-                      {aiDraft.warnings.length ? <p className="mt-2 text-amber-700">Lưu ý: {aiDraft.warnings.join("; ")}</p> : null}
-                    </div> : null}
+                    <div className="flex items-start justify-between gap-3"><div><h4 id="create-project-milestone-title" className="text-sm font-bold text-foreground">Milestone format & điều kiện chuyển tiếp</h4><p className="mt-1 text-xs text-muted-foreground">Chọn template Admin hoặc tự chọn milestone. Import file chỉ thực hiện trong AI Project Builder.</p></div></div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <label className={`flex gap-2 rounded-xl border p-3 cursor-pointer ${milestoneMode === "auto" ? "border-primary bg-primary/5" : "border-border bg-background"}`}>
-                        <input type="radio" name="projects-milestone-mode" checked={milestoneMode === "auto"} onChange={() => { setMilestoneMode("auto"); const selected = milestoneTemplates.find((template) => template.key === milestoneTemplateKey) ?? milestoneTemplates.find((template) => template.key === "pilot-v1"); setProjectMilestones(selected?.milestones.map((milestone) => milestone.name) ?? PILOT_PROJECT_MILESTONES); }} />
-                        <span className="min-w-0 flex-1"><strong className="block text-xs">Theo template đã lưu</strong><small className="text-[11px] text-muted-foreground">Chọn format milestone admin đã setup</small>{milestoneMode === "auto" ? <div className="mt-2"><CustomDropdown ariaLabel="Template milestone" options={[{ value: "pilot-v1", label: "Pilot UpLark chuẩn" }, ...milestoneTemplates.filter((template) => template.key !== "pilot-v1").map((template) => ({ value: template.key, label: `${template.name} · ${template.milestoneCount} milestone` }))]} value={milestoneTemplateKey} onChange={(key) => { setMilestoneTemplateKey(key); const selected = milestoneTemplates.find((template) => template.key === key); if (selected) setProjectMilestones(selected.milestones.map((milestone) => milestone.name)); }} /></div> : null}</span>
-                      </label>
-                      <label className={`flex gap-2 rounded-xl border p-3 cursor-pointer ${milestoneMode === "manual" ? "border-primary bg-primary/5" : "border-border bg-background"}`}>
-                        <input type="radio" name="projects-milestone-mode" checked={milestoneMode === "manual"} onChange={() => setMilestoneMode("manual")} />
-                        <span><strong className="block text-xs">Tự chọn milestone</strong><small className="text-[11px] text-muted-foreground">Tự thêm, đổi tên và sắp thứ tự</small></span>
-                      </label>
+                      <label className={`flex gap-2 rounded-xl border p-3 cursor-pointer ${milestoneMode === "auto" ? "border-primary bg-primary/5" : "border-border bg-background"}`}><input type="radio" name="projects-milestone-mode" checked={milestoneMode === "auto"} onChange={() => { setMilestoneMode("auto"); const selected = milestoneTemplates.find((template) => template.key === milestoneTemplateKey) ?? milestoneTemplates.find((template) => template.key === "pilot-v1"); if (selected) applySavedMilestoneTemplate(selected.milestones); }} /><span className="min-w-0 flex-1"><strong className="block text-xs">Theo template đã lưu</strong><small className="text-[11px] text-muted-foreground">Chọn format milestone admin đã setup</small>{milestoneMode === "auto" ? <div className="mt-2"><CustomDropdown ariaLabel="Template milestone" options={[{ value: "pilot-v1", label: "Pilot UpLark chuẩn" }, ...milestoneTemplates.filter((template) => template.key !== "pilot-v1").map((template) => ({ value: template.key, label: `${template.name} · ${template.milestoneCount} milestone` }))]} value={milestoneTemplateKey} onChange={(key) => { setMilestoneTemplateKey(key); const selected = milestoneTemplates.find((template) => template.key === key); if (selected) applySavedMilestoneTemplate(selected.milestones); }} /></div> : null}</span></label>
+                      <label className={`flex gap-2 rounded-xl border p-3 cursor-pointer ${milestoneMode === "manual" ? "border-primary bg-primary/5" : "border-border bg-background"}`}><input type="radio" name="projects-milestone-mode" checked={milestoneMode === "manual"} onChange={switchToManualMilestones} /><span><strong className="block text-xs">Tự chọn milestone</strong><small className="text-[11px] text-muted-foreground">Tự thêm, đổi tên và sắp thứ tự</small></span></label>
                     </div>
-                    <div className="space-y-2">
+                    {milestoneMode === "auto" ? <SavedMilestoneHierarchy template={selectedMilestoneTemplate} /> : <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                      <div className="border-b border-slate-200 px-4 py-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary">Tự tạo cấu trúc</p><h5 className="mt-1 text-sm font-bold text-slate-900">Milestone của project</h5><p className="mt-0.5 text-[11px] text-slate-500">Thêm milestone, stage và task theo nhu cầu thực tế.</p></div>
+                          <span className="shrink-0 text-[10px] font-semibold text-slate-400">Đang chỉnh sửa</span>
+                        </div>
+                      </div>
+                      <div className="space-y-2 px-4 py-2">
                       {projectMilestones.map((milestone, index) => (
-                        <div className="rounded-xl border border-border bg-background p-2 space-y-2" key={`${index}-${milestone}`}>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 space-y-2" key={`${index}-${milestone}`}>
                           <div className="flex items-center gap-2">
-                            <span className="w-7 h-7 rounded-lg bg-primary/10 text-primary text-[11px] font-bold inline-flex items-center justify-center">M{index + 1}</span>
-                            <input aria-label={`Milestone ${index + 1}`} disabled={milestoneMode === "auto"} value={milestone} onChange={(event) => setProjectMilestones((current) => current.map((value, itemIndex) => itemIndex === index ? event.target.value : value))} className="flex-1 px-3 py-2 bg-background border border-input rounded-xl text-xs" />
+                            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700">M{index + 1}</span>
+                            <input aria-label={`Milestone ${index + 1}`} value={milestone} onChange={(event) => setProjectMilestones((current) => current.map((value, itemIndex) => itemIndex === index ? event.target.value : value))} placeholder="Tên milestone" className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium" />
                             {milestoneMode === "manual" && projectMilestones.length > 1 ? <button type="button" onClick={() => { setProjectMilestones((current) => current.filter((_, itemIndex) => itemIndex !== index)); setProjectMilestoneStages((current) => current.filter((_, itemIndex) => itemIndex !== index)); setProjectMilestoneStageTasks((current) => current.filter((_, itemIndex) => itemIndex !== index)); }} className="text-xs text-destructive">Xóa</button> : null}
                           </div>
-                          {milestoneMode === "manual" ? <div className="ml-9 space-y-2 border-l-2 border-primary/15 pl-3">
+                          {milestoneMode === "manual" ? <div className="ml-4 space-y-2 border-l border-slate-200 pl-3">
                             {(projectMilestoneStages[index] ?? [`${milestone} - Stage 1`]).map((stage, stageIndex) => {
                               const stageTasks = projectMilestoneStageTasks[index]?.[stageIndex] ?? [];
-                              return <div className="rounded-xl border border-indigo-100 bg-indigo-50/30 p-2.5" key={`${index}-${stageIndex}`}>
+                              return <div className="rounded-lg border border-indigo-100 bg-indigo-50/50 p-2.5" key={`${index}-${stageIndex}`}>
                                 <div className="flex items-center gap-2">
-                                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-indigo-100 text-[10px] font-bold text-indigo-700">S{stageIndex + 1}</span>
-                                  <input aria-label={`Milestone ${index + 1} stage ${stageIndex + 1}`} value={stage} onChange={(event) => setProjectMilestoneStages((current) => current.map((stages, milestoneIndex) => milestoneIndex === index ? stages.map((value, currentStageIndex) => currentStageIndex === stageIndex ? event.target.value : value) : stages))} className="min-w-0 flex-1 rounded-lg border border-input bg-background px-2.5 py-1.5 text-[11px] font-semibold" />
+                                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[10px] font-bold text-indigo-700">S{stageIndex + 1}</span>
+                                  <input aria-label={`Milestone ${index + 1} stage ${stageIndex + 1}`} value={stage} onChange={(event) => setProjectMilestoneStages((current) => current.map((stages, milestoneIndex) => milestoneIndex === index ? stages.map((value, currentStageIndex) => currentStageIndex === stageIndex ? event.target.value : value) : stages))} placeholder="Tên stage" className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold" />
                                   <span className="shrink-0 rounded-full bg-background px-2 py-1 text-[9px] text-muted-foreground">{stageTasks.length} task</span>
                                   {(projectMilestoneStages[index]?.length ?? 1) > 1 ? <button type="button" onClick={() => { setProjectMilestoneStages((current) => current.map((stages, milestoneIndex) => milestoneIndex === index ? stages.filter((_, currentStageIndex) => currentStageIndex !== stageIndex) : stages)); setProjectMilestoneStageTasks((current) => current.map((tasks, milestoneIndex) => milestoneIndex === index ? tasks.filter((_, currentStageIndex) => currentStageIndex !== stageIndex) : tasks)); }} className="text-[10px] text-destructive">Xóa</button> : null}
                                 </div>
-                                <div className="mt-2 space-y-1.5 border-l-2 border-indigo-200 pl-3">
-                                  {stageTasks.map((task, taskIndex) => <div key={`${index}-${stageIndex}-${taskIndex}`} className="rounded-lg border border-border/80 bg-background px-2 py-1.5">
+                                <div className="mt-2 space-y-1 border-l border-indigo-200 pl-3">
+                                  {stageTasks.map((task, taskIndex) => <div key={`${index}-${stageIndex}-${taskIndex}`} className="py-1">
                                     <div className="flex items-center gap-1.5">
                                       <span className="text-[10px] font-bold text-primary">T{taskIndex + 1}</span>
                                       <input aria-label={`Milestone ${index + 1} stage ${stageIndex + 1} task ${taskIndex + 1}`} value={task.title} onChange={(event) => setProjectMilestoneStageTasks((current) => current.map((milestoneTasks, milestoneIndex) => milestoneIndex === index ? milestoneTasks.map((stageTasks, currentStageIndex) => currentStageIndex === stageIndex ? stageTasks.map((item, currentTaskIndex) => currentTaskIndex === taskIndex ? { ...item, title: event.target.value } : item) : stageTasks) : milestoneTasks))} className="min-w-0 flex-1 rounded-lg border border-input bg-background px-2 py-1 text-[10px]" />
@@ -1977,8 +2046,9 @@ export default function ProjectsPage() {
                           </div> : null}
                         </div>
                       ))}
-                    </div>
-                    {milestoneMode === "manual" ? <button type="button" onClick={() => { setProjectMilestones((current) => [...current, "Milestone mới"]); setProjectMilestoneStages((current) => [...current, ["Milestone mới - Stage 1"]]); setProjectMilestoneStageTasks((current) => [...current, [[]]]); }} className="text-xs font-semibold text-primary hover:underline">+ Thêm milestone</button> : null}
+                    <button type="button" onClick={() => { setProjectMilestones((current) => [...current, "Milestone mới"]); setProjectMilestoneStages((current) => [...current, ["Milestone mới - Stage 1"]]); setProjectMilestoneStageTasks((current) => [...current, [[]]]); }} className="text-xs font-semibold text-primary hover:underline">+ Thêm milestone</button>
+                      </div>
+                    </div>}
                   </section>
 
                   {/* Highlight Color & Tags */}
@@ -2083,33 +2153,21 @@ export default function ProjectsPage() {
                     </button>
                   </div>
                 </form>
-                {aiPanelOpen ? <aside aria-label="AI project import" className="flex w-[320px] shrink-0 flex-col border-l border-border bg-muted/10">
-                  <div className="flex items-start justify-between border-b border-border px-4 py-4">
-                    <div>
-                      <div className="flex items-center gap-2 text-sm font-bold text-foreground"><Sparkles className="h-4 w-4 text-primary" /> AI Project Builder</div>
-                      <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">Đưa file dự án đang làm vào, hệ thống sẽ dựng bản nháp theo cây Milestone → Stage → Task → Subtask.</p>
-                    </div>
-                    <button type="button" aria-label="Đóng AI Project Builder" onClick={() => setAiPanelOpen(false)} className="rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground"><X className="h-4 w-4" /></button>
+                {aiPanelOpen ? <aside aria-label="Project file reader" className="flex w-[400px] max-w-[42vw] min-h-0 shrink-0 flex-col border-l border-slate-200 bg-slate-50/60">
+                  <div className="flex items-start justify-between border-b border-slate-200 bg-white px-5 py-4">
+                    <div className="min-w-0"><div className="flex items-center gap-2 text-sm font-bold text-foreground"><Sparkles className="h-4 w-4 text-primary" /> Project file reader</div><p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">Đọc local trước, chưa cần API key. Bạn kiểm tra cây công việc trước khi tạo project.</p></div>
+                    <button type="button" aria-label="Đóng Project file reader" onClick={() => setAiPanelOpen(false)} className="ml-3 rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground"><X className="h-4 w-4" /></button>
                   </div>
-                  <div className="flex-1 space-y-3 overflow-y-auto p-4">
-                    <div className="flex gap-2 rounded-xl border border-border bg-background p-3 text-xs leading-relaxed text-muted-foreground">
-                      <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                      <p>File không cần đúng template. Có thể là roadmap, task list, bảng nhiều sheet hoặc file tiếng Việt/Anh.</p>
-                    </div>
-                    <button type="button" disabled={aiImportBusy} onClick={() => aiImportInputRef.current?.click()} className="flex w-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-primary/40 bg-primary/5 px-4 py-6 text-center text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-50">
-                      <FileUp className="h-6 w-6" />
-                      {aiImportBusy ? "Đang đọc file…" : "Chọn file dự án để AI đọc"}
-                      <span className="text-[10px] font-normal text-muted-foreground">XLSX hoặc CSV · tối đa 8 MB</span>
-                    </button>
-                    {aiImportError ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] leading-relaxed text-destructive">{aiImportError}</div> : null}
-                    {aiDraft ? <div className="overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-b from-primary/5 to-background text-xs text-foreground shadow-sm">
-                      <div className="border-b border-primary/10 px-3.5 py-3"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="flex items-center gap-1.5 font-bold"><Sparkles className="h-3.5 w-3.5 text-primary" /> Bản nháp project</p><p className="mt-1 truncate text-[10px] text-muted-foreground">{aiDraft.sourceFileName}</p></div><span className="shrink-0 rounded-full bg-primary/10 px-2 py-1 text-[10px] font-bold text-primary">Đã đọc</span></div></div>
-                      <div className="space-y-3 p-3.5"><div className="rounded-xl border border-border bg-background px-3 py-2.5"><p className="truncate font-bold">{aiDraft.projectName || "Chưa nhận diện tên project"}</p><div className="mt-2 grid grid-cols-4 gap-1.5 text-center"><span className="rounded-lg bg-primary/5 px-1 py-1.5"><strong className="block text-[11px] text-primary">{aiDraft.milestones.length}</strong><small className="text-[9px] text-muted-foreground">Milestone</small></span><span className="rounded-lg bg-indigo-50 px-1 py-1.5"><strong className="block text-[11px] text-indigo-700">{aiDraft.milestones.reduce((sum, milestone) => sum + milestone.stages.length, 0)}</strong><small className="text-[9px] text-muted-foreground">Stage</small></span><span className="rounded-lg bg-emerald-50 px-1 py-1.5"><strong className="block text-[11px] text-emerald-700">{aiDraft.milestones.reduce((sum, milestone) => sum + milestone.stages.reduce((stageTotal, stage) => stageTotal + (stage.tasks?.length ?? 0), 0), 0)}</strong><small className="text-[9px] text-muted-foreground">Task</small></span><span className="rounded-lg bg-amber-50 px-1 py-1.5"><strong className="block text-[11px] text-amber-700">{aiDraft.milestones.reduce((sum, milestone) => sum + milestone.stages.reduce((stageTotal, stage) => stageTotal + countTemplateSubtasks(stage.tasks ?? []), 0), 0)}</strong><small className="text-[9px] text-muted-foreground">Subtask</small></span></div></div>
-                        <DraftHierarchyTree milestones={aiDraft.milestones} />
-                        {aiDraft.warnings.length ? <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[10px] leading-relaxed text-amber-800"><span className="font-bold">Cần rà soát:</span> {aiDraft.warnings.join("; ")}</div> : null}
-                        <button type="button" onClick={() => { applyAiDraft(); setAiPanelOpen(false); }} className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary px-3 py-2.5 text-xs font-bold text-primary-foreground shadow-sm transition hover:opacity-90"><Check className="h-3.5 w-3.5" /> Đưa bản nháp vào popup</button>
-                      </div>
-                    </div> : <div className="rounded-xl border border-border bg-background p-3 text-[11px] leading-relaxed text-muted-foreground">Sau khi đọc xong, bản nháp sẽ xuất hiện ở đây. Bạn vẫn chỉnh sửa được toàn bộ nội dung trong popup trước khi bấm Create Project.</div>}
+                  <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+                    <p className="flex items-start gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-[11px] leading-relaxed text-slate-500"><MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-primary" /> File có thể là roadmap, task list, nhiều sheet hoặc tiếng Việt/Anh; không bắt buộc đúng template.</p>
+                    <div className="grid grid-cols-3 gap-1 rounded-xl border border-slate-200 bg-white p-1 text-center text-[10px] font-semibold text-slate-500" aria-label="Các bước đọc file"><span className="rounded-lg bg-blue-50 px-2 py-1.5 text-blue-700">1. Đọc file</span><span className="px-2 py-1.5">2. Rà soát</span><span className="px-2 py-1.5">3. Tạo project</span></div>
+                    <button type="button" disabled={aiImportBusy} onClick={() => aiImportInputRef.current?.click()} className="flex w-full shrink-0 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-blue-300 bg-blue-50/50 px-4 py-5 text-center text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50"><FileUp className="h-5 w-5" />{aiImportBusy ? "Đang đọc file…" : "Chọn file Excel hoặc CSV"}<span className="text-[10px] font-normal text-slate-500">XLSX hoặc CSV · tối đa 8 MB · hỗ trợ nhiều sheet</span></button>
+                    {aiImportError ? <div role="alert" className="shrink-0 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] leading-relaxed text-destructive">{aiImportError}</div> : null}
+                    {aiDraft ? <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white text-xs text-foreground">
+                      <div className="shrink-0 border-b border-slate-200 px-3.5 py-3"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="flex items-center gap-1.5 font-bold"><Sparkles className="h-3.5 w-3.5 text-primary" /> Bản nháp project</p><p className="mt-1 truncate text-[10px] text-slate-500">{aiDraft.sourceFileName}</p></div><span className="shrink-0 rounded-full bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-700">Đã đọc</span></div><p className="mt-2 truncate font-semibold text-slate-900">{aiDraft.projectName || "Chưa nhận diện tên project"}</p><div className="mt-2 grid grid-cols-4 gap-1.5 text-center"><span className="rounded-md bg-blue-50 px-1 py-1.5"><strong className="block text-[11px] text-blue-700">{aiDraft.stats?.milestoneCount ?? aiDraft.milestones.length}</strong><small className="text-[9px] text-slate-500">Milestone</small></span><span className="rounded-md bg-slate-50 px-1 py-1.5"><strong className="block text-[11px] text-slate-700">{aiDraft.stats?.stageCount ?? aiDraft.milestones.reduce((sum, milestone) => sum + milestone.stages.length, 0)}</strong><small className="text-[9px] text-slate-500">Stage</small></span><span className="rounded-md bg-emerald-50 px-1 py-1.5"><strong className="block text-[11px] text-emerald-700">{aiDraft.stats?.taskCount ?? aiDraft.milestones.reduce((sum, milestone) => sum + milestone.stages.reduce((stageTotal, stage) => stageTotal + (stage.tasks?.length ?? 0), 0), 0)}</strong><small className="text-[9px] text-slate-500">Task</small></span><span className="rounded-md bg-amber-50 px-1 py-1.5"><strong className="block text-[11px] text-amber-700">{aiDraft.stats?.subtaskCount ?? aiDraft.milestones.reduce((sum, milestone) => sum + milestone.stages.reduce((stageTotal, stage) => stageTotal + countTemplateSubtasks(stage.tasks ?? []), 0), 0)}</strong><small className="text-[9px] text-slate-500">Subtask</small></span></div><p className="mt-2 text-[10px] text-slate-500">{aiDraft.stats ? `${aiDraft.stats.sheetCount} sheet · ${aiDraft.stats.rowCount} dòng · ${aiDraft.stats.detectedColumns.join(", ") || "chưa rõ cột"}` : "Đã tạo bản nháp từ dữ liệu file"}</p></div>
+                      <div className="min-h-0 flex-1 overflow-y-auto p-3"><DraftHierarchyTree milestones={aiDraft.milestones} />{aiDraft.warnings.length ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[10px] leading-relaxed text-amber-800"><span className="font-bold">Cần rà soát:</span> {aiDraft.warnings.join("; ")}</div> : null}</div>
+                      <div className="shrink-0 border-t border-slate-200 bg-white p-3"><button type="button" onClick={applyAiDraft} className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2.5 text-xs font-bold text-primary-foreground shadow-sm transition hover:opacity-90"><Check className="h-3.5 w-3.5" /> Đưa bản nháp vào tự chọn</button></div>
+                    </section> : <div className="rounded-xl border border-dashed border-border bg-background px-4 py-6 text-center text-[11px] leading-relaxed text-muted-foreground">Bản nháp sẽ xuất hiện ở đây sau khi đọc file. Bạn có thể chỉnh sửa toàn bộ milestone, stage, task và subtask trước khi tạo project.</div>}
                   </div>
                 </aside> : null}
                 </div>

@@ -1,7 +1,7 @@
-import { hours, type PnlProject } from "./pnl-data";
+import { addExcelTableSheet, excelDate, styleExcelHeaderCells, type ExcelCell } from "@/lib/excel-table-sheet";
+import { EXPENSE_GROUPS, LOCKED_EXPENSE_ROWS, hours, type PnlProject } from "./pnl-data";
 
 type ExcelJsModule = typeof import("exceljs");
-type CellValue = string | number;
 
 export interface PnlExportContext {
   period: string;
@@ -15,98 +15,80 @@ function formatPeriod(period: string) {
   return year && month ? `Tháng ${month}/${year}` : period;
 }
 
-function styleTitle(sheet: import("exceljs").Worksheet) {
-  sheet.getCell("A1").font = { bold: true, size: 16, color: { argb: "FF0F172A" } };
-  sheet.getRow(1).height = 24;
-}
+export const PNL_EXPORT_SHEETS = ["Tổng quan", "Theo dự án", "Theo nhân sự", "Logwork theo ngày", "Chi phí theo nhóm", "Chi phí chi tiết", "Raw Data"] as const;
 
-function styleHeader(sheet: import("exceljs").Worksheet, rowNumber: number, lastColumn: number) {
-  for (let column = 1; column <= lastColumn; column += 1) {
-    const cell = sheet.getCell(rowNumber, column);
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1D4ED8" } };
-    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
-  }
-  sheet.getRow(rowNumber).height = 28;
-}
-
-function setSheetLayout(sheet: import("exceljs").Worksheet, widths: number[]) {
-  sheet.columns = widths.map((width) => ({ width }));
-  sheet.views = [{ state: "frozen", ySplit: 5 }];
-}
-
-function addMeta(sheet: import("exceljs").Worksheet, period: string, projectCount: number) {
-  sheet.addRow(["Báo cáo P&L"]);
-  sheet.addRow([`Kỳ báo cáo: ${formatPeriod(period)}`]);
-  sheet.addRow(["Phạm vi", `${projectCount} project đang hiển thị`]);
-  sheet.addRow([]);
-  styleTitle(sheet);
-}
-
-function addDataBar(sheet: import("exceljs").Worksheet, ref: string) {
-  const dataBar = {
-    type: "dataBar",
-    priority: 1,
-    gradient: true,
-    minLength: 4,
-    maxLength: 100,
-    showValue: true,
-    cfvo: [{ type: "min" }, { type: "max" }],
-    color: { argb: "FF2563EB" }
-  } as unknown as import("exceljs").ConditionalFormattingRule;
-  sheet.addConditionalFormatting({ ref, rules: [dataBar] });
-}
-
-function moneyByProject(project: PnlProject) {
-  return project.costAvailable ? Math.max(project.revenue - project.grossMargin, 0) : undefined;
-}
-
-/** Builds a multi-sheet P&L download. Each reader-facing data block gets its own worksheet. */
+/**
+ * Builds the P&L download. Same rule as every export: one table per sheet,
+ * header on row 1. "Tổng quan" follows the dashboard template (period on top,
+ * then the KPI table); every other sheet is a single table.
+ */
 export function buildPnlWorkbook(ExcelJS: ExcelJsModule, { period, projects }: PnlExportContext) {
   const workbook = new ExcelJS.Workbook();
-  const overviewSheet = workbook.addWorksheet("Tổng quan");
-  const projectSheet = workbook.addWorksheet("Theo dự án");
-  const dailySheet = workbook.addWorksheet("Logwork theo ngày");
-  const peopleSheet = workbook.addWorksheet("Theo nhân sự");
-  const expenseSheet = workbook.addWorksheet("Chi phí");
-  const rawSheet = workbook.addWorksheet("Data Raw");
-
+  const currency = projects[0]?.currency || "VND";
   const total = (selector: (project: PnlProject) => number) => projects.reduce((sum, project) => sum + selector(project), 0);
+  const round2 = (value: number) => Math.round(value * 100) / 100;
+  // Every money figure below is the API's per-project figure, or a plain sum of those across the
+  // exported projects. Nothing is re-derived per project (no revenue − cost, no total − labor).
   const totalRevenue = total((project) => project.revenue);
-  const totalExpenses = projects.reduce((sum, project) => sum + (moneyByProject(project) ?? 0), 0);
-  const totalPnlMinutes = total((project) => project.pnlMinutes);
-  const totalPendingMinutes = total((project) => project.pendingMinutes);
-  const reconciledCount = projects.filter((project) => project.status === "Đã đối soát").length;
+  const totalCost = total((project) => project.totalCost);
+  const totalEbit = round2(total((project) => project.grossMargin));
+  // One project: the API's own margin. Several: the ratio of the two summed API figures (the API has no figure for an arbitrary selection).
+  const ebitMargin = projects.length === 1 ? projects[0].grossMarginPercent ?? null : totalRevenue > 0 ? round2((totalEbit / totalRevenue) * 100) : null;
+  const expenseAmount = (project: PnlProject, key: string) => project.expenses.find((expense) => expense.key === key)?.amount ?? 0;
+  const lockedCount = projects.filter((project) => project.lockedOtherCost !== undefined).length;
+  const LIVE_NOTE = "Số hiện tại, có thể khác số đã chốt";
+  const missingRateMinutes = total((project) => project.missingRateMinutes);
+  const groupLabel = new Map(EXPENSE_GROUPS.map((group) => [group.key, group.label]));
 
-  addMeta(overviewSheet, period, projects.length);
-  overviewSheet.addRows([
-    ["Chỉ số tổng quan", "Giá trị", "Đơn vị", "Diễn giải"],
-    ["Doanh thu", totalRevenue, "VND", "Doanh thu ghi nhận trong kỳ"],
-    ["Tổng chi phí", totalExpenses, "VND", "Tổng chi phí có nguồn"],
-    ["EBIT", totalRevenue - totalExpenses, "VND", "Doanh thu trừ tổng chi phí"],
-    ["P&L hợp lệ", hours(totalPnlMinutes), "giờ", "Logwork đủ điều kiện P&L"],
-    ["Chờ xử lý", hours(totalPendingMinutes), "giờ", "Logwork chưa đủ điều kiện P&L"],
-    ["Dự án đã đối soát", reconciledCount, "dự án", "Đối soát giờ hoàn tất"],
+  // 1 · Tổng quan
+  const overview = workbook.addWorksheet(PNL_EXPORT_SHEETS[0]);
+  overview.addRows([
+    ["Kỳ báo cáo", formatPeriod(period)],
+    ["Số project", projects.length],
     [],
-    ["Phạm vi xuất", projects.length, "project", "Đã áp dụng bộ lọc trên màn hình"]
+    ["CHỈ SỐ TỔNG QUAN P&L", "Giá trị", "Đơn vị"],
+    ["Doanh thu", totalRevenue, currency],
+    ["Tổng chi phí", totalCost, currency],
+    ["EBIT", totalEbit, currency],
+    ["Biên EBIT", ebitMargin, "%"],
+    ["Giờ kế hoạch", hours(total((project) => project.planMinutes)), "giờ"],
+    ["Logwork", hours(total((project) => project.logworkMinutes)), "giờ"],
+    ["Giờ đã duyệt", hours(total((project) => project.pnlMinutes)), "giờ"],
+    ["Chờ xử lý", hours(total((project) => project.pendingMinutes)), "giờ"],
+    ["Giờ đã duyệt thiếu cost rate", hours(missingRateMinutes), "giờ"]
   ]);
-  styleHeader(overviewSheet, 5, 4);
-  setSheetLayout(overviewSheet, [34, 20, 14, 42]);
+  overview.columns = [{ width: 34 }, { width: 22 }, { width: 12 }];
+  styleExcelHeaderCells(overview, 4, 3);
 
-  addMeta(projectSheet, period, projects.length);
-  const projectHeader = ["Project", "Mã dự án", "Khách hàng", "Owner", "Trạng thái", "Doanh thu", "Chi phí", "EBIT / Margin", "Plan giờ", "Logwork giờ", "P&L giờ", "Chờ xử lý giờ"];
-  projectSheet.addRows([projectHeader, ...projects.map((project) => {
-    const cost = moneyByProject(project);
-    return [project.name, project.code, project.client, project.ownerDisplayName || "Chưa phân công", project.status, project.revenue, cost ?? "Chưa có dữ liệu", cost === undefined ? "Chưa đủ dữ liệu" : project.revenue - cost, hours(project.planMinutes), hours(project.logworkMinutes), hours(project.pnlMinutes), hours(project.pendingMinutes)];
-  })]);
-  styleHeader(projectSheet, 5, projectHeader.length);
-  setSheetLayout(projectSheet, [34, 18, 26, 24, 18, 18, 18, 18, 14, 16, 14, 18]);
-  projectSheet.autoFilter = { from: { row: 5, column: 1 }, to: { row: Math.max(5, projects.length + 5), column: projectHeader.length } };
+  // 2 · Theo dự án
+  addExcelTableSheet(
+    workbook,
+    PNL_EXPORT_SHEETS[1],
+    ["Tên dự án", "Mã dự án", "Khách hàng", "Owner", "Trạng thái", "Doanh thu", "Chi phí nhân sự", "Chi phí khác", "Tổng chi phí", "EBIT", "Biên EBIT (%)", "Chi phí kế hoạch", "Giờ kế hoạch", "Logwork giờ", "Giờ đã duyệt", "Chờ xử lý giờ", "Giờ thiếu cost rate", "Đã chốt kỳ"],
+    projects.map((project) => [
+      project.name, project.code, project.client, project.ownerDisplayName || "Chưa phân công", project.status,
+      project.revenue, project.laborCost, project.otherCost, project.totalCost, project.grossMargin, project.grossMarginPercent ?? null, project.plannedCost,
+      hours(project.planMinutes), hours(project.logworkMinutes), hours(project.pnlMinutes), hours(project.pendingMinutes), hours(project.missingRateMinutes), project.locked ? "Có" : "Không"
+    ]),
+    [38, 20, 26, 24, 16, 18, 18, 18, 18, 18, 14, 18, 14, 14, 12, 16, 18, 12]
+  );
 
-  const dailyMap = new Map<string, { label: string; logwork: number; pnl: number; pending: number; excluded: number; entries: number; projects: number }>();
+  // 3 · Theo nhân sự (một dòng cho mỗi người ở mỗi dự án)
+  const peopleRows: ExcelCell[][] = projects.flatMap((project) => project.people.map((person) => [
+    person.name, person.role, project.name, project.code,
+    hours(person.planMinutes), hours(person.logworkMinutes), hours(person.pnlMinutes), hours(person.logworkMinutes - person.pnlMinutes),
+    person.hourlyCostRate ?? null, person.laborCost ?? null, hours(person.missingRateMinutes ?? 0),
+    // A locked month freezes totals only: the per-person split is whatever the data says today.
+    project.lockedOtherCost !== undefined ? LIVE_NOTE : ""
+  ]));
+  addExcelTableSheet(workbook, PNL_EXPORT_SHEETS[2], ["Nhân sự", "Vai trò", "Tên dự án", "Mã dự án", "Giờ kế hoạch", "Logwork giờ", "Giờ đã duyệt", "Chờ xử lý giờ", "Cost rate (₫/giờ)", "Chi phí nhân sự", "Giờ thiếu cost rate", "Ghi chú"], peopleRows, [28, 22, 38, 20, 14, 14, 14, 16, 18, 18, 18, 36]);
+
+  // 4 · Logwork theo ngày (chỉ ngày có log)
+  const dailyMap = new Map<string, { logwork: number; pnl: number; pending: number; excluded: number; entries: number; projects: number }>();
   for (const project of projects) {
     for (const point of project.daily) {
-      const current = dailyMap.get(point.date) ?? { label: point.label, logwork: 0, pnl: 0, pending: 0, excluded: 0, entries: 0, projects: 0 };
+      if (!point.minutes) continue;
+      const current = dailyMap.get(point.date) ?? { logwork: 0, pnl: 0, pending: 0, excluded: 0, entries: 0, projects: 0 };
       const pnl = point.pnlMinutes ?? 0;
       const pending = point.pendingMinutes ?? 0;
       current.logwork += point.minutes;
@@ -114,59 +96,61 @@ export function buildPnlWorkbook(ExcelJS: ExcelJsModule, { period, projects }: P
       current.pending += pending;
       current.excluded += Math.max(point.minutes - pnl - pending, 0);
       current.entries += point.entryCount ?? 0;
-      current.projects += point.minutes > 0 ? 1 : 0;
+      current.projects += 1;
       dailyMap.set(point.date, current);
     }
   }
-  const dailyHeader = ["Ngày", "Nhãn", "Logwork giờ", "P&L giờ", "Chờ xử lý giờ", "Bị loại giờ", "Entry", "Project có log"];
-  addMeta(dailySheet, period, projects.length);
-  dailySheet.addRows([dailyHeader, ...[...dailyMap.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, row]) => [date, row.label, hours(row.logwork), hours(row.pnl), hours(row.pending), hours(row.excluded), row.entries, row.projects])]);
-  styleHeader(dailySheet, 5, dailyHeader.length);
-  setSheetLayout(dailySheet, [16, 12, 16, 14, 18, 14, 12, 18]);
-  if (dailyMap.size) addDataBar(dailySheet, `C6:C${5 + dailyMap.size}`);
-  dailySheet.autoFilter = { from: { row: 5, column: 1 }, to: { row: Math.max(5, dailyMap.size + 5), column: dailyHeader.length } };
+  addExcelTableSheet(
+    workbook,
+    PNL_EXPORT_SHEETS[3],
+    ["Ngày", "Logwork giờ", "Giờ đã duyệt", "Chờ xử lý giờ", "Bị loại giờ", "Số entry", "Số dự án"],
+    [...dailyMap.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([date, row]) => [excelDate(date), hours(row.logwork), hours(row.pnl), hours(row.pending), hours(row.excluded), row.entries, row.projects]),
+    [14, 14, 12, 16, 14, 12, 12],
+    { 1: "dd/mm/yyyy" }
+  );
 
-  const peopleMap = new Map<string, { name: string; role: string; projects: number; plan: number; logwork: number; pnl: number }>();
-  for (const project of projects) {
-    for (const person of project.people) {
-      const current = peopleMap.get(person.id) ?? { name: person.name, role: person.role, projects: 0, plan: 0, logwork: 0, pnl: 0 };
-      current.projects += 1;
-      current.plan += person.planMinutes;
-      current.logwork += person.logworkMinutes;
-      current.pnl += person.pnlMinutes;
-      peopleMap.set(person.id, current);
-    }
-  }
-  const peopleHeader = ["Nhân sự", "Vai trò", "Số project", "Plan giờ", "Logwork giờ", "P&L giờ", "Chờ xử lý giờ", "Tỷ lệ P&L"];
-  addMeta(peopleSheet, period, projects.length);
-  peopleSheet.addRows([peopleHeader, ...[...peopleMap.values()].sort((a, b) => a.name.localeCompare(b.name)).map((person) => [person.name, person.role, person.projects, hours(person.plan), hours(person.logwork), hours(person.pnl), hours(person.logwork - person.pnl), person.logwork ? person.pnl / person.logwork : 0])]);
-  styleHeader(peopleSheet, 5, peopleHeader.length);
-  setSheetLayout(peopleSheet, [28, 24, 14, 14, 16, 14, 18, 14]);
-  peopleSheet.getColumn(8).numFmt = "0.0%";
-  peopleSheet.autoFilter = { from: { row: 5, column: 1 }, to: { row: Math.max(5, peopleMap.size + 5), column: peopleHeader.length } };
+  // 5 · Chi phí theo nhóm (6 nhóm BRD; tháng đã chốt chỉ có 2 dòng "đã chốt" vì snapshot không tách nhóm).
+  // Rows add up to the overview's "Tổng chi phí".
+  const groupRows = [...EXPENSE_GROUPS.map((group) => ({ key: group.key, label: group.label })), ...(lockedCount ? [LOCKED_EXPENSE_ROWS.entered, LOCKED_EXPENSE_ROWS.other] : [])];
+  addExcelTableSheet(
+    workbook,
+    PNL_EXPORT_SHEETS[4],
+    ["Nhóm chi phí", "Giá trị", "Đơn vị", "Tỷ trọng (%)", "Số dự án có phát sinh"],
+    groupRows.map((group) => {
+      const amount = total((project) => expenseAmount(project, group.key));
+      return [group.label, amount, currency, totalCost > 0 ? round2((amount / totalCost) * 100) : 0, projects.filter((project) => expenseAmount(project, group.key) > 0).length];
+    }),
+    [44, 20, 12, 16, 24]
+  );
 
-  const expenseMap = new Map<string, number>();
-  for (const project of projects) for (const expense of project.expenses) expenseMap.set(expense.label, (expenseMap.get(expense.label) ?? 0) + expense.amount);
-  const expenseHeader = ["Chi phí", "Giá trị", "Đơn vị", "Tỷ trọng", "Số project có phát sinh"];
-  const expenseRows = [...expenseMap.entries()].map(([label, amount]) => [label, amount, projects[0]?.currency || "VND", totalExpenses ? amount / totalExpenses : 0, projects.filter((project) => project.expenses.some((expense) => expense.label === label && expense.amount > 0)).length]);
-  addMeta(expenseSheet, period, projects.length);
-  expenseSheet.addRows([expenseHeader, ...expenseRows, [], ["Tổng chi phí", totalExpenses, projects[0]?.currency || "VND", totalExpenses ? 1 : 0, projects.filter((project) => project.costAvailable).length]]);
-  styleHeader(expenseSheet, 5, expenseHeader.length);
-  setSheetLayout(expenseSheet, [26, 20, 14, 14, 24]);
-  expenseSheet.getColumn(4).numFmt = "0.0%";
-  expenseSheet.autoFilter = { from: { row: 5, column: 1 }, to: { row: Math.max(5, expenseRows.length + 5), column: expenseHeader.length } };
+  // 6 · Chi phí chi tiết: mọi khoản tạo nên tổng chi phí của từng dự án (cộng lại đúng bằng tổng chi phí).
+  // A locked project lists its three frozen amounts; the live lines are not mixed in, because they are no longer what the total is made of.
+  const costRows: ExcelCell[][] = projects.flatMap((project) => project.lockedOtherCost !== undefined ? [
+    [project.name, project.code, "Salaries Related", "Chi phí nhân sự đã chốt", "Số đã chốt", null, project.laborCost] as ExcelCell[],
+    [project.name, project.code, "Đã chốt, không tách nhóm", LOCKED_EXPENSE_ROWS.entered.label, "Số đã chốt", null, project.enteredCost] as ExcelCell[],
+    [project.name, project.code, "Đã chốt, không tách nhóm", LOCKED_EXPENSE_ROWS.other.label, "Số đã chốt", null, project.lockedOtherCost] as ExcelCell[]
+  ] : [
+    ...project.people.filter((person) => (person.laborCost ?? 0) > 0).map((person): ExcelCell[] => [project.name, project.code, "Salaries Related", `Chi phí nhân sự — ${person.name}`, "Giờ đã duyệt × cost rate", null, person.laborCost ?? 0]),
+    ...project.costItems.map((item): ExcelCell[] => [project.name, project.code, groupLabel.get(item.category) ?? item.category, item.label, "Nhập tay", excelDate(item.occurredOn), item.amount]),
+    ...project.calculatedItems.map((item): ExcelCell[] => [project.name, project.code, groupLabel.get(item.category) ?? item.category, item.label, "Công thức", null, item.amount]),
+    ...(project.sharedCost > 0 ? [[project.name, project.code, "Functional Operation", "Quỹ dùng chung phân bổ", "Phân bổ quỹ", null, project.sharedCost] as ExcelCell[]] : [])
+  ]);
+  addExcelTableSheet(workbook, PNL_EXPORT_SHEETS[5], ["Tên dự án", "Mã dự án", "Nhóm chi phí", "Khoản", "Nguồn", "Ngày phát sinh", "Số tiền"], costRows, [38, 20, 24, 56, 24, 16, 18], { 6: "dd/mm/yyyy" });
 
-  const rawHeader = ["Project ID", "Mã dự án", "Dự án", "Khách hàng", "Kỳ báo cáo", "Trạng thái đối soát", "Plan giờ", "Logwork giờ", "P&L giờ", "Bị loại giờ", "Chờ xử lý giờ", "Doanh thu", "Tổng chi phí", "EBIT", "BD", "PM", "Delivery / DX", "AI / Công cụ", "Overhead", "Khác"];
-  const rawRows: CellValue[][] = projects.map((project) => {
-    const expenseByKey = new Map(project.expenses.map((expense) => [expense.key, expense.amount]));
-    const totalCost = project.expenses.reduce((sum, expense) => sum + expense.amount, 0);
-    return [project.id, project.code, project.name, project.client, period, project.status, hours(project.planMinutes), hours(project.logworkMinutes), hours(project.pnlMinutes), hours(project.excludedMinutes), hours(project.pendingMinutes), project.revenue, totalCost, project.revenue - totalCost, expenseByKey.get("bd") ?? 0, expenseByKey.get("pm") ?? 0, expenseByKey.get("delivery-dx") ?? 0, expenseByKey.get("ai-tools") ?? 0, expenseByKey.get("overhead") ?? 0, expenseByKey.get("other") ?? 0];
-  });
-  rawSheet.addRows([rawHeader, ...rawRows]);
-  setSheetLayout(rawSheet, [28, 18, 38, 28, 16, 20, 14, 16, 14, 14, 16, 20, 20, 20, 14, 14, 18, 16, 16, 14]);
-  rawSheet.views = [{ state: "frozen", ySplit: 1 }];
-  styleHeader(rawSheet, 1, rawHeader.length);
-  rawSheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, rawRows.length + 1), column: rawHeader.length } };
+  // 7 · Raw Data: một dòng cho mỗi dự án, đủ số để tự kiểm tra
+  addExcelTableSheet(
+    workbook,
+    PNL_EXPORT_SHEETS[6],
+    ["Project ID", "Mã dự án", "Tên dự án", "Khách hàng", "Kỳ báo cáo", "Trạng thái đối soát", "Giờ kế hoạch", "Logwork giờ", "Giờ đã duyệt", "Bị loại giờ", "Chờ xử lý giờ", "Doanh thu", "Nguồn doanh thu", "Đã thu", "Tổng chi phí", "EBIT", "Đã chốt kỳ", LOCKED_EXPENSE_ROWS.entered.label, LOCKED_EXPENSE_ROWS.other.label, ...EXPENSE_GROUPS.map((group) => group.label)],
+    projects.map((project) => [
+      project.id, project.code, project.name, project.client, formatPeriod(period), project.status,
+      hours(project.planMinutes), hours(project.logworkMinutes), hours(project.pnlMinutes), hours(project.excludedMinutes), hours(project.pendingMinutes),
+      project.revenue, project.revenueBasis === "custom" ? "Nhập tay theo tháng" : project.revenueBasis === "none" ? "Chưa nhập cho kỳ" : "Kế hoạch", project.paidRevenue, project.totalCost, project.grossMargin,
+      project.locked ? "Có" : "Không", expenseAmount(project, LOCKED_EXPENSE_ROWS.entered.key), expenseAmount(project, LOCKED_EXPENSE_ROWS.other.key),
+      ...EXPENSE_GROUPS.map((group) => expenseAmount(project, group.key))
+    ]),
+    [28, 18, 38, 28, 18, 20, 14, 14, 14, 14, 16, 20, 20, 18, 20, 20, 12, 26, 44, 18, 18, 18, 18, 20, 22]
+  );
 
   return workbook;
 }

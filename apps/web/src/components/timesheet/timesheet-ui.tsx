@@ -187,6 +187,35 @@ export function BarValue({ percent, value, tone = "info" }: { percent: number; v
   );
 }
 
+/** Two-or-more option local view switch (e.g. Ngày | Tuần). */
+export function SegmentedSwitch<T extends string>({
+  label,
+  options,
+  value,
+  onChange
+}: {
+  label: string;
+  options: Array<{ value: T; label: string }>;
+  value: T;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div role="group" aria-label={label} className="inline-flex rounded-lg border border-border bg-card p-0.5">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          aria-pressed={option.value === value}
+          onClick={() => onChange(option.value)}
+          className={`rounded-md px-3 py-1 text-[11.5px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${option.value === value ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /* ── Pagination ─────────────────────────────────────────────────────────── */
 
 export interface PaginationState<T> {
@@ -331,12 +360,23 @@ export function Drawer({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  // Move focus into the dialog when it opens and hand it back to the trigger when it closes.
+  const panelRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (!open) return;
+    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    panelRef.current?.focus();
+    return () => {
+      if (trigger?.isConnected) trigger.focus();
+    };
+  }, [open]);
+
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={title}>
       <button type="button" aria-label="Đóng" onClick={onClose} className="absolute inset-0 bg-overlay" />
-      <div className="relative flex h-full w-full max-w-3xl flex-col border-l border-border bg-card shadow-xl">
+      <div ref={panelRef} tabIndex={-1} className="relative flex h-full w-full max-w-3xl flex-col border-l border-border bg-card shadow-xl outline-none">
         <div className="flex items-start justify-between gap-3 border-b border-border p-4">
           <div className="flex min-w-0 items-start gap-2.5">
             {Icon ? (

@@ -5,14 +5,15 @@ import type {
   CapacitySummaryItem,
   CapacitySummaryResponse,
   ProjectSummary,
-  ResourceAllocationStatus,
-  ResourceListResponse
+  ResourceAllocationStatus
 } from "@b2b-crm/contracts";
 import { ShopifyAppShell, ShopifyBanner, ShopifyDataTable, ShopifyIcon, ShopifyPage, ShopifySection } from "../shopify-ui";
 import { ShopifyModal } from "../shopify-modal";
 import { ConfirmActionDialog } from "./confirm-action-dialog";
 import { CrmSelect, type CrmSelectOption } from "./crm-select";
 import { businessRoleFromMember } from "@/lib/people-roles";
+import { fetchAllPages } from "@/lib/api-pages";
+import { capacityLoadStatus } from "@/lib/capacity-status";
 
 type AllocationStatus = ResourceAllocationStatus | "blocked" | "completed";
 
@@ -27,6 +28,10 @@ interface Consultant {
   role: string;
   skills: string[];
   capacityMinutesByWeek: Record<string, number>;
+  /** Weeks where the API fell back to the default capacity (no capacity period or resource profile). */
+  capacityUnknownWeeks: string[];
+  /** Minutes allocated on On Hold projects per week: freed capacity, not load (EV-035). */
+  onHoldMinutesByWeek: Record<string, number>;
   allocations: {
     week: string;
     project: string;
@@ -168,14 +173,14 @@ export function ResourceMgmtFunctionPage({
 
     async function load() {
       try {
-        const [projectResponse] = await Promise.all([
-          fetch("/api/projects?principal=founder", { cache: "no-store" }),
+        // The API caps a page at 100 projects: page through all of them or the picker silently loses the rest.
+        const [projectRows] = await Promise.all([
+          fetchAllPages<ProjectSummary>("/api/projects?principal=founder").catch(() => null),
           refreshCapacity()
         ]);
         if (cancelled) return;
-        if (projectResponse.ok) {
-          const payload = (await projectResponse.json()) as ResourceListResponse<ProjectSummary>;
-          const nextProjects = payload.data.map((project) => ({
+        if (projectRows) {
+          const nextProjects = projectRows.map((project) => ({
             accountId: project.accountId,
             accountName: project.accountName,
             id: project.id,
@@ -205,7 +210,7 @@ export function ResourceMgmtFunctionPage({
 
   const totalConsultants = consultants.length;
   const firstWeek = weeksList[0];
-  const overbookedThisWeek = consultants.filter((consultant) => getUtilizationData(consultant, firstWeek).percentage > 100).length;
+  const overbookedThisWeek = consultants.filter((consultant) => getUtilizationData(consultant, firstWeek).overloaded).length;
   const larkSyncedCount = consultants.filter((consultant) => consultant.larkOpenId).length;
   const assignedThisWeek = consultants.filter((consultant) => getUtilizationData(consultant, firstWeek).allocated > 0).length;
   const totalResourcePages = Math.max(1, Math.ceil(consultants.length / resourcePageSize));
@@ -213,33 +218,17 @@ export function ResourceMgmtFunctionPage({
   const pagedConsultants = consultants.slice((currentResourcePage - 1) * resourcePageSize, currentResourcePage * resourcePageSize);
 
   function getUtilizationData(consultant: Consultant, week: string) {
-    const allocated = consultant.allocations
+    const onHoldHours = Math.round((consultant.onHoldMinutesByWeek[week] ?? 0) / 6) / 10;
+    // The allocation list still contains On Hold project rows; take them out so the load matches the API's allocatedMinutes.
+    const allocated = Math.max(0, consultant.allocations
       .filter((allocation) => allocation.week === week && !["released", "completed", "cancelled"].includes(allocation.status))
-      .reduce((sum, allocation) => sum + allocation.days, 0);
+      .reduce((sum, allocation) => sum + allocation.days, 0) - (consultant.onHoldMinutesByWeek[week] ?? 0) / minutesPerDay);
     const available = (consultant.capacityMinutesByWeek[week] ?? 5 * minutesPerDay) / minutesPerDay;
     const percentage = available > 0 ? Math.round((allocated / available) * 100) : 0;
 
-    let tone: "info" | "success" | "warning" | "critical" | "neutral" = "success";
-    let statusText = "Ổn định";
+    const { tone, statusText, overloaded } = capacityLoadStatus(percentage, !consultant.capacityUnknownWeeks.includes(week));
 
-    if (percentage === 0) {
-      tone = "neutral";
-      statusText = "Còn trống";
-    } else if (percentage <= 80) {
-      tone = "info";
-      statusText = "Còn trống";
-    } else if (percentage <= 100) {
-      tone = "success";
-      statusText = "Ổn định";
-    } else if (percentage <= 110) {
-      tone = "warning";
-      statusText = "Vượt tải nhẹ";
-    } else {
-      tone = "critical";
-      statusText = percentage > 120 ? "Bị chặn trên 120%" : "Quá tải cao";
-    }
-
-    return { allocated, available, percentage, tone, statusText };
+    return { allocated, available, percentage, tone, statusText, overloaded, onHoldHours };
   }
 
   async function submitAllocationDraft({ consultant, days, nextPercentage, project, week }: AllocationDraft) {
@@ -310,7 +299,7 @@ export function ResourceMgmtFunctionPage({
         <div className="shopify-status-row" aria-label="Cài đặt nguồn lực" style={{ marginBottom: "16px" }}>
           <s-badge tone="neutral">Đội triển khai</s-badge>
           <s-badge tone={apiState === "ready" ? "success" : apiState === "loading" ? "info" : "warning"}>
-            {apiState === "ready" ? apiMeta : apiState === "loading" ? "Đang tải dữ liệu nguồn lực" : "Đang dùng dữ liệu dự phòng"}
+            {apiState === "ready" ? apiMeta : apiState === "loading" ? "Đang tải dữ liệu nguồn lực" : "Chưa tải được dữ liệu nguồn lực"}
           </s-badge>
         </div>
 
@@ -388,6 +377,7 @@ export function ResourceMgmtFunctionPage({
                         </div>
                         <span>{consultant.role}</span>
                         <small>{consultant.email ?? "Chưa có email"}</small>
+                        {utilization.onHoldHours > 0 ? <small>{utilization.onHoldHours}h giải phóng từ Project On Hold</small> : null}
                         <div className="resource-member-tags">
                           <span>{consultant.larkOpenId ? "Đã đồng bộ" : "Chưa có định danh"}</span>
                           <span>{formatDays(utilization.allocated)}d / {formatDays(utilization.available)}d</span>
@@ -451,11 +441,12 @@ export function ResourceMgmtFunctionPage({
                     </div>
                   ),
                   ...weeksList.map((week) => {
-                    const { allocated, available, percentage, tone, statusText } = getUtilizationData(consultant, week);
+                    const { allocated, available, percentage, tone, statusText, onHoldHours } = getUtilizationData(consultant, week);
                     return (
                       <div key={week} style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
                         <span className="font-mono tabular-nums" style={{ fontSize: "13px", fontWeight: 650, color: "var(--text)" }}>{formatDays(allocated)}d / {formatDays(available)}d</span>
                         <span className="font-mono tabular-nums" style={{ fontSize: "11px", color: "var(--text-muted)" }}>({percentage}%)</span>
+                        {onHoldHours > 0 ? <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{onHoldHours}h giải phóng từ Project On Hold</span> : null}
                         <div style={{ marginTop: "3px" }}>
                           <s-badge tone={tone}>{statusText}</s-badge>
                         </div>
@@ -658,6 +649,8 @@ function adaptCapacitySnapshots(snapshots: Array<{ response: CapacitySummaryResp
     response.data.forEach((item) => {
       const consultant = byUser.get(item.userId) ?? createConsultant(item);
       consultant.capacityMinutesByWeek[week.label] = item.availableMinutes;
+      consultant.onHoldMinutesByWeek[week.label] = item.onHoldAllocatedMinutes ?? 0;
+      if (item.capacityKnown === false && !consultant.capacityUnknownWeeks.includes(week.label)) consultant.capacityUnknownWeeks.push(week.label);
       consultant.allocations = [
         ...consultant.allocations.filter((allocation) => allocation.week !== week.label),
         ...item.allocations.map((allocation) => ({
@@ -686,6 +679,8 @@ function createConsultant(item: CapacitySummaryItem): Consultant {
     role: businessRoleFromMember({ resourceDisplayRole: item.displayRole }),
     skills: item.skills.length > 0 ? item.skills.map(formatResourceSkill) : ["Triển khai"],
     capacityMinutesByWeek: {},
+    capacityUnknownWeeks: [],
+    onHoldMinutesByWeek: {},
     allocations: []
   };
 }
@@ -762,7 +757,7 @@ function formatAllocationStatus(status: AllocationStatus) {
     reserved: "Đã giữ lịch",
     confirmed: "Đã xác nhận",
     blocked: "Đang chặn",
-    completed: "Hoàn tất",
+    completed: "Đã hoàn thành",
     released: "Đã nhả lịch",
     cancelled: "Đã hủy"
   };

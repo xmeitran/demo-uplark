@@ -1,3 +1,5 @@
+import type { ProjectStatusLabel } from "@/lib/project-status";
+
 export interface Member {
   id?: string;
   name?: string;
@@ -16,13 +18,19 @@ export interface Project {
   accountId?: string;
   name: string;
   description: string;
-  status: "Active" | "In Review" | "Planning" | "On Hold" | "Completed" | "At Risk";
+  /** Standard catalogue label, or "Chưa xác định" when the API status is unknown/missing (never defaulted to Active). */
+  status: ProjectStatusLabel;
+  statusReason?: string;
+  statusSince?: string;
+  openWarningCount?: number;
   priority: "Critical" | "High" | "Medium" | "Low";
   progress: number;
   budget: number;
   spent: number;
   startDate: string;
   dueDate: string;
+  /** ISO planned end date behind the formatted `dueDate`; sort by this, never by the formatted string. */
+  dueAt?: string;
   members: Member[];
   ownerUserId?: string;
   ownerDisplayName?: string;

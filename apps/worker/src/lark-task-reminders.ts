@@ -1,6 +1,8 @@
 import { createHmac, randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import {
+  CLOSED_TASK_STATUSES,
+  REMINDER_INACTIVE_PROJECT_STATUSES,
   dueReminderSlots,
   findActualIssues,
   findPlanIssues,
@@ -312,7 +314,7 @@ async function loadReminderFacts(prisma: PrismaClient, config: TaskReminderConfi
       projectMembers: {
         some: {
           workspaceId: config.workspaceId,
-          project: { status: { notIn: ["completed", "cancelled", "closed", "archived"] } }
+          project: { status: { notIn: REMINDER_INACTIVE_PROJECT_STATUSES } }
         }
       }
     },
@@ -325,7 +327,7 @@ async function loadReminderFacts(prisma: PrismaClient, config: TaskReminderConfi
         take: 1
       },
       projectMembers: {
-        where: { workspaceId: config.workspaceId, project: { status: { notIn: ["completed", "cancelled", "closed", "archived"] } } },
+        where: { workspaceId: config.workspaceId, project: { status: { notIn: REMINDER_INACTIVE_PROJECT_STATUSES } } },
         select: { project: { select: { name: true } } }
       }
     },
@@ -339,11 +341,13 @@ async function loadReminderFacts(prisma: PrismaClient, config: TaskReminderConfi
       where: {
         workspaceId: config.workspaceId,
         archivedAt: null,
-        status: { notIn: ["completed", "done", "cancelled", "closed"] },
+        status: { notIn: CLOSED_TASK_STATUSES },
         OR: [
           { assigneeUserId: { in: userIds } },
           { assigneeUserId: null, ownerUserId: { in: userIds } }
-        ]
+        ],
+        // Work on an On Hold or completed project is not something to plan or chase today.
+        AND: [{ OR: [{ projectId: null }, { project: { status: { notIn: REMINDER_INACTIVE_PROJECT_STATUSES } } }] }]
       },
       select: {
         id: true,

@@ -6,13 +6,13 @@ import type {
   PnlPeriodInput,
   PrincipalContext,
   ReopenPnlPeriodInput,
-  ResourceMonthlyCostInput,
   ReviewTimelineChangeInput,
   SubmitTaskPlanInput,
   TimelineChangeRequestInput
 } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
-import { activeMembershipWhere } from "../identity-access/active-membership";
+import { assertCostApprove, assertCostEdit, assertCostView } from "../resource-controls/cost-permissions";
+import { ResourceControlsService } from "../resource-controls/resource-controls.service";
 
 const TASK_LAYER1 = new Set(["PRE_SALE", "DELIVERY", "PM"]);
 const TASK_LAYER2 = new Set(["CUSTOMER_PROJECT", "INTERNAL_PROJECT", "TICKET_MAINTENANCE", "DAY_OFF_COMPANY"]);
@@ -28,7 +28,20 @@ function isoDate(value: unknown, field: string, dateOnly = false) {
 }
 
 function dateKey(value: Date) { return value.toISOString().slice(0, 10); }
-function money(value: number | undefined) { return new Prisma.Decimal(typeof value === "number" && Number.isFinite(value) ? value : 0); }
+const MAX_REVENUE_AMOUNT = 1e13;
+/** A revenue figure must be an explicit number: a missing or malformed value is rejected, never stored as 0. */
+function requireRevenue(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > MAX_REVENUE_AMOUNT) {
+    throw new BadRequestException("revenueAmount phải là số từ 0 đến 10.000.000.000.000 (nhập 0 nếu tháng này không ghi nhận doanh thu).");
+  }
+  return new Prisma.Decimal(value);
+}
+/** First and last calendar day (YYYY-MM-DD) of a YYYY-MM month. */
+function monthDays(periodKey: string) {
+  const [year, month] = periodKey.split("-").map(Number);
+  return { first: `${periodKey}-01`, last: `${periodKey}-${String(new Date(Date.UTC(year, month, 0)).getUTCDate()).padStart(2, "0")}` };
+}
+function firstValue(value: unknown) { return Array.isArray(value) ? value[0] : value; }
 function isManager(principal: PrincipalContext) { return principal.roleCodes.some((role) => MANAGER_ROLES.has(role)); }
 function validatePeriodKey(value: unknown) {
   if (typeof value !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) throw new BadRequestException("periodKey must use YYYY-MM");
@@ -37,7 +50,16 @@ function validatePeriodKey(value: unknown) {
 
 @Injectable()
 export class BrdGovernanceService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(ResourceControlsService) private readonly resourceControls: ResourceControlsService
+  ) {}
+
+  /** Once a month is locked nothing that feeds its P&L may change until it is reopened. */
+  private async assertMonthOpen(workspaceId: string, periodKey: string) {
+    const locked = await this.prisma.pnlPeriod.findFirst({ where: { workspaceId, projectId: null, periodKey, status: "LOCKED" }, select: { id: true } });
+    if (locked) throw new ConflictException(`Kỳ ${periodKey} đã chốt; mở lại kỳ trước khi sửa.`);
+  }
 
   private assertManager(principal: PrincipalContext) {
     if (!isManager(principal)) throw new ForbiddenException("PM, BD Lead, Dx Director or Founder/GM role is required");
@@ -143,79 +165,109 @@ export class BrdGovernanceService {
     return this.prisma.overtimePlan.update({ where: { id: planId }, data: { approvalStatus: input.decision, approvedByUserId: principal.subjectId, approvedAt: new Date(), reviewNote: input.note?.trim() } });
   }
 
-  async upsertMonthlyCost(input: ResourceMonthlyCostInput, principal: PrincipalContext) {
-    this.assertManager(principal);
-    const periodKey = validatePeriodKey(input.periodKey);
-    const start = isoDate(input.periodStart, "periodStart", true); const end = isoDate(input.periodEnd, "periodEnd", true);
-    if (end < start) throw new BadRequestException("periodEnd must be on or after periodStart");
-    const total = input.totalMonthlyIncome ?? [input.p1BaseAmount, input.p2AllowanceAmount, input.p3PerformanceAmount, input.p4OtherVariableAmount].reduce<number>((a, b) => a + (b ?? 0), 0);
-    const user = await this.prisma.user.findFirst({ where: { id: input.userId, status: "ACTIVE", roleBindings: { some: { workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, ...activeMembershipWhere() } } }, select: { id: true } });
-    if (!user) throw new BadRequestException("Nhân sự không thuộc workspace hoặc đã bị khóa.");
-    const existing = await this.prisma.resourceMonthlyCost.findUnique({ where: { workspaceId_userId_periodKey: { workspaceId: principal.workspaceId, userId: input.userId, periodKey } } });
-    if (existing?.status === "LOCKED") throw new ConflictException("A locked payroll period cannot be edited");
-    const row = await this.prisma.resourceMonthlyCost.upsert({ where: { workspaceId_userId_periodKey: { workspaceId: principal.workspaceId, userId: input.userId, periodKey } }, create: { workspaceId: principal.workspaceId, userId: input.userId, periodStart: start, periodEnd: end, periodKey, currency: input.currency ?? "VND", p1BaseAmount: money(input.p1BaseAmount), p2AllowanceAmount: money(input.p2AllowanceAmount), p3PerformanceAmount: money(input.p3PerformanceAmount), p4OtherVariableAmount: money(input.p4OtherVariableAmount), overtimeAmount: money(input.overtimeAmount), socialInsuranceAmount: money(input.socialInsuranceAmount), pitAmount: money(input.pitAmount), otherAmount: money(input.otherAmount), totalMonthlyIncome: money(total), hourlyCostRate: input.hourlyCostRate === undefined ? undefined : money(input.hourlyCostRate) }, update: { periodStart: start, periodEnd: end, currency: input.currency ?? "VND", p1BaseAmount: money(input.p1BaseAmount), p2AllowanceAmount: money(input.p2AllowanceAmount), p3PerformanceAmount: money(input.p3PerformanceAmount), p4OtherVariableAmount: money(input.p4OtherVariableAmount), overtimeAmount: money(input.overtimeAmount), socialInsuranceAmount: money(input.socialInsuranceAmount), pitAmount: money(input.pitAmount), otherAmount: money(input.otherAmount), totalMonthlyIncome: money(total), hourlyCostRate: input.hourlyCostRate === undefined ? undefined : money(input.hourlyCostRate), status: "DRAFT" } });
-    await this.prisma.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "pnl.resource_monthly_cost_changed", resource: "resource_monthly_cost", resourceId: row.id, before: existing ? { status: existing.status, totalMonthlyIncome: existing.totalMonthlyIncome.toString(), hourlyCostRate: existing.hourlyCostRate?.toString() ?? null } : undefined, after: { periodKey: row.periodKey, totalMonthlyIncome: row.totalMonthlyIncome.toString(), hourlyCostRate: row.hourlyCostRate?.toString() ?? null, status: row.status }, requestId: randomUUID() } });
-    return { data: row, meta: { source: "manual", locked: false } };
-  }
-
   async getPnlConfiguration(periodKey: string, principal: PrincipalContext) {
-    this.assertManager(principal);
+    assertCostView(principal);
     validatePeriodKey(periodKey);
     const row = await this.prisma.pnlConfiguration.findUnique({ where: { workspaceId_periodKey: { workspaceId: principal.workspaceId, periodKey } } });
     return { data: row, meta: { periodKey, source: row ? "database" : "defaults" } };
   }
 
-  async getPnlPeriod(periodKey: string, principal: PrincipalContext) {
-    this.assertManager(principal);
+  async getPnlPeriod(periodKey: string, principal: PrincipalContext, projectId?: string) {
+    assertCostView(principal);
     validatePeriodKey(periodKey);
     const row = await this.prisma.pnlPeriod.findFirst({
-      where: { workspaceId: principal.workspaceId, periodKey, projectId: null },
+      where: { workspaceId: principal.workspaceId, periodKey, projectId: projectId || null },
       orderBy: { updatedAt: "desc" }
     });
     return { data: row, meta: { periodKey, source: row ? "database" : "not_created" } };
   }
 
   async upsertPnlConfiguration(input: { periodKey: string; items: unknown; parameters: unknown; pool: unknown; templates: unknown }, principal: PrincipalContext) {
-    this.assertManager(principal);
+    assertCostEdit(principal);
     const periodKey = validatePeriodKey(input?.periodKey);
     if (!Array.isArray(input.items) || !Array.isArray(input.parameters) || !Array.isArray(input.templates) || !input.pool || typeof input.pool !== "object") {
       throw new BadRequestException("items, parameters, pool and templates must be valid configuration values");
     }
+    await this.assertMonthOpen(principal.workspaceId, periodKey);
     const row = await this.prisma.pnlConfiguration.upsert({ where: { workspaceId_periodKey: { workspaceId: principal.workspaceId, periodKey } }, create: { workspaceId: principal.workspaceId, periodKey, items: input.items as Prisma.InputJsonValue, parameters: input.parameters as Prisma.InputJsonValue, pool: input.pool as Prisma.InputJsonValue, templates: input.templates as Prisma.InputJsonValue, updatedByUserId: principal.subjectId }, update: { items: input.items as Prisma.InputJsonValue, parameters: input.parameters as Prisma.InputJsonValue, pool: input.pool as Prisma.InputJsonValue, templates: input.templates as Prisma.InputJsonValue, updatedByUserId: principal.subjectId } });
     await this.prisma.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "pnl.configuration_changed", resource: "pnl_configuration", resourceId: row.id, after: { periodKey: row.periodKey, updatedByUserId: principal.subjectId }, requestId: randomUUID() } });
     return { data: row, meta: { persisted: true } };
   }
 
   async upsertPnlPeriod(input: PnlPeriodInput, principal: PrincipalContext) {
-    this.assertManager(principal);
-    const periodKey = validatePeriodKey(input.periodKey);
+    assertCostEdit(principal);
+    const periodKey = validatePeriodKey(input?.periodKey);
+    const days = monthDays(periodKey);
+    if (input.periodStart !== days.first || input.periodEnd !== days.last) throw new BadRequestException(`periodStart và periodEnd phải là ngày đầu và ngày cuối của kỳ ${periodKey} (${days.first} → ${days.last}).`);
     const start = isoDate(input.periodStart, "periodStart", true); const end = isoDate(input.periodEnd, "periodEnd", true);
-    if (end < start) throw new BadRequestException("periodEnd must be on or after periodStart");
+    // A project's row IS its entered revenue for the month, so the amount is mandatory there.
+    // The workspace row (no project) only carries the month's open/locked status.
+    const revenueAmount = input.projectId || input.revenueAmount !== undefined ? requireRevenue(input.revenueAmount) : new Prisma.Decimal(0);
     if (input.projectId) {
       const project = await this.prisma.project.findFirst({ where: { id: input.projectId, workspaceId: principal.workspaceId }, select: { id: true } });
       if (!project) throw new BadRequestException("Project không thuộc workspace hiện tại.");
     }
     const existing = await this.prisma.pnlPeriod.findFirst({ where: { workspaceId: principal.workspaceId, projectId: input.projectId ?? null, periodKey } });
     if (existing?.status === "LOCKED") throw new ConflictException("Locked P&L period cannot be edited");
+    // A project's manual revenue belongs to the month: the workspace lock covers it too.
+    if (input.projectId) await this.assertMonthOpen(principal.workspaceId, periodKey);
     const row = existing
-      ? await this.prisma.pnlPeriod.update({ where: { id: existing.id }, data: { periodStart: start, periodEnd: end, currency: input.currency ?? "VND", revenueAmount: money(input.revenueAmount), status: "OPEN" } })
-      : await this.prisma.pnlPeriod.create({ data: { workspaceId: principal.workspaceId, projectId: input.projectId, periodStart: start, periodEnd: end, periodKey, currency: input.currency ?? "VND", revenueAmount: money(input.revenueAmount) } });
+      ? await this.prisma.pnlPeriod.update({ where: { id: existing.id }, data: { periodStart: start, periodEnd: end, currency: input.currency ?? "VND", revenueAmount, status: "OPEN" } })
+      : await this.prisma.pnlPeriod.create({ data: { workspaceId: principal.workspaceId, projectId: input.projectId, periodStart: start, periodEnd: end, periodKey, currency: input.currency ?? "VND", revenueAmount } });
     await this.prisma.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "pnl.period_changed", resource: "pnl_period", resourceId: row.id, before: existing ? { status: existing.status, revenueAmount: existing.revenueAmount.toString() } : undefined, after: { status: row.status, periodKey: row.periodKey, revenueAmount: row.revenueAmount.toString() }, requestId: randomUUID() } });
     return { data: row, meta: { status: row.status, advisory: row.status !== "LOCKED" } };
   }
 
-  async lockPnlPeriod(periodId: string, principal: PrincipalContext) {
-    this.assertManager(principal);
-    const period = await this.prisma.pnlPeriod.findFirst({ where: { id: periodId, workspaceId: principal.workspaceId } });
-    if (!period) throw new NotFoundException("P&L period not found");
-    if (period.status === "LOCKED") throw new ConflictException("P&L period is already locked");
-    const row = await this.prisma.pnlPeriod.update({ where: { id: periodId }, data: { status: "LOCKED", lockedAt: new Date(), lockedByUserId: principal.subjectId } });
-    await this.prisma.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "pnl.period_locked", resource: "pnl_period", resourceId: periodId, before: { status: period.status }, after: { status: row.status, lockedByUserId: principal.subjectId }, requestId: randomUUID() } });
-    return { data: row, meta: { locked: true, immutable: true } };
+  /**
+   * Removes a project's entered revenue for one month, so the month is "chưa nhập" again
+   * (no revenue, EBIT not computed) instead of an entered 0. Same permission and lock
+   * rules as entering it.
+   */
+  async removePnlPeriodRevenue(query: { projectId?: unknown; periodKey?: unknown }, principal: PrincipalContext) {
+    assertCostEdit(principal);
+    const periodKey = validatePeriodKey(firstValue(query?.periodKey));
+    const projectId = firstValue(query?.projectId);
+    if (typeof projectId !== "string" || !projectId.trim()) throw new BadRequestException("projectId is required");
+    const existing = await this.prisma.pnlPeriod.findFirst({ where: { workspaceId: principal.workspaceId, projectId, periodKey } });
+    if (!existing) throw new NotFoundException(`Project chưa có doanh thu nhập cho kỳ ${periodKey}.`);
+    if (existing.status === "LOCKED") throw new ConflictException("Locked P&L period cannot be edited");
+    await this.assertMonthOpen(principal.workspaceId, periodKey);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.pnlPeriod.delete({ where: { id: existing.id } });
+      await tx.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "pnl.period_revenue_removed", resource: "pnl_period", resourceId: existing.id, before: { projectId, periodKey, status: existing.status, revenueAmount: existing.revenueAmount.toString() }, requestId: randomUUID() } });
+    });
+    return { data: { projectId, periodKey }, meta: { deleted: true } };
+  }
+
+  /**
+   * Locks a month. `periodRef` is the period row id or, for the workspace month, its
+   * YYYY-MM key: an approver can then lock a month nobody saved a setup for (the
+   * workspace row is created by the lock itself). The figures are computed first;
+   * snapshots, status and audit are then written in ONE transaction.
+   */
+  async lockPnlPeriod(periodRef: string, principal: PrincipalContext) {
+    assertCostApprove(principal);
+    const byMonthKey = /^\d{4}-(0[1-9]|1[0-2])$/.test(periodRef);
+    const period = await this.prisma.pnlPeriod.findFirst({ where: byMonthKey ? { workspaceId: principal.workspaceId, projectId: null, periodKey: periodRef } : { id: periodRef, workspaceId: principal.workspaceId } });
+    if (!period && !byMonthKey) throw new NotFoundException("P&L period not found");
+    if (period?.status === "LOCKED") throw new ConflictException("P&L period is already locked");
+    const periodKey = period?.periodKey ?? periodRef;
+    // Throws (409 with the list) while the month still has parameter or formula errors.
+    const plan = period?.projectId ? undefined : await this.resourceControls.preparePeriodSnapshots(periodKey, principal);
+    return this.prisma.$transaction(async (tx) => {
+      const snapshot = plan ? await this.resourceControls.writePeriodSnapshots(tx, plan, principal) : undefined;
+      const lock = { status: "LOCKED", lockedAt: new Date(), lockedByUserId: principal.subjectId };
+      const days = monthDays(periodKey);
+      const row = period
+        ? await tx.pnlPeriod.update({ where: { id: period.id }, data: lock })
+        : await tx.pnlPeriod.create({ data: { workspaceId: principal.workspaceId, periodKey, periodStart: isoDate(days.first, "periodStart", true), periodEnd: isoDate(days.last, "periodEnd", true), currency: "VND", revenueAmount: new Prisma.Decimal(0), ...lock } });
+      await tx.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "pnl.period_locked", resource: "pnl_period", resourceId: row.id, before: { status: period?.status ?? "NOT_CREATED" }, after: { status: row.status, lockedByUserId: principal.subjectId, snapshotProjects: snapshot?.projectCount ?? 0 }, requestId: randomUUID() } });
+      return { data: row, meta: { locked: true, immutable: true, snapshotProjects: snapshot?.projectCount ?? 0, missingRateMinutes: snapshot?.missingRateMinutes ?? 0 } };
+    });
   }
 
   async reopenPnlPeriod(periodId: string, input: ReopenPnlPeriodInput, principal: PrincipalContext) {
-    this.assertManager(principal);
+    assertCostApprove(principal);
     if (!input.reason?.trim()) throw new BadRequestException("reason is required to reopen a P&L period");
     const period = await this.prisma.pnlPeriod.findFirst({ where: { id: periodId, workspaceId: principal.workspaceId } });
     if (!period) throw new NotFoundException("P&L period not found");
@@ -223,36 +275,5 @@ export class BrdGovernanceService {
     const row = await this.prisma.pnlPeriod.update({ where: { id: periodId }, data: { status: "REOPENED", reopenedAt: new Date(), reopenedByUserId: principal.subjectId, reopenReason: input.reason.trim() } });
     await this.prisma.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "pnl.period_reopened", resource: "pnl_period", resourceId: periodId, before: { status: period.status }, after: { status: row.status, reason: input.reason.trim() }, requestId: randomUUID() } });
     return { data: row, meta: { locked: false, auditReason: input.reason.trim() } };
-  }
-
-  async rebuildPnlAllocations(periodId: string, principal: PrincipalContext) {
-    this.assertManager(principal);
-    const period = await this.prisma.pnlPeriod.findFirst({ where: { id: periodId, workspaceId: principal.workspaceId } });
-    if (!period) throw new NotFoundException("P&L period not found");
-    if (period.status === "LOCKED") throw new ConflictException("Locked P&L period cannot be rebuilt");
-    const entries = await this.prisma.taskTimeEntry.findMany({ where: { workspaceId: principal.workspaceId, projectId: period.projectId ?? undefined, workDate: { gte: period.periodStart, lte: period.periodEnd } }, include: { task: true, dayOff: true, overtimePlan: true } });
-    let included = 0; let excluded = 0; let pending = 0;
-    for (const entry of entries) {
-      const standardMinutes = entry.regularMinutes || Math.min(entry.minutes, 480);
-      const overtimeMinutes = entry.overtimeMinutes || Math.max(0, entry.minutes - 480);
-      let status = "INCLUDED"; let reason: string | null = null;
-      if (entry.dayOffId || entry.dayOff?.isActive || entry.task.taskTypeLayer2 === "DAY_OFF_COMPANY" || entry.task.taskTypeLayer2 === "INTERNAL_PROJECT") { status = "EXCLUDED"; reason = "day_off_or_internal"; }
-      else if (entry.approvalStatus.toLowerCase() !== "approved" || !entry.task.taskTypeLayer1 || !entry.task.taskTypeLayer2) { status = "PENDING"; reason = "missing_approval_or_task_type"; }
-      else if (overtimeMinutes > 0 && entry.overtimeApprovalStatus !== "approved" && entry.overtimePlan?.approvalStatus !== "APPROVED") { status = "PENDING"; reason = "overtime_not_preapproved"; }
-      if (status === "INCLUDED") included += entry.minutes; else if (status === "EXCLUDED") excluded += entry.minutes; else pending += entry.minutes;
-      await this.prisma.$transaction([
-        this.prisma.taskTimeEntry.update({ where: { id: entry.id }, data: { regularMinutes: standardMinutes, overtimeMinutes, pnlStatus: status.toLowerCase(), pnlReason: reason } }),
-        this.prisma.pnlTimeEntryAllocation.upsert({ where: { timeEntryId: entry.id }, create: { workspaceId: principal.workspaceId, periodId: period.id, timeEntryId: entry.id, status, reason, standardMinutes, overtimeMinutes, classifiedAt: new Date(), classifiedByUserId: principal.subjectId }, update: { periodId: period.id, status, reason, standardMinutes, overtimeMinutes, classifiedAt: new Date(), classifiedByUserId: principal.subjectId } })
-      ]);
-    }
-    return { data: { includedMinutes: included, excludedMinutes: excluded, pendingMinutes: pending, loggedMinutes: included + excluded + pending }, meta: { periodId, source: "task_time_entries" } };
-  }
-
-  async pnlReconciliation(periodId: string, principal: PrincipalContext) {
-    this.assertManager(principal);
-    const period = await this.prisma.pnlPeriod.findFirst({ where: { id: periodId, workspaceId: principal.workspaceId }, include: { allocations: true } });
-    if (!period) throw new NotFoundException("P&L period not found");
-    const totals = period.allocations.reduce((acc, row) => { acc.logged += row.standardMinutes + row.overtimeMinutes; if (row.status === "INCLUDED") acc.included += row.standardMinutes + row.overtimeMinutes; else if (row.status === "EXCLUDED") acc.excluded += row.standardMinutes + row.overtimeMinutes; else acc.pending += row.standardMinutes + row.overtimeMinutes; return acc; }, { logged: 0, included: 0, excluded: 0, pending: 0 });
-    return { data: { periodId, periodKey: period.periodKey, ...totals, reconciles: totals.included + totals.excluded + totals.pending === totals.logged, formula: "included + excluded + pending = logwork" }, meta: { status: period.status, source: "pnl_time_entry_allocations" } };
   }
 }

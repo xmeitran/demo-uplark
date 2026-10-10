@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, BriefcaseBusiness, Users } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, BriefcaseBusiness, Pencil, Pin, Trash2, Users } from "lucide-react";
 import { MoneyAmount } from "../../components/money-amount";
 import type { Project } from "../../../app/projects/data";
 import { formatProjectStatusLabel } from "../../../app/projects/live-projects";
@@ -15,7 +15,6 @@ type ProjectSheetProps = {
   pushedIds: string[];
   sortKey: ProjectSheetSortKey;
   sortDir: ProjectSheetSortDir;
-  storageKey: string;
   onSort: (key: ProjectSheetSortKey, direction?: ProjectSheetSortDir) => void;
   onTogglePush: (projectId: string) => void;
   onEdit: (project: Project) => void;
@@ -28,8 +27,24 @@ const STATUS_STYLES: Record<Project["status"], string> = {
   Planning: "bg-cyan-50 text-cyan-700",
   "On Hold": "bg-slate-100 text-slate-600",
   Completed: "bg-emerald-50 text-emerald-700",
-  "At Risk": "bg-red-50 text-red-700"
+  "At Risk": "bg-red-50 text-red-700",
+  "Chưa xác định": "bg-slate-100 text-slate-600"
 };
+
+/** Columns of the sheet; `sortKey` marks the ones that sort the list (same handler and URL state as the page). */
+const COLUMNS: Array<{ label: string; sortKey?: ProjectSheetSortKey }> = [
+  { label: "Project / Client", sortKey: "name" },
+  { label: "Status", sortKey: "status" },
+  { label: "Progress", sortKey: "progress" },
+  { label: "Tasks" },
+  { label: "Plan hour" },
+  { label: "Logwork hour" },
+  { label: "P&L hour" },
+  { label: "Spent" },
+  { label: "Members" }
+];
+
+const ROW_ACTION_CLASS = "flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/25";
 
 function roundHours(value: number) {
   return Math.round((value + Number.EPSILON) * 10) / 10;
@@ -70,7 +85,7 @@ function MemberStack({ project }: { project: Project }) {
   );
 }
 
-export function ProjectSheet({ projects, returnTo }: ProjectSheetProps) {
+export function ProjectSheet({ projects, returnTo, pushedIds, sortKey, sortDir, onSort, onTogglePush, onEdit, onDelete }: ProjectSheetProps) {
   return (
     <section className="flex min-h-0 flex-1 flex-col bg-card" data-testid="project-sheet">
       <header className="flex shrink-0 flex-col gap-2 border-b border-border px-5 py-5 sm:flex-row sm:items-end sm:justify-between">
@@ -88,10 +103,20 @@ export function ProjectSheet({ projects, returnTo }: ProjectSheetProps) {
         <table className="w-full min-w-[1180px] border-separate border-spacing-0 text-left">
           <thead className="sticky top-0 z-20 bg-card/95 backdrop-blur">
             <tr>
-              {["Project / Client", "Status", "Progress", "Tasks", "Plan hour", "Logwork hour", "P&L hour", "Budget / Spent", "Members"].map((label) => (
-                <th key={label} className="border-b border-border px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{label}</th>
-              ))}
-              <th className="border-b border-border px-3 py-3"><span className="sr-only">Open Project Sheet</span></th>
+              {COLUMNS.map((column) => {
+                const sorted = column.sortKey !== undefined && column.sortKey === sortKey;
+                return (
+                  <th key={column.label} aria-sort={sorted ? (sortDir === "asc" ? "ascending" : "descending") : undefined} className="border-b border-border px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    {column.sortKey ? (
+                      <button type="button" onClick={() => onSort(column.sortKey!)} className="inline-flex items-center gap-1 uppercase tracking-wider hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/25">
+                        {column.label}
+                        {sorted ? (sortDir === "asc" ? <ArrowUp className="h-3 w-3" aria-hidden /> : <ArrowDown className="h-3 w-3" aria-hidden />) : null}
+                      </button>
+                    ) : column.label}
+                  </th>
+                );
+              })}
+              <th className="border-b border-border px-3 py-3"><span className="sr-only">Thao tác</span></th>
             </tr>
           </thead>
           <tbody>
@@ -100,7 +125,7 @@ export function ProjectSheet({ projects, returnTo }: ProjectSheetProps) {
               const spentPercent = project.budget > 0 ? Math.round(project.spent / project.budget * 100) : 0;
               const href = `/projects/${encodeURIComponent(project.id)}?tab=Project%20Sheet&returnTo=${encodeURIComponent(returnTo)}`;
               return (
-                <tr key={project.id} className="group transition-colors hover:bg-muted/25">
+                <tr key={project.id} className={`group transition-colors hover:bg-muted/25${(project.openWarningCount ?? 0) > 0 ? " bg-red-50/50" : ""}`}>
                   <td className="border-b border-border/70 px-4 py-4">
                     <Link href={href} className="flex min-w-[250px] items-center gap-3 rounded-lg outline-none focus:ring-2 focus:ring-primary/25">
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-black text-white shadow-sm" style={{ backgroundColor: project.color }}>{project.name.slice(0, 1).toUpperCase()}</span>
@@ -110,7 +135,7 @@ export function ProjectSheet({ projects, returnTo }: ProjectSheetProps) {
                       </span>
                     </Link>
                   </td>
-                  <td className="border-b border-border/70 px-4 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${STATUS_STYLES[project.status]}`}>{formatProjectStatusLabel(project.status)}</span></td>
+                  <td className="border-b border-border/70 px-4 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${STATUS_STYLES[project.status]}`}>{formatProjectStatusLabel(project.status)}</span>{(project.openWarningCount ?? 0) > 0 ? <span title={`${project.openWarningCount} cảnh báo đang mở`} aria-label={`${project.openWarningCount} cảnh báo đang mở`} className="ml-1.5 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{project.openWarningCount}</span> : null}</td>
                   <td className="border-b border-border/70 px-4 py-4">
                     <div className="min-w-24">
                       <div className="mb-1.5 text-xs font-bold">{project.progress}%</div>
@@ -127,7 +152,12 @@ export function ProjectSheet({ projects, returnTo }: ProjectSheetProps) {
                   </td>
                   <td className="border-b border-border/70 px-4 py-4"><MemberStack project={project} /></td>
                   <td className="border-b border-border/70 px-3 py-4">
-                    <Link href={href} aria-label={`Open Project Sheet for ${project.name}`} className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/25"><ArrowRight className="h-4 w-4" /></Link>
+                    <div className="flex items-center gap-1.5">
+                      <button type="button" onClick={() => onEdit(project)} title="Edit project" aria-label={`Edit project ${project.name}`} className={ROW_ACTION_CLASS}><Pencil className="h-4 w-4" /></button>
+                      <button type="button" onClick={() => onDelete(project)} title="Delete project" aria-label={`Delete project ${project.name}`} className={ROW_ACTION_CLASS}><Trash2 className="h-4 w-4" /></button>
+                      <button type="button" onClick={() => onTogglePush(project.id)} aria-pressed={pushedIds.includes(project.id)} title={pushedIds.includes(project.id) ? "Unpush from Sidebar Menu" : "Push to Sidebar Menu"} aria-label={`${pushedIds.includes(project.id) ? "Unpush" : "Push"} ${project.name}`} className={`${ROW_ACTION_CLASS}${pushedIds.includes(project.id) ? " border-primary/30 bg-primary/5 text-primary" : ""}`}><Pin className="h-4 w-4" style={{ transform: pushedIds.includes(project.id) ? "none" : "rotate(45deg)" }} /></button>
+                      <Link href={href} aria-label={`Open Project Sheet for ${project.name}`} className={ROW_ACTION_CLASS}><ArrowRight className="h-4 w-4" /></Link>
+                    </div>
                   </td>
                 </tr>
               );

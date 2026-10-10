@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isCancelledTaskStatus, isClosedTaskStatus, isCompletedTaskStatus } from "./task-status";
+import { isCancelledTaskStatus, isClosedTaskStatus, isClosedWorkStatus, isCompletedTaskStatus } from "./task-status";
 
 describe("task status semantics", () => {
   it.each(["done", "completed", "closed"])("treats %s as a completed status", (status) => {
@@ -24,5 +24,13 @@ describe("task status semantics", () => {
 
   it.each(["todo", "in_progress", "done", "completed"])("does not treat %s as cancelled", (status) => {
     expect(isCancelledTaskStatus(status)).toBe(false);
+  });
+
+  it.each(["done", "completed", "closed", "cancelled", "canceled", "archived", " Done "])("treats %s as closed work (never open or overdue)", (status) => {
+    expect(isClosedWorkStatus(status)).toBe(true);
+  });
+
+  it.each(["todo", "in_progress", "blocked", "review", ""])("treats %s as open work", (status) => {
+    expect(isClosedWorkStatus(status)).toBe(false);
   });
 });

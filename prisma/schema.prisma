@@ -1320,6 +1320,8 @@ model Project {
   planHistories          TaskPlanHistory[]
   overtimePlans          OvertimePlan[]
   pnlPeriods             PnlPeriod[]
+  statusHistory          ProjectStatusHistory[]
+  warnings               ProjectWarning[]
 
   @@unique([workspaceId, code])
   @@index([workspaceId, status])
@@ -1328,6 +1330,65 @@ model Project {
   @@index([workspaceId, priority])
   @@index([accountId, status])
   @@index([opportunityId])
+}
+
+/// EV-064: append-only log of project status changes. Statuses are stored as canonical codes (project-status.ts).
+model ProjectStatusHistory {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  projectId       String
+  fromStatus      String?
+  toStatus        String
+  reason          String?
+  changedByUserId String?
+  changedAt       DateTime @default(now())
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, changedAt(sort: Desc)])
+}
+
+/// EV-065: one shared warning record per project change. A partial unique index
+/// (projectId, dedupeKey) WHERE status = 'open' lives in the migration SQL.
+model ProjectWarning {
+  id              String                @id @default(cuid())
+  workspaceId     String
+  projectId       String
+  milestoneId     String?
+  stageId         String?
+  taskId          String?
+  typeCode        String
+  severity        String                @default("medium")
+  title           String
+  detail          String?
+  status          String                @default("open")
+  ownerUserId     String?
+  dueAt           DateTime?
+  openedAt        DateTime              @default(now())
+  openedByUserId  String?
+  closedAt        DateTime?
+  closedByUserId  String?
+  closeReason     String?
+  dedupeKey       String
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  project         Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  events          ProjectWarningEvent[]
+
+  @@index([workspaceId, status])
+  @@index([projectId, status, openedAt(sort: Desc)])
+  @@index([projectId, dedupeKey])
+}
+
+model ProjectWarningEvent {
+  id          String         @id @default(cuid())
+  warningId   String
+  action      String
+  actorUserId String?
+  note        String?
+  at          DateTime       @default(now())
+  warning     ProjectWarning @relation(fields: [warningId], references: [id], onDelete: Cascade)
+
+  @@index([warningId, at])
 }
 
 model ProjectMilestone {
@@ -1532,6 +1593,8 @@ model ResourceAllocation {
 
 model CostRateProfile {
   id             String    @id @default(cuid())
+  // Null on legacy rows; rates entered through the P&L cost screen are per workspace.
+  workspaceId    String?
   userId         String?
   role           String
   currency       String    @default("VND")
@@ -1544,6 +1607,7 @@ model CostRateProfile {
   user           User?     @relation(fields: [userId], references: [id])
 
   @@index([userId, active])
+  @@index([workspaceId, userId, effectiveFrom])
   @@index([role, active])
   @@index([effectiveFrom, effectiveTo])
 }
@@ -1581,6 +1645,8 @@ model ProjectCost {
   projectId       String
   taskTimeEntryId String?
   costType        ProjectCostType @default(OTHER)
+  // BRD expense group key (welfare-related, basic-activities, business-location, sell-marketing, functional-operation).
+  category        String?
   label           String
   currency        String          @default("VND")
   amount          Decimal
@@ -2377,6 +2443,7 @@ model OvertimePlan {
 }
 
 // Effective-dated P1-P4 components; changing a new month never mutates a locked month.
+// unused since 2026-10: kept to avoid a destructive migration
 model ResourceMonthlyCost {
   id                    String          @id @default(cuid())
   workspaceId           String
@@ -2460,6 +2527,7 @@ model PnlConfiguration {
 }
 
 // Materialized classification of every worklog; this is what makes P&L auditable.
+// unused since 2026-10: kept to avoid a destructive migration
 model PnlTimeEntryAllocation {
   id                 String          @id @default(cuid())
   workspaceId        String

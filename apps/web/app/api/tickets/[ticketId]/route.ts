@@ -10,14 +10,14 @@ interface RouteContext {
 
 export async function GET(request: Request, context: RouteContext) {
   const { ticketId } = await context.params;
-  return proxyCrmBffJson({ request, path: `/tickets/${ticketId}`, principalFallback: "founder" });
+  return proxyCrmBffJson({ request, path: `/tickets/${encodeURIComponent(ticketId)}`, principalFallback: "founder" });
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
   const { ticketId } = await context.params;
   return proxyCrmBffJson({
     request,
-    path: `/tickets/${ticketId}`,
+    path: `/tickets/${encodeURIComponent(ticketId)}`,
     method: "PATCH",
     body: await readJsonBody(request)
   });

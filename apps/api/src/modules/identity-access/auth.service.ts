@@ -11,7 +11,25 @@ import { PrincipalService } from "./principal.service";
 
 const COST_PERMISSION_CODES: CostPermissionCode[] = ["COST_VIEW", "COST_EDIT", "COST_APPROVE", "COST_EXPORT"];
 const INTERNAL_ROLE_CODES: InternalRoleCode[] = ["FOUNDER_GM", "WORKSPACE_ADMIN", "WORKSPACE_USER", "SALES_OWNER", "DELIVERY_LEAD", "FINANCE_ADMIN", ...COST_PERMISSION_CODES];
+// A member's role is one of these; COST_* codes are additive permissions granted only through updateCostPermissions.
+const BASE_INTERNAL_ROLE_CODES = INTERNAL_ROLE_CODES.filter((code) => !COST_PERMISSION_CODES.includes(code as CostPermissionCode));
 const RESOURCE_DISPLAY_ROLES = BUSINESS_ROLE_OPTIONS;
+
+/** Only a Founder/GM may hand out or take away the Founder/GM role (including by suspending a founder). */
+export function assertFounderRoleChangeAllowed(actorRoleCodes: readonly string[], targetIsFounder: boolean, nextIsFounder: boolean) {
+  if (targetIsFounder !== nextIsFounder && !actorRoleCodes.includes("FOUNDER_GM")) {
+    throw new ForbiddenException("Chỉ Founder/GM mới được cấp hoặc thu hồi quyền Founder/GM");
+  }
+}
+
+/** A non-founder admin may not change their own role or cost permissions. */
+export function assertNotSelfPrivilegeChange(actor: { subjectId: string; roleCodes: readonly string[] }, targetUserId: string) {
+  if (actor.subjectId === targetUserId && !actor.roleCodes.includes("FOUNDER_GM")) {
+    throw new ForbiddenException("Bạn không thể tự thay đổi vai trò hoặc quyền chi phí của chính mình");
+  }
+}
+
+const isFounderBinding = (binding: { role?: { code?: string } | null }) => binding.role?.code === "FOUNDER_GM";
 
 @Injectable()
 export class AuthService {
@@ -64,6 +82,7 @@ export class AuthService {
     const email = nonEmptyString(input.email, "email").toLowerCase();
     const displayName = nonEmptyString(input.displayName, "displayName");
     const roleCode = this.normalizeRoleCode(input.roleCode);
+    assertFounderRoleChangeAllowed(principal.roleCodes, false, roleCode === "FOUNDER_GM");
     const workspace = await this.workspaces.resolveWorkspace({
       tenantKey: principal.tenantKey,
       workspaceId: principal.workspaceId,
@@ -260,6 +279,7 @@ export class AuthService {
       await lockUserAuth(tx, userId);
       await this.requireCurrentAdmin(tx, principal.subjectId, principal.workspaceId);
       await ensureAnotherFounder(tx, principal.workspaceId, principal.tenantKey, userId);
+      assertFounderRoleChangeAllowed(principal.roleCodes, await this.isActiveFounder(tx, userId, principal.workspaceId, principal.tenantKey), false);
       const endedRoleBindings = await tx.roleBinding.updateMany({
         where: { userId, workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, OR: [{ endsAt: null }, { endsAt: { gt: now } }] },
         data: { endsAt: now }
@@ -316,15 +336,17 @@ export class AuthService {
   async changeUserRole(authorization: string | undefined, userId: string, roleCode: string, principalFallback?: string) {
     const principal = await this.requireAdminPrincipal(authorization, principalFallback);
     const normalized = this.normalizeRoleCode(roleCode);
-    if (userId === principal.subjectId && normalized === "WORKSPACE_USER") {
+    if (userId === principal.subjectId && normalized !== "FOUNDER_GM" && normalized !== "WORKSPACE_ADMIN") {
       throw new ConflictException("Bạn không thể tự hạ quyền tài khoản quản trị hiện tại");
     }
+    assertNotSelfPrivilegeChange(principal, userId);
     await this.prisma.$transaction(async (tx) => {
       await lockWorkspaceAuth(tx, principal.workspaceId);
       await lockUserAuth(tx, userId);
       await this.requireCurrentAdmin(tx, principal.subjectId, principal.workspaceId);
       const user = await tx.user.findFirst({ where: { id: userId, status: "ACTIVE", roleBindings: { some: { workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, ...activeMembershipWhere() } } }, include: { roleBindings: { where: { workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, ...activeMembershipWhere() }, include: { role: true } } } });
       if (!user) throw new NotFoundException("Active member not found");
+      assertFounderRoleChangeAllowed(principal.roleCodes, (user.roleBindings ?? []).some(isFounderBinding), normalized === "FOUNDER_GM");
       if (normalized !== "FOUNDER_GM") await ensureAnotherFounder(tx, principal.workspaceId, principal.tenantKey, userId);
       const role = await tx.role.findUniqueOrThrow({ where: { code: normalized } });
       const previousRoleCodes = user.roleBindings?.map((binding: any) => binding.role?.code).filter(Boolean) ?? [];
@@ -346,8 +368,9 @@ export class AuthService {
       await lockUserAuth(tx, userId);
       await this.requireCurrentAdmin(tx, principal.subjectId, principal.workspaceId);
       // Reactivation restores only the most recently ended role, never all historical grants/roles.
-      const binding = await tx.roleBinding.findFirst({ where: { userId, workspaceId: principal.workspaceId, tenantKey: principal.tenantKey }, orderBy: { endsAt: "desc" } });
+      const binding = await tx.roleBinding.findFirst({ where: { userId, workspaceId: principal.workspaceId, tenantKey: principal.tenantKey }, orderBy: { endsAt: "desc" }, include: { role: true } });
       if (!binding) throw new NotFoundException("Workspace member not found");
+      assertFounderRoleChangeAllowed(principal.roleCodes, false, isFounderBinding(binding));
       const active = await tx.roleBinding.findFirst({ where: { userId, workspaceId: principal.workspaceId, ...activeMembershipWhere() } });
       if (active) throw new ConflictException("Member is already active");
       await tx.user.update({ where: { id: userId }, data: { status: "ACTIVE" } });
@@ -363,6 +386,7 @@ export class AuthService {
     if (!Array.isArray(permissions)) throw new ForbiddenException("permissionCodes must be an array");
     const requested = [...new Set(permissions)].filter((code): code is CostPermissionCode => COST_PERMISSION_CODES.includes(code));
     if (requested.length !== permissions.length) throw new ForbiddenException("Unsupported cost permission code");
+    assertNotSelfPrivilegeChange(principal, userId);
     const result = await this.prisma.$transaction(async (tx) => {
       await lockWorkspaceAuth(tx, principal.workspaceId);
       await lockUserAuth(tx, userId);
@@ -396,6 +420,11 @@ export class AuthService {
         throw new BadRequestException("Unsupported resource display role");
       }
       const employmentStatus = input.employmentStatus ?? (user.status === "ACTIVE" ? "ACTIVE" : "INACTIVE");
+      if (employmentStatus !== "ACTIVE") {
+        // ON_LEAVE and INACTIVE both suspend the login, so they end a founder's access like a deactivation does.
+        await ensureAnotherFounder(tx, principal.workspaceId, principal.tenantKey, userId);
+        assertFounderRoleChangeAllowed(principal.roleCodes, user.roleBindings.some(isFounderBinding), false);
+      }
       const previousRoleBinding = user.roleBindings.length === 0
         ? await tx.roleBinding.findFirst({
             where: { userId, workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, role: { code: { notIn: COST_PERMISSION_CODES } } },
@@ -417,6 +446,10 @@ export class AuthService {
       if (nextSystemRole !== currentSystemRole || (employmentStatus === "ACTIVE" && user.roleBindings.length === 0 && previousRoleBinding)) {
         if (userId === principal.subjectId && nextSystemRole === "WORKSPACE_USER") {
           throw new ConflictException("Bạn không thể tự hạ quyền tài khoản quản trị hiện tại");
+        }
+        if (nextSystemRole !== currentSystemRole) {
+          assertNotSelfPrivilegeChange(principal, userId);
+          assertFounderRoleChangeAllowed(principal.roleCodes, currentSystemRole === "FOUNDER_GM", nextSystemRole === "FOUNDER_GM");
         }
         if (nextSystemRole !== "FOUNDER_GM") await ensureAnotherFounder(tx, principal.workspaceId, principal.tenantKey, userId);
         const role = await tx.role.findUniqueOrThrow({ where: { code: nextSystemRole } });
@@ -445,9 +478,13 @@ export class AuthService {
     if (!binding) throw new ForbiddenException("Active Founder/GM or Workspace Admin membership is required");
   }
 
+  private async isActiveFounder(tx: Prisma.TransactionClient, userId: string, workspaceId: string, tenantKey: string) {
+    return Boolean(await tx.roleBinding.findFirst({ where: { userId, workspaceId, tenantKey, ...activeMembershipWhere(), role: { code: "FOUNDER_GM" } }, select: { id: true } }));
+  }
+
   private normalizeRoleCode(roleCode: string) {
     const normalized = nonEmptyString(roleCode, "roleCode") as InternalRoleCode;
-    if (!INTERNAL_ROLE_CODES.includes(normalized)) {
+    if (!BASE_INTERNAL_ROLE_CODES.includes(normalized)) {
       throw new ForbiddenException(`Unsupported internal roleCode: ${roleCode}`);
     }
 

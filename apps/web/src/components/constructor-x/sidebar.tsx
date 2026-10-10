@@ -11,7 +11,6 @@ import {
   BarChart3,
   ClipboardList,
   CircleDollarSign,
-  ContactRound,
   FileText,
   MessageSquare,
   Mail,
@@ -38,7 +37,7 @@ import {
   readPushedProjectIds,
 } from "@/lib/frontend-data-store";
 import { fetchLiveProjectById } from "@/app/projects/live-projects";
-import { isLocalNavigationVisibleRoute } from "@/lib/production-route-readiness";
+import { isLocalNavigationVisibleRoute, matchProductRoute } from "@/lib/production-route-readiness";
 import { useTheme } from "@/lib/theme";
 
 export const PROJECT_TAB_NAV_EVENT = "b2b-crm:project-tab-navigation";
@@ -75,10 +74,9 @@ const NAV_ITEMS = [
   { icon: Mail, label: "Mail", href: "/mail", badge: 1 },
   { icon: Users, label: "Users", href: "/users" },
   { icon: Calendar, label: "Calendar", href: "/calendar", badge: null },
-  { icon: BarChart3, label: "Phân tích", href: "/analytics" },
+  { icon: BarChart3, label: "Analytics", href: "/analytics" },
   { icon: ClipboardList, label: "Timesheet", href: "/timesheet" },
   { icon: CircleDollarSign, label: "Project P&L", href: "/pnl" },
-  { icon: ContactRound, label: "Hồ sơ nhân sự", href: "/people" },
   { icon: BookOpen, label: "Knowledge Base", href: "/knowledge" },
   { icon: Building2, label: "Clients", href: "/clients" },
   { icon: MessageSquare, label: "Messenger", href: "/messenger" },
@@ -97,6 +95,10 @@ const NAV_BOTTOM = [
 const visibleNavItems = NAV_ITEMS.filter((item) => isLocalNavigationVisibleRoute(item.href));
 const visibleMoreItems = NAV_MORE.filter((item) => isLocalNavigationVisibleRoute(item.href));
 const visibleBottomItems = NAV_BOTTOM.filter((item) => item.isToggle || isLocalNavigationVisibleRoute(item.href));
+// The Users page and its API are admin-only.
+const ADMIN_ONLY_NAV_HREFS = new Set(["/users"]);
+// Routes behind a server-only production flag (e.g. Analytics): hidden until /api/navigation confirms the middleware would allow them.
+const FLAGGED_NAV_HREFS = new Set(visibleNavItems.filter((item) => matchProductRoute(item.href)?.productionFlag).map((item) => item.href));
 const PROJECT_SUB = [
   // Keep the sidebar's historical Dashboard URL as a compatibility alias for
   // the project detail Overview panel. This avoids breaking bookmarked links.
@@ -190,6 +192,19 @@ export function Sidebar({ activeRoute = "/", onCreateProjectClick, variant = "de
   const { user } = useAuth();
   const isWorkspaceAdmin = Boolean(user?.roleCodes?.some((role) => role === "FOUNDER_GM" || role === "WORKSPACE_ADMIN"));
   const pushedProjectOwnerKey = getPushedProjectsOwnerKey(user);
+  const [availableFlaggedRoutes, setAvailableFlaggedRoutes] = useState<string[]>([]);
+  useEffect(() => {
+    if (FLAGGED_NAV_HREFS.size === 0) return;
+    let cancelled = false;
+    fetch("/api/navigation", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body) => { if (!cancelled && Array.isArray(body?.data?.availableFlaggedRoutes)) setAvailableFlaggedRoutes(body.data.availableFlaggedRoutes); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+  const roleVisibleNavItems = visibleNavItems.filter((item) =>
+    (isWorkspaceAdmin || !ADMIN_ONLY_NAV_HREFS.has(item.href))
+    && (!FLAGGED_NAV_HREFS.has(item.href) || availableFlaggedRoutes.includes(item.href)));
 
   const [collapsed, setCollapsed] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(true);
@@ -545,7 +560,7 @@ export function Sidebar({ activeRoute = "/", onCreateProjectClick, variant = "de
         </div>
 
         {/* 3. Remaining production-ready nav items */}
-        {visibleNavItems.filter(item => item.label !== "Dashboard" && item.label !== "Projects").map((item) => (
+        {roleVisibleNavItems.filter(item => item.label !== "Dashboard" && item.label !== "Projects").map((item) => (
           <Link key={item.href} href={item.href}>
             <div
               className={`flex items-center justify-between mx-2 px-3 py-2 rounded-xl cursor-pointer transition-all ${

@@ -283,6 +283,38 @@ describe("AuthService membership lifecycle", () => {
     prisma.user.count.mockResolvedValue(0);
     await expect(service.changeUserRole("Bearer founder", "usr-target", "SALES_OWNER")).rejects.toThrow("at least one active Founder");
   });
+  it("lets only a Founder/GM grant or revoke the Founder/GM role", async () => {
+    const admin = makeService({ principal: { subjectType: "internal_user", roleCodes: ["WORKSPACE_ADMIN"] } });
+    await expect(admin.service.changeUserRole("Bearer admin", "usr-target", "FOUNDER_GM")).rejects.toBeInstanceOf(ForbiddenException);
+    admin.prisma.user.findFirst.mockResolvedValue({ id: "usr-target", roleBindings: [{ role: { code: "FOUNDER_GM" } }] });
+    await expect(admin.service.changeUserRole("Bearer admin", "usr-target", "WORKSPACE_USER")).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(admin.service.createInternalUser("Bearer admin", { email: "f@example.com", displayName: "F", roleCode: "FOUNDER_GM" } as any)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(admin.prisma.roleBinding.upsert).not.toHaveBeenCalled();
+  });
+  it("never accepts a cost permission code as a member role", async () => {
+    const { service, prisma } = makeService();
+    await expect(service.changeUserRole("Bearer founder", "usr-target", "COST_VIEW")).rejects.toThrow("Unsupported internal roleCode");
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+  it("stops a non-founder admin from changing their own role or cost permissions", async () => {
+    const { service, prisma, principals } = makeService();
+    principals.resolveFromAuthorization.mockResolvedValue({ subjectType: "internal_user", subjectId: "usr-admin", roleCodes: ["WORKSPACE_ADMIN"], tenantKey: "prod", workspaceId: "twk-foundation", workspaceKey: "default" });
+    await expect(service.updateCostPermissions("Bearer admin", "usr-admin", ["COST_VIEW"])).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.changeUserRole("Bearer admin", "usr-admin", "WORKSPACE_ADMIN")).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+  it("rejects putting the final founder on leave or inactive through the resource profile", async () => {
+    const { service, prisma } = makeService();
+    prisma.user.findFirst.mockResolvedValue({ id: "usr-target", status: "ACTIVE", resourceProfile: null, roleBindings: [{ role: { code: "FOUNDER_GM" } }] });
+    prisma.roleBinding.findFirst.mockResolvedValue({ id: "founder-binding" });
+    prisma.user.count.mockResolvedValue(0);
+    prisma.resourceProfile = { upsert: vi.fn() };
+    for (const employmentStatus of ["ON_LEAVE", "INACTIVE"] as const) {
+      await expect(service.updateResourceProfile("Bearer founder", "usr-target", { employmentStatus })).rejects.toThrow("at least one active Founder");
+    }
+    expect(prisma.resourceProfile.upsert).not.toHaveBeenCalled();
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
   it("does not implicitly reactivate a suspended identity through create-user", async () => {
     const { service, prisma } = makeService({ existingUser: { id: "usr-old", status: "SUSPENDED", roleBindings: [] } });
     await expect(service.createInternalUser("Bearer founder", { email: "old@example.com", displayName: "Old", roleCode: "SALES_OWNER" } as any)).rejects.toThrow("explicit reactivation");

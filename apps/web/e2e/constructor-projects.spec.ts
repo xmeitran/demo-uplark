@@ -1529,7 +1529,7 @@ test("projects search filter and pagination keep the page frame stable", async (
   await expect(nextButton).toBeEnabled();
 
   await page.getByRole("button", { name: "All Status" }).click();
-  await page.getByRole("option", { name: "Đang triển khai", exact: true }).click();
+  await page.getByRole("option", { name: "Active", exact: true }).click();
   await expect(page.getByRole("button", { name: "Completed", exact: true })).toBeHidden();
   await expect.poll(() => projectListRequests.some((search) => new URLSearchParams(search).get("status") === "in_progress")).toBe(true);
   await expectStableFrame("after status filter", initialFrame);
@@ -3195,41 +3195,34 @@ test("user detail uses the live profile endpoint and keeps the latest profile fr
 
   await expect(page.getByRole("heading", { name: liveUser.displayName })).toBeVisible();
   await expect(page.locator("main").getByText(liveUser.email).first()).toBeVisible();
-  await expect(page.getByText("Lark SSO linked")).toBeVisible();
-  await expect(page.getByText("Digital Transformation Lead")).toBeVisible();
+  await expect(page.locator("main").getByText(liveUser.larkOpenId)).toBeVisible();
   await expect(page.locator("main").getByText("Alice Nguyen")).toHaveCount(0);
   await expect(page.locator("main").getByText("John Smith")).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Email" })).toHaveAttribute("href", `mailto:${liveUser.email}`);
-  await expect(page.getByRole("button", { name: "Overview" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("link", { name: "Timesheet" }).last()).toHaveAttribute("href", `/timesheet?person=${liveUser.id}`);
 
-  await page.getByRole("button", { name: "Activity" }).click();
-  await expect(page).toHaveURL(/tab=Activity/);
-  await expect(page.getByRole("button", { name: "Activity" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByText("Identity Activity")).toBeVisible();
-
-  await page.getByRole("button", { name: "Overview" }).click();
-  await expect(page.getByRole("button", { name: "Overview" })).toHaveAttribute("aria-pressed", "true");
+  // Tasks is the default tab and stays out of the URL.
+  await expect(page.getByRole("button", { name: "Tasks" })).toHaveAttribute("aria-pressed", "true");
   expect(page.url()).not.toContain("tab=");
+  await expect(page.getByText(liveTask.title)).toBeVisible();
+  const taskLink = page.getByRole("link", { name: `Open task ${liveTask.title}` });
+  await expect(taskLink).toHaveAttribute("href", `/tasks/${liveTask.id}`);
 
   await page.getByRole("button", { name: "Projects", exact: true }).click();
   await expect(page).toHaveURL(/tab=Projects/);
   await expect(page.getByRole("button", { name: "Projects", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByText(liveProject.name)).toBeVisible();
-  await expect(page.getByRole("link", { name: new RegExp(liveProject.name) })).toHaveAttribute("href", `/projects/${liveProject.id}`);
+  await expect(page.locator("main").getByRole("link", { name: new RegExp(liveProject.name) })).toHaveAttribute("href", `/projects/${liveProject.id}`);
+  await expect(page.getByRole("link", { name: liveAccount.name })).toHaveAttribute("href", `/clients/${liveAccount.id}`);
 
   await page.getByRole("button", { name: "Tasks" }).click();
-  await expect(page).toHaveURL(/tab=Tasks/);
   await expect(page.getByRole("button", { name: "Tasks" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByText(liveTask.title)).toBeVisible();
-  const taskLink = page.getByRole("link", { name: `Open task ${liveTask.title}` });
-  await expect(taskLink).toHaveAttribute("href", `/projects/${liveProject.id}?tab=Tasks`);
+  expect(page.url()).not.toContain("tab=");
 
   await expect.poll(() => userApiRequests.includes(`/api/admin/users/${liveUser.id}`)).toBe(true);
   expect(userApiRequests.some((path) => path === "/api/admin/users")).toBe(false);
 
   await taskLink.click();
-  await expect(page).toHaveURL(new RegExp(`/projects/${liveProject.id}\\?tab=Tasks`));
-  await expect(page.getByRole("heading", { name: liveProject.name })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/tasks/${liveTask.id}$`));
 });
 
 test("sidebar exposes production Calendar while disabled placeholder modules stay hidden", async ({ page }) => {
@@ -4077,7 +4070,7 @@ test("clicking a task card navigates to /tasks/[taskId] full page (not modal)", 
   const modal = page.locator('[role="dialog"]');
   await expect(modal).not.toBeVisible();
 
-  await page.getByRole("link", { name: /Quay lại danh sách/ }).click();
+  await page.locator("main nav").getByRole("link", { name: "Công việc", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${liveProject.id}\\?tab=Tasks(&principal=founder)?$`));
 });
 
@@ -4171,8 +4164,7 @@ test("one-hour and two-hour planning blocks preserve the four-hour task estimate
   });
 
   const expectFourHourEstimate = async () => {
-    const estimateStat = page.getByText("Ước tính", { exact: true }).first().locator("..");
-    await expect(estimateStat).toContainText("4 giờ");
+    await expect(page.getByText("/ 4 giờ kế hoạch", { exact: true })).toBeVisible();
   };
 
   const openPlanningDialog = async () => {

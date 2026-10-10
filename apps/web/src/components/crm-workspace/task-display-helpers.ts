@@ -32,14 +32,23 @@ export function formatCodeLabel(value?: string | null) {
     .join(" ");
 }
 
+/** One label per task status across the app: reuse these, do not retype variants ("Đang xử lý", "Hoàn tất", …). */
+export const TASK_STATUS_LABEL = {
+  notStarted: "Chưa bắt đầu",
+  inProgress: "Đang làm",
+  completed: "Đã hoàn thành",
+  overdue: "Quá hạn"
+} as const;
+
 export const statusLabels: Record<string, string> = {
-  todo: "Cần làm",
-  in_progress: "Đang xử lý",
-  completed: "Hoàn tất",
+  todo: TASK_STATUS_LABEL.notStarted,
+  not_started: TASK_STATUS_LABEL.notStarted,
+  in_progress: TASK_STATUS_LABEL.inProgress,
+  completed: TASK_STATUS_LABEL.completed,
   blocked: "Đang bị chặn",
   waiting: "Đang chờ",
   cancelled: "Đã hủy",
-  done: "Hoàn tất",
+  done: TASK_STATUS_LABEL.completed,
   paused: "Tạm dừng",
   pending: "Đang chờ",
   skipped: "Bỏ qua"

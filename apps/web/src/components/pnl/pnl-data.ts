@@ -1,4 +1,4 @@
-import type { ProjectPlSummaryItem, ProjectSummary, TaskTimeEntrySummary } from "@b2b-crm/contracts";
+import type { ProjectCostItem, ProjectPlSummaryItem, ProjectSummary, TaskTimeEntrySummary } from "@b2b-crm/contracts";
 
 export type PnlProjectStatus = "Chờ xử lý" | "Đã đối soát" | "Thiếu dữ liệu";
 
@@ -7,7 +7,13 @@ export type PnlExpense = {
   label: string;
   amount: number;
   color: string;
+  status?: "Có số liệu" | "Chưa cung cấp";
+  note?: string;
 };
+
+/** "none": the viewed period has no entered revenue (whole-project planned revenue is not a period figure). */
+export type PnlRevenueBasis = "custom" | "paid" | "planned" | "none";
+export type PnlResultStatus = "Sẵn sàng" | "Tạm tính" | "Thiếu dữ liệu";
 
 export type PnlDailyPoint = {
   date: string;
@@ -27,6 +33,10 @@ export type PnlPerson = {
   planMinutes: number;
   logworkMinutes: number;
   pnlMinutes: number;
+  /** Cost figures come from the server (approved hours × cost rate); absent when the person has no approved hours. */
+  hourlyCostRate?: number;
+  laborCost?: number;
+  missingRateMinutes?: number;
   daily: Record<string, { plan: number; logwork: number; pnl: number }>;
 };
 
@@ -40,8 +50,33 @@ export type PnlProject = {
   paidRevenue: number;
   plannedCost: number;
   costAvailable: boolean;
+  /** Server totals. Never re-derive cost from revenue − margin. */
+  totalCost: number;
+  laborCost: number;
+  directCost: number;
+  writeOff: number;
+  /** Approved minutes with no cost rate: their cost is missing from totalCost. */
+  missingRateMinutes: number;
+  costItems: ProjectCostItem[];
+  /** API: totalCost − laborCost. */
+  otherCost: number;
+  /** API: entered cost lines inside totalCost (frozen when locked). */
+  enteredCost: number;
+  /**
+   * Locked month only: frozen pool share + formula costs as one amount. When set, sharedCost is 0,
+   * calculatedItems is empty, and people / costItems / hours are current data that may differ from the locked totals.
+   */
+  lockedOtherCost?: number;
+  /** Share of the month's shared cost pool allocated to the project. */
+  sharedCost: number;
+  /** Costs calculated from the formulas users set up for each month. */
+  calculatedItems: Array<{ code: string; label: string; category: string; amount: number }>;
+  /** True when the figures are a locked month snapshot. */
+  locked: boolean;
   grossMargin: number;
   grossMarginPercent?: number;
+  /** %Expenses/Revenue from the API; absent without revenue. */
+  expenseRatioPercent?: number;
   projectStatus?: string;
   progressPercent?: number;
   taskCount?: number;
@@ -54,8 +89,12 @@ export type PnlProject = {
   dataSource: "period" | "project";
   status: PnlProjectStatus;
   revenue: number;
+  revenueBasis: PnlRevenueBasis;
+  revenueScope: "Kỳ báo cáo" | "Toàn project";
+  pnlResultStatus: PnlResultStatus;
   planMinutes: number;
   logworkMinutes: number;
+  /** Approved minutes, always the API's approvedLaborMinutes (the hours the labor cost is computed on). */
   pnlMinutes: number;
   excludedMinutes: number;
   pendingMinutes: number;
@@ -65,120 +104,10 @@ export type PnlProject = {
 };
 
 export const EXPENSE_COLORS = ["#2563eb", "#7c3aed", "#16a34a", "#db2777", "#f59e0b", "#64748b"];
-export const EXPENSE_LABELS = ["BD", "PM", "Delivery / DX", "AI / Công cụ", "Overhead", "Khác"];
-
-const PEOPLE = [
-  { id: "an", name: "An Nguyễn", role: "Project Manager", weight: 1.1 },
-  { id: "pm", name: "Phạm Minh Quân", role: "Project Manager", weight: 1.25 },
-  { id: "bt", name: "Bùi Thanh", role: "Project Manager", weight: 1.05 },
-  { id: "dp", name: "Đỗ Phương", role: "DX enabler", weight: 0.82 },
-  { id: "lh", name: "Lê Hoàng", role: "DX enabler", weight: 0.82 },
-  { id: "nl", name: "Nguyễn Linh", role: "DX enabler", weight: 0.7 }
-] as const;
-
-const DEMO_DATES = [
-  "01/09/2026", "02/09/2026", "03/09/2026", "04/09/2026", "07/09/2026",
-  "08/09/2026", "09/09/2026", "10/09/2026", "11/09/2026", "14/09/2026",
-  "15/09/2026", "16/09/2026", "17/09/2026", "18/09/2026", "21/09/2026",
-  "22/09/2026", "23/09/2026", "24/09/2026", "25/09/2026", "28/09/2026"
-];
-
 function round(value: number, digits = 1) {
   const factor = 10 ** digits;
   return Math.round((value + Number.EPSILON) * factor) / factor;
 }
-
-function makeDemoPeople(totalMinutes: number, pendingMinutes: number): PnlPerson[] {
-  const approved = totalMinutes - pendingMinutes;
-  const dayMultipliers = [0.92, 1.02, 1.02, 1.08, 1.1, 0.92, 1.02, 1.02, 1.08, 1.1];
-  const weighted = PEOPLE.reduce((sum, person) => sum + person.weight, 0);
-
-  return PEOPLE.map((person, personIndex) => {
-    const logworkMinutes = Math.round((totalMinutes * person.weight / weighted) / 10) * 10;
-    const pnlMinutes = Math.round((approved * person.weight / weighted) / 10) * 10;
-    const daily: PnlPerson["daily"] = {};
-    DEMO_DATES.forEach((date, dateIndex) => {
-      const base = Math.max(30, Math.round((logworkMinutes / DEMO_DATES.length) * dayMultipliers[dateIndex % dayMultipliers.length] / 10) * 10);
-      const pnl = Math.max(0, Math.round(base * (pnlMinutes / Math.max(logworkMinutes, 1)) / 10) * 10);
-      daily[date] = { plan: 480, logwork: base, pnl };
-    });
-
-    // Correct the first row's total by retaining a deterministic, believable matrix.
-    if (personIndex === PEOPLE.length - 1) {
-      daily[DEMO_DATES[0]] = { plan: 480, logwork: Math.max(30, Math.round((logworkMinutes / 60 / DEMO_DATES.length) * 60)), pnl: Math.max(30, Math.round((pnlMinutes / 60 / DEMO_DATES.length) * 60)) };
-    }
-
-    return {
-      id: person.id,
-      name: person.name,
-      role: person.role,
-      planMinutes: 480 * DEMO_DATES.length,
-      logworkMinutes,
-      pnlMinutes,
-      daily
-    };
-  });
-}
-
-function makeDemoDaily(totalMinutes: number): PnlDailyPoint[] {
-  const weights = [0.93, 0.96, 0.96, 1.0, 1.01, 0.93, 0.96, 0.96, 1.0, 1.01];
-  return DEMO_DATES.map((date, index) => ({
-    date,
-    label: date.slice(0, 5),
-    minutes: Math.round((totalMinutes / DEMO_DATES.length * weights[index % weights.length]) / 6) * 6
-  }));
-}
-
-function makeExpenses(total: number): PnlExpense[] {
-  const ratios = [0.08, 0.18, 0.54, 0.08, 0.07, 0.05];
-  return EXPENSE_LABELS.map((label, index) => ({
-    key: label.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
-    label,
-    amount: Math.round((total * ratios[index]) / 10000) * 10000,
-    color: EXPENSE_COLORS[index]
-  }));
-}
-
-function demoProject(input: {
-  id: string;
-  code: string;
-  name: string;
-  client: string;
-  revenue: number;
-  planHours: number;
-  logworkHours: number;
-  pnlHours: number;
-  expenses: number;
-}): PnlProject {
-  const planMinutes = input.planHours * 60;
-  const logworkMinutes = input.logworkHours * 60;
-  const pnlMinutes = input.pnlHours * 60;
-  return {
-    ...input,
-    currency: "VND",
-    plannedRevenue: input.revenue,
-    paidRevenue: input.revenue,
-    plannedCost: input.expenses,
-    costAvailable: true,
-    grossMargin: input.revenue - input.expenses,
-    dataSource: "project",
-    status: logworkMinutes === pnlMinutes ? "Đã đối soát" : "Chờ xử lý",
-    planMinutes,
-    logworkMinutes,
-    pnlMinutes,
-    excludedMinutes: 0,
-    pendingMinutes: Math.max(logworkMinutes - pnlMinutes, 0),
-    expenses: makeExpenses(input.expenses),
-    daily: makeDemoDaily(logworkMinutes),
-    people: makeDemoPeople(logworkMinutes, Math.max(logworkMinutes - pnlMinutes, 0))
-  };
-}
-
-export const DEMO_PNL_PROJECTS: PnlProject[] = [
-  demoProject({ id: "P-9001", code: "P-9001", name: "CRM cho Khách hàng A", client: "Khách hàng A", revenue: 1_680_000_000, planHours: 4_800, logworkHours: 620, pnlHours: 590, expenses: 430_000_000 }),
-  demoProject({ id: "P-9002", code: "P-9002", name: "Portal đối tác B", client: "Khách hàng B", revenue: 620_000_000, planHours: 2_240, logworkHours: 420, pnlHours: 390, expenses: 280_000_000 }),
-  demoProject({ id: "P-9003", code: "P-9003", name: "Tích hợp ERP nội bộ", client: "Nội bộ", revenue: 300_000_000, planHours: 1_200, logworkHours: 280, pnlHours: 0, expenses: 180_000_000 })
-];
 
 export function hours(minutes: number) {
   return round(minutes / 60);
@@ -240,17 +169,42 @@ function isWeekday(date: string) {
   return day !== 0 && day !== 6;
 }
 
+export const EXPENSE_GROUPS: Array<{ key: string; label: string; hint: string }> = [
+  { key: "salaries-related", label: "Salaries Related", hint: "Giờ đã duyệt × cost rate theo tháng của từng người." },
+  { key: "welfare-related", label: "Welfare Related", hint: "BHXH, phúc lợi, tuyển dụng, đào tạo." },
+  { key: "basic-activities", label: "Basic Activities", hint: "Điện nước, internet, văn phòng phẩm, chi phí hoạt động." },
+  { key: "business-location", label: "Business Location", hint: "Văn phòng, quản lý, vệ sinh." },
+  { key: "sell-marketing", label: "Sell & MKT Expenses", hint: "Commission bên thứ ba, marketing B2B." },
+  { key: "functional-operation", label: "Functional Operation", hint: "Thuê ngoài, phần mềm, AI, bank charge, thuế, tỷ giá, vận hành." }
+];
+
+/** Rows of a locked month: the snapshot keeps labor, entered lines and "everything else", not the six groups. */
+export const LOCKED_EXPENSE_ROWS = {
+  entered: { key: "locked-entered", label: "Chi phí nhập tay đã chốt" },
+  other: { key: "locked-other", label: "Chi phí khác đã chốt (quỹ dùng chung + khoản tính theo công thức)" }
+} as const;
+
+/** Expense rows of a project. They always add up to the API's totalCostAmount. */
 function mapExpenseGroups(summary: ProjectPlSummaryItem): PnlExpense[] {
-  const total = summary.totalCostAmount || summary.actualLaborCostAmount + summary.directCostAmount + summary.writeOffAmount;
-  if (!total) return makeExpenses(0);
-  return [
-    { key: "bd", label: "BD", amount: 0, color: EXPENSE_COLORS[0] },
-    { key: "pm", label: "PM", amount: 0, color: EXPENSE_COLORS[1] },
-    { key: "delivery-dx", label: "Delivery / DX", amount: summary.actualLaborCostAmount, color: EXPENSE_COLORS[2] },
-    { key: "ai-tools", label: "AI / Công cụ", amount: 0, color: EXPENSE_COLORS[3] },
-    { key: "overhead", label: "Overhead", amount: summary.directCostAmount, color: EXPENSE_COLORS[4] },
-    { key: "other", label: "Khác", amount: summary.writeOffAmount, color: EXPENSE_COLORS[5] }
-  ].map((item) => ({ ...item, amount: Math.max(item.amount, 0) }));
+  const labor = Math.max(summary.actualLaborCostAmount, 0);
+  if (summary.lockedOtherCostAmount !== undefined) {
+    const frozen = "Số đã chốt; không tách theo nhóm chi phí.";
+    return [
+      { key: "salaries-related", label: EXPENSE_GROUPS[0].label, amount: labor, color: EXPENSE_COLORS[0], status: "Có số liệu", note: "Chi phí nhân sự đã chốt." },
+      { ...LOCKED_EXPENSE_ROWS.entered, amount: summary.enteredCostAmount ?? 0, color: EXPENSE_COLORS[2], status: "Có số liệu", note: frozen },
+      { ...LOCKED_EXPENSE_ROWS.other, amount: summary.lockedOtherCostAmount, color: EXPENSE_COLORS[5], status: "Có số liệu", note: frozen }
+    ];
+  }
+  const shared = summary.sharedCostAmount ?? 0;
+  return EXPENSE_GROUPS.map((group, index) => {
+    const entered = group.key === "salaries-related" ? labor : summary.costByCategory?.[group.key as keyof ProjectPlSummaryItem["costByCategory"]] ?? 0;
+    // costByCategory already holds entered lines and calculated items; the shared pool is an operating cost.
+    const amount = group.key === "functional-operation" ? entered + shared : entered;
+    const note = group.key === "salaries-related" && summary.missingRateMinutes > 0 ? "Còn giờ chưa có cost rate nên số này chưa đủ."
+      : group.key === "functional-operation" && shared > 0 ? `Gồm ${formatMoney(shared, summary.currency)} quỹ dùng chung phân bổ.`
+        : amount > 0 ? group.hint : `Chưa nhập. ${group.hint}`;
+    return { key: group.key, label: group.label, amount, color: EXPENSE_COLORS[index], status: amount > 0 ? "Có số liệu" as const : "Chưa cung cấp" as const, note };
+  });
 }
 
 export function adaptLivePnlProjects(
@@ -274,12 +228,14 @@ export function adaptLivePnlProjects(
     const project = projectById.get(summary.projectId);
     const hasPeriodEntries = projectEntries.length > 0;
     const hasScopedRange = Boolean(period || dateRange);
-    const logworkMinutes = hasPeriodEntries
+    // Approved hours sit next to money, so they are the API's figure (reporting-timezone boundaries,
+    // the same minutes the labor cost is computed on) — never re-derived from the entries loaded here.
+    const pnlMinutes = summary.approvedLaborMinutes ?? 0;
+    const loggedByEntries = hasPeriodEntries
       ? projectEntries.reduce((total, entry) => total + entry.minutes, 0)
-      : hasScopedRange ? 0 : project?.loggedMinutes ?? summary.approvedLaborMinutes;
-    const pnlMinutes = hasPeriodEntries
-      ? projectEntries.filter((entry) => normalizeApprovalStatus(entry.approvalStatus) === "approved").reduce((total, entry) => total + entry.minutes, 0)
-      : hasScopedRange ? 0 : project?.approvedMinutes ?? summary.approvedLaborMinutes;
+      : hasScopedRange ? 0 : project?.loggedMinutes ?? pnlMinutes;
+    // Logged time can never be less than what was approved out of it.
+    const logworkMinutes = Math.max(loggedByEntries, pnlMinutes);
     const excludedMinutes = projectEntries.filter((entry) => ["rejected", "cancelled"].includes(normalizeApprovalStatus(entry.approvalStatus))).reduce((total, entry) => total + entry.minutes, 0);
     const pendingMinutes = Math.max(logworkMinutes - pnlMinutes - excludedMinutes, 0);
     const daily = new Map<string, { minutes: number; pnlMinutes: number; excludedMinutes: number; entryCount: number; people: Set<string> }>();
@@ -340,6 +296,23 @@ export function adaptLivePnlProjects(
     people.forEach((person) => {
       person.planMinutes = [...(plannedByPerson.get(person.id)?.values() ?? [])].reduce((total, minutes) => total + minutes, 0);
     });
+    // Approved hours and cost per person are computed by the API; attach them to the hours rows.
+    if (summary.laborByPerson) people.forEach((person) => { person.pnlMinutes = 0; });
+    for (const labor of summary.laborByPerson ?? []) {
+      const person = people.get(labor.userId) ?? { id: labor.userId, name: labor.displayName, role: "Project member", planMinutes: 0, logworkMinutes: labor.approvedMinutes, pnlMinutes: labor.approvedMinutes, daily: {} };
+      person.pnlMinutes = labor.approvedMinutes;
+      person.logworkMinutes = Math.max(person.logworkMinutes, labor.approvedMinutes);
+      person.hourlyCostRate = labor.hourlyCostRate;
+      person.laborCost = labor.laborCostAmount;
+      person.missingRateMinutes = labor.missingRateMinutes;
+      people.set(labor.userId, person);
+    }
+    const revenueBasis: PnlRevenueBasis = summary.revenueBasis === "custom" ? "custom" : summary.revenueBasis === "none" ? "none" : "planned";
+    const revenueScope: PnlProject["revenueScope"] = revenueBasis === "custom" ? "Kỳ báo cáo" : "Toàn project";
+    const hasRevenue = summary.revenueBasis !== "none";
+    const missingRateMinutes = summary.missingRateMinutes ?? 0;
+    // "Sẵn sàng" means the viewed month itself is locked — never that some other month is.
+    const pnlResultStatus: PnlResultStatus = summary.locked ? "Sẵn sàng" : !hasRevenue || (hasScopedRange && !hasPeriodEntries) ? "Thiếu dữ liệu" : "Tạm tính";
     return {
       id: summary.projectId,
       code: project?.code ?? summary.projectId,
@@ -349,9 +322,23 @@ export function adaptLivePnlProjects(
       plannedRevenue: summary.plannedRevenueAmount,
       paidRevenue: summary.paidRevenueAmount,
       plannedCost: summary.plannedCostAmount,
-      costAvailable: summary.totalCostAmount > 0 || summary.plannedCostAmount > 0,
+      // Cost is usable once every approved hour has a rate; a real zero is a valid cost.
+      costAvailable: missingRateMinutes === 0,
+      totalCost: summary.totalCostAmount,
+      laborCost: summary.actualLaborCostAmount,
+      directCost: summary.directCostAmount,
+      writeOff: summary.writeOffAmount,
+      missingRateMinutes,
+      costItems: summary.costItems ?? [],
+      otherCost: summary.otherCostAmount ?? 0,
+      enteredCost: summary.enteredCostAmount ?? 0,
+      lockedOtherCost: summary.lockedOtherCostAmount,
+      sharedCost: summary.sharedCostAmount ?? 0,
+      calculatedItems: summary.calculatedItems ?? [],
+      locked: Boolean(summary.locked),
       grossMargin: summary.grossMarginAmount,
       grossMarginPercent: summary.grossMarginPercent,
+      expenseRatioPercent: summary.expenseRatioPercent,
       projectStatus: project?.status,
       progressPercent: project?.progressPercent,
       taskCount: project?.taskCount,
@@ -362,9 +349,12 @@ export function adaptLivePnlProjects(
       budgetAmount: project?.budgetAmount,
       spentAmount: project?.spentAmount,
       dataSource: hasPeriodEntries || hasScopedRange ? "period" : "project",
-      status: statusFromEntries(logworkMinutes, pendingMinutes, project?.plannedMinutes ?? 0, !project || (hasScopedRange && !hasPeriodEntries)),
-      revenue: summary.paidRevenueAmount || summary.plannedRevenueAmount,
-      planMinutes: project?.plannedMinutes ?? 0,
+      status: statusFromEntries(logworkMinutes, pendingMinutes, summary.plannedMinutes ?? project?.plannedMinutes ?? 0, !project || (hasScopedRange && !hasPeriodEntries)),
+      revenue: summary.revenueAmount,
+      revenueBasis,
+      revenueScope,
+      pnlResultStatus,
+      planMinutes: summary.plannedMinutes ?? project?.plannedMinutes ?? 0,
       logworkMinutes,
       pnlMinutes,
       excludedMinutes,
@@ -374,8 +364,4 @@ export function adaptLivePnlProjects(
       people: Array.from(people.values())
     };
   });
-}
-
-export function mergeWithDemoProjects(projects: PnlProject[]) {
-  return projects;
 }
