@@ -25,6 +25,8 @@ import {
 import Link from "next/link";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { CustomDropdown } from "@/components/constructor-x/custom-controls";
+import { CrmSelect } from "@/components/crm-workspace/crm-select";
+import { FilterBar, FilterField } from "@/components/filters/filter-controls";
 import { ModalLayer } from "@/components/modal-layer";
 import type { AccountSummary, AccountsResponse } from "@b2b-crm/contracts";
 import { downloadCsv } from "@/lib/csv-export";
@@ -471,9 +473,10 @@ export default function ClientsPage() {
             </button>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+          <div className="rounded-xl border border-border bg-card shadow-sm">
             <div className="flex flex-col items-stretch gap-3 border-b border-border px-3 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:px-4 xl:flex-nowrap">
-              <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-xl border border-input bg-background px-3.5 py-2">
+              <FilterBar className="min-w-0 flex-1" onReset={query || statusFilter !== "all" || tierFilter !== "all" ? () => { setQuery(""); setStatusFilter("all"); setTierFilter("all"); } : undefined}>
+              <div className="flex h-10 min-w-[220px] flex-1 items-center gap-2.5 rounded-[10px] border border-input bg-background px-3.5">
                 <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <input
                   value={query}
@@ -483,8 +486,9 @@ export default function ClientsPage() {
                 />
               </div>
 
-              <CustomDropdown options={filterStatusOptions} value={statusFilter} onChange={setStatusFilter} className="w-full shrink-0 sm:w-40" />
-              <CustomDropdown options={filterTierOptions} value={tierFilter} onChange={setTierFilter} className="w-full shrink-0 sm:w-40" />
+              <FilterField className="w-full sm:w-40"><CrmSelect ariaLabel="Lọc trạng thái" options={filterStatusOptions} value={statusFilter} onChange={setStatusFilter} /></FilterField>
+              <FilterField className="w-full sm:w-40"><CrmSelect ariaLabel="Lọc phân hạng" options={filterTierOptions} value={tierFilter} onChange={setTierFilter} /></FilterField>
+              </FilterBar>
 
               <div className="flex items-center self-end rounded-xl bg-muted p-0.5 sm:ml-auto sm:self-auto">
                 <button type="button" aria-label="List view" aria-pressed={view === "list"} onClick={() => setView("list")} className={`min-h-11 min-w-11 rounded-lg p-2 transition-all ${view === "list" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}>
@@ -610,7 +614,7 @@ export default function ClientsPage() {
               </div>
             )}
 
-            <div className="flex items-center justify-between border-t border-border bg-muted/20 px-4 py-3">
+            <div className="flex items-center justify-between rounded-b-xl border-t border-border bg-muted/20 px-4 py-3">
               <p className="text-xs text-muted-foreground">
                 Showing <span className="font-semibold text-foreground">{filtered.length}</span> of <span className="font-semibold text-foreground">{clientsList.length}</span> clients
               </p>

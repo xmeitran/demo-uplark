@@ -10,7 +10,8 @@ import {
 import Link from "next/link";
 import { AdminInvitations } from "@/components/auth/admin-access-controls";
 import { AppShell } from "@/components/constructor-x/app-shell";
-import { CustomDropdown } from "@/components/crm-workspace/tasks-workbench";
+import { CrmSelect } from "@/components/crm-workspace/crm-select";
+import { FilterBar, FilterField } from "@/components/filters/filter-controls";
 import { downloadCsv } from "@/lib/csv-export";
 import { useAuth } from "@/lib/auth";
 import type { EmploymentStatus, WorkspaceSystemRole } from "@b2b-crm/contracts";
@@ -288,10 +289,10 @@ export default function UsersPage() {
           </header>
 
           {/* Filters */}
-          <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
-            <div className="flex flex-col items-stretch gap-3 border-b border-border px-3 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:px-4 xl:flex-nowrap">
+          <div className="bg-card border border-border rounded-xl shadow-sm">
+            <FilterBar className="border-b border-border px-3 py-3 sm:px-4" onReset={query || statusFilter !== "all" || roleFilter !== "all" || systemRoleFilter !== "all" ? () => { setQuery(""); setStatusFilter("all"); setRoleFilter("all"); setSystemRoleFilter("all"); } : undefined}>
               {/* Search */}
-              <div className="flex min-w-0 items-center gap-2.5 flex-1 bg-background border border-input rounded-xl px-3.5 py-2">
+              <div className="flex h-10 min-w-[220px] items-center gap-2.5 flex-1 bg-background border border-input rounded-[10px] px-3.5">
                 <Search className="w-4 h-4 text-muted-foreground shrink-0" />
                 <input
                   value={query}
@@ -302,36 +303,20 @@ export default function UsersPage() {
               </div>
 
               {/* Status filter */}
-              <div className="w-full shrink-0 sm:w-48">
-                <CustomDropdown
-                  label=""
-                  options={statusOptions}
-                  value={statusFilter}
-                  onChange={setStatusFilter}
-                />
-              </div>
+              <FilterField className="w-full sm:w-48">
+                <CrmSelect ariaLabel="Lọc trạng thái" options={statusOptions} value={statusFilter} onChange={setStatusFilter} />
+              </FilterField>
 
               {/* Role filter */}
-              <div className="w-full shrink-0 sm:w-56">
-                <CustomDropdown
-                  label=""
-                  options={roleOptions}
-                  value={roleFilter}
-                  onChange={setRoleFilter}
-                />
-              </div>
+              <FilterField className="w-full sm:w-56">
+                <CrmSelect ariaLabel="Lọc vai trò" options={roleOptions} value={roleFilter} onChange={setRoleFilter} />
+              </FilterField>
 
               {/* System role filter */}
-              <div className="w-full shrink-0 sm:w-56">
-                <CustomDropdown
-                  label=""
-                  options={systemRoleFilterOptions}
-                  value={systemRoleFilter}
-                  onChange={setSystemRoleFilter}
-                />
-              </div>
-
-            </div>
+              <FilterField className="w-full sm:w-56">
+                <CrmSelect ariaLabel="Lọc system role" options={systemRoleFilterOptions} value={systemRoleFilter} onChange={setSystemRoleFilter} />
+              </FilterField>
+            </FilterBar>
 
             {/* Table */}
             <div className="overflow-x-auto">
@@ -433,7 +418,7 @@ export default function UsersPage() {
             </div>
 
             {/* Table footer */}
-          <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-muted/20">
+          <div className="flex items-center justify-between rounded-b-xl px-4 py-3 border-t border-border bg-muted/20">
               <p className="text-xs text-muted-foreground">
                 Showing <span className="font-semibold text-foreground">{filtered.length}</span> of <span className="font-semibold text-foreground">{users.length}</span> users
               </p>

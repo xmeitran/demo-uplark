@@ -37,7 +37,7 @@ export function PnlCostInputPage() {
     <AppShell activeRoute="/pnl" title="Nhập chi phí">
       <main className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:p-5">
         <header>
-          <Link href="/pnl" className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"><ArrowLeft className="h-3.5 w-3.5" /> Project P&amp;L</Link>
+          <Link href={requestedPeriod === periodKey ? `/pnl?period=${periodKey}` : "/pnl?scope=all"} className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border bg-card px-3 text-xs font-semibold text-foreground shadow-sm transition-colors hover:border-primary/40 hover:text-primary"><ArrowLeft className="h-3.5 w-3.5" aria-hidden /> Quay lại Project P&amp;L</Link>
           <h1 className="mt-3 !text-xl font-bold text-foreground">Nhập chi phí</h1>
           <p className="mt-0.5 text-sm text-muted-foreground">Hai loại chi phí tạo nên P&amp;L của dự án: chi phí nhân sự (giờ × cost rate) và các khoản chi khác.</p>
         </header>

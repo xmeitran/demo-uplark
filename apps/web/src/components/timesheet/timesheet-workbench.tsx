@@ -9,7 +9,7 @@ import { AdvancedFilters, FilterBar, FilterField, MonthFilter } from "@/componen
 import { hasChoice } from "@/components/filters/filter-dates";
 import { emptyTimesheetDataset, loadTimesheetDataset } from "./timesheet-live-data";
 import { filterLogs, type TimesheetFilters } from "./timesheet-selectors";
-import { formatDate, formatHours, formatMonth } from "./timesheet-format";
+import { formatDate, formatHours } from "./timesheet-format";
 import {
   VIEWER_SCOPE_LABELS,
   WORK_GROUP_LABELS,
