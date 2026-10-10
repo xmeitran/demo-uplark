@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, ClipboardPaste, Lock, Search } from "lucide-react";
+import { ClipboardPaste, Lock, Search } from "lucide-react";
 import type { CostRateRow, CostRatesResponse } from "@b2b-crm/contracts";
+import { FilterBar, MonthFilter } from "@/components/filters/filter-controls";
 import { PersonLink } from "@/components/person-link";
-import { hoursFormat, inputClass, matchPastedRates, moneyFormat, formatMoneyInput, parseMoneyInput, periodLabel, primaryButton, readApi, secondaryButton, shiftPeriod, thClass } from "./pnl-cost-shared";
+import { hoursFormat, currentPeriodKey, inputClass, matchPastedRates, moneyFormat, formatMoneyInput, parseMoneyInput, periodLabel, primaryButton, readApi, secondaryButton, thClass } from "./pnl-cost-shared";
 
 type Drafts = Record<string, string>;
 
@@ -95,18 +96,14 @@ export function PnlCostRates({ periodKey, onPeriodChange }: Readonly<{ periodKey
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div>
+      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div className="min-w-0">
           <p className="text-sm text-foreground">Nhập <strong>đơn giá một giờ</strong> của từng người. Chi phí nhân sự của dự án = giờ đã duyệt × đơn giá này.</p>
           <p className="mt-1 text-xs text-muted-foreground">Đơn giá áp dụng từ tháng đang chọn và giữ nguyên cho các tháng sau, tới khi bạn nhập đơn giá mới.</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button type="button" aria-label="Tháng trước" className={secondaryButton} onClick={() => changePeriod(shiftPeriod(periodKey, -1))}><ChevronLeft className="h-4 w-4" /></button>
-          <label className="sr-only" htmlFor="cost-rate-month">Tháng áp dụng</label>
-          <input id="cost-rate-month" type="month" value={periodKey} onChange={(event) => { if (event.target.value) changePeriod(event.target.value); }} className={`${inputClass} w-44 font-semibold`} />
-          <button type="button" aria-label="Tháng sau" className={secondaryButton} onClick={() => changePeriod(shiftPeriod(periodKey, 1))}><ChevronRight className="h-4 w-4" /></button>
-          {canEdit ? <button type="button" aria-expanded={pasteOpen} className={`${secondaryButton} shrink-0 whitespace-nowrap`} onClick={() => setPasteOpen((value) => !value)}><ClipboardPaste className="h-4 w-4" /> Dán từ Excel</button> : null}
-        </div>
+        <FilterBar className="shrink-0 md:flex-nowrap" onReset={periodKey !== currentPeriodKey() ? () => changePeriod(currentPeriodKey()) : undefined} actions={canEdit ? <button type="button" aria-expanded={pasteOpen} className={`${secondaryButton} shrink-0 whitespace-nowrap`} onClick={() => setPasteOpen((value) => !value)}><ClipboardPaste className="h-4 w-4" /> Dán từ Excel</button> : undefined}>
+          <MonthFilter ariaLabel="Tháng áp dụng" value={periodKey} onChange={changePeriod} />
+        </FilterBar>
       </div>
 
       {meta?.locked ? <p role="status" className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800"><Lock className="h-4 w-4 shrink-0" /> {periodLabel(periodKey)} đã chốt kỳ. Mở lại kỳ ở Thiết lập P&amp;L nếu cần sửa cost rate.{meta.statementFrozen ? " P&L của tháng dùng số đã chốt; giờ và chi phí ở bảng này là dữ liệu hiện tại nên có thể khác số đã chốt." : ""}</p> : null}

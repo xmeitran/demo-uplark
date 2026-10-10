@@ -14,7 +14,7 @@ import {
   RefreshCw
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { CrmSelect } from "@/components/crm-workspace/crm-select";
+import { MonthFilter } from "@/components/filters/filter-controls";
 import { emptyTimesheetDataset, loadTimesheetDataset } from "./timesheet-live-data";
 import { eachDate, monthBounds } from "./timesheet-dates";
 import { isClosedNodeStatus, isTaskOverdue } from "./timesheet-status";
@@ -281,7 +281,7 @@ export function PersonalTimesheet() {
       <div className="rounded-2xl border border-border bg-card px-4 py-4 shadow-sm sm:px-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
         <div><Link href="/timesheet" className="mb-2 inline-flex items-center gap-1 text-[12px] font-semibold text-muted-foreground hover:text-foreground"><ArrowLeft className="h-3.5 w-3.5" aria-hidden /> Timesheet</Link><p className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">TIMESHEET · GIỜ CỦA TÔI</p><h1 className="!text-xl mt-1 font-bold tracking-tight text-foreground">Giờ của tôi</h1><p className="mt-1 text-[13px] text-muted-foreground">Tập trung vào giờ, task và kế hoạch của {person.name}.</p></div>
-        <div className="flex items-center gap-2"><CrmSelect id="personal-month" ariaLabel="Chọn tháng" options={dataset.months.map((value) => ({ value, label: formatMonth(value) }))} value={month} onChange={(value) => router.push(`/timesheet/me?month=${value}`, { scroll: false })} /><button type="button" onClick={() => setReloadToken((value) => value + 1)} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-[12px] font-semibold text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Tải lại dữ liệu"><RefreshCw className="h-3.5 w-3.5" /> Tải lại</button></div>
+        <div className="flex items-center gap-2"><MonthFilter ariaLabel="Chọn tháng" months={dataset.months} value={month} onChange={(value) => router.push(`/timesheet/me?month=${value}`, { scroll: false })} /><button type="button" onClick={() => setReloadToken((value) => value + 1)} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-[12px] font-semibold text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Tải lại dữ liệu"><RefreshCw className="h-3.5 w-3.5" /> Tải lại</button></div>
         </div>
       </div>
       {(missingDays.length > 0 || openTasks.length > 0) ? <div className="flex flex-wrap items-center gap-3 rounded-xl border border-warning/30 bg-warning/[0.08] px-4 py-3"><AlertTriangle className="h-4 w-4 shrink-0 text-warning" /><div className="min-w-0 flex-1"><p className="text-[12.5px] font-bold text-foreground">Cần bổ sung dữ liệu hôm nay</p><p className="text-[11.5px] text-muted-foreground">{missingDays.length > 0 ? `${missingDays.length} ngày làm việc chưa ghi giờ` : "Bạn vẫn còn task đang mở cần theo dõi."}{overdueTasks.length > 0 ? ` · ${overdueTasks.length} task quá hạn` : ""}</p></div><Link href={openTasks[0] ? `/tasks/${openTasks[0].task.id}` : "/tasks"} className="inline-flex items-center gap-1.5 rounded-lg bg-warning px-3 py-2 text-[12px] font-bold text-warning-foreground hover:opacity-90">Ghi giờ ngay <ArrowRight className="h-3.5 w-3.5" /></Link></div> : <div className="flex items-center gap-2 rounded-xl border border-success/25 bg-success/[0.06] px-4 py-3 text-[12px] text-success"><CheckCircle2 className="h-4 w-4" /> Dữ liệu ghi giờ của bạn đang đầy đủ trong kỳ đã chọn.</div>}

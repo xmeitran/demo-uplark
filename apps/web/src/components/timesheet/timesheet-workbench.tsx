@@ -2,9 +2,11 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangle, Download, Info, RotateCcw, SlidersHorizontal, Users, Clock3 } from "lucide-react";
+import { AlertTriangle, Download, Info, Users, Clock3 } from "lucide-react";
 import { CustomDropdown, type DropdownOption } from "@/components/constructor-x/custom-controls";
 import { CrmMultiSelect } from "@/components/crm-workspace/crm-select";
+import { AdvancedFilters, FilterBar, FilterField, MonthFilter } from "@/components/filters/filter-controls";
+import { hasChoice } from "@/components/filters/filter-dates";
 import { emptyTimesheetDataset, loadTimesheetDataset } from "./timesheet-live-data";
 import { filterLogs, type TimesheetFilters } from "./timesheet-selectors";
 import { formatDate, formatHours, formatMonth } from "./timesheet-format";
@@ -44,7 +46,6 @@ interface FilterDetailLog {
   task: string;
   hours: string;
 }
-
 interface FilterDetail {
   kind: FilterKind;
   title: string;
@@ -246,7 +247,6 @@ export function TimesheetWorkbench() {
 
   /* ── Dropdown option lists ────────────────────────────────────────── */
 
-  const monthOptions: DropdownOption[] = decorateOptions("month", dataset.months.map((month) => ({ value: month, label: formatMonth(month) })), scopedDataset, filters, scope);
   const scopeOptions: DropdownOption[] = decorateOptions("scope", (Object.keys(VIEWER_SCOPE_LABELS) as ViewerScope[]).filter((key) => canViewWorkspace || key === "self").map((key) => ({
     value: key,
     label: VIEWER_SCOPE_LABELS[key]
@@ -284,10 +284,9 @@ export function TimesheetWorkbench() {
   // "Đặt lại" keeps the permission scope, so scope only counts towards the advanced badge.
   const activeFilterCount = [filters.departmentId, filters.projectId, filters.workGroup].filter(
     (value) => value !== "all"
-  ).length + (filters.personIds?.length ? 1 : 0);
+  ).length + (filters.personIds?.length ? 1 : 0) + (searchParams.get("month") && filters.month !== dataset.months[dataset.months.length - 1] ? 1 : 0);
   const advancedFilterCount = [filters.projectId, filters.workGroup].filter((value) => value !== "all").length
     + (canViewWorkspace && scope !== "workspace" ? 1 : 0);
-  const [advancedOpen, setAdvancedOpen] = useState(advancedFilterCount > 0);
 
   const viewCopy = view === "project"
     ? {
@@ -347,65 +346,49 @@ export function TimesheetWorkbench() {
       />
 
       {/* ── Filters: three main ones on a row, the rest behind a toggle ─── */}
-      <section aria-label="Bộ lọc và phạm vi xem Timesheet" className="flex flex-wrap items-end gap-2 rounded-xl border border-border bg-card p-3">
-        <FilterField label="Kỳ báo cáo">
-          <CustomDropdown ariaLabel="Chọn tháng" options={monthOptions} value={filters.month} onChange={(value) => commit({ month: value })} onOptionInfo={(option) => openFilterDetail("month", option)} />
-        </FilterField>
-        <FilterField label="Phòng ban">
-          <CustomDropdown
-            ariaLabel="Chọn phòng ban"
-            options={departmentOptions}
-            value={filters.departmentId}
-            onChange={(value) => commit({ dept: value, person: "all" })}
-            onOptionInfo={(option) => openFilterDetail("department", option)}
-          />
-        </FilterField>
-        <FilterField label="Nhân sự">
-          <CrmMultiSelect
-            ariaLabel="Chọn một hoặc nhiều nhân sự"
-            options={personOptions.filter((option) => option.value !== "all")}
-            values={filters.personIds ?? []}
-            onChange={(values) => commit({ person: values.join(",") })}
-            selectedCountLabel={(count) => `${count} nhân sự đã chọn`}
-            placeholder="Tất cả nhân sự"
-            searchPlaceholder="Tìm nhân sự..."
-          />
-        </FilterField>
-
-        <div className="ml-auto flex min-h-9 items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setAdvancedOpen((open) => !open)}
-            aria-expanded={advancedOpen}
-            aria-controls="ts-advanced-filters"
-            className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11.5px] font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            <SlidersHorizontal className="h-3 w-3" aria-hidden /> Bộ lọc nâng cao{advancedFilterCount > 0 ? ` (${advancedFilterCount})` : ""}
-          </button>
-          {activeFilterCount > 0 ? (
-            <button
-              type="button"
-              onClick={resetFilters}
-              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11.5px] font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <RotateCcw className="h-3 w-3" aria-hidden /> Đặt lại
-            </button>
-          ) : null}
-        </div>
-
-        {advancedOpen ? (
-          <div id="ts-advanced-filters" className="flex w-full flex-wrap items-end gap-2 border-t border-border pt-2">
-            <FilterField label="Dự án">
-              <CustomDropdown ariaLabel="Chọn dự án" options={projectOptions} value={filters.projectId} onChange={(value) => commit({ project: value })} onOptionInfo={(option) => openFilterDetail("project", option)} />
+      <section aria-label="Bộ lọc và phạm vi xem Timesheet" className="rounded-xl border border-border bg-card p-3">
+        <FilterBar onReset={activeFilterCount > 0 ? resetFilters : undefined}>
+          <FilterField label="Kỳ báo cáo" className="shrink-0">
+            <MonthFilter ariaLabel="Chọn tháng" months={dataset.months} value={filters.month} onChange={(value) => commit({ month: value })} />
+          </FilterField>
+          {hasChoice(departmentOptions) || filters.departmentId !== "all" ? (
+            <FilterField label="Phòng ban">
+              <CustomDropdown
+                ariaLabel="Chọn phòng ban"
+                options={departmentOptions}
+                value={filters.departmentId}
+                onChange={(value) => commit({ dept: value, person: "all" })}
+                onOptionInfo={(option) => openFilterDetail("department", option)}
+              />
             </FilterField>
+          ) : null}
+          <FilterField label="Nhân sự">
+            <CrmMultiSelect
+              ariaLabel="Chọn một hoặc nhiều nhân sự"
+              options={personOptions.filter((option) => option.value !== "all")}
+              values={filters.personIds ?? []}
+              onChange={(values) => commit({ person: values.join(",") })}
+              selectedCountLabel={(count) => `${count} nhân sự đã chọn`}
+              placeholder="Tất cả nhân sự"
+              searchPlaceholder="Tìm nhân sự..."
+            />
+          </FilterField>
+          <AdvancedFilters count={advancedFilterCount}>
+            {hasChoice(projectOptions) || filters.projectId !== "all" ? (
+              <FilterField label="Dự án">
+                <CustomDropdown ariaLabel="Chọn dự án" options={projectOptions} value={filters.projectId} onChange={(value) => commit({ project: value })} onOptionInfo={(option) => openFilterDetail("project", option)} />
+              </FilterField>
+            ) : null}
             <FilterField label="Nhóm công việc">
               <CustomDropdown ariaLabel="Chọn nhóm công việc" options={groupOptions} value={filters.workGroup} onChange={(value) => commit({ group: value })} onOptionInfo={(option) => openFilterDetail("workGroup", option)} />
             </FilterField>
-            <FilterField label="Phạm vi quyền xem">
-              <CustomDropdown ariaLabel="Chọn phạm vi quyền xem" options={scopeOptions} value={scope} onChange={(value) => commit({ scope: value })} onOptionInfo={(option) => openFilterDetail("scope", option)} />
-            </FilterField>
-          </div>
-        ) : null}
+            {scopeOptions.length > 1 ? (
+              <FilterField label="Phạm vi quyền xem">
+                <CustomDropdown ariaLabel="Chọn phạm vi quyền xem" options={scopeOptions} value={scope} onChange={(value) => commit({ scope: value })} onOptionInfo={(option) => openFilterDetail("scope", option)} />
+              </FilterField>
+            ) : null}
+          </AdvancedFilters>
+        </FilterBar>
       </section>
 
       {loadError ? <section role="alert" className="flex flex-col gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 sm:flex-row sm:items-center sm:justify-between"><span>{loadError}</span><button type="button" onClick={() => setReloadToken((value) => value + 1)} className="inline-flex min-h-9 items-center justify-center rounded-lg border border-rose-300 bg-white px-3 font-semibold text-rose-700 hover:bg-rose-100">Thử lại</button></section> : null}
@@ -501,14 +484,5 @@ function FilterOptionDetailDrawer({ detail, onClose }: { detail: FilterDetail | 
         </>
       ) : null}
     </Drawer>
-  );
-}
-
-function FilterField({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block min-w-[170px] flex-1">
-      <span className="mb-1 block text-[11px] font-semibold text-muted-foreground">{label}</span>
-      {children}
-    </label>
   );
 }

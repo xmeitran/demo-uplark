@@ -6,7 +6,8 @@ import { Pencil, Plus, Trash2 } from "lucide-react";
 import type { ProjectCostCategory, ProjectCostItem, ProjectCostItemInput, ProjectCostItemsResponse, ProjectSummary, ResourceListResponse } from "@b2b-crm/contracts";
 import { EXPENSE_GROUPS } from "./pnl-data";
 import { CrmSelect } from "@/components/crm-workspace/crm-select";
-import { formatMoneyInput, inputClass, labelClass, moneyFormat, monthDateRange, parseMoneyInput, periodLabel, primaryButton, readApi, secondaryButton, thClass, todayKey } from "./pnl-cost-shared";
+import { FilterBar, FilterField, MonthFilter } from "@/components/filters/filter-controls";
+import { currentPeriodKey, formatMoneyInput, inputClass, labelClass, moneyFormat, monthDateRange, parseMoneyInput, periodLabel, primaryButton, readApi, secondaryButton, thClass, todayKey } from "./pnl-cost-shared";
 
 // Salaries are computed from hours × cost rate, so only the five other BRD groups can be entered.
 const CATEGORY_GROUPS = EXPENSE_GROUPS.filter((group) => group.key !== "salaries-related");
@@ -148,12 +149,16 @@ export function PnlOtherCosts({ periodKey, projectId, onProjectChange, onPeriodC
       {error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{error}</p> : null}
       {message ? <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">{message}</p> : null}
 
-      <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+      <section className="rounded-xl border border-border bg-card shadow-sm">
         <div className="flex flex-col gap-3 border-b border-border px-3 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:px-4">
           <h2 className="!text-sm font-bold text-foreground sm:mr-2">Chi phí đã nhập</h2>
-          {embedded ? null : <div className="w-full sm:w-72"><CrmSelect ariaLabel="Lọc theo dự án" searchable options={projectFilterOptions} value={projectId} onChange={onProjectChange} /></div>}
-          <label className="sr-only" htmlFor="other-cost-month">Tháng phát sinh</label><input id="other-cost-month" type="month" value={periodKey} hidden={embedded} disabled={allMonths || embedded} onChange={(event) => { if (event.target.value) onPeriodChange(event.target.value); }} className={`${inputClass} w-full font-semibold sm:w-44`} />
-          <label className="flex items-center gap-2 text-xs font-semibold text-muted-foreground"><input type="checkbox" checked={allMonths} onChange={(event) => setAllMonths(event.target.checked)} className="h-4 w-4 rounded border-input" /> Xem mọi tháng</label>
+          {embedded
+            // Inside a project's P&L the month comes from the page; only "every month" is left to toggle.
+            ? <label className="flex items-center gap-2 text-xs font-semibold text-muted-foreground"><input type="checkbox" checked={allMonths} onChange={(event) => setAllMonths(event.target.checked)} className="h-4 w-4 rounded border-input" /> Xem mọi tháng</label>
+            : <FilterBar className="min-w-0 flex-1" onReset={projectId || allMonths || periodKey !== currentPeriodKey() ? () => { setAllMonths(false); onProjectChange(""); onPeriodChange(currentPeriodKey()); } : undefined}>
+                <FilterField className="w-full sm:w-72"><CrmSelect ariaLabel="Lọc theo dự án" searchable options={projectFilterOptions} value={projectId} onChange={onProjectChange} /></FilterField>
+                <MonthFilter ariaLabel="Tháng phát sinh" allowAll value={allMonths ? "" : periodKey} onChange={(next) => { setAllMonths(!next); if (next) onPeriodChange(next); }} />
+              </FilterBar>}
         </div>
         <div className="overflow-x-auto">
           <table className={embedded ? "w-full min-w-[640px]" : "w-full min-w-[860px]"}>
@@ -173,9 +178,9 @@ export function PnlOtherCosts({ periodKey, projectId, onProjectChange, onPeriodC
               ))}
             </tbody>
           </table>
-          {!items.length ? <div className="px-5 py-10 text-center"><p className="text-sm font-semibold text-foreground">{loading ? "Đang tải chi phí…" : "Chưa có khoản chi phí nào"}</p>{!loading ? <p className="mt-1 text-xs text-muted-foreground">{allMonths ? "Chưa nhập khoản nào cho phạm vi đang chọn." : `Chưa nhập khoản nào trong ${periodLabel(periodKey).toLowerCase()}. Bật "Xem mọi tháng" để xem các tháng khác.`}</p> : null}</div> : null}
+          {!items.length ? <div className="px-5 py-10 text-center"><p className="text-sm font-semibold text-foreground">{loading ? "Đang tải chi phí…" : "Chưa có khoản chi phí nào"}</p>{!loading ? <p className="mt-1 text-xs text-muted-foreground">{allMonths ? "Chưa nhập khoản nào cho phạm vi đang chọn." : `Chưa nhập khoản nào trong ${periodLabel(periodKey).toLowerCase()}. Chọn "Tất cả thời gian" để xem các tháng khác.`}</p> : null}</div> : null}
         </div>
-        <div className="flex items-center justify-between border-t border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground"><span><strong className="text-foreground">{items.length}</strong> khoản</span><span>Tổng: <strong className="font-mono tabular-nums text-foreground">{moneyFormat.format(total)} ₫</strong></span></div>
+        <div className="flex items-center justify-between rounded-b-xl border-t border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground"><span><strong className="text-foreground">{items.length}</strong> khoản</span><span>Tổng: <strong className="font-mono tabular-nums text-foreground">{moneyFormat.format(total)} ₫</strong></span></div>
       </section>
     </div>
   );
