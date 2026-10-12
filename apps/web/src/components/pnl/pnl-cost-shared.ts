@@ -1,11 +1,16 @@
-export const moneyFormat = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 });
-export const hoursFormat = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 1 });
+/**
+ * What the P&L setup / data-entry screens share that is not display formatting (pnl-format.ts), not a fix link
+ * (pnl-query.ts) and not a component (pnl-ui.tsx, pnl-setup-ui.tsx): reading typed numbers, period helpers and the
+ * pure view logic of the settings tabs.
+ */
+import type { PnlFixTarget } from "@b2b-crm/contracts";
+import { formatMonth } from "./pnl-format";
+import { fixTargetHref } from "./pnl-query";
+
+const moneyFormat = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 });
 
 export const inputClass = "h-10 w-full rounded-xl border border-input bg-background px-3 text-sm text-foreground focus:border-primary focus:outline-none disabled:cursor-not-allowed disabled:opacity-60";
 export const labelClass = "mb-1.5 block text-xs font-semibold text-muted-foreground";
-export const primaryButton = "inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50";
-export const secondaryButton = "inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-border px-3.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50";
-export const thClass = "px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
 
 /** Digits typed by the user → number of đồng. Empty input is "no value", not zero. */
 export function parseMoneyInput(value: string): number | undefined {
@@ -18,51 +23,8 @@ export function formatMoneyInput(value: string) {
   return amount === undefined ? "" : moneyFormat.format(amount);
 }
 
-/**
- * The number a parameter text stands for. MIRROR of parseParameterValue in
- * apps/api/src/modules/resource-controls/pnl-calc.ts — the API's reading is the one that
- * counts; this copy only shows "Hệ thống hiểu là…" while typing. Both specs run the same
- * table of cases: change the two functions together.
- *
- *  - "%" divides by 100 ("5%" → 0.05).
- *  - Both "." and ",": the one written last is the decimal mark ("1.250,5", "1,250.5" → 1250.5).
- *  - One kind, several times: thousands ("1.250.000" → 1250000).
- *  - One separator: a decimal mark, EXCEPT a non-zero 1–3 digit integer part followed by
- *    exactly three digits ("26.300", "1,250"), read as thousands. "0.125" is always 0.125.
- */
-export function readParameterValue(raw: string): number | undefined {
-  const text = raw.trim();
-  const match = /-?\d[\d.,]*/.exec(text);
-  if (!match) return undefined;
-  const negative = match[0].startsWith("-");
-  const body = match[0].replace(/^-/, "").replace(/[.,]+$/, "");
-  const dots = body.split(".").length - 1;
-  const commas = body.split(",").length - 1;
-  let digits: string;
-  if (dots && commas) {
-    const decimal = body.lastIndexOf(".") > body.lastIndexOf(",") ? "." : ",";
-    if ((decimal === "." ? dots : commas) !== 1) return undefined;
-    digits = body.split(decimal === "." ? "," : ".").join("").replace(decimal, ".");
-  } else if (dots + commas > 1) {
-    if (!/^\d{1,3}([.,]\d{3})+$/.test(body)) return undefined;
-    digits = body.replace(/[.,]/g, "");
-  } else if (/^0*[1-9]\d{0,2}[.,]\d{3}$/.test(body)) {
-    digits = body.replace(/[.,]/, "");
-  } else {
-    digits = body.replace(",", ".");
-  }
-  const value = Number(digits);
-  if (!Number.isFinite(value)) return undefined;
-  const signed = negative ? -value : value;
-  return text.includes("%") ? signed / 100 : signed;
-}
-
 export function currentPeriodKey() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit" }).format(new Date()).slice(0, 7);
-}
-
-export function todayKey() {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 }
 
 export function shiftPeriod(periodKey: string, delta: number) {
@@ -81,38 +43,122 @@ export function monthDateRange(periodKey: string) {
   return { startDate: `${periodKey}-01`, endDate: `${periodKey}-${String(lastDay).padStart(2, "0")}` };
 }
 
-/** Reads an API response, turning 401/403 and API messages into a Vietnamese error. */
-export async function readApi<T>(response: Response, fallback: string): Promise<T> {
-  if (response.status === 401) {
-    window.location.assign(`/login?returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`);
-    throw new Error("Phiên đăng nhập đã hết hạn.");
-  }
-  const payload = await response.json().catch(() => ({})) as { message?: string | string[] };
-  if (response.status === 403) throw new Error("Bạn chưa được cấp quyền chi phí. Liên hệ Admin để được cấp quyền P&L.");
-  if (!response.ok) throw new Error(Array.isArray(payload.message) ? payload.message.join("; ") : payload.message || fallback);
-  return payload as T;
+/** "26.300", "5,5", "400000" → number; anything else → undefined. */
+export function parseDecimalInput(value: string): number | undefined {
+  const text = value.replace(/\s/g, "");
+  if (!text) return undefined;
+  const normalized = text.includes(",") ? text.replace(/\./g, "").replace(",", ".") : /^\d{1,3}(\.\d{3})+$/.test(text) ? text.replace(/\./g, "") : text;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-const nameKey = (name: string) => name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d").toLowerCase().replace(/\s+/g, " ").trim();
+// --- 6.2 Cây khoản mục ------------------------------------------------------
+
+export type TreeNode = { code: string; parentCode: string | null };
+export type TreeRow<T> = T & { hasChildren: boolean; expanded: boolean };
+
+/** The rows to draw, in the API's display order: a node is hidden while any ancestor is collapsed. */
+export function visibleTreeRows<T extends TreeNode>(items: readonly T[], collapsed: ReadonlySet<string>): Array<TreeRow<T>> {
+  const parents = new Set(items.map((item) => item.parentCode).filter(Boolean));
+  const byCode = new Map(items.map((item) => [item.code, item]));
+  const hidden = (item: T) => {
+    const seen = new Set<string>();
+    for (let parent = item.parentCode; parent && !seen.has(parent); parent = byCode.get(parent)?.parentCode ?? null) {
+      if (collapsed.has(parent)) return true;
+      seen.add(parent);
+    }
+    return false;
+  };
+  return items.filter((item) => !hidden(item)).map((item) => ({ ...item, hasChildren: parents.has(item.code), expanded: !collapsed.has(item.code) }));
+}
+
+const formulaNumber = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 4 });
+type FormulaToken = { item: string } | { param: string } | { value: number } | { op: "+" | "-" | "*" | "/" };
+const OP_SIGNS = { "+": "+", "-": "−", "*": "×", "/": "÷" } as const;
+const tokenKey = (token: FormulaToken) => "item" in token ? `item:${token.item}` : "param" in token ? `param:${token.param}` : "value" in token ? `value:${token.value}` : `op:${token.op}`;
+
+/** "[Doanh thu ghi nhận] × [Tỷ lệ hoa hồng]" from tokens and the API's operand list. */
+export function formulaText(tokens: readonly FormulaToken[], operands: ReadonlyArray<{ token: FormulaToken; label: string }>): string {
+  const labels = new Map(operands.map((operand) => [tokenKey(operand.token), operand.label]));
+  return tokens.map((token) => "op" in token ? OP_SIGNS[token.op] : "value" in token ? formulaNumber.format(token.value) : `[${labels.get(tokenKey(token)) ?? ("item" in token ? token.item : token.param)}]`).join(" ");
+}
+/** Công thức xen kẽ đại lượng và phép tính: what may be appended next. */
+export function nextFormulaStep(tokens: readonly FormulaToken[]): "operand" | "operator" {
+  const last = tokens[tokens.length - 1];
+  return !last || "op" in last ? "operand" : "operator";
+}
+
+/** Khối 1 của tab Khoản mục: three statements, each ✓ or a problem. */
+export function configCheckParts(check: { hasCycle: boolean; cycleCodes: string[]; allGroupsSummed: boolean; groupErrors: string[]; requiredWithoutValue: unknown[]; periodKey: string; errors: string[] }): Array<{ ok: boolean; text: string }> {
+  return [
+    check.hasCycle ? { ok: false, text: `Có tham chiếu vòng: ${check.cycleCodes.join(" → ")}` } : { ok: true, text: "Không có tham chiếu vòng" },
+    check.allGroupsSummed ? { ok: true, text: "Mọi dòng tổng do hệ thống cộng" } : { ok: false, text: `${check.groupErrors.length || 1} dòng tổng chưa do hệ thống cộng` },
+    check.requiredWithoutValue.length ? { ok: false, text: `${check.requiredWithoutValue.length} khoản mục bắt buộc chưa có số ở kỳ ${formatMonth(check.periodKey)}` } : { ok: true, text: `Khoản mục bắt buộc đều có số ở kỳ ${formatMonth(check.periodKey)}` },
+    ...check.errors.map((text) => ({ ok: false, text }))
+  ];
+}
+
+// --- 6.5 Checklist và các nút "tới đúng màn cần sửa" -------------------------
+
+/** One checklist line: "Không còn giờ Chờ xử lý … · còn 117,5 giờ" + the link on the right. */
+export function checklistRow(item: { ok: boolean; label: string; detail: string | null; target: string | null; targetLabel: string | null }, periodKey: string) {
+  const href = item.ok || !item.target ? null : fixTargetHref(item.target as PnlFixTarget, { periodKey });
+  return { ok: item.ok, text: item.detail ? `${item.label} · ${item.detail}` : item.label, link: href && item.targetLabel ? { href, label: item.targetLabel } : null };
+}
+
+// --- 6.7 Import chi phí tháng -------------------------------------------------
+
+export type StaffCostColumn = { key: string; label: string; required: boolean };
+export type StaffCostImportRow = { employeeCode: string } & Record<string, string | number>;
+const sameText = (a: unknown, b: string) => String(a ?? "").trim().toLocaleLowerCase("vi") === b.trim().toLocaleLowerCase("vi");
 
 /**
- * Rows copied from a spreadsheet ("Tên <tab> đơn giá", one person per line) → rates by person.
- * Names match ignoring case and diacritics; a name shared by two people is left unmatched
- * rather than guessed.
+ * Sheet cells (first row = the template's header) → rows for POST /pnl/staff-costs/import.
+ * Columns are matched by the template's header text; blank lines are skipped; a cell that is not a number is left
+ * out so the API reports "thiếu cấu phần bắt buộc" for that line instead of the browser guessing 0.
  */
-export function matchPastedRates(text: string, people: ReadonlyArray<{ userId: string; displayName: string }>) {
-  const byName = new Map<string, string[]>();
-  for (const person of people) byName.set(nameKey(person.displayName), [...(byName.get(nameKey(person.displayName)) ?? []), person.userId]);
-  const matched: Record<string, number> = {};
-  const unmatched: string[] = [];
-  for (const line of text.split(/\r?\n/)) {
-    const cells = line.split(/\t|;/).map((cell) => cell.trim()).filter(Boolean);
-    if (cells.length < 2) continue;
-    // "150000.00" / "150000,5" carry decimals; "150.000" is a thousands separator.
-    const amount = parseMoneyInput(cells[cells.length - 1].replace(/[.,]\d{1,2}$/, ""));
-    const ids = byName.get(nameKey(cells[0])) ?? [];
-    if (amount === undefined) continue; // header or note row
-    if (ids.length === 1) matched[ids[0]] = amount; else unmatched.push(cells[0]);
+export function mapStaffCostSheet(matrix: ReadonlyArray<ReadonlyArray<unknown>>, columns: readonly StaffCostColumn[]): { rows: StaffCostImportRow[]; missingColumns: string[] } {
+  const header = matrix[0] ?? [];
+  const indexOf = (column: StaffCostColumn) => header.findIndex((cell) => sameText(cell, column.label) || sameText(cell, column.key));
+  const codeIndex = indexOf(columns.find((column) => column.key === "employeeCode") ?? { key: "employeeCode", label: "Mã NS", required: true });
+  const amountColumns = columns.filter((column) => column.key !== "employeeCode" && column.key !== "displayName").map((column) => ({ column, index: indexOf(column) }));
+  const missingColumns = [...(codeIndex < 0 ? ["Mã NS"] : []), ...amountColumns.filter((entry) => entry.index < 0 && entry.column.required).map((entry) => entry.column.label)];
+  if (missingColumns.length) return { rows: [], missingColumns };
+  const rows: StaffCostImportRow[] = [];
+  for (const line of matrix.slice(1)) {
+    const employeeCode = String(line[codeIndex] ?? "").trim();
+    const cells = amountColumns.filter((entry) => entry.index >= 0).map((entry) => ({ key: entry.column.key, raw: line[entry.index] }));
+    if (!employeeCode && cells.every((cell) => cell.raw === null || cell.raw === undefined || cell.raw === "")) continue;
+    const row: StaffCostImportRow = { employeeCode };
+    for (const cell of cells) {
+      const value = typeof cell.raw === "number" ? cell.raw : typeof cell.raw === "string" ? parseDecimalInput(cell.raw) : undefined;
+      if (value !== undefined) row[cell.key] = value;
+    }
+    rows.push(row);
   }
-  return { matched, unmatched };
+  return { rows, missingColumns: [] };
+}
+
+/** "Import 09/2026: 44 dòng hợp lệ vào Nháp · 1 dòng lỗi: mã NS-099 không tồn tại". */
+export function importResultText(result: { periodKey: string; validCount: number; errors: Array<{ employeeCode: string; reason: string }> }): string {
+  const head = `Import ${formatMonth(result.periodKey)}: ${result.validCount} dòng hợp lệ vào Nháp`;
+  if (!result.errors.length) return `${head} · không có dòng lỗi`;
+  const first = result.errors[0];
+  return `${head} · ${result.errors.length} dòng lỗi: ${first.employeeCode ? `mã ${first.employeeCode} ` : ""}${first.reason}${result.errors.length > 1 ? "…" : ""}`;
+}
+
+// --- Admin › Thiết lập P&L: năm tab ---------------------------------------------
+
+export type SetupTab = "items" | "parameters" | "funds" | "periods" | "templates";
+export const SETUP_TABS: Array<{ id: SetupTab; label: string }> = [
+  { id: "items", label: "Khoản mục" },
+  { id: "parameters", label: "Tham số" },
+  { id: "funds", label: "Quỹ chi phí chung" },
+  { id: "periods", label: "Kỳ và khóa kỳ" },
+  { id: "templates", label: "Mẫu khoản mục" }
+];
+
+/** `?tab=` of the URL → tab. Anything else (the old "Khoản mục chi phí" default, a typo) lands on Khoản mục. */
+export function setupTabOf(value: string | null): SetupTab {
+  return SETUP_TABS.some((tab) => tab.id === value) ? value as SetupTab : "items";
 }

@@ -1,34 +1,93 @@
 import { describe, expect, it } from "vitest";
-import { matchPastedRates, readParameterValue } from "./pnl-cost-shared";
+import { checklistRow, configCheckParts, formulaText, importResultText, mapStaffCostSheet, nextFormulaStep, parseDecimalInput, setupTabOf, visibleTreeRows } from "./pnl-cost-shared";
 
-describe("matchPastedRates", () => {
-  const people = [{ userId: "a", displayName: "Nguyễn Văn An" }, { userId: "b", displayName: "Trần Đức" }, { userId: "c", displayName: "Lê Hoa" }, { userId: "d", displayName: "Lê Hoa" }];
-  it("matches names without diacritics and reads spreadsheet number formats", () => {
-    const result = matchPastedRates("Họ tên\tĐơn giá\nnguyen van an\t150.000\nTRẦN ĐỨC\tDev\t200,000.00\nLê Hoa\t90000\nNgười Lạ;50000\n", people);
-    expect(result.matched).toEqual({ a: 150000, b: 200000 });
-    expect(result.unmatched).toEqual(["Lê Hoa", "Người Lạ"]);
+describe("P&L setup input", () => {
+  it("reads typed numbers", () => {
+    expect(parseDecimalInput("26.300")).toBe(26300);
+    expect(parseDecimalInput("5,5")).toBe(5.5);
+    expect(parseDecimalInput("400000")).toBe(400000);
+    expect(parseDecimalInput("1.250.000,5")).toBe(1250000.5);
+    expect(parseDecimalInput("")).toBeUndefined();
+    expect(parseDecimalInput("abc")).toBeUndefined();
   });
 });
 
-describe("readParameterValue", () => {
-  // Same table as apps/api/src/modules/resource-controls/pnl-calc.spec.ts — keep the two in step.
-  const PARAMETER_CASES: Array<[string, number | undefined]> = [
-    ["5%", 0.05], ["12,5%", 0.125], ["12.5%", 0.125],
-    // Leading-zero integer part is always a decimal.
-    ["0.125", 0.125], ["0,005", 0.005], ["0.05", 0.05], ["0,5", 0.5],
-    // One separator + exactly three digits after a non-zero 1–3 digit integer part: thousands.
-    ["26.300", 26300], ["26.300 ₫", 26300], ["1,250", 1250], ["999.999", 999999],
-    // Not that shape: a decimal.
-    ["1250.300", 1250.3], ["1250,300", 1250.3], ["26.30", 26.3], ["26,3", 26.3], ["1.2500", 1.25],
-    // Several separators of one kind: thousands.
-    ["1.250.000", 1250000], ["1,250,000", 1250000], ["10.000.000 ₫", 10000000],
-    // Mixed: the last one is the decimal mark.
-    ["1.250,5", 1250.5], ["1,250.5", 1250.5], ["1.250.000,75", 1250000.75], ["1,250,000.75", 1250000.75],
-    ["176 giờ", 176], ["200 USD", 200], ["-1.250,5", -1250.5], ["-5%", -0.05],
-    ["1.2.3", undefined], ["1,250.5,5", undefined], ["chưa có", undefined], ["", undefined]
+describe("Khoản mục tree", () => {
+  const items = [
+    { code: "REV", parentCode: null }, { code: "REV.REC", parentCode: "REV" },
+    { code: "COST", parentCode: null }, { code: "COST.FO", parentCode: "COST" }, { code: "COST.FO.AI", parentCode: "COST.FO" }, { code: "COST.COMM", parentCode: "COST" }
   ];
+  it("keeps the API order and marks groups", () => {
+    const rows = visibleTreeRows(items, new Set());
+    expect(rows.map((row) => row.code)).toEqual(items.map((item) => item.code));
+    expect(rows.filter((row) => row.hasChildren).map((row) => row.code)).toEqual(["REV", "COST", "COST.FO"]);
+    expect(rows.every((row) => row.expanded)).toBe(true);
+  });
+  it("hides every descendant of a collapsed group", () => {
+    const rows = visibleTreeRows(items, new Set(["COST"]));
+    expect(rows.map((row) => row.code)).toEqual(["REV", "REV.REC", "COST"]);
+    expect(rows.find((row) => row.code === "COST")?.expanded).toBe(false);
+    expect(visibleTreeRows(items, new Set(["COST.FO"])).map((row) => row.code)).toEqual(["REV", "REV.REC", "COST", "COST.FO", "COST.COMM"]);
+  });
+  it("writes a formula from tokens and says what may come next", () => {
+    const operands = [{ token: { item: "REV.REC" }, label: "Doanh thu ghi nhận" }, { token: { param: "commissionPercent" }, label: "Tỷ lệ hoa hồng" }];
+    const tokens = [{ item: "REV.REC" }, { op: "*" as const }, { param: "commissionPercent" }];
+    expect(formulaText(tokens, operands)).toBe("[Doanh thu ghi nhận] × [Tỷ lệ hoa hồng]");
+    expect(nextFormulaStep([])).toBe("operand");
+    expect(nextFormulaStep(tokens.slice(0, 1))).toBe("operator");
+    expect(nextFormulaStep(tokens.slice(0, 2))).toBe("operand");
+  });
+  it("turns the configuration check into the three statements of the status bar", () => {
+    const ok = { hasCycle: false, cycleCodes: [], allGroupsSummed: true, groupErrors: [], requiredWithoutValue: [{}], periodKey: "2026-10", errors: [] };
+    expect(configCheckParts(ok)).toEqual([
+      { ok: true, text: "Không có tham chiếu vòng" }, { ok: true, text: "Mọi dòng tổng do hệ thống cộng" }, { ok: false, text: "1 khoản mục bắt buộc chưa có số ở kỳ 10/2026" }
+    ]);
+    expect(configCheckParts({ ...ok, hasCycle: true, cycleCodes: ["A", "B"] })[0]).toEqual({ ok: false, text: "Có tham chiếu vòng: A → B" });
+  });
+});
 
-  it("reads parameter values by the same rule as the API", () => {
-    for (const [text, expected] of PARAMETER_CASES) expect(readParameterValue(text), text).toBe(expected);
+describe("checklist and fix links", () => {
+  it("builds a checklist line with its detail and link, and no link once the condition is met", () => {
+    const item = { ok: false, label: "Mọi quỹ của tháng đã chia đủ và xác nhận", detail: "còn: Công cụ AI", target: "funds", targetLabel: "Quỹ chi phí chung" };
+    expect(checklistRow(item, "2026-09")).toEqual({ ok: false, text: "Mọi quỹ của tháng đã chia đủ và xác nhận · còn: Công cụ AI", link: { href: "/pnl/costs?tab=funds&periodKey=2026-09", label: "Quỹ chi phí chung" } });
+    expect(checklistRow({ ...item, ok: true, detail: null }, "2026-09")).toEqual({ ok: true, text: "Mọi quỹ của tháng đã chia đủ và xác nhận", link: null });
+    // The one fixTargetHref (pnl-query.ts): the hours worklist and the project list are reachable from a checklist line too.
+    expect(checklistRow({ ok: false, label: "Không còn giờ Chờ xử lý", detail: "còn 117,5 giờ", target: "pending_hours", targetLabel: "Danh sách" }, "2026-09").link).toEqual({ href: "/pnl/hours?periodKey=2026-09", label: "Danh sách" });
+    expect(checklistRow({ ...item, target: null, targetLabel: null }, "2026-09").link).toBeNull();
+  });
+  it("sends old or unknown tab values to the nearest tab", () => {
+    expect(setupTabOf("periods")).toBe("periods");
+    expect(setupTabOf("funds")).toBe("funds");
+    expect(setupTabOf(null)).toBe("items");
+    expect(setupTabOf("other-costs")).toBe("items");
+  });
+});
+
+describe("staff cost import", () => {
+  const columns = [
+    { key: "employeeCode", label: "Mã NS", required: true }, { key: "displayName", label: "Nhân sự", required: false },
+    { key: "baseSalaryAmount", label: "Lương tiêu chuẩn", required: true }, { key: "overtimeAmount", label: "OT", required: false }
+  ];
+  it("maps sheet rows by the template's header, skips blank lines and leaves non-numbers out", () => {
+    const result = mapStaffCostSheet([
+      ["Mã NS", "Nhân sự", "OT", "Lương tiêu chuẩn"],
+      ["NS-012", "Nhân sự A", 0, 20_000_000],
+      [null, null, null, null],
+      ["NS-031", "PM-1", "", "26.000.000"],
+      ["NS-044", "BD-1", "n/a", null]
+    ], columns);
+    expect(result.missingColumns).toEqual([]);
+    expect(result.rows).toEqual([
+      { employeeCode: "NS-012", overtimeAmount: 0, baseSalaryAmount: 20_000_000 },
+      { employeeCode: "NS-031", baseSalaryAmount: 26_000_000 },
+      { employeeCode: "NS-044" }
+    ]);
+  });
+  it("reports missing required columns instead of importing", () => {
+    expect(mapStaffCostSheet([["Mã NS", "OT"], ["NS-012", 0]], columns)).toEqual({ rows: [], missingColumns: ["Lương tiêu chuẩn"] });
+  });
+  it("summarises the import result as the screen shows it", () => {
+    expect(importResultText({ periodKey: "2026-09", validCount: 44, errors: [{ employeeCode: "NS-099", reason: "không tồn tại" }] })).toBe("Import 09/2026: 44 dòng hợp lệ vào Nháp · 1 dòng lỗi: mã NS-099 không tồn tại");
+    expect(importResultText({ periodKey: "2026-09", validCount: 45, errors: [] })).toBe("Import 09/2026: 45 dòng hợp lệ vào Nháp · không có dòng lỗi");
   });
 });

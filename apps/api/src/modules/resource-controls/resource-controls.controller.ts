@@ -1,5 +1,6 @@
-import { Body, Controller, Delete, Get, Headers, Inject, Param, Patch, Post, Put, Query } from "@nestjs/common";
+import { Body, Controller, Get, Headers, Inject, Post, Query } from "@nestjs/common";
 import { PrincipalService } from "../identity-access/principal.service";
+import { PnlConfigService } from "./pnl-config.service";
 import { ResourceControlsService } from "./resource-controls.service";
 
 @Controller()
@@ -8,7 +9,8 @@ export class ResourceControlsController {
     @Inject(PrincipalService)
     private readonly principals: PrincipalService,
     @Inject(ResourceControlsService)
-    private readonly resourceControls: ResourceControlsService
+    private readonly resourceControls: ResourceControlsService,
+    @Inject(PnlConfigService) private readonly pnlConfig: PnlConfigService
   ) {}
 
   @Get("capacity/summary")
@@ -27,51 +29,10 @@ export class ResourceControlsController {
     return this.resourceControls.createAllocation(body, principal);
   }
 
-  @Get("project-controls/pl-summary")
-  async projectPlSummary(@Headers("authorization") authorization: string | undefined, @Query() query: any) {
+  /** Trang hồ sơ từng người: that person's monthly costs — the same table as GET /pnl/staff-costs (mục 6.7). */
+  @Get("staff-costs")
+  async listStaffCosts(@Headers("authorization") authorization: string | undefined, @Query() query: any) {
     const principal = await this.principals.resolveFromAuthorization(authorization, query.principal);
-    return this.resourceControls.projectPlSummary(query, principal);
-  }
-
-  @Get("cost-rates")
-  async listCostRates(@Headers("authorization") authorization: string | undefined, @Query() query: any) {
-    const principal = await this.principals.resolveFromAuthorization(authorization, query.principal);
-    return this.resourceControls.listCostRates(query, principal);
-  }
-
-  @Put("cost-rates")
-  async setCostRate(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Body() body: any) {
-    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
-    return this.resourceControls.setCostRate(body, principal);
-  }
-
-  @Get("project-costs")
-  async listProjectCosts(@Headers("authorization") authorization: string | undefined, @Query() query: any) {
-    const principal = await this.principals.resolveFromAuthorization(authorization, query.principal);
-    return this.resourceControls.listProjectCosts(query, principal);
-  }
-
-  @Post("project-costs")
-  async createProjectCost(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Body() body: any) {
-    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
-    return this.resourceControls.createProjectCost(body, principal);
-  }
-
-  @Patch("project-costs/:costId")
-  async updateProjectCost(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("costId") costId: string, @Body() body: any) {
-    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
-    return this.resourceControls.updateProjectCost(costId, body, principal);
-  }
-
-  @Delete("project-costs/:costId")
-  async deleteProjectCost(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("costId") costId: string) {
-    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
-    return this.resourceControls.deleteProjectCost(costId, principal);
-  }
-
-  @Put("project-costs/planned/:projectId")
-  async setPlannedCost(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("projectId") projectId: string, @Body() body: any) {
-    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
-    return this.resourceControls.setPlannedCost(projectId, body, principal);
+    return this.pnlConfig.staffCostsOfUser(String(Array.isArray(query.userId) ? query.userId[0] : query.userId ?? ""), principal);
   }
 }

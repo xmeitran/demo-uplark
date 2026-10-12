@@ -1,6 +1,7 @@
 import type { TimesheetFilters } from "./timesheet-selectors";
 import { formatDepartmentLabel } from "@/lib/department-labels";
 import { projectStatusLabel } from "@/lib/project-status";
+import { CONTRACT_ITEM_FIELD_LABEL, NO_CONTRACT_ITEM_LABEL } from "@/lib/contract-item";
 import { addExcelTableSheet, excelDate, styleExcelHeaderCells, type ExcelCell } from "@/lib/excel-table-sheet";
 import {
   NODE_STATUS_LABELS,
@@ -179,19 +180,20 @@ export function buildTimesheetWorkbook(ExcelJS: ExcelJsModule, context: Timeshee
         task?.taskName ?? log.taskId,
         task?.taskStatus ?? "Chưa xác định",
         WORK_GROUP_LABELS[log.workGroup],
-        log.billable ? "Có" : "Không",
+        log.layer2Mismatch ? "Có" : "",
         log.minutes,
         hours(log.minutes),
         task?.estimateMinutes ? hours(task.estimateMinutes) : null,
-        log.note || ""
+        log.note || "",
+        log.contractItem || NO_CONTRACT_ITEM_LABEL
       ];
     });
   addTableSheet(
     workbook,
     TIMESHEET_EXPORT_SHEETS[4],
-    ["Ngày", "User ID", "Nhân sự", "Phòng ban", "Vai trò", "Project ID", "Mã dự án", "Tên dự án", "Khách hàng / tài khoản", "Trạng thái dự án", "Milestone", "Giai đoạn", "Task ID", "Task", "Trạng thái task", "Nhóm công việc", "Tính phí", "Số phút", "Số giờ", "Giờ estimate task", "Ghi chú"],
+    ["Ngày", "User ID", "Nhân sự", "Phòng ban", "Vai trò", "Project ID", "Mã dự án", "Tên dự án", "Khách hàng / tài khoản", "Trạng thái dự án", "Milestone", "Giai đoạn", "Task ID", "Task", "Trạng thái task", "Nhóm công việc", "Lớp 2 không khớp", "Số phút", "Số giờ", "Giờ estimate task", "Ghi chú", CONTRACT_ITEM_FIELD_LABEL],
     rawRows,
-    [12, 26, 24, 18, 24, 28, 22, 34, 26, 18, 26, 26, 28, 42, 18, 22, 12, 12, 12, 18, 42],
+    [12, 26, 24, 18, 24, 28, 22, 34, 26, 18, 26, 26, 28, 42, 18, 22, 18, 12, 12, 18, 42, 30],
     { 1: "dd/mm/yyyy" }
   );
 

@@ -1,6 +1,5 @@
 "use client";
 import { postProject, type ProjectCreateAttempt } from "@/lib/project-create-request";
-import { MoneyAmount } from "@/components/money-amount";
 import { useDialogAccessibility } from "@/hooks/use-dialog-accessibility";
 
 
@@ -15,15 +14,9 @@ import {
   LayoutDashboard,
   Clock,
   Plus,
-  MessageSquare,
   ArrowRight,
   X
 } from "lucide-react";
-import {
-  ResponsiveContainer,
-  RadialBarChart,
-  RadialBar,
-} from "recharts";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { CustomDropdown, CustomDatePicker } from "@/components/constructor-x/custom-controls";
 import { ModalLayer } from "@/components/modal-layer";
@@ -31,13 +24,13 @@ import { AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { loadExcelWorkbook } from "@/lib/excel-import";
 import type { Member, Project } from "./projects/data";
+import { PROJECT_STATUS_LABELS } from "@/lib/project-status";
 import {
   fetchAccountOptions,
   fetchLiveProjects,
   isUnauthorizedLiveProjectsError,
   mapProjectSummaryToUiProject,
   PROJECT_PAGE_SIZE,
-  toBackendProjectStatus,
   type LiveProjectAccountOption
 } from "./projects/live-projects";
 import {
@@ -58,8 +51,6 @@ interface DashboardProject {
   initials: string;
   stages: number;
   tasks: number;
-  income: number;
-  spent: number;
   progress: number;
   deadline: string;
   members: Member[];
@@ -89,8 +80,6 @@ function toDashboardProject(project: Project): DashboardProject {
     initials: project.name.charAt(0).toUpperCase() || "P",
     stages: parseStageCount(project.description),
     tasks: project.tasks.total,
-    income: project.budget,
-    spent: project.spent,
     progress: project.progress,
     deadline: project.dueDate.replaceAll("/", "."),
     members: project.members,
@@ -248,57 +237,6 @@ function WorkspaceUserAvatar({ user }: { user: WorkspaceUserOption }) {
 }
 
 
-function financialProjectShare(projects: DashboardProject[], valueForProject: (project: DashboardProject) => number) {
-  const maxValue = Math.max(1, ...projects.map(valueForProject));
-  return projects
-    .map((project) => ({
-      id: project.id,
-      label: project.name,
-      value: valueForProject(project),
-      width: Math.max(4, Math.round((valueForProject(project) / maxValue) * 100))
-    }))
-    .filter((item) => item.value > 0)
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 3);
-}
-
-// Progress ring SVG
-function ProgressRing({ progress }: { progress: number }) {
-  const r = 16;
-  const circ = 2 * Math.PI * r;
-  const dash = (progress / 100) * circ;
-  return (
-    <svg width="42" height="42" viewBox="0 0 42 42" className="-rotate-90">
-      <circle cx="21" cy="21" r={r} strokeWidth="4" stroke="var(--color-muted)" fill="none" />
-      <motion.circle
-        cx="21" cy="21" r={r} strokeWidth="4" fill="none"
-        stroke="var(--color-chart-3)"
-        strokeDasharray={`${circ}`}
-        strokeDashoffset={circ - dash}
-        strokeLinecap="round"
-        initial={{ strokeDashoffset: circ }}
-        animate={{ strokeDashoffset: circ - dash }}
-        transition={{ duration: 1, ease: "easeOut" }}
-      />
-      <text
-        x="21" y="21" textAnchor="middle" dominantBaseline="central"
-        className="fill-foreground text-[8px] font-bold rotate-90"
-        style={{ transform: "rotate(90deg)", transformOrigin: "21px 21px", fontSize: 9, fontWeight: 700 }}
-      >
-        {progress}%
-      </text>
-    </svg>
-  );
-}
-
-const STATUS_OPTIONS = [
-  { value: "Active", label: "Active", color: "#16a34a" },
-  { value: "In Review", label: "In Review", color: "#2563eb" },
-  { value: "Planning", label: "Planning", color: "#0891b2" },
-  { value: "On Hold", label: "On Hold", color: "#64748b" },
-  { value: "At Risk", label: "At Risk", color: "#dc2626" },
-  { value: "Completed", label: "Completed", color: "#16a34a" },
-];
 
 const PRIORITY_OPTIONS = [
   { value: "Critical", label: "Critical", color: "#dc2626" },
@@ -333,7 +271,7 @@ export default function DashboardPage() {
   const [workspaceUsers, setWorkspaceUsers] = useState<WorkspaceUserOption[]>([]);
   const [loadingWorkspaceUsers, setLoadingWorkspaceUsers] = useState(true);
   const [workspaceUsersError, setWorkspaceUsersError] = useState<string | null>(null);
-  const [projectTab, setProjectTab] = useState<"last" | "deadline" | "costs">("last");
+  const [projectTab, setProjectTab] = useState<"last" | "deadline">("last");
 
   // Modal State
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -341,9 +279,8 @@ export default function DashboardPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [client, setClient] = useState("");
-  const [status, setStatus] = useState<"Active" | "In Review" | "Planning" | "On Hold" | "Completed" | "At Risk">("Active");
   const [priority, setPriority] = useState<"Critical" | "High" | "Medium" | "Low">("Medium");
-  const [budget, setBudget] = useState("");
+  const [isTestProject, setIsTestProject] = useState(false);
   const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [dueDate, setDueDate] = useState(() => new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10));
   const [color, setColor] = useState("#2563eb");
@@ -493,29 +430,15 @@ export default function DashboardPage() {
 
   const dashboardStats = useMemo(() => {
     const totalTasks = projectsList.reduce((sum, project) => sum + project.tasks, 0);
-    const activeProjects = projectsList.filter((project) => project.status === "Active").length;
+    const activeProjects = projectsList.filter((project) => project.status === PROJECT_STATUS_LABELS.active).length;
     const uniqueAccounts = new Set(projectsList.map((project) => project.client).filter(Boolean)).size;
     return [
       { label: "Projects", value: projectPagination.total, icon: Briefcase, color: "text-primary", bg: "bg-primary/8" },
       { label: "Tasks Loaded", value: totalTasks, icon: FileText, color: "text-success", bg: "bg-success/8" },
-      { label: "Active Loaded", value: activeProjects, icon: Users, color: "text-warning", bg: "bg-warning/8" },
+      { label: `${PROJECT_STATUS_LABELS.active} · đã tải`, value: activeProjects, icon: Users, color: "text-warning", bg: "bg-warning/8" },
       { label: "Accounts Loaded", value: uniqueAccounts, icon: FolderOpen, color: "text-info", bg: "bg-info/8" },
     ];
   }, [projectPagination.total, projectsList]);
-
-  const financialSummary = useMemo(() => {
-    const income = projectsList.reduce((sum, project) => sum + project.income, 0);
-    const spent = projectsList.reduce((sum, project) => sum + project.spent, 0);
-    const profit = Math.max(income - spent, 0);
-    const incomeProjects = financialProjectShare(projectsList, (project) => project.income);
-    const profitProjects = financialProjectShare(projectsList, (project) => Math.max(project.income - project.spent, 0));
-    const radialData = [
-      { name: "Cost", value: income > 0 ? Math.round((spent / income) * 100) : 0, fill: "#f97316" },
-      { name: "Profit", value: income > 0 ? Math.round((profit / income) * 100) : 0, fill: "#16a34a" },
-      { name: "Income", value: income > 0 ? 100 : 0, fill: "#2563eb" },
-    ];
-    return { income, spent, profit, incomeProjects, profitProjects, radialData };
-  }, [projectsList]);
 
   const projectEvents = useMemo(() => {
     const grouped = projectsList.slice(0, 2).map((project, index) => ({
@@ -529,7 +452,7 @@ export default function DashboardPage() {
           action: `${project.stages} stages · ${project.tasks} tasks`,
           time: project.deadline === "TBD" ? "TBD" : project.deadline,
           tag: project.status,
-          tagColor: project.status === "Completed" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700",
+          tagColor: project.status === PROJECT_STATUS_LABELS.completed || project.status === PROJECT_STATUS_LABELS.maintenance ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700",
           avatar: index === 0 ? "bg-emerald-500" : "bg-blue-500"
         }
       ]
@@ -541,9 +464,6 @@ export default function DashboardPage() {
     const list = [...projectsList];
     if (projectTab === "deadline") {
       return list.sort((a, b) => a.deadline.localeCompare(b.deadline));
-    }
-    if (projectTab === "costs") {
-      return list.sort((a, b) => b.income - a.income);
     }
     return list;
   }, [projectTab, projectsList]);
@@ -575,15 +495,12 @@ export default function DashboardPage() {
 
     try {
       const ownerUserId = selectedMembers[0];
-      const parsedBudget = budget.trim() === "" ? 0 : Number(budget);
-      if (!Number.isFinite(parsedBudget) || parsedBudget < 0) throw new Error("Budget must be a valid positive number.");
       const response = await postProject(createAttempt.current, {
           accountId: selectedAccount.accountId,
           name: name.trim(),
-          status: toBackendProjectStatus(status),
           ownerUserId: ownerUserId || undefined,
           memberUserIds: selectedMembers,
-          budgetAmount: parsedBudget,
+          isTestProject,
           plannedStartAt: uiProjectDateToIso(startDate),
           plannedEndAt: uiProjectDateToIso(dueDate),
           priority: priority.toLowerCase(),
@@ -629,9 +546,8 @@ export default function DashboardPage() {
       setName("");
       setDescription("");
       setClient(accountOptions[0]?.value ?? "");
-      setStatus("Active");
       setPriority("Medium");
-      setBudget("");
+      setIsTestProject(false);
       setStartDate(new Date().toISOString().slice(0, 10));
       setDueDate(new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10));
       setColor("#2563eb");
@@ -739,116 +655,6 @@ export default function DashboardPage() {
                   ))}
                 </div>
               </div>
-
-              {/* Incoming Income sparkline */}
-              <div className="bg-card border border-border rounded-2xl p-4 shadow-sm">
-                <div className="flex justify-between items-start mb-1">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    Incoming income
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-end gap-3 mb-2">
-                  <h4 className="min-w-0 max-w-full text-2xl font-bold font-mono tabular-nums text-success"><MoneyAmount value={financialSummary.income} /></h4>
-                  <div className="text-[11px] font-semibold text-success bg-success/10 px-1.5 py-0.5 rounded-lg mb-0.5">
-                    <span>{projectPageRangeLabel(projectPagination)}</span>
-                  </div>
-                </div>
-                <div className="space-y-1.5" aria-label="Income by loaded project" data-testid="legacy-finance-income-mix">
-                  {financialSummary.incomeProjects.length > 0 ? financialSummary.incomeProjects.map((item) => (
-                    <div key={item.id} className="grid gap-1">
-                      <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-                        <span className="truncate">{item.label}</span>
-                        <strong className="font-mono tabular-nums text-foreground"><MoneyAmount value={item.value} /></strong>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-muted overflow-hidden" aria-hidden="true">
-                        <div className="h-full rounded-full bg-success" style={{ width: `${item.width}%` }} />
-                      </div>
-                    </div>
-                  )) : (
-                    <p className="text-xs text-muted-foreground">No loaded project income yet.</p>
-                  )}
-                </div>
-              </div>
-
-              {/* Profit from income sparkline */}
-              <div className="bg-card border border-border rounded-2xl p-4 shadow-sm">
-                <div className="flex justify-between items-start mb-1">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    Profit from income
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-end gap-3 mb-2">
-                  <h4 className="min-w-0 max-w-full text-2xl font-bold font-mono tabular-nums text-success"><MoneyAmount value={financialSummary.profit} /></h4>
-                  <div className="text-[11px] font-semibold text-success bg-success/10 px-1.5 py-0.5 rounded-lg mb-0.5">
-                    <span>{financialSummary.income > 0 ? `${Math.round((financialSummary.profit / financialSummary.income) * 100)}%` : "0%"}</span>
-                  </div>
-                </div>
-                <div className="space-y-1.5" aria-label="Profit by loaded project" data-testid="legacy-finance-profit-mix">
-                  {financialSummary.profitProjects.length > 0 ? financialSummary.profitProjects.map((item) => (
-                    <div key={item.id} className="grid gap-1">
-                      <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-                        <span className="truncate">{item.label}</span>
-                        <strong className="font-mono tabular-nums text-foreground"><MoneyAmount value={item.value} /></strong>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-muted overflow-hidden" aria-hidden="true">
-                        <div className="h-full rounded-full bg-success" style={{ width: `${item.width}%` }} />
-                      </div>
-                    </div>
-                  )) : (
-                    <p className="text-xs text-muted-foreground">No loaded project profit yet.</p>
-                  )}
-                </div>
-              </div>
-
-              {/* Financial Statistics radial */}
-              <div className="bg-card border border-border rounded-2xl p-4 shadow-sm">
-                <div className="flex justify-between items-center mb-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    Financial Statistics
-                  </p>
-                </div>
-
-                {/* Radial ring chart */}
-                <div className="h-48 w-full min-w-0 relative flex items-center justify-center">
-                  <ResponsiveContainer width="100%" height={192}>
-                    <RadialBarChart
-                      cx="50%" cy="50%"
-                      innerRadius="25%" outerRadius="90%"
-                      barSize={10}
-                      data={financialSummary.radialData}
-                      startAngle={90} endAngle={-270}
-                    >
-                      <RadialBar
-                        background={{ fill: "var(--color-muted)" }}
-                        dataKey="value"
-                        cornerRadius={6}
-                      />
-                    </RadialBarChart>
-                  </ResponsiveContainer>
-                  {/* Center label */}
-                  <div className="absolute flex flex-col items-center">
-                    <span className="text-[9px] uppercase tracking-wider text-muted-foreground">Total</span>
-                    <span className="text-base font-bold font-mono tabular-nums text-foreground"><MoneyAmount value={financialSummary.income} /></span>
-                  </div>
-                </div>
-
-                {/* Legend */}
-                <div className="grid grid-cols-3 gap-1 border-t border-border pt-3 mt-2">
-                  {[
-                    { label: "Income", value: <MoneyAmount value={financialSummary.income} />, color: "bg-primary" },
-                    { label: "Profit", value: <MoneyAmount value={financialSummary.profit} />, color: "bg-success" },
-                    { label: "Cost", value: <MoneyAmount value={financialSummary.spent} />, color: "bg-warning" },
-                  ].map((item) => (
-                    <div key={item.label} className="text-center">
-                      <div className="flex items-center justify-center gap-1 mb-1">
-                        <span className={`w-2 h-2 rounded-full ${item.color}`} />
-                        <span className="text-[10px] text-muted-foreground">{item.label}</span>
-                      </div>
-                      <p className="text-xs font-bold font-mono tabular-nums text-foreground">{item.value}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
             </div>
 
             {/* ─ MIDDLE COLUMN ────────────────────────────────────────────── */}
@@ -857,7 +663,7 @@ export default function DashboardPage() {
                 {/* Tabs */}
                 <div className="flex items-center justify-between px-5 pt-4 pb-0 border-b border-border">
                   <div className="flex gap-1">
-                    {(["last", "deadline", "costs"] as const).map((tab) => (
+                    {(["last", "deadline"] as const).map((tab) => (
                       <button
                         key={tab}
                         onClick={() => setProjectTab(tab)}
@@ -867,7 +673,7 @@ export default function DashboardPage() {
                             : "border-transparent text-muted-foreground hover:text-foreground"
                         }`}
                       >
-                        {tab === "last" ? "Last Projects" : tab === "deadline" ? "On Deadline" : "Costs"}
+                        {tab === "last" ? "Last Projects" : "On Deadline"}
                       </button>
                     ))}
                   </div>
@@ -923,10 +729,7 @@ export default function DashboardPage() {
                           <Clock className="w-3.5 h-3.5 shrink-0" />
                           <span>Deadline: {proj.deadline}</span>
                         </span>
-                        <span className="flex items-center gap-1.5 font-mono tabular-nums ml-auto">
-                          Income: <strong className="text-foreground"><MoneyAmount value={proj.income} /></strong>
-                        </span>
-                        <span className="font-mono tabular-nums">
+                        <span className="font-mono tabular-nums ml-auto">
                           <strong className="text-foreground">{proj.tasks}</strong> tasks
                         </span>
                       </div>
@@ -1026,7 +829,7 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-muted/20">
                   <div>
                     <h3 id="dashboard-create-title" className="text-base font-bold text-foreground">Create New Project</h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">Define core properties, schedules, budget, and assign team members.</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Define core properties, schedules, and assign team members.</p>
                   </div>
                   <button
                     aria-label="Close create project dialog" type="button"
@@ -1067,27 +870,13 @@ export default function DashboardPage() {
                       />
                     </div>
 
-                    {/* Budget */}
+                    {/* PL-02: trial project flag */}
                     <div className="space-y-1.5">
-                      <label htmlFor="dashboard-project-budget" className="text-xs font-semibold text-muted-foreground">Budget (đ)</label>
-                      <input id="dashboard-project-budget"
-                        type="number"
-                        placeholder="e.g. 50000"
-                        value={budget}
-                        onChange={e => setBudget(e.target.value)}
-                        className="w-full px-3.5 py-2.5 bg-background border border-input rounded-xl text-sm text-foreground focus:outline-none focus:border-primary transition-colors"
-                      />
-                    </div>
-
-                    {/* Status */}
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-muted-foreground">Status</label>
-                      <CustomDropdown
-                        ariaLabel="Status"
-                        options={STATUS_OPTIONS}
-                        value={status}
-                        onChange={val => setStatus(val as any)}
-                      />
+                      <span className="text-xs font-semibold text-muted-foreground">Dự án thử nghiệm</span>
+                      <label htmlFor="dashboard-project-test-flag" className="flex w-full items-center gap-2 px-3.5 py-2.5 bg-background border border-input rounded-xl text-sm text-foreground">
+                        <input id="dashboard-project-test-flag" type="checkbox" checked={isTestProject} onChange={e => setIsTestProject(e.target.checked)} />
+                        Không tính vào số tổng P&amp;L
+                      </label>
                     </div>
 
                     {/* Priority */}

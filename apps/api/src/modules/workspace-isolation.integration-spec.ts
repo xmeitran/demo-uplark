@@ -425,7 +425,7 @@ describe.runIf(safeDatabase)("two-workspace isolation", () => {
           expectedUpdatedAt: block.updatedAt
         }, principalA(), ids.userA),
         service.createTimeEntry(task.id, {
-          userId: ids.userA,
+          userId: ids.userA, selectedTaskTypeLayer2: "CUSTOMER_PROJECT" as const,
           workDate: "2026-07-22T02:00:00.000Z",
           startAt: "2026-07-22T02:00:00.000Z",
           endAt: "2026-07-22T02:30:00.000Z",

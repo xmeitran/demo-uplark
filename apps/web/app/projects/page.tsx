@@ -1,6 +1,5 @@
 "use client";
 import { postProject, type ProjectCreateAttempt } from "@/lib/project-create-request";
-import { MoneyAmount } from "@/components/money-amount";
 import { useDialogAccessibility } from "@/hooks/use-dialog-accessibility";
 
 
@@ -8,9 +7,8 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Search, Plus, Download, Sparkles, FileUp, MessageSquare,
-  ChevronDown,
-  Briefcase, Calendar, TrendingUp, AlertCircle,
-  CheckCircle2, Clock, ArrowRight, Wallet, BarChart2, Layers, X, Pin, Pencil, Trash2, Check
+  Briefcase, Calendar, AlertCircle,
+  CheckCircle2, Clock, ArrowRight, BarChart2, Layers, X, Pin, Pencil, Trash2, Check, Archive
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -19,6 +17,7 @@ import { CustomDropdown, CustomDatePicker } from "@/components/constructor-x/cus
 import { ModalLayer } from "@/components/modal-layer";
 import { CrmMultiSelect, CrmSelect } from "@/components/crm-workspace/crm-select";
 import { useAuth } from "@/lib/auth";
+import { isAdminView } from "@/lib/auth-role";
 import {
   getPushedProjectsOwnerKey,
   readPushedProjectIds,
@@ -65,24 +64,25 @@ type SortDir = ProjectSheetSortDir;
 type ProjectListView = UrlProjectListView;
 const PROJECT_LIST_VIEW_TABS: WorkspaceTabItem<ProjectListView>[] = [
   { id: "grid", label: "Tổng quan", description: "Cards dự án & trạng thái" },
-  { id: "sheet", label: "Project Sheet", ariaLabel: "Project Sheet View", description: "Bảng dữ liệu & chi phí" },
+  { id: "sheet", label: "Project Sheet", ariaLabel: "Project Sheet View", description: "Bảng dữ liệu & giờ" },
   { id: "timeline", label: "Timeline", description: "Lịch thực hiện dự án" }
 ];
 
 import { Project, PROJECTS, type Member } from "./data";
+import { PROJECT_STATUS_LABELS, PROJECT_STATUS_OPTIONS, projectStatusOrder, projectStatusStyleMap, quickProjectStatusOptions } from "@/lib/project-status";
 import type { ProjectMilestoneTemplateSummary, ProjectTaskTemplateInput, ResourceListPaginationMeta } from "@b2b-crm/contracts";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const STATUS_CFG = {
-  "Active":    { color:"#16a34a", bg:"#dcfce7", icon:CheckCircle2 },
-  "In Review": { color:"#2563eb", bg:"#eff6ff", icon:BarChart2 },
-  "Planning":  { color:"#0891b2", bg:"#e0f2fe", icon:Clock },
-  "On Hold":   { color:"#64748b", bg:"#f1f5f9", icon:Clock },
-  "Completed": { color:"#16a34a", bg:"#f0fdf4", icon:CheckCircle2 },
-  "At Risk":   { color:"#dc2626", bg:"#fee2e2", icon:AlertCircle },
-  "Chưa xác định": { color:"#64748b", bg:"#f1f5f9", icon:Clock },
-};
+const STATUS_CFG = projectStatusStyleMap({
+  active:    { color:"#16a34a", bg:"#dcfce7", icon:CheckCircle2 },
+  in_review: { color:"#2563eb", bg:"#eff6ff", icon:BarChart2 },
+  planning:  { color:"#0891b2", bg:"#e0f2fe", icon:Clock },
+  on_hold:   { color:"#64748b", bg:"#f1f5f9", icon:Clock },
+  completed: { color:"#16a34a", bg:"#f0fdf4", icon:CheckCircle2 },
+  at_risk:   { color:"#dc2626", bg:"#fee2e2", icon:AlertCircle },
+  closed:    { color:"#475569", bg:"#e2e8f0", icon:Archive },
+}, { color:"#64748b", bg:"#f1f5f9", icon:Clock });
 
 const PRIORITY_CFG = {
   Critical: { color:"#dc2626", bg:"#fee2e2" },
@@ -299,7 +299,6 @@ function ProjectCard({
 }) {
   const sc = STATUS_CFG[project.status];
   const pc = PRIORITY_CFG[project.priority];
-  const budgetPct = project.budget > 0 ? Math.round((project.spent / project.budget) * 100) : 0;
 
   return (
     <Link href={`/projects/${encodeURIComponent(project.id)}?returnTo=${encodeURIComponent(returnTo)}`} className="block h-full group">
@@ -343,12 +342,12 @@ function ProjectCard({
             <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Tasks</p>
           </div>
           <div className="text-center border-x border-border">
-            <p className="text-sm font-bold font-mono text-foreground"><MoneyAmount value={project.budget} /></p>
-            <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Budget</p>
+            <p className="text-sm font-bold font-mono text-foreground">{project.plannedHours ?? 0}h</p>
+            <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Plan</p>
           </div>
           <div className="text-center">
-            <p className="text-sm font-bold font-mono" style={{ color: budgetPct > 90 ? "#dc2626" : "var(--color-foreground)" }}>{budgetPct}%</p>
-            <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Spent</p>
+            <p className="text-sm font-bold font-mono text-foreground">{project.loggedHours ?? 0}h</p>
+            <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Logged</p>
           </div>
         </div>
 
@@ -360,6 +359,7 @@ function ProjectCard({
               <sc.icon className="w-3 h-3" />{formatProjectStatusLabel(project.status)}
             </span>
             {(project.openWarningCount ?? 0) > 0 ? <span title={`${project.openWarningCount} cảnh báo đang mở`} aria-label={`${project.openWarningCount} cảnh báo đang mở`} className="shrink-0 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{project.openWarningCount}</span> : null}
+            {project.hasPendingStatusProposal ? <span title="Có đề xuất trạng thái chờ xác nhận" className="shrink-0 rounded-full bg-sky-50 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">Có đề xuất trạng thái</span> : null}
             <button
               onClick={(e) => {
                 e.preventDefault();
@@ -409,14 +409,7 @@ function ProjectCard({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-const STATUS_OPTIONS = [
-  { value: "Active", label: "Active", color: "#16a34a" },
-  { value: "In Review", label: "In Review", color: "#2563eb" },
-  { value: "Planning", label: "Planning", color: "#0891b2" },
-  { value: "On Hold", label: "On Hold", color: "#64748b" },
-  { value: "At Risk", label: "At Risk", color: "#dc2626" },
-  { value: "Completed", label: "Completed", color: "#16a34a" },
-];
+const STATUS_OPTIONS = PROJECT_STATUS_OPTIONS.map((option) => ({ value: option.value, label: option.label, color: STATUS_CFG[option.value].color }));
 
 const PRIORITY_OPTIONS = [
   { value: "Critical", label: "Critical", color: "#dc2626" },
@@ -530,7 +523,7 @@ interface ProjectEditValues {
   scopeSummary: string;
   ownerUserId: string;
   memberUserIds: string[];
-  budgetAmount: string;
+  isTestProject: boolean;
   plannedStartAt: string;
   plannedEndAt: string;
 }
@@ -568,7 +561,9 @@ function ProjectEditModal({
   const initialMemberIds = project.memberUserIds ?? project.members.map((member) => member.id).filter((id): id is string => Boolean(id));
   const [ownerUserId, setOwnerUserId] = useState(project.ownerUserId ?? initialMemberIds[0] ?? "none");
   const [memberUserIds, setMemberUserIds] = useState<string[]>(initialMemberIds);
-  const [budgetAmount, setBudgetAmount] = useState(project.budget > 0 ? String(project.budget) : "");
+  // PL-02: "Dự án thử nghiệm" — after creation only an Admin account changes it (the API enforces the same).
+  const [isTestProject, setIsTestProject] = useState(project.isTestProject === true);
+  const canEditTestFlag = isAdminView(useAuth().user);
   const [plannedStartAt, setPlannedStartAt] = useState(project.startDate);
   const [plannedEndAt, setPlannedEndAt] = useState(project.dueDate);
 
@@ -584,7 +579,7 @@ function ProjectEditModal({
       scopeSummary: scopeSummary.trim(),
       ownerUserId,
       memberUserIds,
-      budgetAmount,
+      isTestProject,
       plannedStartAt,
       plannedEndAt
     });
@@ -594,7 +589,7 @@ function ProjectEditModal({
     <ModalLayer onClose={onClose}>
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <motion.div
-        ref={editDialogRef} role="dialog" aria-modal="true" aria-label="Edit Project" tabIndex={-1}
+        ref={editDialogRef} role="dialog" aria-modal="true" aria-label="Chỉnh sửa dự án" tabIndex={-1}
         initial={{ opacity: 0, scale: 0.95, y: 16 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 16 }}
@@ -602,7 +597,7 @@ function ProjectEditModal({
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-muted/20">
           <div>
-            <h3 className="text-base font-bold text-foreground">Edit Project</h3>
+            <h3 className="text-base font-bold text-foreground">Chỉnh sửa dự án</h3>
             <p className="text-xs text-muted-foreground mt-0.5">Update persisted CRM fields for this workspace project.</p>
           </div>
           <button
@@ -625,11 +620,11 @@ function ProjectEditModal({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5 md:col-span-2">
               <label className="text-xs font-semibold text-muted-foreground">
-                Project Name <span className="text-destructive">*</span>
+                Tên dự án <span className="text-destructive">*</span>
               </label>
               <input
                 type="text"
-                aria-label="Project Name"
+                aria-label="Tên dự án"
                 required
                 value={name}
                 onChange={(event) => setName(event.target.value)}
@@ -638,10 +633,10 @@ function ProjectEditModal({
             </div>
 
             <div className="space-y-1.5">
-              <label htmlFor="edit-project-code" className="text-xs font-semibold text-muted-foreground">Project Code</label>
+              <label htmlFor="edit-project-code" className="text-xs font-semibold text-muted-foreground">Mã dự án</label>
               <input id="edit-project-code"
                 type="text"
-                aria-label="Project Code"
+                aria-label="Mã dự án"
                 value={code}
                 onChange={(event) => setCode(event.target.value)}
                 className="w-full px-3.5 py-2.5 bg-background border border-input rounded-xl text-sm text-foreground focus:outline-none focus:border-primary transition-colors"
@@ -649,19 +644,21 @@ function ProjectEditModal({
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-muted-foreground">Status</label>
+              <label className="text-xs font-semibold text-muted-foreground">Trạng thái</label>
+              {/* No reason field here: only statuses the server accepts without one. */}
               <CustomDropdown
-                ariaLabel="Status"
-                options={STATUS_OPTIONS}
+                ariaLabel="Trạng thái"
+                options={quickProjectStatusOptions(project.status).map((option) => ({ value: option.value, label: option.label, color: STATUS_CFG[option.value].color }))}
                 value={status}
                 onChange={(value) => setStatus(value as Project["status"])}
               />
+              <p className="text-[11px] text-muted-foreground">Đổi trạng thái khác ở trang dự án</p>
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-muted-foreground">Project Type</label>
+              <label className="text-xs font-semibold text-muted-foreground">Loại dự án</label>
               <CustomDropdown
-                ariaLabel="Project Type"
+                ariaLabel="Loại dự án"
                 options={CATEGORY_OPTIONS}
                 value={projectType}
                 onChange={setProjectType}
@@ -669,9 +666,9 @@ function ProjectEditModal({
             </div>
 
             <div className="space-y-1.5 md:col-span-2">
-              <label className="text-xs font-semibold text-muted-foreground">Client Account</label>
+              <label className="text-xs font-semibold text-muted-foreground">Khách hàng</label>
               <CustomDropdown
-                ariaLabel="Client Account"
+                ariaLabel="Khách hàng"
                 options={clientOptions}
                 value={client}
                 onChange={setClient}
@@ -693,16 +690,11 @@ function ProjectEditModal({
             </div>
 
             <div className="space-y-1.5">
-              <label htmlFor="edit-project-budget" className="text-xs font-semibold text-muted-foreground">Budget (đ)</label>
-              <input id="edit-project-budget"
-                type="number"
-                min="0"
-                step="1"
-                aria-label="Budget"
-                value={budgetAmount}
-                onChange={(event) => setBudgetAmount(event.target.value)}
-                className="w-full px-3.5 py-2.5 bg-background border border-input rounded-xl text-sm text-foreground focus:outline-none focus:border-primary transition-colors"
-              />
+              <span className="text-xs font-semibold text-muted-foreground">Dự án thử nghiệm</span>
+              <label htmlFor="edit-project-test-flag" title={canEditTestFlag ? undefined : "Chỉ tài khoản Admin (PM) đổi được cờ này"} className="flex w-full items-center gap-2 px-3.5 py-2.5 bg-background border border-input rounded-xl text-sm text-foreground">
+                <input id="edit-project-test-flag" type="checkbox" checked={isTestProject} disabled={!canEditTestFlag} onChange={(event) => setIsTestProject(event.target.checked)} />
+                Không tính vào số tổng P&amp;L
+              </label>
             </div>
 
             <div className="space-y-1.5">
@@ -1097,9 +1089,8 @@ export default function ProjectsPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [client, setClient] = useState("");
-  const [status, setStatus] = useState<Project["status"]>("Active");
   const [priority, setPriority] = useState<Project["priority"]>("Medium");
-  const [budget, setBudget] = useState("");
+  const [isTestProject, setIsTestProject] = useState(false);
   const [startDate, setStartDate] = useState(defaultProjectStartDate);
   const [dueDate, setDueDate] = useState(defaultProjectDueDate);
   const [color, setColor] = useState("#2563eb");
@@ -1208,8 +1199,8 @@ export default function ProjectsPage() {
   const filtered = useMemo(() => {
     let list = warningOnlyActive ? warnedProjects ?? projectsList.filter(p => (p.openWarningCount ?? 0) > 0) : projectsList;
     list = [...list].sort((a, b) => {
-      const map: Record<SortKey, number | string> = { name:a.name, status:a.status, progress:a.progress, budget:a.budget, dueDate:projectDueSortValue(a), priority: ["Critical","High","Medium","Low"].indexOf(a.priority) };
-      const mapB: Record<SortKey, number | string> = { name:b.name, status:b.status, progress:b.progress, budget:b.budget, dueDate:projectDueSortValue(b), priority: ["Critical","High","Medium","Low"].indexOf(b.priority) };
+      const map: Record<SortKey, number | string> = { name:a.name, status:projectStatusOrder(a.status), progress:a.progress, dueDate:projectDueSortValue(a), priority: ["Critical","High","Medium","Low"].indexOf(a.priority) };
+      const mapB: Record<SortKey, number | string> = { name:b.name, status:projectStatusOrder(b.status), progress:b.progress, dueDate:projectDueSortValue(b), priority: ["Critical","High","Medium","Low"].indexOf(b.priority) };
       const va = map[sortKey], vb = mapB[sortKey];
       if (typeof va === "number" && typeof vb === "number") return sortDir === "asc" ? va - vb : vb - va;
       return sortDir === "asc" ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
@@ -1218,10 +1209,8 @@ export default function ProjectsPage() {
   }, [projectsList, sortKey, sortDir, warningOnlyActive, warnedProjects]);
 
   // KPI stats
-  const totalBudget = useMemo(() => projectsList.reduce((s, p) => s + p.budget, 0), [projectsList]);
-  const totalSpent  = useMemo(() => projectsList.reduce((s, p) => s + p.spent, 0), [projectsList]);
-  const active      = useMemo(() => projectsList.filter(p => p.status === "Active").length, [projectsList]);
-  const atRisk      = useMemo(() => projectsList.filter(p => p.status === "At Risk").length, [projectsList]);
+  const active      = useMemo(() => projectsList.filter(p => p.status === PROJECT_STATUS_LABELS.active).length, [projectsList]);
+  const atRisk      = useMemo(() => projectsList.filter(p => p.status === PROJECT_STATUS_LABELS.at_risk).length, [projectsList]);
 
   const clientOptions: ProjectClientOption[] = accountOptions;
 
@@ -1349,10 +1338,6 @@ export default function ProjectsPage() {
 
     try {
       const ownerUserId = selectedMembers[0];
-      const parsedBudget = budget.trim() === "" ? 0 : Number(budget);
-      if (!Number.isFinite(parsedBudget) || parsedBudget < 0) {
-        throw new Error("Budget must be a valid positive number.");
-      }
       if (milestoneMode === "manual" && !projectMilestones.some((milestone) => milestone.trim())) {
         throw new Error("Thêm ít nhất một milestone hoặc chọn template đã lưu.");
       }
@@ -1362,10 +1347,9 @@ export default function ProjectsPage() {
       const response = await postProject(createAttempt.current, {
           accountId: selectedAccount.accountId,
           name: name.trim(),
-          status: toBackendProjectStatus(status),
           ownerUserId: ownerUserId || undefined,
           memberUserIds: selectedMembers,
-          budgetAmount: parsedBudget,
+          isTestProject,
           scopeSummary: description.trim() || undefined,
           plannedStartAt: uiProjectDateToIso(startDate),
           plannedEndAt: uiProjectDateToIso(dueDate),
@@ -1411,9 +1395,8 @@ export default function ProjectsPage() {
       setName("");
       setDescription("");
       setClient(accountOptions[0]?.value ?? "");
-      setStatus("Active");
       setPriority("Medium");
-      setBudget("");
+      setIsTestProject(false);
       setStartDate(defaultProjectStartDate());
       setDueDate(defaultProjectDueDate());
       setColor("#2563eb");
@@ -1447,10 +1430,6 @@ export default function ProjectsPage() {
     setProjectsError(null);
 
     try {
-      const parsedBudget = values.budgetAmount.trim() === "" ? 0 : Number(values.budgetAmount);
-      if (!Number.isFinite(parsedBudget) || parsedBudget < 0) {
-        throw new Error("Budget must be a valid positive number.");
-      }
       const ownerUserId = values.ownerUserId === "none" ? null : values.ownerUserId;
       const memberUserIds = Array.from(new Set([
         ...values.memberUserIds,
@@ -1463,12 +1442,13 @@ export default function ProjectsPage() {
           accountId: selectedAccount.accountId,
           name: values.name,
           code: values.code || undefined,
-          status: toBackendProjectStatus(values.status),
+          // Unchanged status is left out so a system-owned or reason-bound status never blocks saving other fields.
+          status: values.status === project.status ? undefined : toBackendProjectStatus(values.status),
           projectType: values.projectType,
           scopeSummary: values.scopeSummary || null,
           ownerUserId,
           memberUserIds,
-          budgetAmount: parsedBudget,
+          isTestProject: values.isTestProject,
           plannedStartAt: uiProjectDateToIso(values.plannedStartAt),
           plannedEndAt: uiProjectDateToIso(values.plannedEndAt)
         })
@@ -1553,7 +1533,7 @@ export default function ProjectsPage() {
             </div>
             <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
               <motion.button whileHover={{ scale:1.02 }} whileTap={{ scale:0.97 }}
-                onClick={() => downloadCsv("uplark-projects-loaded.csv", ["Name", "Status", "Priority", "Client", "Budget", "Spent", "Due date"], filtered.map((project) => [project.name, project.status, project.priority, project.client, project.budget, project.spent, project.dueDate]))}
+                onClick={() => downloadCsv("uplark-projects-loaded.csv", ["Name", "Status", "Priority", "Client", "Due date"], filtered.map((project) => [project.name, project.status, project.priority, project.client, project.dueDate]))}
                 aria-label={`Export ${filtered.length} loaded projects as CSV`}
                 title="Export the currently loaded project result set"
                 className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-border text-sm font-medium text-muted-foreground hover:bg-muted transition-colors">
@@ -1581,12 +1561,10 @@ export default function ProjectsPage() {
           )}
 
           {/* KPI row */}
-          <div className="mb-4 grid shrink-0 grid-cols-2 gap-3 sm:mb-6 sm:gap-4 xl:grid-cols-4">
+          <div className="mb-4 grid shrink-0 grid-cols-2 gap-3 sm:mb-6 sm:gap-4">
             {[
-              { label:"Total Budget · trang này",  value:<MoneyAmount value={totalBudget} />, icon:Wallet,  color:"#2563eb" },
-              { label:"Total Spent · trang này",   value:<MoneyAmount value={totalSpent} />,  icon:TrendingUp,  color:"#7c3aed" },
-              { label:"Active Loaded", value:active,                               icon:CheckCircle2,color:"#16a34a" },
-              { label:"At Risk Loaded",value:atRisk,                               icon:AlertCircle, color:"#dc2626" },
+              { label:`${PROJECT_STATUS_LABELS.active} · trang này`, value:active, icon:CheckCircle2,color:"#16a34a" },
+              { label:`${PROJECT_STATUS_LABELS.at_risk} · trang này`, value:atRisk, icon:AlertCircle, color:"#dc2626" },
             ].map(s => (
               <motion.div key={s.label} whileHover={{ y:-2 }} className="bg-card border border-border rounded-xl p-4 shadow-sm">
                 <div className="flex items-center justify-between mb-2">
@@ -1797,6 +1775,7 @@ export default function ProjectsPage() {
                             </div>
                             <span className="text-[9px] font-bold px-2 py-0.5 rounded-lg shrink-0" style={{ backgroundColor: sc.bg, color: sc.color }}>{formatProjectStatusLabel(p.status)}</span>
                             {(p.openWarningCount ?? 0) > 0 ? <span title={`${p.openWarningCount} cảnh báo đang mở`} aria-label={`${p.openWarningCount} cảnh báo đang mở`} className="shrink-0 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{p.openWarningCount}</span> : null}
+                            {p.hasPendingStatusProposal ? <span title="Có đề xuất trạng thái chờ xác nhận" className="shrink-0 rounded-full bg-sky-50 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">Có đề xuất trạng thái</span> : null}
                           </div>
 
                           {/* Right Column: Month grid with the Gantt pill */}
@@ -1876,7 +1855,7 @@ export default function ProjectsPage() {
                 <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-muted/20">
                   <div>
                     <h3 id="create-project-title" className="text-base font-bold text-foreground">Create New Project</h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">Define core properties, schedules, budget, and assign team members.</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Define core properties, schedules, and assign team members.</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <button type="button" onClick={() => setAiPanelOpen((open) => !open)} aria-pressed={aiPanelOpen} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-semibold transition-colors ${aiPanelOpen ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
@@ -1925,28 +1904,13 @@ export default function ProjectsPage() {
                       />
                     </div>
 
-                    {/* Budget */}
+                    {/* PL-02: trial project flag (one of the four fields of the form that decide P&L) */}
                     <div className="space-y-1.5">
-                      <label htmlFor="create-project-budget" className="text-xs font-semibold text-muted-foreground">Budget (đ)</label>
-                      <input
-                        id="create-project-budget"
-                        type="number"
-                        placeholder="e.g. 50000"
-                        value={budget}
-                        onChange={e => setBudget(e.target.value)}
-                        className="w-full px-3.5 py-2.5 bg-background border border-input rounded-xl text-sm text-foreground focus:outline-none focus:border-primary transition-colors"
-                      />
-                    </div>
-
-                    {/* Status */}
-                    <div className="space-y-1.5">
-                      <span className="text-xs font-semibold text-muted-foreground">Trạng thái</span>
-                      <CustomDropdown
-                        ariaLabel="Status"
-                        options={STATUS_OPTIONS}
-                        value={status}
-                        onChange={val => setStatus(val as Project["status"])}
-                      />
+                      <span className="text-xs font-semibold text-muted-foreground">Dự án thử nghiệm</span>
+                      <label htmlFor="create-project-test-flag" className="flex w-full items-center gap-2 px-3.5 py-2.5 bg-background border border-input rounded-xl text-sm text-foreground">
+                        <input id="create-project-test-flag" type="checkbox" checked={isTestProject} onChange={e => setIsTestProject(e.target.checked)} />
+                        Không tính vào số tổng P&amp;L
+                      </label>
                     </div>
 
                     {/* Priority */}

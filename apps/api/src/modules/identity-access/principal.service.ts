@@ -2,7 +2,7 @@ import { activeMembershipWhere } from "./active-membership";
 import { Inject, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import { lockUserAuth } from "./auth-lifecycle-lock";
 import { createHash, randomBytes } from "node:crypto";
-import type { PrincipalContext } from "@b2b-crm/contracts";
+import { accountTypeOf, expandRoleCodes, type PrincipalContext } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { bearerToken } from "../../shared/http/request-context";
 import { TenantWorkspaceService, type WorkspaceContext } from "../tenant-workspace/tenant-workspace.service";
@@ -281,6 +281,7 @@ export class PrincipalService {
       displayName: string;
       avatarUrl?: string | null;
       subjectType: string;
+      viewMode?: string | null;
       roleBindings: Array<{ id: string; tenantKey: string; workspaceId?: string | null; role: { code: string } }>;
       customerGrants: Array<{ accountId?: string | null; projectId?: string | null }>;
     },
@@ -288,7 +289,10 @@ export class PrincipalService {
     grantVersion: string,
     workspace: WorkspaceContext
   ): PrincipalContext {
-    const roleCodes = user.roleBindings.map((binding) => binding.role.code);
+    // Business roles (PM, BD…) also count as the technical codes they imply, so every existing role check keeps working.
+    const heldRoleCodes = user.roleBindings.map((binding) => binding.role.code);
+    const roleCodes = expandRoleCodes(heldRoleCodes);
+    const accountType = accountTypeOf(heldRoleCodes);
     const customerAccountIds = user.customerGrants.flatMap((grant) => (grant.accountId ? [grant.accountId] : []));
     const customerProjectIds = user.customerGrants.flatMap((grant) => (grant.projectId ? [grant.projectId] : []));
 
@@ -302,6 +306,9 @@ export class PrincipalService {
       email: user.email,
       avatarUrl: user.avatarUrl ?? undefined,
       roleCodes,
+      heldRoleCodes,
+      accountType,
+      viewMode: accountType === "ADMIN" && user.viewMode === "user" ? "user" : "admin",
       accountIds: customerAccountIds,
       projectIds: customerProjectIds,
       customerAccountIds,

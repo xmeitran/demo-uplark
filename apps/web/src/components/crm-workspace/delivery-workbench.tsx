@@ -64,6 +64,7 @@ type DeliveryStageView = Pick<
   | "description"
   | "upbaseRole"
   | "customerRole"
+  | "taskTypeLayer1"
   | "status"
   | "ownerUserId"
   | "ownerDisplayName"
@@ -818,8 +819,6 @@ function DeliveryWorkbench({ config, projectId }: Readonly<{ config: BusinessFun
       projectId: selectedProject.id,
       stageId: stage.id,
       taskType: getStageTaskType(stageIndex),
-      taskTypeLayer1: "DELIVERY",
-      taskTypeLayer2: "CUSTOMER_PROJECT",
       title: `${stage.activity} - công việc mới`,
       description: `Task thuộc stage ${stage.activity} của dự án ${selectedProject.name}.`
     });
@@ -918,7 +917,7 @@ function DeliveryWorkbench({ config, projectId }: Readonly<{ config: BusinessFun
       description: taskInput.description,
       taskType: taskInput.taskType,
       taskTypeLayer1: taskInput.taskTypeLayer1,
-      taskTypeLayer2: taskInput.taskTypeLayer2,
+      contractItemId: taskInput.contractItemId,
       status: "todo",
       priority: taskInput.priority,
       ownerUserId: taskInput.assigneeUserId,
@@ -956,7 +955,7 @@ function DeliveryWorkbench({ config, projectId }: Readonly<{ config: BusinessFun
         description: taskInput.description,
         taskType: taskInput.taskType,
         taskTypeLayer1: taskInput.taskTypeLayer1,
-        taskTypeLayer2: taskInput.taskTypeLayer2,
+      contractItemId: taskInput.contractItemId,
         status: "todo",
         priority: taskInput.priority,
         ownerUserId: taskInput.assigneeUserId,
@@ -999,7 +998,7 @@ function DeliveryWorkbench({ config, projectId }: Readonly<{ config: BusinessFun
         description: taskInput.description,
         taskType: taskInput.taskType,
         taskTypeLayer1: taskInput.taskTypeLayer1,
-        taskTypeLayer2: taskInput.taskTypeLayer2,
+      contractItemId: taskInput.contractItemId,
         status: "todo",
         priority: taskInput.priority,
         ownerUserId: "founder",
@@ -1521,7 +1520,8 @@ function DeliveryWorkbench({ config, projectId }: Readonly<{ config: BusinessFun
                   cumulativePercent: stage.cumulativePercent,
                   id: stage.id,
                   phase: stage.phase,
-                  projectId: selectedProject?.id
+                  projectId: selectedProject?.id,
+                  taskTypeLayer1: stage.taskTypeLayer1
                 }))}
                 defaults={createDefaults}
                 assigneeOptions={taskAssigneeOptions}

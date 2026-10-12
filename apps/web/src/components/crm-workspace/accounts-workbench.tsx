@@ -1,4 +1,5 @@
 "use client";
+import { readApiError } from "@/lib/api-error";
 import { MoneyAmount } from "@/components/money-amount";
 import { useDialogAccessibility } from "@/hooks/use-dialog-accessibility";
 import { formatVnd } from "@/lib/currency";
@@ -22,6 +23,7 @@ import type {
 import { PolarisFallbackText, ShopifyDataTable, ShopifyIcon, ShopifySection } from "../shopify-ui";
 import { ModalLayer } from "../modal-layer";
 import { CrmSelect, type CrmSelectOption } from "./crm-select";
+import { PROJECT_STATUS_COLOR_FAMILY, PROJECT_STATUS_LABELS, normalizeProjectStatus, projectStatusLabel } from "@/lib/project-status";
 
 // Formatting helpers with decimal detection
 function formatDecimalVnd(value: number) {
@@ -103,13 +105,6 @@ const contactInfluenceLabels: Record<string, string> = {
   neutral: "Liên hệ chính"
 };
 
-const projectStatusLabels: Record<string, string> = {
-  planning: "Lên kế hoạch",
-  active: "Đang triển khai",
-  completed: "Hoàn tất",
-  blocked: "Đang nghẽn"
-};
-
 function formatAccountStage(stage?: string) {
   if (!stage) return "Chưa rõ";
   return accountStageLabels[stage] ?? stage;
@@ -186,18 +181,6 @@ function getAccountPicOptions(resources: CapacitySummaryItem[], members: AdminAc
   ];
 }
 
-async function readApiError(response: Response) {
-  try {
-    const body = await response.json();
-    const message = body?.message;
-    if (Array.isArray(message)) return message.join(", ");
-    if (typeof message === "string") return message;
-  } catch {
-    // Fall through to generic status below.
-  }
-  return `Yêu cầu thất bại (${response.status}).`;
-}
-
 async function loadAccountPicMembers() {
   const response = await fetch("/api/admin/members", { cache: "no-store" });
   if (!response.ok) return [];
@@ -237,13 +220,14 @@ function getContactInfluenceTone(value?: string) {
 }
 
 function formatProjectStatus(value?: string) {
-  if (!value) return "Chưa rõ";
-  return projectStatusLabels[value] ?? "Chưa rõ";
+  return projectStatusLabel(normalizeProjectStatus(value));
 }
 
 function getProjectStatusTone(value?: string) {
-  if (value === "active" || value === "completed") return "success";
-  if (value === "blocked") return "danger";
+  const code = normalizeProjectStatus(value);
+  const family = code ? PROJECT_STATUS_COLOR_FAMILY[code] : null;
+  if (family === "active" || family === "completed") return "success";
+  if (family === "at_risk") return "danger";
   return "neutral";
 }
 
@@ -1104,7 +1088,6 @@ function ProjectFormModal({
 }) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
-  const [marginPercent, setMarginPercent] = useState("35");
   const [status, setStatus] = useState("planning");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1113,12 +1096,10 @@ function ProjectFormModal({
     if (project) {
       setName(project.name || "");
       setCode(project.code || "");
-      setMarginPercent(project.marginPercent !== undefined ? String(project.marginPercent) : "35");
       setStatus(project.status || "planning");
     } else {
       setName("");
       setCode("");
-      setMarginPercent("35");
       setStatus("planning");
     }
     setError("");
@@ -1138,7 +1119,6 @@ function ProjectFormModal({
         id: project?.id,
         name: name.trim(),
         code: code.trim(),
-        marginPercent: Number(marginPercent) || 0,
         status
       });
     } catch (err) {
@@ -1154,16 +1134,15 @@ function ProjectFormModal({
         {error ? <div className="accounts-form-error">{error}</div> : null}
         <FormField label="Tên dự án" value={name} onChange={e => setName(e.target.value)} required />
         <FormField label="Tên viết tắt" value={code} onChange={e => setCode(e.target.value)} required />
-        <FormField label="Biên lợi nhuận (%)" value={marginPercent} onChange={e => setMarginPercent(e.target.value)} type="number" placeholder="VD: 35" />
         
         <div style={{ zIndex: 1001 }}>
           <CustomDropdown
             label="Trạng thái dự án"
             value={status}
             options={[
-              { value: "planning", label: "Đang lên kế hoạch", icon: "clock" },
-              { value: "active", label: "Đang chạy", icon: "star", iconTone: "info" },
-              { value: "completed", label: "Hoàn tất", icon: "checkmark", iconTone: "success" }
+              { value: "planning", label: PROJECT_STATUS_LABELS.planning, icon: "clock" },
+              { value: "active", label: PROJECT_STATUS_LABELS.active, icon: "star", iconTone: "info" },
+              { value: "completed", label: PROJECT_STATUS_LABELS.completed, icon: "checkmark", iconTone: "success" }
             ]}
             onChange={setStatus}
           />
@@ -1426,7 +1405,7 @@ export function AccountsWorkbench({
                   })
                 });
                 if (!response.ok) {
-                  throw new Error(await readApiError(response));
+                  throw await readApiError(response);
                 }
                 const savedAccount = await response.json();
                 const newAccounts = localAccounts.map(a => a.id === savedAccount.id ? savedAccount : a);
@@ -1453,7 +1432,7 @@ export function AccountsWorkbench({
               body: JSON.stringify(newContact)
             });
             if (!response.ok) {
-              throw new Error(await readApiError(response));
+              throw await readApiError(response);
             }
             const savedContact = await response.json();
             setAllContacts((current) => [...current.filter(contact => contact.id !== savedContact.id), savedContact]);
@@ -1467,7 +1446,7 @@ export function AccountsWorkbench({
               body: JSON.stringify(updatedContact)
             });
             if (!response.ok) {
-              throw new Error(await readApiError(response));
+              throw await readApiError(response);
             }
             const savedContact = await response.json();
             setAllContacts((current) => current.map(contact => contact.id === savedContact.id ? savedContact : contact));
@@ -1482,7 +1461,7 @@ export function AccountsWorkbench({
                   method: "DELETE"
                 });
                 if (!response.ok) {
-                  throw new Error(await readApiError(response));
+                  throw await readApiError(response);
                 }
                 setAllContacts((current) => current.filter(contact => contact.id !== contactId));
                 triggerToast(`Đã xóa liên hệ ${contactToDelete?.name || contactId}.`, "danger");
@@ -1505,7 +1484,7 @@ export function AccountsWorkbench({
               })
             });
             if (!response.ok) {
-              throw new Error(await readApiError(response));
+              throw await readApiError(response);
             }
             const savedOpportunity = await response.json();
             setLocalOpportunities((current) => [...current.filter(opp => opp.id !== savedOpportunity.id), savedOpportunity]);
@@ -1524,7 +1503,7 @@ export function AccountsWorkbench({
               })
             });
             if (!response.ok) {
-              throw new Error(await readApiError(response));
+              throw await readApiError(response);
             }
             const savedOpportunity = await response.json();
             setLocalOpportunities((current) => current.map(opp => opp.id === savedOpportunity.id ? savedOpportunity : opp));
@@ -1550,7 +1529,7 @@ export function AccountsWorkbench({
                 })
               });
               if (!response.ok) {
-                throw new Error(await readApiError(response));
+                throw await readApiError(response);
               }
               const createdProject = await response.json();
               setLocalProjects((current) => [...current.filter(project => project.id !== createdProject.id), createdProject]);
@@ -1575,7 +1554,7 @@ export function AccountsWorkbench({
                 })
               });
               if (!response.ok) {
-                throw new Error(await readApiError(response));
+                throw await readApiError(response);
               }
               const savedProject = await response.json();
               setLocalProjects((current) => current.map(project => project.id === savedProject.id ? savedProject : project));
@@ -1592,7 +1571,7 @@ export function AccountsWorkbench({
               try {
                 const response = await fetch(`/api/projects/${encodeURIComponent(projId)}`, { method: "DELETE" });
                 if (!response.ok) {
-                  throw new Error(await readApiError(response));
+                  throw await readApiError(response);
                 }
                 setLocalProjects((current) => current.filter(project => project.id !== projId));
                 triggerToast(`Đã xóa dự án ${projToDelete?.name || projId}.`, "danger");
@@ -1837,7 +1816,7 @@ export function AccountsWorkbench({
             body: JSON.stringify(newAcc)
           });
           if (!response.ok) {
-            throw new Error(await readApiError(response));
+            throw await readApiError(response);
           }
           const createdAccount = await response.json();
           const newAccounts = [...localAccounts.filter(account => account.id !== createdAccount.id), createdAccount];
@@ -2261,7 +2240,7 @@ function AccountDetailPage({
         body: JSON.stringify(newReview)
       });
       if (!response.ok) {
-        throw new Error(await readApiError(response));
+        throw await readApiError(response);
       }
       const savedReview = await response.json() as AccountUsageReviewSummary;
       setReviews((current) => [savedReview, ...current.filter((review) => review.id !== savedReview.id)]);
@@ -3697,15 +3676,6 @@ function AccountDetailPage({
                           </div>
 
                           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "var(--space-1)" }}>
-                            {proj.marginPercent !== undefined ? (
-                              <span style={{ fontSize: "13.5px", fontWeight: 600, color: "var(--text)" }}>
-                                Biên lợi nhuận: {formatDecimalNumber(proj.marginPercent)}%
-                              </span>
-                            ) : (
-                              <span className="account-detail-label-chip neutral">
-                                Biên lợi nhuận đang ẩn
-                              </span>
-                            )}
                             <span className={`account-detail-label-chip ${getProjectStatusTone(proj.status)}`}>
                               {formatProjectStatus(proj.status)}
                             </span>

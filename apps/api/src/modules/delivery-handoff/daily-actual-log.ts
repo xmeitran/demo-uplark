@@ -1,6 +1,14 @@
 import type { DailyActualLogState, DailyActualLogStatus } from "@b2b-crm/contracts";
+import { standardDayMinutes } from "../../shared/system-parameters";
 
-export const DAILY_ACTUAL_LOG_TARGET_MINUTES = 480 as const;
+/**
+ * D-13: standard (hành chính) minutes one person may plan or log per day across all projects.
+ * The only place the value lives — every cap, target and reminder reads it from here.
+ */
+// 7.6 "Giờ chuẩn một ngày": the catalogue default. Callers that can await should read the workspace's stored value
+// through shared/system-parameters (loadParameters / getStoredParameter) instead of this constant.
+export const STANDARD_DAY_MINUTES: number = standardDayMinutes();
+export const DAILY_ACTUAL_LOG_TARGET_MINUTES = STANDARD_DAY_MINUTES;
 export const DAILY_ACTUAL_LOG_TIME_ZONE = "Asia/Ho_Chi_Minh" as const;
 
 const HCM_OFFSET_MINUTES = 7 * 60;

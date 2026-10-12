@@ -145,7 +145,7 @@ const routeSurfaces: RouteSurface[] = [
   {
     name: "project-detail",
     path: `/projects/${project.id}?tab=Dashboard`,
-    ready: (page) => page.getByRole("heading", { name: project.name })
+    ready: (page) => page.getByRole("heading", { name: project.name, exact: true })
   },
   {
     name: "users",
@@ -291,6 +291,7 @@ function analyticsSummary() {
       tasksCompleted: 1
     })),
     breakdowns: { users: [userRow], projects: [projectRow], departments: [], teams: [] },
+    taskTypeBreakdowns: [],
     quality: {
       usersMissingDepartment: 0,
       usersMissingTeam: 0,
@@ -369,6 +370,10 @@ async function installResponsiveApi(page: Page) {
       await fulfillJson(route, project);
       return;
     }
+    if (path === `/api/projects/${project.id}/baseline`) {
+      await fulfillJson(route, { projectId: project.id, locked: false, current: {}, history: [], canCapture: false });
+      return;
+    }
     if (path.startsWith(`/api/projects/${project.id}/`)) {
       await fulfillJson(route, listResponse([]));
       return;
@@ -397,14 +402,6 @@ async function installResponsiveApi(page: Page) {
       });
       return;
     }
-    if (path === "/api/project-controls/pl-summary") {
-      await fulfillJson(route, {
-        data: [],
-        summary: { totalBudgetAmount: 120000, totalActualCostAmount: 24000, totalRecognizedRevenueAmount: 0 },
-        meta: { principal: workspaceUser.id, rowScope: "workspace" }
-      });
-      return;
-    }
     if (path === "/api/analytics/workforce-projects/summary") {
       await fulfillJson(route, summary);
       return;
@@ -420,7 +417,43 @@ async function installResponsiveApi(page: Page) {
       return;
     }
 
-    await fulfillJson(route, { message: `Unhandled responsive fixture: ${path}` }, 404);
+    // Shell and page reads added since this fixture was written (notifications, flagged navigation, warning counts,
+    // task history, P&L setup of the project): empty answers, so the route renders without console 404s.
+    if (path === "/api/navigation") {
+      await fulfillJson(route, { data: { availableFlaggedRoutes: [] } });
+      return;
+    }
+    if (path === "/api/notifications") {
+      await fulfillJson(route, { data: [], meta: { unreadCount: 0 } });
+      return;
+    }
+    if (path === "/api/project-warnings/counts") {
+      await fulfillJson(route, { data: {} });
+      return;
+    }
+    if (path === "/api/workspace/users") {
+      await fulfillJson(route, listResponse([workspaceUser]));
+      return;
+    }
+    if (path === "/api/workspace/day-offs" || path === "/api/milestone-templates" || path === `/api/tasks/${task.id}/history`) {
+      await fulfillJson(route, listResponse([]));
+      return;
+    }
+    if (path === `/api/pnl/projects/${project.id}/setup`) {
+      await fulfillJson(route, {
+        data: {
+          projectId: project.id, projectName: project.name, accountName: account.name,
+          contract: { totalAmount: null, fixedPriceAmount: null, hourlyCeilingAmount: null, status: "draft", statusLabel: "Nháp", signedOn: null, baseValuesReadOnly: false, collectedAmount: null, collectedInstallments: 0, installmentCount: 0 },
+          items: [],
+          baseline: { g1Approved: false, g1ApprovedOn: null, firstInstallmentPaid: false, rootItemReady: false, blockers: [] },
+          template: { key: "customer", name: "Khách hàng", disabledCodes: [], override: null }
+        },
+        meta: { generatedAt: "2026-07-15T08:00:00.000Z", currency: "VND", moneyVisible: true, canEdit: true, canApprove: true, canExport: true }
+      });
+      return;
+    }
+
+    await fulfillJson(route, { message: `Unhandled responsive fixture: ${request.method()} ${path}` }, 404);
   });
 }
 

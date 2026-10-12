@@ -114,6 +114,21 @@ services:
         value: HCM273=maitns@upbase.asia
       - key: CRM_AUTH_ENCRYPTION_KEY
         sync: false
+      # Daily alert scan: no worker runs on Render, so an external cron calls
+      # POST /api/internal/alert-scan with this token (docs/alert-scan.md).
+      - key: ALERT_SCAN_TOKEN
+        sync: false
+      - key: LARK_PROJECT_ALERT_WEBHOOK_URL
+        sync: false
+      # Lark groups, bots and personal leave (docs/lark-integration.md). Off until LARK_MESSAGING_ENABLED=true.
+      - key: LARK_MESSAGING_ENABLED
+        sync: false
+      - key: LARK_HANDOFF_REVIEW_CHAT_ID
+        sync: false
+      - key: LARK_LEAVE_APPROVAL_CODE
+        sync: false
+      - key: LARK_SWEEP_TOKEN
+        sync: false
       - key: FOUNDATION_TENANT_KEY
         value: prod
       - key: FOUNDATION_WORKSPACE_ID

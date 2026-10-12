@@ -141,6 +141,15 @@ async function installAuthenticatedBrowser(context: BrowserContext, page: Page, 
   await page.addInitScript((user) => {
     window.localStorage.setItem("crm_auth_user", JSON.stringify(user));
   }, authUser);
+  // Fail closed: nothing in this spec reaches a real API. Shell reads get empty answers; any other unmocked call is a
+  // 404 that names its path. Registered first, so every mock below takes precedence.
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (body: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+    if (path === "/api/navigation") return json({ data: { availableFlaggedRoutes: ["/analytics"] } });
+    if (path === "/api/notifications") return json({ data: [], meta: { unreadCount: 0 } });
+    return json({ message: `Unmocked API call in e2e: ${route.request().method()} ${path}` }, 404);
+  });
   await page.route("**/api/auth/me", route => fulfillJson(route, {
     subjectId: workspaceUser.id,
     displayName: workspaceUser.displayName,
@@ -161,12 +170,10 @@ async function installCoreReadMocks(page: Page, options: { usersFail?: boolean }
     summary: { totalUsers: 0, availableUsers: 0, overbookedUsers: 0, allocatedMinutes: 0, capacityMinutes: 0 },
     meta: { principal: workspaceUser.id, rowScope: "workspace" }
   }));
-  await page.route("**/api/project-controls/pl-summary**", route => fulfillJson(route, {
-    data: [],
-    summary: { totalBudgetAmount: 0, totalActualCostAmount: 0, totalRecognizedRevenueAmount: 0 },
-    meta: { principal: workspaceUser.id, rowScope: "workspace" }
-  }));
   await page.route("**/api/milestone-templates**", route => fulfillJson(route, listResponse([])));
+  await page.route("**/api/workspace/day-offs**", route => fulfillJson(route, listResponse([])));
+  // Projects list: workspace-wide open-warning counts ({ projectId: openCount }).
+  await page.route("**/api/project-warnings/counts**", route => fulfillJson(route, { data: {} }));
   await page.route("**/api/workspace/users**", route => options.usersFail
     ? fulfillJson(route, { message: "Directory unavailable" }, 503)
     : fulfillJson(route, listResponse([workspaceUser])));
@@ -321,6 +328,9 @@ async function openActualWorkModal(page: Page, completeTask: boolean) {
   if (completeTask) {
     await page.getByLabel("Đánh dấu hoàn thành công việc này").check();
   }
+  // A time log needs its own Lớp 2; the fixture task has none to pre-select, so the person chooses.
+  await page.getByRole("button", { name: /Lớp 2 · Bối cảnh công việc/ }).click();
+  await page.getByRole("option", { name: "Dự án tính phí", exact: true }).click();
   await page.getByRole("button", { name: "Ghi thời gian", exact: true }).click();
 }
 
@@ -493,16 +503,15 @@ test.describe("interaction audit remediation", () => {
     await expect(page.getByText("Create New Project", { exact: true })).toBeVisible();
 
     await page.getByPlaceholder("e.g. Mobile App Redesign").fill("All Fields QA Project");
-    await page.getByPlaceholder("e.g. 50000").fill("98765");
+    // The create form carries no money and no status: budget lives in the project's P&L setup, a new project starts at "Lên kế hoạch".
+    await expect(page.getByPlaceholder("e.g. 50000")).toHaveCount(0);
+    await page.getByLabel("Không tính vào số tổng P&L").check();
     await page.getByPlaceholder("Describe the scope, objectives, and deliverables of this project...").fill("All visible create fields must survive the request contract.");
     await page.getByPlaceholder("e.g. Core, Design, Marketing").fill("Audit, Persistence");
 
     const priorityField = page.getByText("Priority", { exact: true }).locator("..");
     await priorityField.getByRole("button").click();
     await page.getByRole("option", { name: "Critical", exact: true }).click();
-    const statusField = page.getByText("Trạng thái", { exact: true }).locator("..");
-    await statusField.getByRole("button").click();
-    await page.getByRole("option", { name: "At Risk", exact: true }).click();
 
     await page.getByRole("button", { name: `IQ ${workspaceUser.displayName}` }).click();
     await page.getByRole("button", { name: "Select project color #059669" }).click();
@@ -513,10 +522,9 @@ test.describe("interaction audit remediation", () => {
     expect(submittedPayload).toMatchObject({
       accountId: account.id,
       name: "All Fields QA Project",
-      status: "at_risk",
       ownerUserId: workspaceUser.id,
       memberUserIds: [workspaceUser.id],
-      budgetAmount: 98765,
+      isTestProject: true,
       priority: "critical",
       tags: ["Audit", "Persistence"],
       scopeSummary: "All visible create fields must survive the request contract.",
@@ -525,6 +533,8 @@ test.describe("interaction audit remediation", () => {
     expect(submittedPayload).toHaveProperty("plannedStartAt");
     expect(submittedPayload).toHaveProperty("plannedEndAt");
     expect(submittedPayload).toHaveProperty("color");
+    expect(submittedPayload).not.toHaveProperty("status");
+    expect(submittedPayload).not.toHaveProperty("budgetAmount");
     expect(submittedPayload.color).not.toBe("#2563eb");
     await expect(page.getByText("Create New Project", { exact: true })).toHaveCount(0);
   });
@@ -536,7 +546,9 @@ test.describe("interaction audit remediation", () => {
 
     await page.goto(`/tasks/${task.id}`);
     await openActualWorkModal(page, true);
-    await expect(page.getByText(/Không thể lưu thay đổi vì chưa ghi nhận được trên hệ thống/)).toBeVisible();
+    // A write the API rejected shows the API's own message; the generic text is only for requests that never got an answer.
+    await expect(page.getByText("Time entry write failed", { exact: true })).toBeVisible();
+    await expect(page.getByText(/Không thể lưu thay đổi vì chưa ghi nhận được trên hệ thống/)).toHaveCount(0);
     expect(controls.timeEntryCalls()).toBe(1);
     expect(controls.transitionCalls()).toBe(0);
     await expect(page.getByText(/và hoàn thành công việc/)).toHaveCount(0);
@@ -554,6 +566,7 @@ test.describe("interaction audit remediation", () => {
     expect(controls.timeEntryCalls()).toBe(1);
     expect(controls.transitionCalls()).toBe(1);
     expect(controls.canonicalTask().timeEntries).toHaveLength(1);
+    expect(controls.canonicalTask().timeEntries[0]).toMatchObject({ selectedTaskTypeLayer2: "CUSTOMER_PROJECT" });
     expect(controls.canonicalTask().status).toBe("in_progress");
     await expect(page.getByText(/Đã ghi 1 giờ làm việc và hoàn thành công việc/)).toHaveCount(0);
   });

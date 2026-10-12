@@ -6,7 +6,7 @@ test("business BFF routes reject no-cookie access even when principal fallback i
     "/api/projects?limit=1&principal=founder",
     "/api/tasks?limit=1&principal=founder",
     "/api/capacity/summary?principal=founder",
-    "/api/project-controls/pl-summary?principal=finance-admin",
+    "/api/pnl/dashboard?principal=finance-admin",
     "/api/analytics/workforce-projects/summary?principal=founder",
     "/api/analytics/workforce-projects/breakdown?by=project&principal=founder",
     "/api/analytics/workforce-projects/export?principal=founder",

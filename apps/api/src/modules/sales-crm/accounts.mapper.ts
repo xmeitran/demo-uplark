@@ -1,7 +1,8 @@
 import type { AccountSummary, ContactSummary } from "@b2b-crm/contracts";
 import { toIso, toMoneyNumber } from "../../shared/http/request-context";
 
-export function mapAccountSummary(account: any): AccountSummary {
+/** `canViewMoney`: the annual value is a money figure, shown only to the cost permission group (`canViewCost`). */
+export function mapAccountSummary(account: any, canViewMoney: boolean): AccountSummary {
   return {
     id: account.id,
     code: account.code,
@@ -13,7 +14,7 @@ export function mapAccountSummary(account: any): AccountSummary {
     picEmail: account.picUser?.email ?? undefined,
     picAvatarUrl: account.picUser?.avatarUrl ?? undefined,
     health: inferAccountHealth(account.stage),
-    annualValue: toMoneyNumber(account.annualValue),
+    ...(canViewMoney ? { annualValue: toMoneyNumber(account.annualValue) } : {}),
     commercialNote: account.commercialNote ?? undefined
   };
 }

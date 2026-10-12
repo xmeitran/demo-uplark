@@ -10,6 +10,7 @@ import {
   optionalString
 } from "../../shared/http/request-context";
 import { mapAccountSummary, mapContactSummary } from "./accounts.mapper";
+import { canViewCost } from "../resource-controls/cost-permissions";
 
 const accountInclude = {
   ownerTeam: true,
@@ -62,11 +63,11 @@ export class AccountsService {
     ]);
 
     return {
-      data: accounts.map(mapAccountSummary),
+      data: accounts.map((account) => mapAccountSummary(account, canViewCost(principal))),
       meta: {
         principal,
         rowScope: "workspace",
-        hiddenFields: [],
+        hiddenFields: canViewCost(principal) ? [] : ["annualValue"],
         pagination: buildPaginationMeta({ ...pagination, total, returned: accounts.length })
       }
     };
@@ -82,14 +83,14 @@ export class AccountsService {
       throw new NotFoundException("Account not found");
     }
 
-    return mapAccountSummary(account);
+    return mapAccountSummary(account, canViewCost(principal));
   }
 
   async createAccount(input: CreateAccountInput, principal: PrincipalContext) {
     assertInternalAccountWriter(principal);
     const code = nonEmptyString(input.code, "code").toUpperCase();
     const name = nonEmptyString(input.name, "name");
-    const annualValue = optionalNumber(input.annualValue, "annualValue") ?? 0;
+    const annualValue = (canViewCost(principal) ? optionalNumber(input.annualValue, "annualValue") : null) ?? 0;
 
     const account = await this.prisma.account.create({
       data: {
@@ -105,7 +106,7 @@ export class AccountsService {
       include: accountInclude
     });
 
-    return mapAccountSummary(account);
+    return mapAccountSummary(account, canViewCost(principal));
   }
 
   async updateAccount(accountId: string, input: UpdateAccountInput, principal: PrincipalContext) {
@@ -119,13 +120,14 @@ export class AccountsService {
         stage: optionalString(input.stage, "stage") ?? undefined,
         ownerTeamId: optionalString(input.ownerTeamId, "ownerTeamId"),
         picUserId: optionalString(input.picUserId, "picUserId"),
-        annualValue: optionalNumber(input.annualValue, "annualValue") ?? undefined,
+        // A viewer without the cost permission never received the figure: ignore what their form sends back.
+        annualValue: canViewCost(principal) ? optionalNumber(input.annualValue, "annualValue") ?? undefined : undefined,
         commercialNote: optionalString(input.commercialNote, "commercialNote")
       },
       include: accountInclude
     });
 
-    return mapAccountSummary(account);
+    return mapAccountSummary(account, canViewCost(principal));
   }
 
   async deleteAccount(accountId: string, principal: PrincipalContext) {

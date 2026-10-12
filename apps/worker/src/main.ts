@@ -8,6 +8,8 @@ import {
   createTaskReminderScheduler,
   taskReminderConfigFromEnv
 } from "./lark-task-reminders.js";
+import { alertScanConfigFromEnv, createAlertScanScheduler } from "./alert-scan-scheduler.js";
+import { createLarkSweepScheduler, larkSweepConfigFromEnv } from "./lark-sweep-scheduler.js";
 
 async function main() {
   const redisUrl = process.env.REDIS_URL;
@@ -31,8 +33,11 @@ async function main() {
     redis
   });
 
+  const alertScanScheduler = createAlertScanScheduler({ config: alertScanConfigFromEnv(process.env), redis });
+  const larkSweepScheduler = createLarkSweepScheduler({ config: larkSweepConfigFromEnv(process.env), redis });
+
   const shutdown = async () => {
-    await Promise.all([scheduler.stop(), taskReminderScheduler.stop()]);
+    await Promise.all([scheduler.stop(), taskReminderScheduler.stop(), alertScanScheduler.stop(), larkSweepScheduler.stop()]);
     redis.disconnect();
     process.exit(0);
   };
@@ -40,7 +45,7 @@ async function main() {
   process.once("SIGINT", () => void shutdown());
 
   const ping = await redis.ping();
-  console.log(`b2b-crm-saas worker ready: redis=${ping} larkDirectorySync=${scheduler.enabled ? "enabled" : "disabled"} larkTaskReminders=${taskReminderScheduler.enabled ? "enabled" : "disabled"}`);
+  console.log(`b2b-crm-saas worker ready: redis=${ping} larkDirectorySync=${scheduler.enabled ? "enabled" : "disabled"} larkTaskReminders=${taskReminderScheduler.enabled ? "enabled" : "disabled"} alertScan=${alertScanScheduler.enabled ? "enabled" : "disabled"} larkSweep=${larkSweepScheduler.enabled ? "enabled" : "disabled"}`);
 
   setInterval(async () => {
     try {

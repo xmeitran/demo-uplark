@@ -1,6 +1,6 @@
 import { activeMembershipWhere, isActiveMembership } from "./active-membership";
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
-import { BUSINESS_ROLE_OPTIONS, type AdminAccessMemberSummary, type CostPermissionCode, type CreateInternalUserInput, type EmploymentStatus, type InternalRoleCode, type WorkspaceSystemRole } from "@b2b-crm/contracts";
+import { ADMIN_ROLE_CODES, BUSINESS_ROLE_CODES, BUSINESS_ROLE_OPTIONS, DEFAULT_COST_PERMISSION_ROLE_CODES, accountTypeOf, businessRoleOf, expandRoleCodes, isBusinessRoleCode, type AccountViewMode, type AdminAccessMemberSummary, type BusinessRoleCode, type CostPermissionCode, type CreateInternalUserInput, type EmploymentStatus, type InternalRoleCode, type WorkspaceSystemRole } from "@b2b-crm/contracts";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../../shared/prisma/prisma.service";
@@ -14,6 +14,16 @@ const INTERNAL_ROLE_CODES: InternalRoleCode[] = ["FOUNDER_GM", "WORKSPACE_ADMIN"
 // A member's role is one of these; COST_* codes are additive permissions granted only through updateCostPermissions.
 const BASE_INTERNAL_ROLE_CODES = INTERNAL_ROLE_CODES.filter((code) => !COST_PERMISSION_CODES.includes(code as CostPermissionCode));
 const RESOURCE_DISPLAY_ROLES = BUSINESS_ROLE_OPTIONS;
+// A system-role change replaces the account's other roles but keeps its cost permissions and its business role (set separately).
+const KEPT_ON_ROLE_CHANGE: string[] = [...COST_PERMISSION_CODES, ...BUSINESS_ROLE_CODES];
+/**
+ * Role codes that survive a change to `nextRoleCode`. A demotion to a User-type system role also ends the Admin-type
+ * business roles (PM, Dx Director, BD Lead): they imply WORKSPACE_ADMIN, so keeping them would leave the account an Admin.
+ */
+export function keptOnRoleChange(nextRoleCode: string): string[] {
+  return accountTypeOf([nextRoleCode]) === "ADMIN" ? KEPT_ON_ROLE_CHANGE : KEPT_ON_ROLE_CHANGE.filter((code) => !ADMIN_ROLE_CODES.includes(code));
+}
+const endedOnRoleChange = (heldRoleCodes: readonly string[], nextRoleCode: string) => heldRoleCodes.filter((code) => code !== nextRoleCode && !keptOnRoleChange(nextRoleCode).includes(code));
 
 /** Only a Founder/GM may hand out or take away the Founder/GM role (including by suspending a founder). */
 export function assertFounderRoleChangeAllowed(actorRoleCodes: readonly string[], targetIsFounder: boolean, nextIsFounder: boolean) {
@@ -238,7 +248,7 @@ export class AuthService {
       orderBy: { displayName: "asc" }, take: 500
     });
     return { data: users.map((user) => ({ id: user.id, email: user.email, displayName: user.displayName, avatarUrl: user.avatarUrl,
-      departmentCode: user.departmentCode, resourceDisplayRole: user.resourceProfile?.displayRole ?? undefined, status: "active", roleCodes: user.roleBindings.map((binding) => binding.role.code) })), meta: { total: users.length } };
+      departmentCode: user.departmentCode, resourceDisplayRole: user.resourceProfile?.displayRole ?? undefined, status: "active", roleCodes: expandRoleCodes(user.roleBindings.map((binding) => binding.role.code)) })), meta: { total: users.length } };
   }
 
   async getUser(authorization: string | undefined, userId: string, includeSuspended = false, principalFallback?: string) {
@@ -350,13 +360,13 @@ export class AuthService {
       if (normalized !== "FOUNDER_GM") await ensureAnotherFounder(tx, principal.workspaceId, principal.tenantKey, userId);
       const role = await tx.role.findUniqueOrThrow({ where: { code: normalized } });
       const previousRoleCodes = user.roleBindings?.map((binding: any) => binding.role?.code).filter(Boolean) ?? [];
-      await tx.roleBinding.updateMany({ where: { userId, workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, role: { code: { notIn: COST_PERMISSION_CODES } }, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] }, data: { endsAt: new Date() } });
+      await tx.roleBinding.updateMany({ where: { userId, workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, role: { code: { notIn: keptOnRoleChange(normalized) } }, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] }, data: { endsAt: new Date() } });
       await tx.roleBinding.upsert({
         where: { userId_roleId_tenantKey_workspaceId: { userId, roleId: role.id, tenantKey: principal.tenantKey, workspaceId: principal.workspaceId } },
         create: { userId, roleId: role.id, tenantKey: principal.tenantKey, workspaceId: principal.workspaceId }, update: { startsAt: new Date(), endsAt: null }
       });
       await tx.portalSession.updateMany({ where: { userId, workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, revokedAt: null }, data: { revokedAt: new Date() } });
-      await tx.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "auth.member.role_changed", resource: "user", resourceId: userId, before: { roleCodes: previousRoleCodes }, after: { roleCode: normalized }, requestId: randomUUID() } });
+      await tx.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "auth.member.role_changed", resource: "user", resourceId: userId, before: { roleCodes: previousRoleCodes }, after: { roleCode: normalized, endedRoleCodes: endedOnRoleChange(previousRoleCodes, normalized) }, requestId: randomUUID() } });
     });
     return { userId, roleCode: normalized };
   }
@@ -408,7 +418,7 @@ export class AuthService {
     return { userId, costPermissionCodes: result };
   }
 
-  async updateResourceProfile(authorization: string | undefined, userId: string, input: { displayRole?: string; systemRole?: WorkspaceSystemRole; weeklyCapacityMinutes?: number; billableTargetPercent?: number; employmentStatus?: EmploymentStatus }, principalFallback?: string) {
+  async updateResourceProfile(authorization: string | undefined, userId: string, input: { displayRole?: string; businessRoleCode?: BusinessRoleCode | null; systemRole?: WorkspaceSystemRole; weeklyCapacityMinutes?: number; billableTargetPercent?: number; employmentStatus?: EmploymentStatus }, principalFallback?: string) {
     const principal = await this.requireAdminPrincipal(authorization, principalFallback);
     const result = await this.prisma.$transaction(async (tx) => {
       await lockWorkspaceAuth(tx, principal.workspaceId);
@@ -453,15 +463,16 @@ export class AuthService {
         }
         if (nextSystemRole !== "FOUNDER_GM") await ensureAnotherFounder(tx, principal.workspaceId, principal.tenantKey, userId);
         const role = await tx.role.findUniqueOrThrow({ where: { code: nextSystemRole } });
-        await tx.roleBinding.updateMany({ where: { userId, workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, role: { code: { notIn: COST_PERMISSION_CODES } }, ...activeMembershipWhere() }, data: { endsAt: new Date() } });
+        await tx.roleBinding.updateMany({ where: { userId, workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, role: { code: { notIn: keptOnRoleChange(nextSystemRole) } }, ...activeMembershipWhere() }, data: { endsAt: new Date() } });
         await tx.roleBinding.upsert({
           where: { userId_roleId_tenantKey_workspaceId: { userId, roleId: role.id, tenantKey: principal.tenantKey, workspaceId: principal.workspaceId } },
           create: { userId, roleId: role.id, tenantKey: principal.tenantKey, workspaceId: principal.workspaceId },
           update: { startsAt: new Date(), endsAt: null }
         });
         await tx.portalSession.updateMany({ where: { userId, workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, revokedAt: null }, data: { revokedAt: new Date() } });
-        await tx.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "auth.member.role_changed", resource: "user", resourceId: userId, before: { systemRole: currentSystemRole }, after: { systemRole: nextSystemRole }, requestId: randomUUID() } });
+        await tx.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "auth.member.role_changed", resource: "user", resourceId: userId, before: { systemRole: currentSystemRole }, after: { systemRole: nextSystemRole, endedRoleCodes: endedOnRoleChange(user.roleBindings.map((binding) => binding.role.code), nextSystemRole) }, requestId: randomUUID() } });
       }
+      if (input.businessRoleCode !== undefined) await this.setBusinessRole(tx, principal, userId, user.roleBindings.map((binding) => binding.role.code), input.businessRoleCode);
       const profile = await tx.resourceProfile.upsert({ where: { userId }, update: { displayRole: input.displayRole, employmentStatus, defaultWeeklyCapacityMinutes: input.weeklyCapacityMinutes, billableTargetPercent: input.billableTargetPercent, active: employmentStatus !== "INACTIVE" }, create: { userId, displayRole: input.displayRole, employmentStatus, defaultWeeklyCapacityMinutes: input.weeklyCapacityMinutes ?? 2400, billableTargetPercent: input.billableTargetPercent ?? 70, skills: [], active: employmentStatus !== "INACTIVE" } });
       const before = { status: user.status, displayRole: user.resourceProfile?.displayRole ?? null, active: user.resourceProfile?.active ?? null, systemRole: currentSystemRole };
       const shouldSuspend = employmentStatus !== "ACTIVE";
@@ -473,8 +484,52 @@ export class AuthService {
     return { data: { userId, status: result.user.status === "ACTIVE" ? "active" : "suspended", employmentStatus: result.employmentStatus, resourceDisplayRole: result.profile.displayRole }, meta: { audited: true } };
   }
 
+  /**
+   * Binds the account's business role (ROLE_CATALOGUE) as a real role binding. One business role per account.
+   * Granting PM / Dx Director / BD Lead makes the account an Admin, so it follows the same rules as granting an admin role:
+   * only an Admin may do it (the caller is one), nobody but a Founder/GM changes their own, and the Founder binding is never touched.
+   */
+  private async setBusinessRole(tx: Prisma.TransactionClient, principal: { subjectId: string; workspaceId: string; tenantKey: string; roleCodes: readonly string[] }, userId: string, heldRoleCodes: string[], requested: BusinessRoleCode | null) {
+    const next = requested === null || (requested as string) === "" ? null : requested;
+    if (next !== null && !isBusinessRoleCode(next)) throw new BadRequestException(`Vai trò nghiệp vụ không hợp lệ: ${String(requested)}`);
+    const held = heldRoleCodes.filter(isBusinessRoleCode);
+    if (held.length === (next ? 1 : 0) && (held[0] ?? null) === next) return;
+    assertNotSelfPrivilegeChange(principal, userId);
+    const now = new Date();
+    const scope = { userId, workspaceId: principal.workspaceId, tenantKey: principal.tenantKey };
+    await tx.roleBinding.updateMany({ where: { ...scope, role: { code: { in: BUSINESS_ROLE_CODES } }, ...activeMembershipWhere() }, data: { endsAt: now } });
+    const granted: string[] = [];
+    if (next) {
+      // 7.7: PM, BD Lead and Dx Director hold the cost permission group by default; an account that already has a grant keeps its own.
+      const withDefaults = DEFAULT_COST_PERMISSION_ROLE_CODES.includes(next) && !heldRoleCodes.some((code) => COST_PERMISSION_CODES.includes(code as CostPermissionCode));
+      for (const code of [next, ...(withDefaults ? COST_PERMISSION_CODES : [])]) {
+        const role = await tx.role.findUnique({ where: { code } });
+        if (!role) throw new BadRequestException(`Vai trò ${code} chưa được khởi tạo trong hệ thống`);
+        await tx.roleBinding.upsert({ where: { userId_roleId_tenantKey_workspaceId: { userId, roleId: role.id, tenantKey: principal.tenantKey, workspaceId: principal.workspaceId } }, update: { startsAt: now, endsAt: null }, create: { ...scope, roleId: role.id } });
+        if (code !== next) granted.push(code);
+      }
+    }
+    const afterCodes = [...heldRoleCodes.filter((code) => !isBusinessRoleCode(code)), ...(next ? [next] : []), ...granted];
+    await tx.portalSession.updateMany({ where: { ...scope, revokedAt: null }, data: { revokedAt: now } });
+    await tx.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "auth.member.business_role_changed", resource: "user", resourceId: userId,
+      before: { businessRoleCodes: held, accountType: accountTypeOf(heldRoleCodes) }, after: { businessRoleCode: next, accountType: accountTypeOf(afterCodes), grantedCostPermissionCodes: granted }, requestId: randomUUID() } });
+  }
+
+  /** 7.7: an Admin switches between admin view and user view; every switch is recorded. */
+  async setViewMode(authorization: string | undefined, mode: string, principalFallback?: string) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    if (accountTypeOf(principal.roleCodes) !== "ADMIN") throw new ForbiddenException("Chỉ tài khoản Admin mới chuyển được chế độ xem");
+    if (mode !== "admin" && mode !== "user") throw new BadRequestException("viewMode must be admin or user");
+    const before = principal.viewMode ?? "admin";
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: principal.subjectId }, data: { viewMode: mode } });
+      await tx.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "auth.view_mode_changed", resource: "user", resourceId: principal.subjectId, before: { viewMode: before }, after: { viewMode: mode }, requestId: randomUUID() } });
+    });
+    return { viewMode: mode as AccountViewMode };
+  }
+
   private async requireCurrentAdmin(tx: Prisma.TransactionClient, userId: string, workspaceId: string) {
-    const binding = await tx.roleBinding.findFirst({ where: { userId, workspaceId, ...activeMembershipWhere(), role: { code: { in: ["FOUNDER_GM", "WORKSPACE_ADMIN"] } }, user: { status: "ACTIVE" } } });
+    const binding = await tx.roleBinding.findFirst({ where: { userId, workspaceId, ...activeMembershipWhere(), role: { code: { in: ADMIN_ROLE_CODES } }, user: { status: "ACTIVE" } } });
     if (!binding) throw new ForbiddenException("Active Founder/GM or Workspace Admin membership is required");
   }
 
@@ -631,6 +686,8 @@ export class AuthService {
       workspaceId,
       roleCodes,
       systemRole,
+      businessRoleCode: businessRoleOf(roleCodes),
+      accountType: accountTypeOf(roleCodes),
       costPermissionCodes,
       employmentStatus: user.status === "ACTIVE" ? (user.resourceProfile?.employmentStatus ?? "ACTIVE") : (user.resourceProfile?.employmentStatus === "ON_LEAVE" ? "ON_LEAVE" : "INACTIVE"),
       accountIds: user.customerGrants.flatMap((grant: any) => (grant.accountId ? [grant.accountId] : [])),

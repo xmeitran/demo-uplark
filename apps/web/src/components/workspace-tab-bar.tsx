@@ -30,7 +30,7 @@ export function WorkspaceTabBar<T extends string>({
   className?: string;
 }) {
   return (
-    <div role="tablist" aria-label={ariaLabel} className={`flex min-w-max items-stretch gap-1 overflow-x-auto rounded-xl border border-border bg-card p-1 shadow-sm ${className}`}>
+    <div role="tablist" aria-label={ariaLabel} className={`flex max-w-full items-stretch md:min-w-max gap-1 overflow-x-auto rounded-xl border border-border bg-card p-1 shadow-sm ${className}`}>
       {items.map((item) => {
         const active = item.id === value;
         return (

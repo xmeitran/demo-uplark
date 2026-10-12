@@ -260,7 +260,7 @@ const PROJECT_SEEDS: ProjectSeed[] = [
     name: "Nội bộ — Đào tạo & Onboarding",
     accountName: "Upbase (nội bộ)",
     status: "active",
-    workGroup: "training",
+    workGroup: "internal_project",
     picIndex: 5,
     memberIndexes: [5, 0, 3, 8, 9, 11],
     deadline: null,
@@ -570,10 +570,9 @@ function buildLogs(people: Person[], projects: ProjectNode[], random: () => numb
         const minutes = Math.max(30, Math.round(share / 15) * 15);
         remaining -= share;
 
-        // Overhead work groups get sprinkled in regardless of project type.
+        // A few logs stay unclassified, like entries written before the classification existed.
         const roll = random();
-        const workGroup: WorkGroup =
-          roll < 0.08 ? "meeting" : roll < 0.11 ? "training" : roll < 0.14 ? "other" : ref.workGroup;
+        const workGroup: WorkGroup = roll < 0.14 ? "unclassified" : ref.workGroup;
 
         logs.push({
           id: `log-${logs.length + 1}`,

@@ -1,5 +1,5 @@
 export type ProjectListView = "grid" | "sheet" | "timeline";
-export type ProjectListSortKey = "name" | "status" | "progress" | "budget" | "dueDate" | "priority";
+export type ProjectListSortKey = "name" | "status" | "progress" | "dueDate" | "priority";
 export type ProjectListSortDir = "asc" | "desc";
 
 export type ProjectListUrlState = {
@@ -27,7 +27,7 @@ const DEFAULT_PROJECT_LIST_STATE: ProjectListUrlState = {
 };
 
 const VIEWS = new Set<ProjectListView>(["grid", "sheet", "timeline"]);
-const SORT_KEYS = new Set<ProjectListSortKey>(["name", "status", "progress", "budget", "dueDate", "priority"]);
+const SORT_KEYS = new Set<ProjectListSortKey>(["name", "status", "progress", "dueDate", "priority"]);
 
 export function readProjectListState(params: Pick<URLSearchParams, "get">): ProjectListUrlState {
   const page = Number(params.get("page"));

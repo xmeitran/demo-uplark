@@ -1,14 +1,15 @@
 "use client";
 import { useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "@/lib/auth";
+import { isAdminView } from "@/lib/auth-role";
 import { authRequest } from "@/lib/native-auth-client";
 import { CustomDropdown } from "@/components/crm-workspace/tasks-workbench";
 import { UserPlus, X } from "lucide-react";
 import { ModalLayer } from "@/components/modal-layer";
 import { CrmMultiSelect } from "@/components/crm-workspace/crm-select";
-import { BUSINESS_ROLE_OPTIONS, MANUAL_WORKSPACE_ROLE_OPTIONS } from "@/lib/people-roles";
+import { MANUAL_WORKSPACE_ROLE_OPTIONS } from "@/lib/people-roles";
 import { AuthField, authButton, authInput } from "./account-form";
-import type { EmploymentStatus } from "@b2b-crm/contracts";
+import { BUSINESS_ROLE_CATALOGUE, accountTypeOf, type EmploymentStatus } from "@b2b-crm/contracts";
 const invitationRoles = MANUAL_WORKSPACE_ROLE_OPTIONS;
 const workspaceRoles = MANUAL_WORKSPACE_ROLE_OPTIONS;
 type Invitation = {id:string;email:string;displayName?:string;roleCode:string;status:string;expiresAt:string};
@@ -16,7 +17,7 @@ export function AdminInvitations() {
   const {user} = useAuth(); const [open,setOpen] = useState(false); const [rows,setRows] = useState<Invitation[]>([]);
   const [email,setEmail] = useState(""); const [displayName,setName] = useState(""); const [roleCode,setRole] = useState("WORKSPACE_USER");
   const [busy,setBusy] = useState(false); const [error,setError] = useState(""); const [message,setMessage] = useState("");
-  const allowed = user?.role === "FOUNDER_GM";
+  const allowed = user?.role === "FOUNDER_GM" && isAdminView(user);
   async function load(){ const r = await authRequest<{data:Invitation[]}>("admin/invitations"); setRows(r.data); }
   useEffect(() => {if(open && allowed) void load().catch(e=>setError(e.message));},[open,allowed]);
   async function create(e:FormEvent){e.preventDefault();setBusy(true);setError("");setMessage("");try{await authRequest("admin/invitations",{email,displayName,roleCode});setEmail("");setName("");setMessage("Invitation created. Delivery is handled by your workspace email service.");await load();}catch(e){setError(e instanceof Error?e.message:"Unable to invite.");}finally{setBusy(false);}}
@@ -26,7 +27,7 @@ export function AdminInvitations() {
     <button type="button" className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90" onClick={()=>setOpen(true)}><UserPlus className="h-4 w-4" /> Invite member</button>
     {open && <ModalLayer initialFocusSelector='input[type="email"]' onClose={()=>setOpen(false)}><div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={()=>setOpen(false)}>
     <div role="dialog" aria-modal="true" aria-labelledby="invite-member-title" className="flex max-h-[90dvh] w-full max-w-2xl flex-col overflow-visible rounded-2xl border border-border bg-card shadow-2xl" onClick={e=>e.stopPropagation()}>
-    <div className="flex items-center justify-between border-b border-border bg-muted/20 px-6 py-4"><h2 id="invite-member-title" className="text-base font-bold text-foreground">Invite member</h2><button type="button" aria-label="Close" className="min-h-11 min-w-11 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" onClick={()=>setOpen(false)}><X className="mx-auto h-4 w-4" /></button></div>
+    <div className="flex items-center justify-between border-b border-border bg-muted/20 px-6 py-4"><h2 id="invite-member-title" className="!text-base font-bold text-foreground">Invite member</h2><button type="button" aria-label="Close" className="min-h-11 min-w-11 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" onClick={()=>setOpen(false)}><X className="mx-auto h-4 w-4" /></button></div>
     <div className="space-y-4 p-6">
       <p className="text-xs text-muted-foreground">Invite a colleague with the least access they need. To resend, revoke the old invitation and create a new one.</p>
       <form className="grid gap-3 md:grid-cols-2" onSubmit={create}>
@@ -46,16 +47,21 @@ const employmentStatusOptions = [
   { value: "INACTIVE", label: "Đã nghỉ việc", subtext: "Ngừng truy cập workspace" },
 ];
 
-const businessRoleOptions = BUSINESS_ROLE_OPTIONS.map((role) => ({ value: role, label: role }));
+// Written the way the rules document writes it: "Loại tài khoản - vai trò" (Admin - PM, User - Dx…).
+const NO_BUSINESS_ROLE = "NONE";
+const businessRoleOptions = [{ value: NO_BUSINESS_ROLE, label: "Chưa gán" }, ...BUSINESS_ROLE_CATALOGUE.map((role) => ({ value: role.code, label: `${role.accountType === "ADMIN" ? "Admin" : "User"} - ${role.label}` }))];
 const costPermissionOptions = [{ value: "COST_VIEW", label: "Xem" }, { value: "COST_EDIT", label: "Sửa" }, { value: "COST_APPROVE", label: "Duyệt" }, { value: "COST_EXPORT", label: "Xuất" }];
 const ALL_COST_PERMISSIONS = ["COST_VIEW", "COST_EDIT", "COST_APPROVE", "COST_EXPORT"];
 const controlLabel = "block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
 
-export function AdminMemberControls({userId,status,currentRole,employmentStatus="ACTIVE",displayRole,costPermissionCodes=[]}:{userId:string;status:string;currentRole:string;employmentStatus?:EmploymentStatus;displayRole:string;costPermissionCodes?:readonly string[]}) {
+export function AdminMemberControls({userId,status,currentRole,employmentStatus="ACTIVE",businessRoleCode,costPermissionCodes=[]}:{userId:string;status:string;currentRole:string;employmentStatus?:EmploymentStatus;businessRoleCode?:string;costPermissionCodes?:readonly string[]}) {
   const {user}=useAuth();
   const [roleCode,setRole]=useState(currentRole);
   const [workStatus,setWorkStatus]=useState<EmploymentStatus>(employmentStatus);
-  const [businessRole,setBusinessRole]=useState(displayRole);
+  const savedBusinessRole=businessRoleCode??NO_BUSINESS_ROLE;
+  const [businessRole,setBusinessRole]=useState(savedBusinessRole);
+  // Account type is derived from the roles, never picked: an Admin role on either select makes the account an Admin.
+  const accountType=accountTypeOf([roleCode,businessRole]);
   // Founder/GM always has full cost access; everyone else needs an explicit COST_* grant.
   const [costCodes,setCostCodes]=useState<string[]>(currentRole==="FOUNDER_GM"?ALL_COST_PERMISSIONS:[...costPermissionCodes]);
   const [costMessage,setCostMessage]=useState("");
@@ -82,7 +88,7 @@ export function AdminMemberControls({userId,status,currentRole,employmentStatus=
           method: "PATCH",
           credentials: "same-origin",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ ...(businessRole !== displayRole ? { displayRole: businessRole } : {}), systemRole: roleCode, employmentStatus: workStatus }),
+          body: JSON.stringify({ ...(businessRole !== savedBusinessRole ? { businessRoleCode: businessRole === NO_BUSINESS_ROLE ? null : businessRole } : {}), systemRole: roleCode, employmentStatus: workStatus }),
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.message || "Không thể lưu thông tin thành viên.");
@@ -100,13 +106,14 @@ export function AdminMemberControls({userId,status,currentRole,employmentStatus=
       window.location.reload();
     }catch(e){setError(e instanceof Error?e.message:"Unable to update member.");}finally{setBusy(false);}
   }
-  if(!user?.roleCodes?.some((role) => role === "FOUNDER_GM" || role === "WORKSPACE_ADMIN"))return null;
+  if(!isAdminView(user))return null;
   return <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
     <h2 className="!text-sm font-bold text-foreground">Workspace access</h2>
     <p className="mt-0.5 text-xs text-muted-foreground">Chỉ admin thấy mục này. Đổi vai trò sẽ thu hồi session hiện tại của user.</p>
     <div className="mt-4 space-y-2">
       <label className={controlLabel}>Vai trò nghiệp vụ</label>
       <CustomDropdown label="" value={businessRole} options={businessRoleOptions} onChange={setBusinessRole}/>
+      <p className="flex items-center gap-2 text-xs text-muted-foreground">Loại tài khoản <span data-testid="account-type-badge" className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-bold text-foreground">{accountType==="ADMIN"?"Admin":"User"}</span></p>
     </div>
     <div className="mt-4 space-y-2">
       <label className={controlLabel}>Vai trò trong workspace</label>
@@ -117,7 +124,7 @@ export function AdminMemberControls({userId,status,currentRole,employmentStatus=
       <CustomDropdown label="" value={workStatus} options={employmentStatusOptions} onChange={(value) => setWorkStatus(value as EmploymentStatus)}/>
     </div>
     <div className="mt-4 grid gap-2 sm:grid-cols-2">
-      <button className={authButton} disabled={busy||(roleCode===currentRole&&workStatus===employmentStatus&&businessRole===displayRole)} onClick={()=>setConfirm("profile")}>{busy?"Đang lưu…":"Lưu thay đổi"}</button>
+      <button className={authButton} disabled={busy||(roleCode===currentRole&&workStatus===employmentStatus&&businessRole===savedBusinessRole)} onClick={()=>setConfirm("profile")}>{busy?"Đang lưu…":"Lưu thay đổi"}</button>
       <button disabled={busy} className="min-h-11 rounded-xl border border-border px-3 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted" onClick={()=>setConfirm(status==="active"?"deactivate":"reactivate")}>{status==="active"?"Tạm khóa truy cập":"Khôi phục truy cập"}</button>
     </div>
     <button disabled={busy} className="mt-2 min-h-10 w-full rounded-xl px-3 text-xs font-semibold text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onClick={()=>setConfirm("revoke-sessions")}>Thu hồi tất cả session</button>

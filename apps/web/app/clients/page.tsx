@@ -30,6 +30,8 @@ import { FilterBar, FilterField } from "@/components/filters/filter-controls";
 import { ModalLayer } from "@/components/modal-layer";
 import type { AccountSummary, AccountsResponse } from "@b2b-crm/contracts";
 import { downloadCsv } from "@/lib/csv-export";
+import { useAuth } from "@/lib/auth";
+import { canViewCostFigures } from "@/lib/auth-role";
 
 type SortKey = "name" | "stage" | "tier" | "mrr" | "status" | "health";
 type SortDir = "asc" | "desc";
@@ -176,7 +178,7 @@ async function readClientError(response: Response, fallback: string) {
   return `${fallback}: ${response.status}`;
 }
 
-function ClientCard({ client, onEdit, onDelete }: { client: ClientRow; onEdit: (client: ClientRow) => void; onDelete: (client: ClientRow) => void }) {
+function ClientCard({ client, showMoney, onEdit, onDelete }: { client: ClientRow; showMoney: boolean; onEdit: (client: ClientRow) => void; onDelete: (client: ClientRow) => void }) {
   const tierCfg = TIER_CFG[client.tier];
   const statusCfg = STATUS_CFG[client.status];
   const hColor = healthColor(client.health);
@@ -199,16 +201,16 @@ function ClientCard({ client, onEdit, onDelete }: { client: ClientRow; onEdit: (
             <p className="truncate text-[11px] text-muted-foreground">{client.code}</p>
           </div>
         </Link>
-        <span className="rounded-lg px-2 py-0.5 text-[10px] font-semibold" style={{ backgroundColor: tierCfg.bg, color: tierCfg.color }}>
+        {showMoney && <span className="rounded-lg px-2 py-0.5 text-[10px] font-semibold" style={{ backgroundColor: tierCfg.bg, color: tierCfg.color }}>
           {client.tier}
-        </span>
+        </span>}
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div className="rounded-lg bg-muted/40 px-3 py-2">
+      <div className={`grid gap-3 ${showMoney ? "grid-cols-2" : "grid-cols-1"}`}>
+        {showMoney && <div className="rounded-lg bg-muted/40 px-3 py-2">
           <p className="mb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">MRR</p>
           <p className="font-mono text-sm font-bold tabular-nums text-foreground"><MoneyAmount value={client.mrr} /></p>
-        </div>
+        </div>}
         <div className="rounded-lg bg-muted/40 px-3 py-2">
           <p className="mb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">Health</p>
           <div className="flex items-center gap-1.5">
@@ -242,6 +244,8 @@ function ClientCard({ client, onEdit, onDelete }: { client: ClientRow; onEdit: (
 }
 
 export default function ClientsPage() {
+  // MRR, annual value and the tier derived from it are for the cost permission group; the API strips the figure for everyone else.
+  const showMoney = canViewCostFigures(useAuth().user);
   const [clientsList, setClientsList] = useState<ClientRow[]>([]);
   const [view, setView] = useState<ViewMode>("list");
   const [query, setQuery] = useState("");
@@ -334,8 +338,7 @@ export default function ClientsPage() {
 
   const columns: { key: SortKey; label: string; width?: string }[] = [
     { key: "name", label: "Company" },
-    { key: "tier", label: "Tier", width: "w-28" },
-    { key: "mrr", label: "MRR", width: "w-24" },
+    ...(showMoney ? [{ key: "tier" as const, label: "Tier", width: "w-28" }, { key: "mrr" as const, label: "MRR", width: "w-24" }] : []),
     { key: "health", label: "Health", width: "w-32" },
     { key: "status", label: "Status", width: "w-28" }
   ];
@@ -382,7 +385,7 @@ export default function ClientsPage() {
           code,
           name,
           stage,
-          annualValue: Number(annualValue) || 0,
+          ...(showMoney ? { annualValue: Number(annualValue) || 0 } : {}),
           commercialNote: commercialNote.trim() || undefined
         })
       });
@@ -445,7 +448,7 @@ export default function ClientsPage() {
               <p className="mt-0.5 text-sm text-muted-foreground">{clientsList.filter((client) => client.status === "Active").length} active</p>
             </div>
             <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-              <button onClick={() => downloadCsv("uplark-clients-filtered.csv", ["Name", "Code", "Stage", "Tier", "Status", "MRR", "Owner"], filtered.map((client) => [client.name, client.code, client.stage, client.tier, client.status, client.mrr, client.owner]))} title="Export the currently loaded and filtered clients" aria-label={`Export ${filtered.length} filtered clients as CSV`} className="flex items-center gap-1.5 rounded-xl border border-border px-3.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted">
+              <button onClick={() => downloadCsv("uplark-clients-filtered.csv", showMoney ? ["Name", "Code", "Stage", "Tier", "Status", "MRR", "Owner"] : ["Name", "Code", "Stage", "Status", "Owner"], filtered.map((client) => showMoney ? [client.name, client.code, client.stage, client.tier, client.status, client.mrr, client.owner] : [client.name, client.code, client.stage, client.status, client.owner]))} title="Export the currently loaded and filtered clients" aria-label={`Export ${filtered.length} filtered clients as CSV`} className="flex items-center gap-1.5 rounded-xl border border-border px-3.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted">
                 <Download className="h-4 w-4" /> Export filtered CSV
               </button>
               <button
@@ -458,10 +461,10 @@ export default function ClientsPage() {
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-            <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+            {showMoney && <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
               <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Total MRR</p>
               <p className="font-mono text-2xl font-bold tabular-nums text-foreground"><MoneyAmount value={totalMRR} /></p>
-            </div>
+            </div>}
             <button
               type="button"
               aria-pressed={statusFilter === "At Risk"}
@@ -487,7 +490,7 @@ export default function ClientsPage() {
               </div>
 
               <FilterField className="w-full sm:w-40"><CrmSelect ariaLabel="Lọc trạng thái" options={filterStatusOptions} value={statusFilter} onChange={setStatusFilter} /></FilterField>
-              <FilterField className="w-full sm:w-40"><CrmSelect ariaLabel="Lọc phân hạng" options={filterTierOptions} value={tierFilter} onChange={setTierFilter} /></FilterField>
+              {showMoney && <FilterField className="w-full sm:w-40"><CrmSelect ariaLabel="Lọc phân hạng" options={filterTierOptions} value={tierFilter} onChange={setTierFilter} /></FilterField>}
               </FilterBar>
 
               <div className="flex items-center self-end rounded-xl bg-muted p-0.5 sm:ml-auto sm:self-auto">
@@ -508,7 +511,7 @@ export default function ClientsPage() {
               <div className="grid grid-cols-1 gap-4 p-4 xl:grid-cols-3">
                 <AnimatePresence mode="popLayout">
                   {filtered.map((client) => (
-                    <ClientCard key={client.id} client={client} onEdit={openEditClient} onDelete={setDeleteClient} />
+                    <ClientCard key={client.id} client={client} showMoney={showMoney} onEdit={openEditClient} onDelete={setDeleteClient} />
                   ))}
                 </AnimatePresence>
               </div>
@@ -555,12 +558,12 @@ export default function ClientsPage() {
                                 </div>
                               </Link>
                             </td>
-                            <td className="px-4 py-3.5">
+                            {showMoney && <td className="px-4 py-3.5">
                               <span className="rounded-lg px-2.5 py-1 text-[11px] font-semibold" style={{ backgroundColor: tierCfg.bg, color: tierCfg.color }}>{client.tier}</span>
-                            </td>
-                            <td className="px-4 py-3.5">
+                            </td>}
+                            {showMoney && <td className="px-4 py-3.5">
                               <span className="font-mono text-sm font-bold tabular-nums text-foreground"><MoneyAmount value={client.mrr} /></span>
-                            </td>
+                            </td>}
                             <td className="px-4 py-3.5">
                               <div className="flex items-center gap-2">
                                 <span className="font-mono text-xs font-bold tabular-nums" style={{ color: hColor }}>{client.health}</span>
@@ -697,7 +700,7 @@ export default function ClientsPage() {
                     />
                   </label>
 
-                  <label className="space-y-1.5">
+                  {showMoney && <label className="space-y-1.5">
                     <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Annual Value (đ)</span>
                     <input
                       type="number"
@@ -707,7 +710,7 @@ export default function ClientsPage() {
                       onChange={(event) => setAnnualValue(event.target.value)}
                       className="w-full rounded-xl border border-input bg-background px-3.5 py-2.5 font-mono text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/20"
                     />
-                  </label>
+                  </label>}
 
                   <div className="space-y-1.5 sm:col-span-2">
                     <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Stage</span>

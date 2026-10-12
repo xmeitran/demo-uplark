@@ -1,4 +1,5 @@
 import type { AnalyticsMetricKey } from "@b2b-crm/contracts";
+import { PROJECT_STATUS_LABELS, normalizeProjectStatus } from "@/lib/project-status";
 
 const STATUS_LABELS: Record<string, string> = {
   onboarding: "Đang khởi động",
@@ -47,6 +48,12 @@ export const ANALYTICS_METRIC_LABELS: Record<AnalyticsMetricKey, string> = {
 export function businessStatusLabel(value: string): string {
   const normalized = value.trim().toLowerCase();
   return STATUS_LABELS[normalized] ?? value.replaceAll("_", " ");
+}
+
+/** Project statuses use the one catalogue (@/lib/project-status); a value outside it falls back to the generic label. */
+export function businessProjectStatusLabel(value: string): string {
+  const code = normalizeProjectStatus(value);
+  return code ? PROJECT_STATUS_LABELS[code] : businessStatusLabel(value);
 }
 
 const WARNING_LABELS: Record<string, string> = {

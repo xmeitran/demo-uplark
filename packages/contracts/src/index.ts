@@ -38,7 +38,14 @@ export interface PrincipalContext {
   tenantKey: string;
   workspaceId: string;
   workspaceKey: string;
+  /** Effective codes: the roles bound to the account plus the technical codes they imply (see ROLE_CATALOGUE). */
   roleCodes: string[];
+  /** Codes exactly as bound in the database. */
+  heldRoleCodes?: string[];
+  /** Derived from the held roles ("Hai loại tài khoản: Admin và User"). */
+  accountType?: AccountType;
+  /** 7.7: an Admin may work in user view; "user" narrows the screens and the project list to what a User sees. */
+  viewMode?: AccountViewMode;
   accountIds: string[];
   projectIds: string[];
   customerAccountIds: string[];
@@ -467,11 +474,18 @@ export interface ProjectSummary {
   status: string;
   /** Canonical status code (EV-064); undefined for a stored value outside the catalogue. */
   statusCode?: ProjectStatusCode;
+  /** Vietnamese catalogue label of statusCode. */
+  statusLabel?: string;
   /** Reason / action-blocker note of the current status and when it started (detail payload only). */
   statusReason?: string;
   statusSince?: string;
+  /** Why the project was closed (detail payload only; set while the status is closed). */
+  closeReasonCode?: ProjectCloseReasonCode;
   /** Open ProjectWarning records (EV-065). */
   openWarningCount?: number;
+  /** A status proposal (5.1, V-17) waits for confirmation; `pendingStatusProposal` is only on the detail payload. */
+  hasPendingStatusProposal?: boolean;
+  pendingStatusProposal?: import("./gates").ProjectStatusProposalSummary;
   projectType?: string;
   scopeSummary?: string;
   marginPercent?: number;
@@ -497,13 +511,66 @@ export interface ProjectSummary {
   plannedStartAt?: string;
   plannedEndAt?: string;
   hierarchyOrderVersion: number;
+  /** PL-02 "Dự án thử nghiệm": left out of every P&L total, fund split and warning. */
+  isTestProject?: boolean;
   milestoneMode?: ProjectMilestoneMode;
   milestoneTemplateKey?: string;
+  /** The fixed "DX Internal Worklog" project (D-08): no contract line items, never part of project P&L. Read-only. */
+  isInternalWorklog?: boolean;
+}
+
+/** Hạng mục hợp đồng (rules 2, D-22). contractType undefined = "Chờ phân loại". */
+export type ProjectContractItemType = "FIXED_PRICE" | "TIME_AND_MATERIAL" | "INTERNAL";
+export type ProjectContractItemKind = "ROOT" | "APPENDIX" | "CHANGE_REQUEST";
+
+export interface ProjectContractItemSummary {
+  id: string;
+  projectId: string;
+  code: string;
+  name: string;
+  kind: ProjectContractItemKind;
+  kindLabel: string;
+  contractType?: ProjectContractItemType;
+  contractTypeLabel: string;
+  valueAmount?: number;
+  currency: string;
+  /** Estimate gốc, in minutes. */
+  estimateMinutes?: number;
+  changeRequestId?: string;
+  status: "active" | "archived";
+  sortOrder: number;
+  taskCount: number;
+  /** D-22: type and base value can no longer be changed (hours logged or invoice issued). */
+  locked: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateProjectContractItemInput {
+  code?: string;
+  name: string;
+  kind?: ProjectContractItemKind;
+  contractType?: ProjectContractItemType | null;
+  valueAmount?: number | null;
+  estimateMinutes?: number | null;
+  changeRequestId?: string | null;
+  sortOrder?: number;
+}
+
+export type UpdateProjectContractItemInput = Partial<CreateProjectContractItemInput> & { status?: "active" | "archived" };
+
+/** D-07 / decision 5: Pre-sale minutes of lost deals, a separate company-level cost section. */
+export interface LostDealPreSaleSummary {
+  label: string;
+  level: "company";
+  totalMinutes: number;
+  months: Array<{ month: string; minutes: number; projects: Array<{ projectId: string; projectCode: string; projectName: string; minutes: number }> }>;
 }
 
 export type ProjectPriority = "critical" | "high" | "medium" | "low";
 
-export type ProjectStatusCode = "planning" | "active" | "in_review" | "on_hold" | "at_risk" | "completed";
+export type ProjectStatusCode = "planning" | "active" | "pilot" | "onboarding" | "in_review" | "on_hold" | "at_risk" | "completed" | "maintenance" | "closed";
+export type ProjectCloseReasonCode = "lost_deal" | "client_stopped" | "maintenance_expired" | "internal_cancel";
 
 export interface ProjectStatusHistoryItem {
   id: string;
@@ -511,6 +578,7 @@ export interface ProjectStatusHistoryItem {
   fromStatus?: string;
   toStatus: string;
   reason?: string;
+  closeReasonCode?: ProjectCloseReasonCode;
   changedByUserId?: string;
   changedByDisplayName?: string;
   changedAt: string;
@@ -619,6 +687,8 @@ export interface CreateProjectInput {
   scopeSummary?: string;
   acceptanceCriteria?: string;
   createStageTemplate?: boolean;
+  /** PL-02 "Dự án thử nghiệm". */
+  isTestProject?: boolean;
   /** How the delivery hierarchy is provisioned for a new project. */
   milestoneMode?: ProjectMilestoneMode;
   /** Standard template key used when milestoneMode is auto. */
@@ -655,6 +725,8 @@ export interface ProjectTaskTemplateInput {
   status?: string;
   priority?: string;
   taskType?: string;
+  /** Overrides the stage's Layer 1 for this template task; sub-tasks always repeat their parent. */
+  taskTypeLayer1?: "PRE_SALE" | "DELIVERY" | "PM";
   estimateMinutes?: number;
   plannedStartAt?: string;
   dueAt?: string;
@@ -709,6 +781,10 @@ export interface CreateProjectMilestoneInput extends ProjectMilestoneConditionIn
     slaDays?: number;
     upbaseRole?: string;
     customerRole?: string;
+    /** Layer 1 inherited by the tasks of this stage (D-02). */
+    taskTypeLayer1?: "PRE_SALE" | "DELIVERY" | "PM";
+    /** Position against the P&L close gate (section 3.4); drives the derived Layer 2. */
+    afterPnlClose?: boolean;
     tasks?: ProjectTaskTemplateInput[];
   }>;
 }
@@ -747,8 +823,10 @@ export interface UpdateProjectInput {
   code?: string;
   name?: string;
   status?: string;
-  /** Required when status changes to On Hold (reason) or At Risk (action/blocker). */
+  /** Required when status changes to On Hold (reason) or At Risk (action/blocker), and when reopening a closed project; optional note when closing. */
   statusReason?: string;
+  /** Required when status changes to closed. */
+  closeReasonCode?: ProjectCloseReasonCode;
   projectType?: string;
   marginPercent?: number | null;
   priority?: ProjectPriority | null;
@@ -757,6 +835,8 @@ export interface UpdateProjectInput {
   ownerUserId?: string | null;
   memberUserIds?: string[];
   budgetAmount?: number | null;
+  /** PL-02 "Dự án thử nghiệm" — Admin (PM) only. */
+  isTestProject?: boolean;
   plannedStartAt?: string | null;
   plannedEndAt?: string | null;
   scopeSummary?: string | null;
@@ -782,6 +862,9 @@ export interface ProjectStageSummary {
   description?: string;
   upbaseRole?: string;
   customerRole?: string;
+  /** Layer 1 inherited by the tasks of this stage (D-02). */
+  taskTypeLayer1?: "PRE_SALE" | "DELIVERY" | "PM";
+  afterPnlClose?: boolean;
   status: string;
   ownerUserId?: string;
   ownerDisplayName?: string;
@@ -950,12 +1033,55 @@ export interface UpdateProjectActivityInput {
 export type ProjectRiskCategory = "Financial" | "Operational" | "External" | "Strategic" | "Blocker" | "Risk" | "Issue";
 export type ProjectRiskLevel = "Low" | "Medium" | "High";
 
+export * from "./issue-log";
+export * from "./system-parameters";
+export * from "./gates";
+export * from "./baseline";
+export * from "./access-control";
+export * from "./pnl";
+import type { AccountType, AccountViewMode, BusinessRoleCode } from "./access-control";
+import type { ChangeRequestStepCode, IssueLogAllowedAction, IssueLogDueState, IssueLogEscalationLevel, IssueLogExtension, IssueLogHistoryEntry, IssueLogImpactArea, IssueLogSeverity, IssueLogStatus, IssueLogType } from "./issue-log";
+
+/** Core fields every issue-log record carries (V-24). `category`, `impact` and `switchTrigger` are legacy read-only values. */
 export interface ProjectRiskSummary {
   id: string;
   accountId: string;
   accountName: string;
   projectId: string;
   projectName: string;
+  code: string;
+  type: IssueLogType;
+  severity: IssueLogSeverity;
+  milestoneId?: string;
+  milestoneName?: string;
+  stageId?: string;
+  stageName?: string;
+  taskId?: string;
+  taskTitle?: string;
+  evidence?: string;
+  nextStep?: string;
+  impactArea?: IssueLogImpactArea;
+  escalationLevel: IssueLogEscalationLevel;
+  escalatedAt?: string;
+  resolutionEvidence?: string;
+  /** The owner reported it done and it waits for the PM's confirmation (V-31). */
+  resolutionProposedAt?: string;
+  cancelReason?: string;
+  closedAt?: string;
+  /** Change requests only: the 8.2 step in progress and its SLA deadline. */
+  crStep?: ChangeRequestStepCode;
+  stepDueAt?: string;
+  /** Type-specific fields (V-24). Commercial keys are absent when the reader may not see them (V-32). */
+  extension: IssueLogExtension;
+  commercialHidden: boolean;
+  isOpen: boolean;
+  ageDays: number;
+  dueState: IssueLogDueState;
+  allowedActions: IssueLogAllowedAction[];
+  canEdit: boolean;
+  history: IssueLogHistoryEntry[];
+  /** Change requests only: the stage, evaluation task and line item the system created (V-39, V-30). */
+  changeRequestLinks?: import("./baseline").ChangeRequestLinks;
   category: ProjectRiskCategory;
   description: string;
   likelihood: ProjectRiskLevel;
@@ -965,14 +1091,27 @@ export interface ProjectRiskSummary {
   dueAt?: string;
   ownerUserId?: string;
   ownerDisplayName?: string;
-  status: string;
+  status: IssueLogStatus;
   createdByUserId?: string;
   createdByDisplayName?: string;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface CreateProjectRiskInput {
+/** Editable core + extension fields of an issue-log record. Status only changes through IssueLogTransitionInput. */
+export interface IssueLogRecordFields {
+  severity?: IssueLogSeverity;
+  milestoneId?: string | null;
+  stageId?: string | null;
+  taskId?: string | null;
+  evidence?: string | null;
+  nextStep?: string | null;
+  impactArea?: IssueLogImpactArea | null;
+  extension?: IssueLogExtension;
+}
+
+export interface CreateProjectRiskInput extends IssueLogRecordFields {
+  type?: IssueLogType;
   category?: ProjectRiskCategory;
   description: string;
   likelihood?: ProjectRiskLevel;
@@ -984,7 +1123,7 @@ export interface CreateProjectRiskInput {
   status?: string;
 }
 
-export interface UpdateProjectRiskInput {
+export interface UpdateProjectRiskInput extends IssueLogRecordFields {
   category?: ProjectRiskCategory;
   description?: string;
   likelihood?: ProjectRiskLevel;
@@ -1041,6 +1180,19 @@ export interface TaskTimeEntrySummary {
   reviewedAt?: string;
   reviewNote?: string;
   sourcePlanningBlockId?: string;
+  /** Classification copied from the task when the entry was written (D-03). */
+  taskTypeLayer1?: "PRE_SALE" | "DELIVERY" | "PM";
+  taskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE";
+  /** P&L spec 12/10 point 5: the Layer 2 the person chose when logging; undefined = legacy row (no choice recorded). */
+  selectedTaskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE";
+  /** "Lớp 2 không khớp": the choice differs from the task's derived Layer 2 (taskTypeLayer2). */
+  layer2Mismatch?: boolean;
+  /** Contract line item copied from the task when the entry was written (D-03); undefined = "Chưa có hạng mục". */
+  contractItemId?: string;
+  /** D-16: logged while the project was "Tạm dừng"; the PM reviews it. */
+  loggedWhileOnHold?: boolean;
+  /** Section 9.2: part of a day above 8 hours dated before the effective date — kept as logged, "trước quy tắc 8 giờ". */
+  beforeEightHourRule?: boolean;
   createdAt: string;
   updatedAt?: string;
 }
@@ -1091,12 +1243,14 @@ export interface DailyActualLogStatus {
   localDate: string;
   timeZone: "Asia/Ho_Chi_Minh";
   totalMinutes: number;
-  targetMinutes: 480;
+  targetMinutes: number;
   state: DailyActualLogState;
 }
 
 export interface CreateTaskTimeEntryResponse extends TaskTimeEntrySummary {
   dailyActualLog: DailyActualLogStatus;
+  /** P&L spec A-1a: the work date falls in a locked cost period — the hour is saved and waits at "Chờ xử lý – Tháng đã khóa". */
+  savedInLockedPeriod?: boolean;
 }
 
 export interface TaskPlanningBlockSummary {
@@ -1144,8 +1298,14 @@ export interface ProjectTaskSummary {
   title: string;
   description?: string;
   taskType: string;
+  /** Layer 1 (vai trò đóng góp), inherited from the stage; undefined = "Chờ phân loại". */
   taskTypeLayer1?: "PRE_SALE" | "DELIVERY" | "PM";
-  taskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE" | "DAY_OFF_COMPANY";
+  /** Layer 2 (bối cảnh công việc), derived by the API and read-only; undefined = "Chờ phân loại". */
+  taskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE";
+  /** D-01: the contract line item; undefined = "Chưa có hạng mục". Code and name are read-only display fields. */
+  contractItemId?: string;
+  contractItemCode?: string;
+  contractItemName?: string;
   status: string;
   priority: string;
   ownerUserId?: string;
@@ -1294,7 +1454,9 @@ export interface CreateProjectTaskInput {
   taskType?: string;
   /** BRD v2 two-layer task classification used by analytics and governance. */
   taskTypeLayer1?: "PRE_SALE" | "DELIVERY" | "PM";
-  taskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE" | "DAY_OFF_COMPANY";
+  taskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE";
+  /** D-06: omitted = the project's only / root line item. Any other item needs PM (Admin) rights. */
+  contractItemId?: string | null;
   status?: string;
   priority?: string;
   ownerUserId?: string;
@@ -1319,7 +1481,12 @@ export interface UpdateProjectTaskInput {
   description?: string | null;
   taskType?: string;
   taskTypeLayer1?: "PRE_SALE" | "DELIVERY" | "PM" | null;
-  taskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE" | "DAY_OFF_COMPANY" | null;
+  taskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE" | null;
+  /** D-05: moving a task to another line item is PM (Admin) only and needs contractItemChangeReason. */
+  contractItemId?: string | null;
+  contractItemChangeReason?: string;
+  /** D-21: why an Admin changes dates or estimate after baseline B1 is locked; kept on the new B1 version. */
+  planChangeReason?: string;
   status?: string;
   priority?: string;
   ownerUserId?: string | null;
@@ -1350,6 +1517,15 @@ export interface CreateTaskTimeEntryInput {
   workType?: string;
   approvalStatus?: string;
   note?: string;
+  /** Required. Layer 2 chosen by the person logging (P&L spec 12/10 point 5). */
+  selectedTaskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE";
+}
+
+/** PATCH tasks/time-entries/:entryId/layer2 — correct a wrongly chosen Layer 2 while the cost period is open. */
+export interface UpdateTaskTimeEntryLayer2Input {
+  selectedTaskTypeLayer2: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE";
+  /** Required once the project passed G7 (its P&L closing point): only an Admin may still correct Layer 2, with a reason. */
+  reason?: string;
 }
 
 export interface ReviewTaskTimeEntryInput {
@@ -1381,8 +1557,10 @@ export interface SubmitTaskPlanInput {
   plannedStartAt?: string | null;
   dueAt?: string | null;
   estimateMinutes?: number;
-  taskTypeLayer1: "PRE_SALE" | "DELIVERY" | "PM";
-  taskTypeLayer2: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE" | "DAY_OFF_COMPANY";
+  /** @deprecated Ignored: submitting a plan never reclassifies the task (D-02, D-04). */
+  taskTypeLayer1?: "PRE_SALE" | "DELIVERY" | "PM";
+  /** @deprecated Ignored: Layer 2 is derived by the API. */
+  taskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE";
 }
 
 export interface TimelineChangeRequestInput {
@@ -1402,37 +1580,6 @@ export interface OvertimePlanInput {
   projectId?: string;
   workDate: string;
   plannedMinutes: number;
-  reason: string;
-}
-
-export interface ResourceMonthlyCostInput {
-  userId: string;
-  periodKey: string;
-  periodStart: string;
-  periodEnd: string;
-  currency?: string;
-  p1BaseAmount?: number;
-  p2AllowanceAmount?: number;
-  p3PerformanceAmount?: number;
-  p4OtherVariableAmount?: number;
-  overtimeAmount?: number;
-  socialInsuranceAmount?: number;
-  pitAmount?: number;
-  otherAmount?: number;
-  totalMonthlyIncome?: number;
-  hourlyCostRate?: number;
-}
-
-export interface PnlPeriodInput {
-  projectId?: string;
-  periodKey: string;
-  periodStart: string;
-  periodEnd: string;
-  revenueAmount?: number;
-  currency?: string;
-}
-
-export interface ReopenPnlPeriodInput {
   reason: string;
 }
 
@@ -1599,37 +1746,8 @@ export const PROJECT_BUDGET_STATUSES = [
   { code: "superseded", label: "Superseded" }
 ] as const;
 
-export const PROJECT_PL_SNAPSHOT_STATUSES = [
-  { code: "draft", label: "Draft" },
-  { code: "locked", label: "Locked" },
-  { code: "superseded", label: "Superseded" }
-] as const;
-
 export type ProjectCostType = (typeof PROJECT_COST_TYPES)[number]["code"];
 export type ProjectBudgetStatus = (typeof PROJECT_BUDGET_STATUSES)[number]["code"];
-export type ProjectPlSnapshotStatus = (typeof PROJECT_PL_SNAPSHOT_STATUSES)[number]["code"];
-
-export interface CostRateProfileSummary {
-  id: string;
-  userId?: string;
-  userDisplayName?: string;
-  role: string;
-  currency: string;
-  hourlyCostRate: number;
-  effectiveFrom: string;
-  effectiveTo?: string;
-  active: boolean;
-}
-
-export interface CreateCostRateProfileInput {
-  userId?: string;
-  role: string;
-  currency?: string;
-  hourlyCostRate: number;
-  effectiveFrom: string;
-  effectiveTo?: string;
-  active?: boolean;
-}
 
 export interface ProjectBudgetSummary {
   id: string;
@@ -1659,219 +1777,6 @@ export interface UpsertProjectBudgetInput {
   baselineMinutes?: number;
   contingencyPercent?: number;
   status?: ProjectBudgetStatus;
-}
-
-export interface ProjectCostSummary {
-  id: string;
-  accountId: string;
-  projectId: string;
-  taskTimeEntryId?: string;
-  costType: ProjectCostType;
-  label: string;
-  currency: string;
-  amount: number;
-  occurredAt: string;
-  billable: boolean;
-  note?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CreateProjectCostInput {
-  accountId: string;
-  projectId: string;
-  taskTimeEntryId?: string;
-  costType?: ProjectCostType;
-  label: string;
-  currency?: string;
-  amount: number;
-  occurredAt?: string;
-  billable?: boolean;
-  note?: string;
-}
-
-export interface ProjectPlSnapshotSummary {
-  id: string;
-  accountId: string;
-  projectId: string;
-  projectName?: string;
-  periodStart: string;
-  periodEnd: string;
-  currency: string;
-  revenueAmount: number;
-  budgetAmount: number;
-  plannedCostAmount: number;
-  actualLaborCostAmount: number;
-  directCostAmount: number;
-  writeOffAmount: number;
-  totalCostAmount: number;
-  grossMarginAmount: number;
-  grossMarginPercent?: number;
-  status: ProjectPlSnapshotStatus;
-  createdAt: string;
-}
-
-export interface CreateProjectPlSnapshotInput {
-  periodStart: string;
-  periodEnd: string;
-  currency?: string;
-  status?: ProjectPlSnapshotStatus;
-}
-
-export interface ProjectPlSummaryItem {
-  accountId: string;
-  accountName?: string;
-  projectId: string;
-  projectName: string;
-  currency: string;
-  plannedRevenueAmount: number;
-  paidRevenueAmount: number;
-  customRevenueAmount?: number;
-  plannedCostAmount: number;
-  approvedLaborMinutes: number;
-  actualLaborCostAmount: number;
-  directCostAmount: number;
-  writeOffAmount: number;
-  totalCostAmount: number;
-  grossMarginAmount: number;
-  grossMarginPercent?: number;
-  latestSnapshot?: ProjectPlSnapshotSummary;
-  /** The single revenue figure the margin is computed on. */
-  revenueAmount: number;
-  revenueBasis: ProjectPlRevenueBasis;
-  /** Total cost ÷ revenue, in percent. Absent when there is no revenue for the range. */
-  expenseRatioPercent?: number;
-  /** Approved minutes whose owner has no cost rate on the work date; their cost is NOT in the totals. */
-  missingRateMinutes: number;
-  laborByPerson: ProjectPlLaborPerson[];
-  /** Non-labor cost lines entered for the project in the reporting range. */
-  costItems: ProjectCostItem[];
-  /** Totals of costItems per BRD expense group. */
-  costByCategory: Record<ProjectCostCategory, number>;
-  /** Share of the month's shared cost pool allocated to this project. */
-  sharedCostAmount: number;
-  /** Costs produced by the formulas users defined in the P&L setup; already inside costByCategory and totalCostAmount. */
-  calculatedCostAmount: number;
-  calculatedItems: ProjectPlCalculatedItem[];
-  /** Plan for the range: scheduled planning blocks in a period, task estimates for the whole project. */
-  plannedMinutes: number;
-  plannedMinutesBasis: "planning_blocks" | "task_estimates";
-  /** True when the figures come from a locked month snapshot. */
-  locked: boolean;
-  /** Everything in totalCostAmount that is not labor (totalCostAmount − actualLaborCostAmount), computed by the API. */
-  otherCostAmount: number;
-  /** Entered cost lines inside totalCostAmount (directCostAmount + writeOffAmount); frozen when locked. */
-  enteredCostAmount: number;
-  /**
-   * Locked months only: the frozen pool share + formula costs as ONE amount (a snapshot cannot split it).
-   * When present, sharedCostAmount/calculatedCostAmount are 0, calculatedItems is empty and costByCategory is all zeros;
-   * laborByPerson, approvedLaborMinutes and costItems are current data and may differ from the locked totals.
-   */
-  lockedOtherCostAmount?: number;
-}
-
-export interface ProjectPlCalculatedItem {
-  code: string;
-  label: string;
-  category: ProjectCostCategory;
-  amount: number;
-}
-
-export type ProjectCostCategory = "welfare-related" | "basic-activities" | "business-location" | "sell-marketing" | "functional-operation";
-
-export type ProjectPlRevenueBasis = "custom" | "planned" | "none";
-
-export interface ProjectPlLaborPerson {
-  userId: string;
-  displayName: string;
-  approvedMinutes: number;
-  laborCostAmount: number;
-  missingRateMinutes: number;
-  hourlyCostRate?: number;
-}
-
-export type ProjectCostItemType = "EXTERNAL" | "SOFTWARE" | "TRAVEL" | "WRITE_OFF" | "OTHER";
-
-export interface ProjectCostItem {
-  id: string;
-  projectId: string;
-  projectName?: string;
-  costType: ProjectCostItemType;
-  category: ProjectCostCategory;
-  label: string;
-  amount: number;
-  currency: string;
-  /** YYYY-MM-DD in the reporting timezone. */
-  occurredOn: string;
-  note?: string;
-}
-
-export interface ProjectCostItemInput {
-  projectId: string;
-  category: ProjectCostCategory;
-  costType?: ProjectCostItemType;
-  label: string;
-  amount: number;
-  occurredOn: string;
-  note?: string;
-}
-
-export interface CostRateRow {
-  userId: string;
-  displayName: string;
-  avatarUrl?: string;
-  role?: string;
-  /** Rate in force for the month, if any. */
-  hourlyCostRate?: number;
-  /** Month (YYYY-MM) the rate in force was entered for; equals the requested month when set directly. */
-  rateFromPeriodKey?: string;
-  approvedMinutes: number;
-  laborCostAmount: number;
-  /** True for a person who is no longer an active member but has approved minutes in the month. */
-  inactive?: boolean;
-}
-
-export interface CostRatesResponse {
-  data: CostRateRow[];
-  /** statementFrozen: the month is locked, so its P&L uses the locked snapshot, not the labor cost listed here. */
-  meta: { periodKey: string; locked: boolean; canEdit: boolean; currency: string; statementFrozen?: boolean };
-}
-
-export interface CostRateInput {
-  userId: string;
-  periodKey: string;
-  /** null clears the month's own rate so the previous month's rate applies again. */
-  hourlyCostRate: number | null;
-}
-
-export interface ProjectCostItemsResponse {
-  data: ProjectCostItem[];
-  /** canEdit is false when the requested range is one locked month. */
-  meta: { canEdit: boolean; locked?: boolean };
-}
-
-export interface ProjectPlSummaryResponse {
-  data: ProjectPlSummaryItem[];
-  meta: {
-    principal: string;
-    rowScope: string;
-    generatedAt: string;
-    source: "postgresql";
-    policy: string;
-    /** True when the requested range is one month that has been locked. */
-    locked?: boolean;
-    /** Problems in user-defined parameters or formulas; affected items are left out of the totals. */
-    formulaErrors?: string[];
-    /** The range is not made of whole months: revenue, pool and formula costs cover only fullMonthKeys. */
-    partialPeriod?: boolean;
-    /** Months (YYYY-MM) fully covered by the requested range; absent for the all-time view. */
-    fullMonthKeys?: string[];
-    /** The caller may edit P&L inputs for the viewed range (cost-edit permission and the month is not locked). */
-    canEdit?: boolean;
-    periodKey?: string;
-    periodStart?: string;
-    periodEnd?: string;
-  };
 }
 
 export interface CreateProjectProgressShareLinkInput {
@@ -2965,6 +2870,9 @@ export interface AdminAccessMemberSummary {
   workspaceId?: string;
   roleCodes: string[];
   systemRole?: WorkspaceSystemRole;
+  /** The business role bound to the account (a real role binding, not the displayRole label). */
+  businessRoleCode?: BusinessRoleCode;
+  accountType?: AccountType;
   costPermissionCodes?: CostPermissionCode[];
   employmentStatus?: EmploymentStatus;
   accountIds: string[];
@@ -3073,7 +2981,7 @@ export interface CreatePortalInvitationResponse {
   magicLink: string;
 }
 
-export type InternalRoleCode = "FOUNDER_GM" | "WORKSPACE_ADMIN" | "WORKSPACE_USER" | "SALES_OWNER" | "DELIVERY_LEAD" | "FINANCE_ADMIN" | "COST_VIEW" | "COST_EDIT" | "COST_APPROVE" | "COST_EXPORT";
+export type InternalRoleCode = BusinessRoleCode | "FOUNDER_GM" | "WORKSPACE_ADMIN" | "WORKSPACE_USER" | "SALES_OWNER" | "DELIVERY_LEAD" | "FINANCE_ADMIN" | "COST_VIEW" | "COST_EDIT" | "COST_APPROVE" | "COST_EXPORT";
 
 export interface CreateInternalUserInput {
   email: string;

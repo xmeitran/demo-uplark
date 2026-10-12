@@ -14,6 +14,7 @@ import { CrmSelect } from "@/components/crm-workspace/crm-select";
 import { FilterBar, FilterField } from "@/components/filters/filter-controls";
 import { downloadCsv } from "@/lib/csv-export";
 import { useAuth } from "@/lib/auth";
+import { isAdminView } from "@/lib/auth-role";
 import type { EmploymentStatus, WorkspaceSystemRole } from "@b2b-crm/contracts";
 import { BUSINESS_ROLE_OPTIONS, businessRoleFromMember, systemRoleFromCodes, SYSTEM_ROLE_LABELS, SYSTEM_ROLE_OPTIONS } from "@/lib/people-roles";
 
@@ -157,7 +158,7 @@ function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
 
 export default function UsersPage() {
   const { user: currentUser } = useAuth();
-  const canManageRoles = Boolean(currentUser?.roleCodes?.some((role) => role === "FOUNDER_GM" || role === "WORKSPACE_ADMIN"));
+  const canManageRoles = isAdminView(currentUser);
   const [users, setUsers]       = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError]       = useState<string | null>(null);
@@ -277,6 +278,8 @@ export default function UsersPage() {
               <p className="mt-0.5 text-sm text-muted-foreground">{canManageRoles ? "Bạn có quyền quản trị workspace này." : "Chỉ Admin mới được chỉnh quyền."}</p>
             </div>
             <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+              {/* Mục 6.7: chi phí nhân sự theo tháng của cả công ty; the API lets only the cost permission group in. */}
+              <Link href="/users/costs" className="flex items-center gap-1.5 rounded-xl border border-border px-3.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted">Chi phí theo tháng</Link>
               <button
                 type="button"
                 onClick={() => downloadCsv("uplark-users-filtered.csv", ["Name", "Email", "Role", "System role", "Status"], filtered.map((user) => [user.name, user.email, user.role, SYSTEM_ROLE_LABELS[user.systemRole], STATUS_CONFIG[user.status].label]))}

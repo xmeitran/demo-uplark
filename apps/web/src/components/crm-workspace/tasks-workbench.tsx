@@ -3,7 +3,13 @@ import { apiErrorMessage, isNetworkFailure, readApiError, ApiResponseError } fro
 import { isActualTimeEntry } from "@/lib/time-entry-actual";
 import { allowedPerformers } from "@/lib/task-people-policy";
 import { defaultWorkLogDate } from "@/lib/work-log-date";
+import {
+  TASK_TYPE_LAYER1_FIELD_LABEL, TASK_TYPE_LAYER1_OPTIONS, TASK_TYPE_LAYER2_FIELD_LABEL, TASK_TYPE_PENDING_LABEL,
+  defaultSelectedLayer2, layer2OptionsForTask, taskTypeLayer1Label, taskTypeLayer2Label, type TaskTypeLayer1
+} from "@/lib/task-classification";
 import { useTaskPeople } from "@/hooks/use-task-people";
+import { CONTRACT_ITEM_FIELD_LABEL } from "@/lib/contract-item";
+import { defaultContractItemId, useProjectContractItems } from "@/hooks/use-project-contract-items";
 
 import { useRouter } from "next/navigation";
 import React, { useId, useState, useEffect, useLayoutEffect, useRef } from "react";
@@ -171,6 +177,8 @@ export type CreateTaskStageOption = {
   phase?: string | null;
   projectId?: string | null;
   taskType?: string | null;
+  /** Layer 1 the stage hands to its tasks (D-02). */
+  taskTypeLayer1?: string | null;
 };
 
 function getDropdownIconName(icon?: string): ShopifyIconName {
@@ -1007,13 +1015,14 @@ export function FormTextArea({
 }
 
 // Modals definitions
+/** Form value for "no explicit Layer 1": the API then takes the stage's value (D-02). */
+const INHERIT_TASK_TYPE_LAYER1 = "inherit";
 export type CreateTaskModalDefaults = {
   accountId?: string;
   projectId?: string;
   stageId?: string;
   taskType?: string;
-  taskTypeLayer1?: "PRE_SALE" | "DELIVERY" | "PM";
-  taskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE" | "DAY_OFF_COMPANY";
+  taskTypeLayer1?: TaskTypeLayer1;
   title?: string;
   description?: string;
 };
@@ -1077,8 +1086,13 @@ export function CreateTaskModal({
   const [stageId, setStageId] = useState(defaults?.stageId || "none");
   const [priority, setPriority] = useState("medium");
   const [taskType, setTaskType] = useState(defaults?.taskType || "implementation");
-  const [taskTypeLayer1, setTaskTypeLayer1] = useState<CreateTaskModalDefaults["taskTypeLayer1"]>(defaults?.taskTypeLayer1 || "DELIVERY");
-  const [taskTypeLayer2, setTaskTypeLayer2] = useState<CreateTaskModalDefaults["taskTypeLayer2"]>(defaults?.taskTypeLayer2 || "CUSTOMER_PROJECT");
+  // "inherit" = take the stage's Layer 1 (D-02). Layer 2 is derived by the API and never chosen (D-04).
+  const [taskTypeLayer1, setTaskTypeLayer1] = useState<TaskTypeLayer1 | typeof INHERIT_TASK_TYPE_LAYER1>(defaults?.taskTypeLayer1 || INHERIT_TASK_TYPE_LAYER1);
+  // D-06: the select only shows when the project has several line items; the API assigns the only / root one otherwise.
+  const [contractItemId, setContractItemId] = useState<string | undefined>(undefined);
+  const contractItems = useProjectContractItems(projectId === "none" ? "" : projectId);
+  const activeContractItems = contractItems.items.filter((item) => item.status === "active");
+  const selectedContractItemId = activeContractItems.some((item) => item.id === contractItemId) ? contractItemId : defaultContractItemId(contractItems.items);
   const [assigneeUserIds, setAssigneeUserIds] = useState<string[]>([defaultAssigneeUserId]);
   const [plannedStartAt, setPlannedStartAt] = useState("");
   const [dueAt, setDueAt] = useState("");
@@ -1120,8 +1134,7 @@ export function CreateTaskModal({
     setStageId(defaultStageIsValid ? defaults?.stageId || "none" : "none");
     setPriority("medium");
     setTaskType(defaults?.taskType || "implementation");
-    setTaskTypeLayer1(defaults?.taskTypeLayer1 || "DELIVERY");
-    setTaskTypeLayer2(defaults?.taskTypeLayer2 || "CUSTOMER_PROJECT");
+    setTaskTypeLayer1(defaults?.taskTypeLayer1 || INHERIT_TASK_TYPE_LAYER1);
     // New tasks start with the account that is actually signed in. Users with
     // permission to assign others can still change this explicitly.
     setAssigneeUserIds([defaultAssigneeUserId]);
@@ -1129,7 +1142,7 @@ export function CreateTaskModal({
     setDueAt("");
     setEstimateMinutes("");
     setCustomerVisible(false);
-  }, [isOpen, defaults?.accountId, defaults?.projectId, defaults?.stageId, defaults?.taskType, defaults?.taskTypeLayer1, defaults?.taskTypeLayer2, defaults?.title, defaults?.description, accounts, projects, stages, assigneeSelectOptions, defaultAssigneeUserId]);
+  }, [isOpen, defaults?.accountId, defaults?.projectId, defaults?.stageId, defaults?.taskType, defaults?.taskTypeLayer1, defaults?.title, defaults?.description, accounts, projects, stages, assigneeSelectOptions, defaultAssigneeUserId]);
 
   const handleAccountChange = (nextAccountId: string) => {
     setAccountId(nextAccountId);
@@ -1169,10 +1182,6 @@ export function CreateTaskModal({
       alert("Cần nhập tiêu đề, chọn khách hàng và chọn người phụ trách thật trước khi tạo công việc.");
       return;
     }
-    if (!taskTypeLayer1 || !taskTypeLayer2) {
-      alert("Cần chọn đủ 2 lớp Task Type trước khi tạo công việc.");
-      return;
-    }
 
     const accountObj = accounts.find(a => a.id === accountId);
     const projectObj = projects.find(p => p.id === projectId);
@@ -1191,8 +1200,8 @@ export function CreateTaskModal({
         stageId: selectedStageCanPersist ? stageId : undefined,
         priority,
         taskType,
-        taskTypeLayer1,
-        taskTypeLayer2,
+        taskTypeLayer1: taskTypeLayer1 === INHERIT_TASK_TYPE_LAYER1 ? undefined : taskTypeLayer1,
+        contractItemId: activeContractItems.length > 1 ? selectedContractItemId : undefined,
         assigneeUserId,
         assigneeUserIds,
         assignees: assigneeUserIds.map((userId) => assigneeSelectOptions.find((option) => option.value === userId)).filter(Boolean).map((option) => ({ userId: option!.value, displayName: option!.label, avatarUrl: option!.avatarUrl })),
@@ -1268,26 +1277,31 @@ export function CreateTaskModal({
 
         <div className="task-form-grid" style={{ zIndex: 1003 }}>
           <CustomDropdown
-            label="Task Type · Nhóm"
-            value={taskTypeLayer1 || "DELIVERY"}
+            label={TASK_TYPE_LAYER1_FIELD_LABEL}
+            value={taskTypeLayer1}
             options={[
-              { value: "PRE_SALE", label: "Pre-sale · Công việc BD", icon: "cash" },
-              { value: "DELIVERY", label: "Delivery", icon: "order" },
-              { value: "PM", label: "Quản trị nội bộ", icon: "settings" }
+              { value: INHERIT_TASK_TYPE_LAYER1, label: `Theo stage · ${taskTypeLayer1Label(stages.find((stage) => stage.id === stageId)?.taskTypeLayer1)}`, icon: "order" },
+              ...TASK_TYPE_LAYER1_OPTIONS
             ]}
-            onChange={(value) => setTaskTypeLayer1(value as CreateTaskModalDefaults["taskTypeLayer1"])}
+            onChange={(value) => setTaskTypeLayer1(value as TaskTypeLayer1 | typeof INHERIT_TASK_TYPE_LAYER1)}
           />
           <CustomDropdown
-            label="Task Type · Bối cảnh"
-            value={taskTypeLayer2 || "CUSTOMER_PROJECT"}
-            options={[
-              { value: "CUSTOMER_PROJECT", label: "Project khách hàng", icon: "order" },
-              { value: "INTERNAL_PROJECT", label: "Nội bộ / Project nội bộ", icon: "settings" },
-              { value: "TICKET_MAINTENANCE", label: "Ticket / Bảo trì", icon: "tool" },
-              { value: "DAY_OFF_COMPANY", label: "Ngày nghỉ công ty", icon: "calendar" }
-            ]}
-            onChange={(value) => setTaskTypeLayer2(value as CreateTaskModalDefaults["taskTypeLayer2"])}
+            label={TASK_TYPE_LAYER2_FIELD_LABEL}
+            value="derived"
+            options={[{ value: "derived", label: "Hệ thống tự gán khi lưu" }]}
+            onChange={() => undefined}
+            disabled
           />
+          {activeContractItems.length > 1 ? (
+            <CustomDropdown
+              label={CONTRACT_ITEM_FIELD_LABEL}
+              value={selectedContractItemId ?? ""}
+              options={activeContractItems.map((item) => ({ value: item.id, label: `${item.code} · ${item.name} (${item.contractTypeLabel})` }))}
+              onChange={setContractItemId}
+              disabled={!contractItems.canManage}
+            />
+          ) : null}
+          <p className="col-span-full -mt-2 text-[11px] text-slate-500">Lớp 1 mặc định theo stage; chỉ PM/Admin đổi khác stage. Lớp 2 do hệ thống suy ra từ dự án và stage, không chọn tay.</p>
         </div>
 
         <div className="task-form-grid" style={{ zIndex: 1002 }}>
@@ -1368,8 +1382,15 @@ export function EditTaskModal({
   const [projectId, setProjectId] = useState(task?.projectId || "none");
   const [priority, setPriority] = useState(task?.priority || "medium");
   const [taskType, setTaskType] = useState(task?.taskType || "implementation");
-  const [taskTypeLayer1, setTaskTypeLayer1] = useState(task?.taskTypeLayer1 || "DELIVERY");
-  const [taskTypeLayer2, setTaskTypeLayer2] = useState(task?.taskTypeLayer2 || "CUSTOMER_PROJECT");
+  // Empty stays empty ("Chờ phân loại"): the form never invents a classification. Layer 2 is shown read-only (D-04).
+  const [taskTypeLayer1, setTaskTypeLayer1] = useState<TaskTypeLayer1 | typeof INHERIT_TASK_TYPE_LAYER1>(task?.taskTypeLayer1 || INHERIT_TASK_TYPE_LAYER1);
+  // D-05: only a PM (Admin) moves a task to another line item, with a reason; a sub-task repeats its parent.
+  const [contractItemId, setContractItemId] = useState<string | undefined>(task?.contractItemId);
+  const [contractItemChangeReason, setContractItemChangeReason] = useState("");
+  const contractItems = useProjectContractItems(task?.projectId ?? "");
+  const activeContractItems = contractItems.items.filter((item) => item.status === "active" || item.id === task?.contractItemId);
+  const selectedContractItemId = contractItemId ?? task?.contractItemId ?? defaultContractItemId(contractItems.items);
+  const contractItemMoved = Boolean(task?.contractItemId) && selectedContractItemId !== task?.contractItemId;
   const [assigneeUserIds, setAssigneeUserIds] = useState<string[]>(task?.assigneeUserIds?.length ? task.assigneeUserIds : (task?.assigneeUserId ? [task.assigneeUserId] : []));
   const [plannedStartAt, setPlannedStartAt] = useState(toVietnamDateInputValue(task?.plannedStartAt));
   const [dueAt, setDueAt] = useState(toVietnamDateInputValue(task?.dueAt));
@@ -1386,8 +1407,7 @@ export function EditTaskModal({
       setProjectId(task.projectId || "none");
       setPriority(task.priority || "medium");
       setTaskType(task.taskType || "implementation");
-      setTaskTypeLayer1(task.taskTypeLayer1 || "DELIVERY");
-      setTaskTypeLayer2(task.taskTypeLayer2 || "CUSTOMER_PROJECT");
+      setTaskTypeLayer1(task.taskTypeLayer1 || INHERIT_TASK_TYPE_LAYER1);
       const nextAssigneeUserIds = task.assigneeUserIds?.filter((userId) => assigneeSelectOptions.some((option) => option.value === userId))
         ?? (task.assigneeUserId && assigneeSelectOptions.some((option) => option.value === task.assigneeUserId) ? [task.assigneeUserId] : []);
       setAssigneeUserIds(nextAssigneeUserIds.length > 0 ? nextAssigneeUserIds : (assigneeSelectOptions[0]?.value ? [assigneeSelectOptions[0].value] : []));
@@ -1402,10 +1422,6 @@ export function EditTaskModal({
     e.preventDefault();
     if (!title || !accountId) {
       alert("Cần nhập tiêu đề và chọn khách hàng trước khi lưu công việc.");
-      return;
-    }
-    if (!taskTypeLayer1 || !taskTypeLayer2) {
-      alert("Cần chọn đủ 2 lớp Task Type trước khi lưu công việc.");
       return;
     }
 
@@ -1423,8 +1439,9 @@ export function EditTaskModal({
       projectName: projectId === "none" ? undefined : projectObj?.name,
       priority,
       taskType,
-      taskTypeLayer1,
-      taskTypeLayer2,
+      taskTypeLayer1: taskTypeLayer1 === INHERIT_TASK_TYPE_LAYER1 ? undefined : taskTypeLayer1,
+      contractItemId: activeContractItems.length > 1 ? selectedContractItemId : undefined,
+      contractItemChangeReason: contractItemMoved ? contractItemChangeReason.trim() || undefined : undefined,
       assigneeUserId,
       assigneeUserIds,
       assignees: assigneeUserIds.map((userId) => assigneeSelectOptions.find((option) => option.value === userId)).filter(Boolean).map((option) => ({ userId: option!.value, displayName: option!.label, avatarUrl: option!.avatarUrl })),
@@ -1493,26 +1510,33 @@ export function EditTaskModal({
 
         <div className="task-form-grid" style={{ zIndex: 1003 }}>
           <CustomDropdown
-            label="Task Type · Nhóm"
+            label={TASK_TYPE_LAYER1_FIELD_LABEL}
             value={taskTypeLayer1}
             options={[
-              { value: "PRE_SALE", label: "Pre-sale · Công việc BD", icon: "cash" },
-              { value: "DELIVERY", label: "Delivery", icon: "order" },
-              { value: "PM", label: "Quản trị nội bộ", icon: "settings" }
+              ...(task?.taskTypeLayer1 ? [] : [{ value: INHERIT_TASK_TYPE_LAYER1, label: TASK_TYPE_PENDING_LABEL }]),
+              ...TASK_TYPE_LAYER1_OPTIONS
             ]}
             onChange={(value) => setTaskTypeLayer1(value as typeof taskTypeLayer1)}
+            disabled={Boolean(task?.parentTaskId)}
           />
           <CustomDropdown
-            label="Task Type · Bối cảnh"
-            value={taskTypeLayer2}
-            options={[
-              { value: "CUSTOMER_PROJECT", label: "Project khách hàng", icon: "order" },
-              { value: "INTERNAL_PROJECT", label: "Nội bộ / Project nội bộ", icon: "settings" },
-              { value: "TICKET_MAINTENANCE", label: "Ticket / Bảo trì", icon: "tool" },
-              { value: "DAY_OFF_COMPANY", label: "Ngày nghỉ công ty", icon: "calendar" }
-            ]}
-            onChange={(value) => setTaskTypeLayer2(value as typeof taskTypeLayer2)}
+            label={TASK_TYPE_LAYER2_FIELD_LABEL}
+            value="derived"
+            options={[{ value: "derived", label: taskTypeLayer2Label(task?.taskTypeLayer2) }]}
+            onChange={() => undefined}
+            disabled
           />
+          {activeContractItems.length > 1 ? (
+            <CustomDropdown
+              label={CONTRACT_ITEM_FIELD_LABEL}
+              value={selectedContractItemId ?? ""}
+              options={activeContractItems.map((item) => ({ value: item.id, label: `${item.code} · ${item.name} (${item.contractTypeLabel})` }))}
+              onChange={setContractItemId}
+              disabled={!contractItems.canManage || Boolean(task?.parentTaskId)}
+            />
+          ) : null}
+          {contractItemMoved ? <FormField label="Lý do đổi hạng mục" value={contractItemChangeReason} onChange={e => setContractItemChangeReason(e.target.value)} placeholder="Bắt buộc khi chuyển task sang hạng mục khác" required /> : null}
+          <p className="col-span-full -mt-2 text-[11px] text-slate-500">{task?.parentTaskId ? "Sub-task theo Lớp 1 của task cha. " : "Chỉ PM/Admin đổi Lớp 1 của task. "}Lớp 2 do hệ thống suy ra, chỉ đọc.</p>
         </div>
 
         <div className="task-form-grid" style={{ zIndex: 1002 }}>
@@ -1730,6 +1754,8 @@ export function LogWorkModal({
   const [workDate, setWorkDate] = useState("");
   const [workType, setWorkType] = useState("delivery");
   const [billable, setBillable] = useState(true);
+  // P&L spec 12/10 point 5: the person logging chooses Layer 2; pre-selected to the task's derived value.
+  const [selectedLayer2, setSelectedLayer2] = useState<string>("");
   const [completeTask, setCompleteTask] = useState(false);
   const [userId, setUserId] = useState("none");
   const [submitting, setSubmitting] = useState(false);
@@ -1755,6 +1781,7 @@ export function LogWorkModal({
       setWorkType(task.taskType || "delivery");
       setNote("");
       setBillable(true);
+      setSelectedLayer2(defaultSelectedLayer2(task.taskTypeLayer2));
       setCompleteTask(false);
       setUseTimeSlot(true);
       setStartTime("09:00");
@@ -1815,6 +1842,7 @@ export function LogWorkModal({
     if (people.loading || people.error || !performerOptions.some(option => option.value === userId)) { setSubmitError("Select an active project member as the performer."); return; }
     if (!minutes || !workDate) return;
     if (useTimeSlot && (!startTime || !endTime)) return;
+    if (step === "actual" && !selectedLayer2) { setSubmitError(`Chọn ${TASK_TYPE_LAYER2_FIELD_LABEL} cho giờ log này.`); return; }
     if (actualValidationMessage) {
       setSubmitError(actualValidationMessage);
       return;
@@ -1836,6 +1864,7 @@ export function LogWorkModal({
         workDate,
         workType,
         billable,
+        selectedTaskTypeLayer2: step === "actual" ? selectedLayer2 : undefined,
         completeTask,
         userId: userId === "none" ? undefined : userId,
         startTime: useTimeSlot ? startTime : undefined,
@@ -1996,7 +2025,6 @@ export function LogWorkModal({
               options={[
                 { value: "delivery",       label: "Triển khai",         icon: "settings", pillBg: "#dbeafe", pillColor: "#1d4ed8" },
                 { value: "consulting",     label: "Tư vấn khách hàng",  icon: "person",   pillBg: "#f3e8ff", pillColor: "#7e22ce" },
-                { value: "meeting",        label: "Họp",                 icon: "calendar", pillBg: "#e0f2fe", pillColor: "#0369a1" },
                 { value: "training",       label: "Đào tạo người dùng",  icon: "star",     pillBg: "#d1fae5", pillColor: "#065f46" },
                 { value: "support",        label: "Sửa lỗi / hỗ trợ",   icon: "clock",    pillBg: "#fef3c7", pillColor: "#92400e" },
                 { value: "blueprint",      label: "Thiết kế giải pháp",  icon: "order",    pillBg: "#ede9fe", pillColor: "#6d28d9" },
@@ -2007,6 +2035,20 @@ export function LogWorkModal({
               onChange={setWorkType}
             />
           </div>
+          {step === "actual" ? (
+            <div className="mb-3">
+              <CustomDropdown
+                id="log-work-layer2"
+                label={<>{TASK_TYPE_LAYER2_FIELD_LABEL} <span className="text-rose-500">*</span></>}
+                value={selectedLayer2}
+                options={[...(selectedLayer2 ? [] : [{ value: "", label: "Chọn Lớp 2" }]), ...layer2OptionsForTask(task?.taskTypeLayer1)]}
+                onChange={setSelectedLayer2}
+              />
+              {selectedLayer2 && task?.taskTypeLayer2 && selectedLayer2 !== task.taskTypeLayer2 ? (
+                <p className="mt-1 text-[11px] text-amber-700">Task đang là “{taskTypeLayer2Label(task.taskTypeLayer2)}”. Giờ vẫn được lưu nhưng sẽ Chờ xử lý với lý do Lớp 2 không khớp.</p>
+              ) : null}
+            </div>
+          ) : null}
           {people.principalUserId && userId === people.principalUserId ? (
             <p className="-mt-2 mb-3 text-[11px] text-slate-500">Mặc định là tài khoản đang đăng nhập. Bạn có thể đổi người thực hiện nếu có quyền.</p>
           ) : null}
@@ -2171,7 +2213,8 @@ export function TasksWorkbench({
       description: taskInput.description,
       taskType: taskInput.taskType,
       taskTypeLayer1: taskInput.taskTypeLayer1,
-      taskTypeLayer2: taskInput.taskTypeLayer2,
+      contractItemId: taskInput.contractItemId,
+      contractItemChangeReason: taskInput.contractItemChangeReason,
       priority: taskInput.priority,
       ownerUserId: taskInput.assigneeUserId,
       assigneeUserId: taskInput.assigneeUserId,
@@ -2261,7 +2304,7 @@ export function TasksWorkbench({
       description: taskInput.description,
       taskType: taskInput.taskType,
       taskTypeLayer1: taskInput.taskTypeLayer1,
-      taskTypeLayer2: taskInput.taskTypeLayer2,
+      contractItemId: taskInput.contractItemId,
       status: "todo",
       priority: taskInput.priority,
       ownerUserId: taskInput.assigneeUserId,
@@ -2296,7 +2339,7 @@ export function TasksWorkbench({
         description: taskInput.description,
         taskType: taskInput.taskType,
         taskTypeLayer1: taskInput.taskTypeLayer1,
-        taskTypeLayer2: taskInput.taskTypeLayer2,
+      contractItemId: taskInput.contractItemId,
         status: "todo",
         priority: taskInput.priority,
         ownerUserId: taskInput.assigneeUserId,
@@ -2351,7 +2394,7 @@ export function TasksWorkbench({
         description: taskInput.description,
         taskType: taskInput.taskType,
         taskTypeLayer1: taskInput.taskTypeLayer1,
-        taskTypeLayer2: taskInput.taskTypeLayer2,
+      contractItemId: taskInput.contractItemId,
         status: "todo",
         priority: taskInput.priority,
         ownerUserId: taskInput.assigneeUserId,
@@ -2488,6 +2531,7 @@ export function TasksWorkbench({
       if (!response.ok) throw await readApiError(response);
 
       const savedEntry = await response.json() as CreateTaskTimeEntryResponse;
+      if (savedEntry.savedInLockedPeriod) triggerToast("Giờ đã được lưu, nhưng tháng này đã khóa kỳ chi phí nên giờ nằm ở Chờ xử lý cho tới khi Admin mở lại kỳ.", "warning");
       const { dailyActualLog, ...savedTimeEntry } = savedEntry;
       const capacityFeedback = getDailyActualLogFeedback(
         dailyActualLog,

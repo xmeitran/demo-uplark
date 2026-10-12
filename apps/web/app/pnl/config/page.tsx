@@ -1,9 +1,6 @@
-import { PnlConfigPage } from "@/components/pnl/pnl-config-workbench";
+import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-export const fetchCache = "force-no-store";
-
+/** Old address of "Admin › Thiết lập P&L". The five tabs (Khoản mục, Tham số, Quỹ chi phí chung, Kỳ và khóa kỳ, Mẫu khoản mục) live at /pnl/costs. */
 export default function PnlConfigRoute() {
-  return <PnlConfigPage />;
+  redirect("/pnl/costs?tab=periods");
 }

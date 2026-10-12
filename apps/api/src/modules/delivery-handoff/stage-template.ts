@@ -61,6 +61,11 @@ export const DEFAULT_PROJECT_STAGE_TEMPLATE = [
  * The legacy template above is kept for backwards compatibility with older
  * integrations; new projects explicitly opting into the automatic format use
  * this four-milestone / nine-stage structure.
+ * Each stage carries the Layer 1 its tasks inherit (rules 4.1, D-02) and its position against the P&L close gate G7
+ * (section 3.4: Milestone 4 is after it), which drives the derived Layer 2.
+ * `gateCode` names the gate of table 8.1 that sits at the END of the stage; its definition (documents, who prepares,
+ * who approves, customer confirmation, what opens next) is PROJECT_GATE_CATALOGUE[gateCode] in @b2b-crm/contracts.
+ * Intake and Optimize have no gate of their own (Optimize's is merged into G8, chốt 11/10 #10).
  */
 export const PILOT_PROJECT_MILESTONE_TEMPLATE = [
   {
@@ -75,6 +80,8 @@ export const PILOT_PROJECT_MILESTONE_TEMPLATE = [
     stages: [
       {
         stageKey: "intake",
+        taskTypeLayer1: "PRE_SALE",
+        afterPnlClose: false,
         phase: "intake",
         activity: "Intake",
         sortOrder: 10,
@@ -91,6 +98,9 @@ export const PILOT_PROJECT_MILESTONE_TEMPLATE = [
       },
       {
         stageKey: "validate",
+        gateCode: "G1",
+        taskTypeLayer1: "PRE_SALE",
+        afterPnlClose: false,
         phase: "validate",
         activity: "Validate scope & kick-off",
         sortOrder: 20,
@@ -118,9 +128,9 @@ export const PILOT_PROJECT_MILESTONE_TEMPLATE = [
     customerConfirmationRequired: true,
     reviewerMode: "workspace_admin",
     stages: [
-      { stageKey: "design", phase: "design", activity: "Design", sortOrder: 10, cumulativePercent: 40, activityPercent: 20, criteria: "BRD/FRD/SRS hoàn tất và được duyệt.", upbaseRole: "Dx", customerRole: "Business Owner", slaDays: 3, tasks: [{ title: "Xây dựng bộ tài liệu thiết kế giải pháp (Form, Flow, Data, Permission).", subtasks: [] }] },
-      { stageKey: "build", phase: "build", activity: "Build", sortOrder: 20, cumulativePercent: 65, activityPercent: 25, criteria: "Hệ thống đã build, có URL và test case.", upbaseRole: "Dx", customerRole: "Technical Owner", slaDays: 5, tasks: [{ title: "Cấu hình và xây dựng hệ thống vận hành trên Lark.", subtasks: [] }, { title: "Import dữ liệu mẫu, UAT nội bộ, Fix bug.", subtasks: [] }] },
-      { stageKey: "deployment_preparation", phase: "deployment_preparation", activity: "Deployment Preparation", sortOrder: 30, cumulativePercent: 72, activityPercent: 7, criteria: "SOP và video hướng dẫn đã sẵn sàng.", upbaseRole: "Dx / PQA", customerRole: "Operations Owner", slaDays: 2, tasks: [{ title: "Xây dựng tài liệu hướng dẫn vận hành (SOP + Video).", subtasks: [] }, { title: "Chuẩn hoá và Import dữ liệu (nếu có).", subtasks: [] }] }
+      { stageKey: "design", gateCode: "G2",taskTypeLayer1: "DELIVERY", afterPnlClose: false, phase: "design", activity: "Design", sortOrder: 10, cumulativePercent: 40, activityPercent: 20, criteria: "BRD/FRD/SRS hoàn tất và được duyệt.", upbaseRole: "Dx", customerRole: "Business Owner", slaDays: 3, tasks: [{ title: "Xây dựng bộ tài liệu thiết kế giải pháp (Form, Flow, Data, Permission).", subtasks: [] }] },
+      { stageKey: "build", gateCode: "G3",taskTypeLayer1: "DELIVERY", afterPnlClose: false, phase: "build", activity: "Build", sortOrder: 20, cumulativePercent: 65, activityPercent: 25, criteria: "Hệ thống đã build, có URL và test case.", upbaseRole: "Dx", customerRole: "Technical Owner", slaDays: 5, tasks: [{ title: "Cấu hình và xây dựng hệ thống vận hành trên Lark.", subtasks: [] }, { title: "Import dữ liệu mẫu, UAT nội bộ, Fix bug.", subtasks: [] }] },
+      { stageKey: "deployment_preparation", gateCode: "G4",taskTypeLayer1: "DELIVERY", afterPnlClose: false, phase: "deployment_preparation", activity: "Deployment Preparation", sortOrder: 30, cumulativePercent: 72, activityPercent: 7, criteria: "SOP và video hướng dẫn đã sẵn sàng.", upbaseRole: "Dx / PQA", customerRole: "Operations Owner", slaDays: 2, tasks: [{ title: "Xây dựng tài liệu hướng dẫn vận hành (SOP + Video).", subtasks: [] }, { title: "Chuẩn hoá và Import dữ liệu (nếu có).", subtasks: [] }] }
     ]
   },
   {
@@ -133,9 +143,9 @@ export const PILOT_PROJECT_MILESTONE_TEMPLATE = [
     customerConfirmationRequired: true,
     reviewerMode: "workspace_admin",
     stages: [
-      { stageKey: "pilot", phase: "pilot", activity: "Pilot", sortOrder: 10, cumulativePercent: 82, activityPercent: 10, criteria: "Pilot bug log và đề xuất cải tiến được ghi nhận.", upbaseRole: "Dx", customerRole: "Pilot Users", slaDays: 3, tasks: [{ title: "Chạy Pilot hệ thống với nhóm Key Users.", subtasks: [] }, { title: "Thiết lập phân quyền, bảo mật và Bàn giao Admin cho khách hàng.", subtasks: [] }] },
-      { stageKey: "onboard", phase: "onboard", activity: "Onboard", sortOrder: 20, cumulativePercent: 90, activityPercent: 8, criteria: "Onboard bug log và đề xuất cải tiến được ghi nhận.", upbaseRole: "Dx / CS", customerRole: "End Users", slaDays: 2, tasks: [{ title: "Onboard hệ thống toàn công ty.", subtasks: [] }] },
-      { stageKey: "acceptance", phase: "acceptance", activity: "Acceptance", sortOrder: 30, cumulativePercent: 96, activityPercent: 6, criteria: "Biên bản nghiệm thu và toàn bộ hồ sơ giải pháp được duyệt.", upbaseRole: "PM", customerRole: "Customer", slaDays: 1, tasks: [{ title: "Nghiệm thu hệ thống.", subtasks: [] }] }
+      { stageKey: "pilot", gateCode: "G5",taskTypeLayer1: "DELIVERY", afterPnlClose: false, phase: "pilot", activity: "Pilot", sortOrder: 10, cumulativePercent: 82, activityPercent: 10, criteria: "Pilot bug log và đề xuất cải tiến được ghi nhận.", upbaseRole: "Dx", customerRole: "Pilot Users", slaDays: 3, tasks: [{ title: "Chạy Pilot hệ thống với nhóm Key Users.", subtasks: [] }, { title: "Thiết lập phân quyền, bảo mật và Bàn giao Admin cho khách hàng.", subtasks: [] }] },
+      { stageKey: "onboard", gateCode: "G6",taskTypeLayer1: "DELIVERY", afterPnlClose: false, phase: "onboard", activity: "Onboard", sortOrder: 20, cumulativePercent: 90, activityPercent: 8, criteria: "Onboard bug log và đề xuất cải tiến được ghi nhận.", upbaseRole: "Dx / CS", customerRole: "End Users", slaDays: 2, tasks: [{ title: "Onboard hệ thống toàn công ty.", subtasks: [] }] },
+      { stageKey: "acceptance", gateCode: "G7",taskTypeLayer1: "PM", afterPnlClose: false, phase: "acceptance", activity: "Acceptance", sortOrder: 30, cumulativePercent: 96, activityPercent: 6, criteria: "Biên bản nghiệm thu và toàn bộ hồ sơ giải pháp được duyệt.", upbaseRole: "PM", customerRole: "Customer", slaDays: 1, tasks: [{ title: "Nghiệm thu hệ thống.", subtasks: [] }] }
     ]
   },
   {
@@ -148,8 +158,8 @@ export const PILOT_PROJECT_MILESTONE_TEMPLATE = [
     customerConfirmationRequired: false,
     reviewerMode: "workspace_admin",
     stages: [
-      { stageKey: "optimize", phase: "optimize", activity: "Optimize", sortOrder: 10, cumulativePercent: 98, activityPercent: 2, criteria: "Hồ sơ bàn giao cho CS đầy đủ.", upbaseRole: "Dx / PQA", customerRole: "CSM", tasks: [{ title: "Tiếp nhận, phân loại và xử lý các điều chỉnh của khách hàng sau go-live.", subtasks: [] }] },
-      { stageKey: "handover", phase: "handover", activity: "Handover", sortOrder: 20, cumulativePercent: 100, activityPercent: 2, criteria: "Có xác nhận bàn giao và ngày Go-live.", upbaseRole: "BD / PM", customerRole: "CSM / Customer", tasks: [{ title: "Chuyển giao dự án cho team CS, sang giai đoạn bảo trì và chăm sóc dài hạn.", subtasks: [] }] }
+      { stageKey: "optimize", taskTypeLayer1: "DELIVERY", afterPnlClose: true, phase: "optimize", activity: "Optimize", sortOrder: 10, cumulativePercent: 98, activityPercent: 2, criteria: "Hồ sơ bàn giao cho CS đầy đủ.", upbaseRole: "Dx / PQA", customerRole: "CSM", tasks: [{ title: "Tiếp nhận, phân loại và xử lý các điều chỉnh của khách hàng sau go-live.", subtasks: [] }] },
+      { stageKey: "handover", gateCode: "G8",taskTypeLayer1: "PM", afterPnlClose: true, phase: "handover", activity: "Handover", sortOrder: 20, cumulativePercent: 100, activityPercent: 2, criteria: "Có xác nhận bàn giao và ngày Go-live.", upbaseRole: "BD / PM", customerRole: "CSM / Customer", tasks: [{ title: "Chuyển giao dự án cho team CS, sang giai đoạn bảo trì và chăm sóc dài hạn.", subtasks: [] }] }
     ]
   }
 ] as const;

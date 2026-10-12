@@ -111,6 +111,9 @@ function makeSummary(input: { reviewed: number; label: string }) {
       departments: [],
       teams: []
     },
+    taskTypeBreakdowns: [
+      { layer1Id: "DELIVERY", layer1Label: "Delivery", layer2Id: "CUSTOMER_PROJECT", layer2Label: "Dự án khách hàng", actualMinutes: input.reviewed, percentage: 100 }
+    ],
     quality: {
       usersMissingDepartment: 1,
       usersMissingTeam: 0,
@@ -331,6 +334,15 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     window.localStorage.clear();
     window.localStorage.setItem("crm_auth_user", JSON.stringify(user));
   }, authUser);
+  // Fail closed: nothing in this spec reaches a real API. Shell reads get empty answers; any other unmocked call is a
+  // 404 that names its path. Registered first, so every mock below takes precedence.
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (body: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+    if (path === "/api/navigation") return json({ data: { availableFlaggedRoutes: ["/analytics"] } });
+    if (path === "/api/notifications") return json({ data: [], meta: { unreadCount: 0 } });
+    return json({ message: `Unmocked API call in e2e: ${route.request().method()} ${path}` }, 404);
+  });
   await page.route("**/api/auth/me", async (route) => {
     await fulfillJson(route, {
       subjectType: "internal_user",
@@ -363,12 +375,13 @@ test("filter commits update the URL, reset pagination and survive Back/Forward",
   // Go to page 2 so a cursor exists, then change a filter: cursor must reset.
   await page.getByRole("button", { name: "Trang sau →" }).click();
   await expect(page).toHaveURL(/cursor=/);
-  await page.getByRole("button", { name: "Thêm bộ lọc" }).click();
-  const advancedFilters = page.getByRole("dialog", { name: "Bộ lọc bổ sung" });
+  // Shared filter controls: the extra filters open inline ("Bộ lọc nâng cao"), and a multi-select sends its ticks
+  // together after a short pause — there is no per-select "Áp dụng".
+  await page.getByRole("button", { name: "Bộ lọc nâng cao" }).click();
+  const advancedFilters = page.getByRole("group", { name: "Bộ lọc nâng cao" });
   await advancedFilters.getByRole("button", { name: "Nhân sự", exact: true }).click();
   await advancedFilters.getByRole("option", { name: "An Analytics" }).click();
-  await expect(page).not.toHaveURL(/user=/);
-  await advancedFilters.getByRole("button", { name: "Áp dụng", exact: true }).click();
+  await expect(advancedFilters.getByRole("button", { name: "Áp dụng" })).toHaveCount(0);
   await expect(page).toHaveURL(/user=usr-a/);
   await expect(page).not.toHaveURL(/cursor=/);
 
@@ -449,31 +462,30 @@ test("multi-select supports keyboard draft, apply and focus restoration", async 
   await installAnalyticsMocks(page);
   await page.goto("/analytics");
 
-  const trigger = page.getByRole("button", { name: "Khách hàng", exact: true });
+  // A filter with a single option is not offered (nothing to choose): the fixture has one customer and one project.
+  await expect(page.getByRole("button", { name: "Khách hàng", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Bộ lọc nâng cao" }).click();
+  const trigger = page.getByRole("group", { name: "Bộ lọc nâng cao" }).getByRole("button", { name: "Nhân sự", exact: true });
   await trigger.focus();
   await page.keyboard.press("Enter");
 
-  const search = page.getByRole("searchbox", { name: "Tìm Khách hàng" });
+  const search = page.getByRole("textbox", { name: "Tìm nhân sự…" });
   await expect(search).toBeFocused();
-  await search.fill("KH Alpha");
-  await page.keyboard.press("ArrowDown");
-
-  const option = page.getByRole("option", { name: "KH Alpha" });
-  const optionCheckbox = option.getByRole("checkbox");
-  if (await optionCheckbox.count()) await expect(optionCheckbox).toBeFocused();
-  else await expect(option).toBeFocused();
+  await search.fill("Bình");
+  const option = page.getByRole("option", { name: "Bình Analytics" });
+  await expect(page.getByRole("option")).toHaveCount(1);
+  await page.keyboard.press("Tab");
+  await expect(option).toBeFocused();
   await page.keyboard.press("Space");
-  await expect(page).not.toHaveURL(/account=/);
-  await page.getByRole("button", { name: "Áp dụng" }).click();
-  await expect(page).toHaveURL(/account=acc-1/);
+  await expect(option).toHaveAttribute("aria-selected", "true");
+  // The tick is a draft for a moment, then sent on its own: no "Áp dụng" button on the select.
+  await expect(page.getByRole("button", { name: "Áp dụng" })).toHaveCount(0);
+  await expect(page).toHaveURL(/user=usr-b/);
+  await expect(trigger).toContainText("Bình Analytics");
 
-  const selectedTrigger = page.getByRole("button", { name: "Khách hàng 1", exact: true });
-  await selectedTrigger.focus();
-  await page.keyboard.press("Enter");
-  await expect(search).toBeFocused();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("listbox", { name: "Khách hàng" })).toHaveCount(0);
-  await expect(selectedTrigger).toBeFocused();
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await expect(trigger).toBeFocused();
 });
 
 test("API failure shows an honest error state with per-widget retry, never zeros", async ({ page }) => {

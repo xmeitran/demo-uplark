@@ -70,3 +70,23 @@ describe("timesheet calendar rules", () => {
     expect(yearsBetween("2026-01-01", "2026-12-31")).toEqual([2026]);
   });
 });
+
+describe("work groups follow the derived Layer 2 (rules 4.2)", () => {
+  it("has exactly the three Layer 2 groups plus Chờ phân loại — no Họp, Đào tạo or Khác", async () => {
+    const { WORK_GROUPS, WORK_GROUP_LABELS, workGroupOfLayer2 } = await import("./timesheet-types");
+    expect(WORK_GROUPS.map((group) => WORK_GROUP_LABELS[group])).toEqual(["Dự án tính phí", "Ticket/bảo trì", "Nội bộ", "Chờ phân loại"]);
+    expect(workGroupOfLayer2("CUSTOMER_PROJECT")).toBe("customer_project");
+    expect(workGroupOfLayer2("TICKET_MAINTENANCE")).toBe("ticket_maintenance");
+    expect(workGroupOfLayer2("INTERNAL_PROJECT")).toBe("internal_project");
+    // Nothing is guessed from free text any more: no derived value means unclassified.
+    for (const value of [undefined, null, "", "DAY_OFF_COMPANY", "meeting"]) expect(workGroupOfLayer2(value)).toBe("unclassified");
+  });
+
+  it("a project row is classified by project type only, never by its name", async () => {
+    const { projectWorkGroup } = await import("./timesheet-live-data");
+    expect(projectWorkGroup("internal_worklog")).toBe("internal_project");
+    expect(projectWorkGroup("delivery")).toBe("customer_project");
+    expect(projectWorkGroup("internal")).toBe("unclassified");
+    expect(projectWorkGroup(undefined)).toBe("unclassified");
+  });
+});

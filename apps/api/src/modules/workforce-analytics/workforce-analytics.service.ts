@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { TASK_TYPE_LAYER1_LABELS, TASK_TYPE_LAYER2_LABELS, taskTypeLayer1Label, taskTypeLayer2Label } from "../delivery-handoff/task-classification";
 import { Prisma } from "@prisma/client";
 import {
   ANALYTICS_DEFINITIONS_VERSION,
@@ -1727,15 +1728,7 @@ export class WorkforceAnalyticsService {
           WHERE ${Prisma.join(workTypeConditions, " AND ")}
           GROUP BY te."workType"
         `);
-    const taskTypeCatalogPromise = typeof this.prisma.taskTypeCatalog?.findMany === "function"
-      ? this.prisma.taskTypeCatalog.findMany({
-          where: { workspaceId, active: true },
-          select: { layer1: true, layer2: true },
-          orderBy: [{ layer1: "asc" }, { layer2: "asc" }]
-        })
-      : Promise.resolve([] as Array<{ layer1: string; layer2: string }>);
-
-    const [departments, teams, users, accounts, projects, projectStatuses, taskStatuses, workTypes, taskTypeCatalog] = await Promise.all([
+    const [departments, teams, users, accounts, projects, projectStatuses, taskStatuses, workTypes] = await Promise.all([
       visibleWorkforceUserIds.length > 0
         ? this.prisma.department.findMany({
             where: { workspaceId, active: true, memberProfiles: { some: effectiveMembershipWhere } },
@@ -1773,36 +1766,12 @@ export class WorkforceAnalyticsService {
       }),
       this.prisma.project.groupBy({ by: ["status"], where: projectWhere, _count: { _all: true } }),
       this.prisma.projectTask.groupBy({ by: ["status"], where: taskWhere, _count: { _all: true } }),
-      workTypesPromise,
-      taskTypeCatalogPromise
+      workTypesPromise
     ]);
 
-    const layer1Labels: Record<string, string> = {
-      PRE_SALE: "Pre-sale",
-      DELIVERY: "Delivery",
-      PM: "Quản trị nội bộ"
-    };
-    const layer2Labels: Record<string, string> = {
-      CUSTOMER_PROJECT: "Project khách hàng",
-      INTERNAL_PROJECT: "Nội bộ / Project nội bộ",
-      TICKET_MAINTENANCE: "Ticket / Bảo trì",
-      DAY_OFF_COMPANY: "Ngày nghỉ công ty"
-    };
-    const taskTypeLayer1 = taskTypeCatalog.length > 0
-      ? [...new Set(taskTypeCatalog.map((row) => row.layer1))].map((id) => ({ id, label: layer1Labels[id] ?? id }))
-      : [
-          { id: "PRE_SALE", label: layer1Labels.PRE_SALE },
-          { id: "DELIVERY", label: layer1Labels.DELIVERY },
-          { id: "PM", label: layer1Labels.PM }
-        ];
-    const taskTypeLayer2 = taskTypeCatalog.length > 0
-      ? [...new Set(taskTypeCatalog.map((row) => row.layer2))].map((id) => ({ id, label: layer2Labels[id] ?? id }))
-      : [
-          { id: "CUSTOMER_PROJECT", label: layer2Labels.CUSTOMER_PROJECT },
-          { id: "INTERNAL_PROJECT", label: layer2Labels.INTERNAL_PROJECT },
-          { id: "TICKET_MAINTENANCE", label: layer2Labels.TICKET_MAINTENANCE },
-          { id: "DAY_OFF_COMPANY", label: layer2Labels.DAY_OFF_COMPANY }
-        ];
+    // Rules 4.1 / 4.2: the two fixed catalogues, with the same names as every other screen and export.
+    const taskTypeLayer1 = Object.entries(TASK_TYPE_LAYER1_LABELS).map(([id, label]) => ({ id, label }));
+    const taskTypeLayer2 = Object.entries(TASK_TYPE_LAYER2_LABELS).map(([id, label]) => ({ id, label }));
 
     return {
       departments: departments.map((row) => ({ id: row.id, label: row.name })),
@@ -1820,21 +1789,13 @@ export class WorkforceAnalyticsService {
 
   private buildTaskTypeBreakdowns(facts: CollectedFacts): AnalyticsTaskTypeBreakdown[] {
     const total = facts.timeStatus.reviewedApprovedMinutes;
-    const layer1Labels: Record<string, string> = { PRE_SALE: "Pre-sale", DELIVERY: "Delivery", PM: "Quản trị nội bộ", UNCLASSIFIED: "Chưa phân loại" };
-    const layer2Labels: Record<string, string> = {
-      CUSTOMER_PROJECT: "Project khách hàng",
-      INTERNAL_PROJECT: "Nội bộ / Project nội bộ",
-      TICKET_MAINTENANCE: "Ticket / Bảo trì",
-      DAY_OFF_COMPANY: "Ngày nghỉ công ty",
-      UNCLASSIFIED: "Chưa phân loại"
-    };
     return facts.taskTypeBreakdown
       .filter((row) => row.actualMinutes > 0)
       .map((row) => ({
         layer1Id: row.layer1Id,
-        layer1Label: layer1Labels[row.layer1Id] ?? row.layer1Id,
+        layer1Label: taskTypeLayer1Label(row.layer1Id),
         layer2Id: row.layer2Id,
-        layer2Label: layer2Labels[row.layer2Id] ?? row.layer2Id,
+        layer2Label: taskTypeLayer2Label(row.layer2Id),
         actualMinutes: Math.round(row.actualMinutes),
         percentage: total > 0 ? roundTo((row.actualMinutes / total) * 100, 1) : 0
       }));

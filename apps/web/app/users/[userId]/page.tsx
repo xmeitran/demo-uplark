@@ -14,8 +14,10 @@ import type {
   WorkspaceSystemRole,
 } from "@b2b-crm/contracts";
 import { currentVietnamMonthRange } from "@/lib/member-participation";
+import { PROJECT_STATUS_LABELS } from "@/lib/project-status";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { businessRoleFromMember, systemRoleLabel } from "@/lib/people-roles";
+import { StaffMonthlyCosts } from "@/components/pnl/staff-monthly-costs";
 
 type ProfileTab = "Tasks" | "Projects";
 
@@ -99,8 +101,8 @@ function UserProjectParticipation({ userId }: { userId: string }) {
   if (error) return <p role="alert" className="text-xs text-rose-600">{error}</p>;
   if (!data) return <p className="text-xs text-muted-foreground">Đang tải trạng thái tham gia tháng {period.label}…</p>;
   const groups = [
-    { title: `Project đang Active (${data.activeProjects.length})`, empty: "Không có Project Active trong kỳ.", items: data.activeProjects.map((project) => ({ ...project, note: `${Math.round(project.actualMinutes / 6) / 10}h trong kỳ` })) },
-    { title: `Project On Hold (${data.onHoldProjects.length})`, empty: "Không có Project On Hold.", items: data.onHoldProjects.map((project) => ({ ...project, note: "" })) }
+    { title: `Project đang tham gia (${data.activeProjects.length})`, empty: "Không có Project đang tham gia trong kỳ.", items: data.activeProjects.map((project) => ({ ...project, note: `${Math.round(project.actualMinutes / 6) / 10}h trong kỳ` })) },
+    { title: `Project ${PROJECT_STATUS_LABELS.on_hold} (${data.onHoldProjects.length})`, empty: `Không có Project ${PROJECT_STATUS_LABELS.on_hold}.`, items: data.onHoldProjects.map((project) => ({ ...project, note: "" })) }
   ];
   return (
     <div className="space-y-3">
@@ -122,7 +124,7 @@ function UserProjectParticipation({ userId }: { userId: string }) {
           </div>
         ))}
       </div>
-      <p className="text-xs text-muted-foreground">Khả năng nhận việc mới phải xét toàn bộ Project đang Active.</p>
+      <p className="text-xs text-muted-foreground">Khả năng nhận việc mới phải xét toàn bộ Project đang tham gia.</p>
     </div>
   );
 }
@@ -297,6 +299,8 @@ export default function UserProfilePage() {
 
               <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
               <div className="min-w-0 space-y-5">
+              {/* D-34: monthly staff cost, visible to the cost permission group only (the component hides itself on 403). */}
+              <StaffMonthlyCosts userId={user.id} defaultRole={primaryRole === "Chưa gán" ? undefined : primaryRole} />
               <div className="overflow-x-auto border-b border-border">
                 <nav className="flex min-w-max gap-2">
                   {TABS.map((tab) => (
@@ -411,7 +415,7 @@ export default function UserProfilePage() {
                   </dl>
                   {user.resourceSkills.length ? <div className="flex flex-wrap gap-2 border-t border-border px-5 py-4">{user.resourceSkills.map((skill) => <span key={skill} className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-bold text-foreground">{skill}</span>)}</div> : null}
                 </section>
-                <AdminMemberControls userId={user.id} status={user.status} currentRole={workspaceRole} employmentStatus={user.employmentStatus} displayRole={primaryRole} costPermissionCodes={user.costPermissionCodes} />
+                <AdminMemberControls userId={user.id} status={user.status} currentRole={workspaceRole} employmentStatus={user.employmentStatus} businessRoleCode={user.businessRoleCode} costPermissionCodes={user.costPermissionCodes} />
               </aside>
               </div>
             </div>

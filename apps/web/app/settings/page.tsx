@@ -7,6 +7,7 @@ import { CheckCircle2, LogOut, Palette, Shield, User } from "lucide-react";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { useTheme } from "@/lib/theme";
 import { useAuth } from "@/lib/auth";
+import { isAdminView } from "@/lib/auth-role";
 import { systemRoleFromCodes, systemRoleLabel } from "@/lib/people-roles";
 
 const SETTINGS_SECTIONS = [
@@ -20,7 +21,7 @@ const SETTINGS_SECTIONS = [
 export default function SettingsPage() {
   const theme = useTheme();
   const { user, logout } = useAuth();
-  const isWorkspaceAdmin = Boolean(user?.roleCodes?.some((role) => role === "FOUNDER_GM" || role === "WORKSPACE_ADMIN"));
+  const isWorkspaceAdmin = isAdminView(user);
   const isLocalSession = process.env.NEXT_PUBLIC_LOCAL_AUTO_AUTH === "true";
 
   return (

@@ -19,6 +19,7 @@ import type {
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { activeMembershipWhere } from "../identity-access/active-membership";
 import { CLOSED_WORK_STATUSES } from "../delivery-handoff/task-status";
+import { getParameter, getStoredParameter, standardDayMinutes } from "../../shared/system-parameters";
 import { PROJECT_STATUS_ALIASES } from "../delivery-handoff/project-status";
 
 const ADMIN_ROLES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN"]);
@@ -28,14 +29,14 @@ const SLOT_LABELS: Record<WorkspaceReminderSlot["slot"], string> = {
   evening_actual: "Actual Hour cuối ngày"
 };
 const DEFAULT_SLOTS: WorkspaceReminderSlot[] = [
-  { slot: "morning_plan", time: "08:30", label: SLOT_LABELS.morning_plan, enabled: true },
-  { slot: "pm_follow_up", time: "14:00", label: SLOT_LABELS.pm_follow_up, enabled: true },
-  { slot: "evening_actual", time: "17:00", label: SLOT_LABELS.evening_actual, enabled: true }
+  { slot: "morning_plan", time: getParameter("reminderTimes")[0], label: SLOT_LABELS.morning_plan, enabled: true },
+  { slot: "pm_follow_up", time: getParameter("reminderTimes")[1], label: SLOT_LABELS.pm_follow_up, enabled: true },
+  { slot: "evening_actual", time: getParameter("reminderTimes")[2], label: SLOT_LABELS.evening_actual, enabled: true }
 ];
 // Shared with delivery-handoff: one list decides which tasks are closed and therefore never open or overdue.
 const TERMINAL_TASK_STATUSES = CLOSED_WORK_STATUSES;
-// Same rule as the worker's scheduled reminders: tasks of On Hold and completed projects are not reminded.
-const REMINDER_INACTIVE_PROJECT_STATUSES = Array.from(new Set([...PROJECT_STATUS_ALIASES.on_hold, ...PROJECT_STATUS_ALIASES.completed, "cancelled", "archived"]));
+// Same rule as the worker's scheduled reminders: tasks of on-hold, completed and closed projects are not reminded.
+const REMINDER_INACTIVE_PROJECT_STATUSES = Array.from(new Set([...PROJECT_STATUS_ALIASES.on_hold, ...PROJECT_STATUS_ALIASES.completed, ...PROJECT_STATUS_ALIASES.closed]));
 const WAITING_TASK_STATUSES = new Set(["blocked", "waiting", "on_hold", "on-hold"]);
 const ACTUAL_ENTRY_STATUSES = new Set(["approved", "submitted"]);
 const ADMIN_HISTORY_ACTIONS = [
@@ -78,7 +79,7 @@ function jsonStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())) : [];
 }
 
-function assertAdmin(principal: PrincipalContext) {
+export function assertAdmin(principal: PrincipalContext) {
   if (principal.subjectType !== "internal_user" || !principal.roleCodes.some((role) => ADMIN_ROLES.has(role))) {
     throw new ForbiddenException("Founder/GM or Workspace Admin role is required");
   }
@@ -134,15 +135,14 @@ function taskMissingFields(task: { assigneeUserId: string | null; plannedStartAt
   return fields;
 }
 
-function reminderWebhookConfig() {
-  const raw = process.env.LARK_TASK_REMINDER_WEBHOOK_URL?.trim();
+export function reminderWebhookConfig(raw = process.env.LARK_TASK_REMINDER_WEBHOOK_URL?.trim(), secret = process.env.LARK_TASK_REMINDER_WEBHOOK_SECRET?.trim() || undefined) {
   if (!raw) throw new BadRequestException("Chưa cấu hình Lark custom-bot webhook trên worker.");
   let url: URL;
   try { url = new URL(raw); } catch { throw new BadRequestException("Lark webhook không hợp lệ."); }
   if (url.protocol !== "https:" || !["open.larksuite.com", "open.feishu.cn"].includes(url.hostname) || !url.pathname.startsWith("/open-apis/bot/v2/hook/")) {
     throw new BadRequestException("Lark webhook phải là URL custom-bot chính thức.");
   }
-  return { url: url.toString(), secret: process.env.LARK_TASK_REMINDER_WEBHOOK_SECRET?.trim() || undefined };
+  return { url: url.toString(), secret };
 }
 
 function signedWebhookPayload(payload: Record<string, unknown>, secret?: string) {
@@ -152,8 +152,7 @@ function signedWebhookPayload(payload: Record<string, unknown>, secret?: string)
   return { timestamp, sign, ...payload };
 }
 
-async function postReminderWebhook(payload: Record<string, unknown>) {
-  const config = reminderWebhookConfig();
+export async function postReminderWebhook(payload: Record<string, unknown>, config = reminderWebhookConfig()) {
   const response = await fetch(config.url, {
     method: "POST",
     headers: { "content-type": "application/json; charset=utf-8" },
@@ -433,6 +432,7 @@ export class WorkspaceAdminService {
 
     const workspace = await this.prisma.tenantWorkspace.findUnique({ where: { id: principal.workspaceId }, select: { tenantKey: true } });
     if (!workspace) throw new ForbiddenException("Workspace is not available");
+    const dayMinutes = standardDayMinutes({ standardDayHours: await getStoredParameter(this.prisma, principal.workspaceId, "standardDayHours") });
 
     let scopedUserIds: string[] | undefined;
     if (input.userId) {
@@ -544,13 +544,13 @@ export class WorkspaceAdminService {
         ];
       }
       if (input.slot === "evening_actual") {
-        const missingMinutes = Math.max(0, 480 - actualMinutes);
+        const missingMinutes = Math.max(0, dayMinutes - actualMinutes);
         return [
           `${mention}Chào **${user.displayName}**,`,
           `Đến 17:00 ngày ${localDate}, dữ liệu Actual Hour của bạn chưa đầy đủ.`,
           "Tổng giờ trong ngày:",
           `• Đã ghi nhận: ${reminderMinutesLabel(actualMinutes)}`,
-          "• Giờ tiêu chuẩn: 8 giờ",
+          `• Giờ tiêu chuẩn: ${reminderMinutesLabel(dayMinutes)}`,
           `• Còn thiếu: ${reminderMinutesLabel(missingMinutes)}`,
           "",
           "Task chưa có Actual Hour:",
@@ -662,6 +662,8 @@ export class WorkspaceAdminService {
   async alerts(principal: PrincipalContext) {
     assertAdmin(principal);
     const now = new Date();
+    // 7.6 "Mức giờ đã dùng bắt đầu xét" (default 80% of the estimate).
+    const usedThreshold = (await getStoredParameter(this.prisma, principal.workspaceId, "hoursUsedThresholdPercent")) / 100;
     const projects = await this.prisma.project.findMany({
       where: { workspaceId: principal.workspaceId },
       orderBy: [{ name: "asc" }],
@@ -712,7 +714,7 @@ export class WorkspaceAdminService {
       const missingDeadline = openTasks.filter((task) => !task.dueAt);
       const missingMapping = openTasks.filter((task) => !task.ownerUserId && !task.assigneeUserId);
       if (overdue.length) add(project, "delay_risk", overdue.length >= 10 ? "critical" : "warning", `${overdue.length} task chưa hoàn thành đã quá Deadline.`, overdue.map((task) => task.id), estimateMinutes, actualMinutes);
-      if (actualMinutes > estimateMinutes && estimateMinutes > 0) add(project, "over_estimate", actualMinutes - estimateMinutes > estimateMinutes * 0.2 ? "critical" : "warning", `Actual Hour đang cao hơn Estimate ${(actualMinutes - estimateMinutes) / 60}h; cần xem task gây vượt.`, tasks.map((task) => task.id), estimateMinutes, actualMinutes);
+      if (estimateMinutes > 0 && actualMinutes >= estimateMinutes * usedThreshold) add(project, "over_estimate", actualMinutes - estimateMinutes > estimateMinutes * 0.2 ? "critical" : "warning", `Actual Hour đạt ${Math.round((actualMinutes / estimateMinutes) * 100)}% Estimate (ngưỡng ${Math.round(usedThreshold * 100)}%); cần xem task gây vượt.`, tasks.map((task) => task.id), estimateMinutes, actualMinutes);
       if (waiting.length) add(project, "waiting_task", "warning", `${waiting.length} task đang chờ; cần cập nhật blocker và người xử lý.`, waiting.map((task) => task.id), estimateMinutes, actualMinutes);
       if (missingEstimate.length) add(project, "missing_estimate", "info", `${missingEstimate.length} task chưa có Estimate Hour; chưa đủ căn cứ đánh giá hiệu suất.`, missingEstimate.map((task) => task.id), estimateMinutes, actualMinutes);
       if (startedWithoutActual.length) add(project, "missing_actual", "info", `${startedWithoutActual.length} task đã bắt đầu nhưng chưa có Actual Hour đã ghi nhận.`, startedWithoutActual.map((task) => task.id), estimateMinutes, actualMinutes);

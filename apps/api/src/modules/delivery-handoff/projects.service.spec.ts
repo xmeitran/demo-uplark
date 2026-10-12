@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, NotFoundExc
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildSpreadsheetTemplateDraft, MAX_TASK_ESTIMATE_MINUTES, ProjectsService, validateTaskEstimateMinutes } from "./projects.service";
 import type { PrincipalContext } from "@b2b-crm/contracts";
+import { visibleProjectWhere } from "./project-visibility";
 
 const blockerDelegates = [
   "projectTask",
@@ -68,6 +69,9 @@ function withMutationDependencies(prisma: Record<string, any>) {
   // projectPermissions reads the first stage to find the project PIC.
   prisma.projectStage ??= {};
   prisma.projectStage.findFirst ??= vi.fn().mockResolvedValue(null);
+  // Task classification (D-04) and the time-log project gate (D-16) read the task's project.
+  prisma.project ??= {};
+  prisma.project.findFirst ??= vi.fn().mockResolvedValue(null);
   return prisma;
 }
 
@@ -859,8 +863,8 @@ describe("ProjectsService.transitionTaskPlanningBlock", () => {
       },
       data: { status: targetStatus }
     });
-    // Completing also logs the time entry, which is audited and shown in the activity feed like a manual log.
-    expect(prisma.auditEvent.create).toHaveBeenCalledTimes(targetStatus === "completed" ? 2 : 1);
+    // D-15: completing only changes the block — one audit event, one activity, and never a time log from planned hours.
+    expect(prisma.auditEvent.create).toHaveBeenCalledTimes(1);
     expect(prisma.auditEvent.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         workspaceId: "twk-1",
@@ -873,7 +877,7 @@ describe("ProjectsService.transitionTaskPlanningBlock", () => {
         requestId: `task-planning-block:plan-1:${targetStatus}:${planningUpdatedAt.toISOString()}`
       })
     });
-    expect(prisma.projectActivity.create).toHaveBeenCalledTimes(targetStatus === "completed" ? 2 : 1);
+    expect(prisma.projectActivity.create).toHaveBeenCalledTimes(1);
     expect(prisma.projectActivity.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         activityType: "planning_status_changed",
@@ -881,53 +885,12 @@ describe("ProjectsService.transitionTaskPlanningBlock", () => {
         accountId: "acc-1"
       })
     });
-    if (targetStatus === "completed") {
-      expect(result).not.toHaveProperty("actualLogWarning");
-      expect(prisma.taskStatusHistory.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          taskId: "task-1",
-          fromStatus: "todo",
-          toStatus: "in_progress",
-          changedByUserId: "usr-1",
-          reason: "Actual work logged"
-        })
-      });
-      expect(prisma.projectTask.update).toHaveBeenCalledWith({
-        where: { id: "task-1" },
-        data: {
-          status: "in_progress",
-          startedAt: new Date("2026-07-14T02:00:00.000Z")
-        }
-      });
-      // Same checks as a manual log: project membership and the daily total are read before the entry is written.
-      expect(prisma.projectMember.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ projectId: "prj-1", userId: { in: ["usr-1"] } }) }));
-      expect(prisma.taskTimeEntry.aggregate).toHaveBeenCalled();
-      expect(prisma.taskTimeEntry.create).toHaveBeenCalledTimes(1);
-      expect(prisma.taskTimeEntry.create).toHaveBeenCalledWith({
-        include: expect.any(Object),
-        data: expect.objectContaining({
-          workspaceId: "twk-1",
-          taskId: "task-1",
-          accountId: "acc-1",
-          projectId: "prj-1",
-          userId: "usr-1",
-          workDate: new Date("2026-07-14T02:00:00.000Z"),
-          startAt: new Date("2026-07-14T02:00:00.000Z"),
-          endAt: new Date("2026-07-14T03:30:00.000Z"),
-          timeZone: "Asia/Ho_Chi_Minh",
-          minutes: 60,
-          billable: false,
-          workType: "consulting",
-          approvalStatus: "approved",
-          sourcePlanningBlockId: "plan-1"
-        })
-      });
-    } else {
-      expect(prisma.$queryRaw).not.toHaveBeenCalled();
-      expect(prisma.taskStatusHistory.create).not.toHaveBeenCalled();
-      expect(prisma.projectTask.update).not.toHaveBeenCalled();
-      expect(prisma.taskTimeEntry.create).not.toHaveBeenCalled();
-    }
+    expect(result).not.toHaveProperty("actualLogWarning");
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    expect(prisma.taskStatusHistory.create).not.toHaveBeenCalled();
+    expect(prisma.projectTask.update).not.toHaveBeenCalled();
+    expect(prisma.taskTimeEntry.findUnique).not.toHaveBeenCalled();
+    expect(prisma.taskTimeEntry.create).not.toHaveBeenCalled();
     expect(prisma.taskTimeEntry.update).not.toHaveBeenCalled();
   });
 
@@ -944,13 +907,13 @@ describe("ProjectsService.transitionTaskPlanningBlock", () => {
       expectedUpdatedAt: planningUpdatedAt.toISOString()
     }, principal, principal.subjectId)).resolves.toMatchObject({ status: "completed" });
 
-    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(prisma.taskPlanningBlock.updateMany).not.toHaveBeenCalled();
     expect(prisma.auditEvent.create).not.toHaveBeenCalled();
     expect(prisma.projectActivity.create).not.toHaveBeenCalled();
     expect(prisma.taskStatusHistory.create).not.toHaveBeenCalled();
     expect(prisma.projectTask.update).not.toHaveBeenCalled();
-    expect(prisma.taskTimeEntry.findUnique).toHaveBeenCalledWith({ where: { sourcePlanningBlockId: "plan-1" }, select: { id: true } });
+    expect(prisma.taskTimeEntry.findUnique).not.toHaveBeenCalled();
     expect(prisma.taskTimeEntry.create).not.toHaveBeenCalled();
   });
 
@@ -972,7 +935,7 @@ describe("ProjectsService.transitionTaskPlanningBlock", () => {
     expect(prisma.projectActivity.create).not.toHaveBeenCalled();
     expect(prisma.taskStatusHistory.create).not.toHaveBeenCalled();
     expect(prisma.projectTask.update).not.toHaveBeenCalled();
-    expect(prisma.taskTimeEntry.findUnique).toHaveBeenCalledWith({ where: { sourcePlanningBlockId: "plan-1" }, select: { id: true } });
+    expect(prisma.taskTimeEntry.findUnique).not.toHaveBeenCalled();
     expect(prisma.taskTimeEntry.create).not.toHaveBeenCalled();
   });
 
@@ -1012,28 +975,21 @@ describe("ProjectsService.transitionTaskPlanningBlock", () => {
       status: "completed"
     });
 
-    expect(prisma.taskTimeEntry.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ userId: "usr-1" })
-    }));
-  });
-
-  it.each([
-    ["the user is no longer a project member", { memberUserIds: [] }],
-    ["the day already holds eight logged hours", { loggedMinutesToday: 480 }]
-  ] as const)("completes the block without a time entry and asks for a manual log when %s", async (_case, options) => {
-    const prisma = createPlanningTransitionPrismaMock(options as any);
-    const service = new ProjectsService(withMutationDependencies(prisma) as any);
-
-    const result = await service.transitionTaskPlanningBlock("plan-1", {
-      status: "completed",
-      expectedUpdatedAt: planningUpdatedAt.toISOString()
-    }, principal, principal.subjectId);
-
-    expect(result).toMatchObject({ id: "plan-1", status: "completed", actualLogWarning: expect.stringContaining("log giờ thủ công") });
     expect(prisma.taskPlanningBlock.updateMany).toHaveBeenCalledTimes(1);
     expect(prisma.taskTimeEntry.create).not.toHaveBeenCalled();
-    // The task is not promoted for work that was never logged.
-    expect(prisma.taskStatusHistory.create).not.toHaveBeenCalled();
+  });
+
+  it("blocks working a plan on a workspace day off for an Admin too, but still lets it be cancelled (D-09)", async () => {
+    const prisma = createPlanningTransitionPrismaMock({ current: planningBlockFixture("cancelled", new Date("2026-07-13T00:01:00.000Z")) });
+    (prisma as any).workspaceDayOff = { findFirst: vi.fn().mockResolvedValue({ date: new Date("2026-07-14T00:00:00.000Z"), name: "Nghỉ lễ" }) };
+    const service = new ProjectsService(withMutationDependencies(prisma) as any);
+    const admin = { ...principal, roleCodes: ["FOUNDER_GM", "WORKSPACE_ADMIN"] };
+
+    await expect(service.transitionTaskPlanningBlock("plan-1", { status: "completed", expectedUpdatedAt: planningUpdatedAt.toISOString() }, admin, admin.subjectId))
+      .rejects.toThrow("Nghỉ lễ");
+    expect(prisma.taskPlanningBlock.updateMany).not.toHaveBeenCalled();
+    await expect(service.transitionTaskPlanningBlock("plan-1", { status: "cancelled", expectedUpdatedAt: planningUpdatedAt.toISOString() }, admin, admin.subjectId))
+      .resolves.toMatchObject({ status: "cancelled" });
   });
 
   it("lets only the block's user or a project manager cancel a planning block", async () => {
@@ -1087,7 +1043,7 @@ describe("ProjectsService.transitionTaskPlanningBlock", () => {
       expectedUpdatedAt: planningUpdatedAt.toISOString()
     }, principal, principal.subjectId)).rejects.toThrow(NotFoundException);
     expect(prisma.taskPlanningBlock.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "other-workspace-plan", workspaceId: "twk-1" }
+      where: expect.objectContaining({ id: "other-workspace-plan", workspaceId: "twk-1" })
     }));
   });
 
@@ -1668,7 +1624,8 @@ describe("ProjectsService.listProjects", () => {
     };
     const service = new ProjectsService(withMutationDependencies(prisma) as any);
 
-    await service.listProjects({ limit: 10, offset: 0, status: "on_hold" }, principal);
+    // An Admin lists every project, so the where clause carries the status filter only (7.7 scoping: project-visibility.spec.ts).
+    await service.listProjects({ limit: 10, offset: 0, status: "on_hold" }, { ...principal, roleCodes: ["WORKSPACE_ADMIN"] });
 
     expect(prisma.project.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1679,7 +1636,8 @@ describe("ProjectsService.listProjects", () => {
               OR: [
                 { status: { equals: "on_hold", mode: "insensitive" } },
                 { status: { equals: "paused", mode: "insensitive" } },
-                { status: { equals: "pause", mode: "insensitive" } }
+                { status: { equals: "pause", mode: "insensitive" } },
+                { status: { equals: "tạm_dừng", mode: "insensitive" } }
               ]
             }
           ]
@@ -1905,7 +1863,7 @@ describe("ProjectsService.createTimeEntry", () => {
     const service = new ProjectsService(withMutationDependencies(prisma) as any);
 
     await expect(service.createTimeEntry("task-1", {
-      userId: "usr-1",
+      userId: "usr-1", selectedTaskTypeLayer2: "CUSTOMER_PROJECT",
       workDate,
       startAt,
       endAt,
@@ -1918,7 +1876,6 @@ describe("ProjectsService.createTimeEntry", () => {
       id: "time-1",
       userDisplayName: "Test User",
       minutes: 120,
-      approvalStatus: "submitted",
       dailyActualLog: {
         localDate: "2026-07-01",
         timeZone: "Asia/Ho_Chi_Minh",
@@ -1935,7 +1892,11 @@ describe("ProjectsService.createTimeEntry", () => {
         endAt: new Date(endAt),
         timeZone: "Asia/Ho_Chi_Minh",
         minutes: 120,
-        approvalStatus: "submitted"
+        regularMinutes: 120,
+        overtimeMinutes: 0,
+        // V-07: no approval step — the "submitted" the client sent is ignored and the log is recorded straight away.
+        approvalStatus: "approved",
+        loggedWhileOnHold: false
       })
     }));
 
@@ -1986,7 +1947,7 @@ describe("ProjectsService.createTimeEntry", () => {
           }
         ]
       },
-      _sum: { minutes: true }
+      _sum: { minutes: true, overtimeMinutes: true }
     });
   });
 
@@ -2035,7 +1996,7 @@ describe("ProjectsService.createTimeEntry", () => {
     const service = new ProjectsService(withMutationDependencies(prisma) as any);
 
     await expect(service.createTimeEntry("task-legacy", {
-      userId: "usr-1",
+      userId: "usr-1", selectedTaskTypeLayer2: "CUSTOMER_PROJECT",
       workDate,
       minutes: 45,
       approvalStatus: "submitted",
@@ -2069,7 +2030,7 @@ describe("ProjectsService.createTimeEntry", () => {
     }));
   });
 
-  it("rejects actual work that exceeds the task plan", async () => {
+  it("D-19 (Ghi nhận): actual work beyond the task estimate is recorded in the audit trail, not refused", async () => {
     const workDate = "2026-07-01T02:00:00.000Z";
     const prisma: Record<string, any> = {
       projectTask: {
@@ -2098,15 +2059,18 @@ describe("ProjectsService.createTimeEntry", () => {
     };
     const service = new ProjectsService(withMutationDependencies(prisma) as any);
 
-    await expect(service.createTimeEntry("task-planned", {
-      userId: "usr-1",
+    // The mock stops later (it has no task to promote); what matters is that the estimate no longer stops the log.
+    const error = await service.createTimeEntry("task-planned", {
+      userId: "usr-1", selectedTaskTypeLayer2: "CUSTOMER_PROJECT",
       workDate,
       minutes: 120,
       approvalStatus: "submitted"
-    }, principal, "usr-1")).rejects.toThrow(
-      "Task actual time cannot exceed planned time. Remaining: 60 minutes"
-    );
-    expect(prisma.taskTimeEntry.create).not.toHaveBeenCalled();
+    }, principal, "usr-1").then(() => null, (reason: Error) => reason);
+    expect(String(error?.message ?? "")).not.toContain("cannot exceed planned time");
+    expect(prisma.auditEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+      action: "time_entry.over_estimate", resourceId: "task-planned",
+      before: { estimateMinutes: 480, loggedMinutes: 420 }, after: { loggedMinutes: 540, overMinutes: 60 }
+    }) });
   });
 });
 
@@ -2436,7 +2400,7 @@ describe("ProjectsService.deleteTaskPlanningBlock", () => {
 
     await expect(service.deleteTaskPlanningBlock("foreign-plan", principal)).rejects.toThrow(NotFoundException);
     expect(prisma.taskPlanningBlock.findFirst).toHaveBeenCalledWith({
-      where: { id: "foreign-plan", workspaceId: "twk-1" },
+      where: expect.objectContaining({ id: "foreign-plan", workspaceId: "twk-1" }),
       select: { id: true, userId: true }
     });
     expect(prisma.taskPlanningBlock.deleteMany).not.toHaveBeenCalled();
@@ -2466,7 +2430,8 @@ describe("ProjectsService.deleteTaskTimeEntry", () => {
 
     await expect(service.deleteTaskTimeEntry("time-1", member("usr-1"))).resolves.toEqual({ deleted: true, id: "time-1" });
 
-    expect(prisma.taskTimeEntry.findFirst).toHaveBeenCalledWith({ where: { id: "time-1", workspaceId: "twk-1" }, select: entrySelect });
+    // 7.7: a User reaches their own entries and those of tasks in projects they can see — never by id alone.
+    expect(prisma.taskTimeEntry.findFirst).toHaveBeenCalledWith({ where: { id: "time-1", workspaceId: "twk-1", OR: [{ userId: "usr-1" }, { task: { AND: [{ OR: [{ projectId: null }, { project: visibleProjectWhere(member("usr-1")) }] }] } }] }, select: entrySelect });
     expect(prisma.projectCost.updateMany).toHaveBeenCalledWith({
       where: { taskTimeEntryId: "time-1", workspaceId: "twk-1" },
       data: { taskTimeEntryId: null }
@@ -2528,7 +2493,7 @@ describe("ProjectsService.deleteTaskTimeEntry", () => {
 
     await expect(service.deleteTaskTimeEntry("time-1", principal)).rejects.toThrow(NotFoundException);
 
-    expect(prisma.taskTimeEntry.findFirst).toHaveBeenCalledWith({ where: { id: "time-1", workspaceId: "twk-1" }, select: entrySelect });
+    expect(prisma.taskTimeEntry.findFirst).toHaveBeenCalledWith({ where: expect.objectContaining({ id: "time-1", workspaceId: "twk-1" }), select: entrySelect });
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 

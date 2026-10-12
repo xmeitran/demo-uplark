@@ -158,14 +158,14 @@ describe("live project query params", () => {
       limit: 10,
       offset: 10,
       q: "AMOBEAR",
-      status: "Active",
+      status: "Đang triển khai",
       category: "Implementation"
     });
 
     expect(requestedUrl).toBe("/api/projects?limit=10&offset=10&q=AMOBEAR&status=in_progress&category=Implementation");
   });
 
-  it("keeps the On Hold UI filter on the canonical project status query param", async () => {
+  it("keeps the on-hold UI filter on the canonical project status query param", async () => {
     let requestedUrl = "";
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       requestedUrl = String(input);
@@ -191,7 +191,7 @@ describe("live project query params", () => {
     await fetchLiveProjects({
       limit: 10,
       offset: 0,
-      status: "On Hold"
+      status: "Tạm dừng"
     });
 
     expect(requestedUrl).toBe("/api/projects?limit=10&offset=0&status=on_hold");
@@ -257,17 +257,19 @@ describe("live project query params", () => {
 
     const result = await fetchLiveProjects({ limit: 10, offset: 0 });
 
-    // Standard catalogue label (Planning / Active / In Review / On Hold / At Risk / Completed).
-    expect(result.projects[0]?.tags).toEqual(["PRJ-RAW", "Active"]);
+    // Standard catalogue label (@/lib/project-status).
+    expect(result.projects[0]?.tags).toEqual(["PRJ-RAW", "Đang triển khai"]);
     expect(result.projects[0]?.tags).not.toContain("in_progress");
   });
 
-  it("maps the project status through the shared catalogue and never defaults an unknown one to Active", () => {
+  it("maps the project status through the shared catalogue and never defaults an unknown one", () => {
     const map = (patch: Record<string, unknown>) => mapProjectSummaryToUiProject({ ...cachedProjectSummary, ...patch } as Parameters<typeof mapProjectSummaryToUiProject>[0]);
-    expect(map({ status: "in_progress", statusCode: "on_hold" }).status).toBe("On Hold");
-    expect(map({ status: "discovery" }).status).toBe("Active");
-    expect(map({ status: "acceptance" }).status).toBe("In Review");
-    expect(map({ status: "pilot" }).status).toBe("Chưa xác định");
+    expect(map({ status: "in_progress", statusCode: "on_hold" }).status).toBe("Tạm dừng");
+    expect(map({ status: "discovery" }).status).toBe("Lên kế hoạch");
+    expect(map({ status: "acceptance" }).status).toBe("Chờ duyệt nghiệm thu");
+    expect(map({ status: "pilot" }).status).toBe("Đang chạy thử");
+    expect(map({ status: "cancelled" }).status).toBe("Đã đóng");
+    expect(map({ status: "hold on" }).status).toBe("Chưa xác định");
     expect(map({ status: undefined }).status).toBe("Chưa xác định");
     expect(map({ plannedEndAt: "2026-12-31T00:00:00.000Z" }).dueAt).toBe("2026-12-31T00:00:00.000Z");
   });
@@ -330,9 +332,14 @@ describe("live project query params", () => {
 
     expect(project).toMatchObject({
       plannedHours: 10.3,
-      loggedHours: 4.3,
-      pnlHours: 3.8
+      loggedHours: 4.3
     });
+    // PL-26: no P&L-hour figure on the Projects screens; it lives in the P&L tab only.
+    expect(project).not.toHaveProperty("pnlHours");
+  });
+
+  it("carries the trial-project flag (PL-02)", () => {
+    expect(mapProjectSummaryToUiProject({ ...cachedProjectSummary, hierarchyOrderVersion: 0, isTestProject: true }).isTestProject).toBe(true);
   });
 });
 

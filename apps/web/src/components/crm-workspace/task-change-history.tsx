@@ -1,5 +1,6 @@
 "use client";
 
+import { taskTypeLayer1Label, taskTypeLayer2Label } from "@/lib/task-classification";
 import { useEffect, useMemo, useState } from "react";
 import type { WorkspaceUserOption } from "@/lib/workspace-users";
 import { getPriorityLabel, getStatusLabel, getTaskTypeLabel } from "./task-display-helpers";
@@ -29,6 +30,8 @@ function formatValue(key: string, value: unknown, people: WorkspaceUserOption[])
   if (key === "status") return getStatusLabel(String(value));
   if (key === "priority") return getPriorityLabel(String(value));
   if (key === "taskType") return getTaskTypeLabel(String(value));
+  if (key === "taskTypeLayer1") return taskTypeLayer1Label(value);
+  if (key === "taskTypeLayer2") return taskTypeLayer2Label(value);
   if (key === "assigneeUserIds" && Array.isArray(value)) {
     return value.map((id) => people.find((person) => person.id === String(id))?.name || String(id)).join(", ") || "Trống";
   }
@@ -48,8 +51,8 @@ function fieldLabel(key: string) {
     title: "Tên task",
     description: "Mô tả",
     taskType: "Loại công việc",
-    taskTypeLayer1: "Nhóm task",
-    taskTypeLayer2: "Bối cảnh task",
+    taskTypeLayer1: "Lớp 1 · Vai trò đóng góp",
+    taskTypeLayer2: "Lớp 2 · Bối cảnh công việc",
     status: "Trạng thái",
     priority: "Ưu tiên",
     ownerUserId: "Owner",

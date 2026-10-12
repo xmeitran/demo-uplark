@@ -17,7 +17,7 @@ test.describe("public authenticated session smoke", () => {
       "/api/projects?limit=1",
       "/api/tasks?limit=1",
       "/api/capacity/summary",
-      "/api/project-controls/pl-summary"
+      "/api/pnl/dashboard"
     ];
 
     for (const endpoint of bffEndpoints) {

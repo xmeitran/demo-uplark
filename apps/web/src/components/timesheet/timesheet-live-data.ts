@@ -20,6 +20,8 @@ import { isActualTimeEntry } from "@/lib/time-entry-actual";
 import { toVietnamDateKey, vietnamDayStartIso } from "@/lib/vietnam-time";
 import { isClosedNodeStatus, isPausedTaskStatus, normalizeNodeStatus } from "./timesheet-status";
 import { monthBounds } from "./timesheet-dates";
+import { workGroupOfLayer2 } from "./timesheet-types";
+import { taskTypeLayer2Label } from "@/lib/task-classification";
 import type { ProjectMemberParticipationItem } from "@b2b-crm/contracts";
 export { normalizeNodeStatus } from "./timesheet-status";
 
@@ -71,6 +73,10 @@ type ApiTask = {
   dueAt?: string;
   completedAt?: string;
   estimateMinutes?: number;
+  taskTypeLayer2?: string;
+  contractItemId?: string;
+  contractItemCode?: string;
+  contractItemName?: string;
 };
 
 type ApiTimeEntry = {
@@ -91,6 +97,14 @@ type ApiTimeEntry = {
   approvalStatus?: string;
   note?: string;
   createdAt?: string;
+  /** Layer 2 copied from the task when the entry was written (D-03). */
+  taskTypeLayer2?: string;
+  /** Layer 2 chosen by the person logging; undefined on legacy rows. */
+  selectedTaskTypeLayer2?: string;
+  layer2Mismatch?: boolean;
+  contractItemId?: string;
+  loggedWhileOnHold?: boolean;
+  beforeEightHourRule?: boolean;
 };
 
 type ApiResponse<T> = { data?: T[]; meta?: { pagination?: { hasNextPage?: boolean; offset?: number; returned?: number; total?: number } } };
@@ -110,13 +124,14 @@ export function dateOnly(value?: string) {
   return value ? toVietnamDateKey(value) || null : null;
 }
 
-function workGroup(value?: string, projectName?: string): WorkGroup {
-  const normalized = `${value ?? ""} ${projectName ?? ""}`.toLowerCase();
-  if (normalized.includes("training") || normalized.includes("đào tạo") || normalized.includes("onboard")) return "training";
-  if (normalized.includes("meeting") || normalized.includes("họp")) return "meeting";
-  if (normalized.includes("ticket") || normalized.includes("maintenance") || normalized.includes("bảo trì")) return "ticket_maintenance";
-  if (normalized.includes("internal") || normalized.includes("nội bộ") || normalized.includes("[dx]")) return "internal_project";
-  return "customer_project";
+/**
+ * Project rows carry the project-level context of table 4.2: the fixed internal-worklog project is "Nội bộ", an internal
+ * project waits for its contract line item, anything else is a "Dự án tính phí". Never guessed from names.
+ */
+export function projectWorkGroup(projectType?: string): WorkGroup {
+  const type = String(projectType ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (type === "internal_worklog") return "internal_project";
+  return !type || type === "internal" ? "unclassified" : "customer_project";
 }
 
 export function projectMemberState(value?: string): MemberState {
@@ -421,7 +436,7 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
       name: project.name,
       accountName: project.accountName || "—",
       status: resolveProjectStatus(project),
-      workGroup: workGroup(project.projectType, project.name),
+      workGroup: projectWorkGroup(project.projectType),
       picId: project.ownerUserId || "",
       startDate: dateOnly(project.plannedStartAt),
       deadline: dateOnly(project.plannedEndAt),
@@ -432,6 +447,8 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
 
   const taskToMilestone = new Map<string, { milestoneId: string; stageId: string }>();
   for (const project of projectNodes) for (const milestone of project.milestones) for (const stage of milestone.stages) for (const task of stage.tasks) taskToMilestone.set(task.id, { milestoneId: milestone.id, stageId: stage.id });
+  const taskLayer2ById = new Map(tasks.map((task) => [task.id, task.taskTypeLayer2]));
+  const contractItemById = new Map(tasks.filter((task) => task.contractItemId).map((task) => [task.contractItemId!, [task.contractItemCode, task.contractItemName].filter(Boolean).join(" · ")]));
   const logs: TimeLog[] = entries.map((entry) => {
     const relation = taskToMilestone.get(entry.taskId);
     return {
@@ -443,9 +460,15 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
       stageId: relation?.stageId || "unassigned-stage",
       taskId: entry.taskId,
       minutes: entry.minutes ?? 0,
-      workGroup: workGroup(entry.workType, entry.projectName || projectById.get(entry.projectId)?.name),
+      // The entry's stored copy first; an entry written before classification existed falls back to its task's value.
+      workGroup: workGroupOfLayer2(entry.taskTypeLayer2 ?? taskLayer2ById.get(entry.taskId)),
       billable: entry.billable !== false,
-      note: entry.note || ""
+      selectedLayer2Label: entry.selectedTaskTypeLayer2 ? taskTypeLayer2Label(entry.selectedTaskTypeLayer2) : undefined,
+      layer2Mismatch: entry.layer2Mismatch === true,
+      note: entry.note || "",
+      loggedWhileOnHold: entry.loggedWhileOnHold === true,
+      beforeEightHourRule: entry.beforeEightHourRule === true,
+      contractItem: entry.contractItemId ? contractItemById.get(entry.contractItemId) : undefined
     };
   });
 

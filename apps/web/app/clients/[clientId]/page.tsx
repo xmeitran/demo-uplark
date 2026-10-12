@@ -21,6 +21,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import type { AccountSummary, ContactSummary, ProjectSummary, ResourceListResponse } from "@b2b-crm/contracts";
+import { projectStatusLabel, resolveProjectStatus } from "@/lib/project-status";
+import { useAuth } from "@/lib/auth";
+import { canViewCostFigures } from "@/lib/auth-role";
 
 const TABS = ["Projects", "Contacts"] as const;
 type Tab = (typeof TABS)[number];
@@ -117,7 +120,7 @@ function ProjectRow({ project, accent }: { project: ProjectSummary; accent: stri
       <div className="mb-3 flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="truncate text-sm font-bold text-foreground">{project.name}</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">{project.code} · {stageLabel(project.status)}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{project.code} · {projectStatusLabel(resolveProjectStatus(project))}</p>
         </div>
         <span className="rounded-lg bg-muted px-2 py-1 text-[10px] font-bold text-muted-foreground">
           {project.taskCount ?? 0} tasks
@@ -135,6 +138,7 @@ function ProjectRow({ project, accent }: { project: ProjectSummary; accent: stri
 }
 
 export default function ClientDetailPage() {
+  const showMoney = canViewCostFigures(useAuth().user);
   const params = useParams<{ clientId: string }>();
   const clientId = params?.clientId ?? "";
   const [tab, setTab] = useState<Tab>("Projects");
@@ -304,7 +308,7 @@ export default function ClientDetailPage() {
               <section className="rounded-2xl border border-border bg-card shadow-sm">
                 <h2 className="border-b border-border px-5 py-4 !text-sm font-bold text-foreground">Account Info</h2>
                 <dl className="divide-y divide-border px-5">
-                  <InfoRow label="Annual Value"><MoneyAmount value={account.annualValue ?? 0} /></InfoRow>
+                  {showMoney && <InfoRow label="Annual Value"><MoneyAmount value={account.annualValue ?? 0} /></InfoRow>}
                   <InfoRow label="Stage">{stageLabel(account.stage)}</InfoRow>
                   <InfoRow label="PIC">
                     {account.picUserId && account.picName ? (

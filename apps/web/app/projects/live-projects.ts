@@ -324,7 +324,7 @@ export function mapProjectSummaryToUiProject(project: ProjectSummary): Project {
   const statusCode = resolveProjectStatus(project);
   const status = projectStatusLabel(statusCode);
   const taskCount = project.taskCount ?? 0;
-  const completedTaskCount = project.completedTaskCount ?? (status === "Completed" ? taskCount : 0);
+  const completedTaskCount = project.completedTaskCount ?? (statusCode === "completed" ? taskCount : 0);
   const uniqueMembers = uniqueProjectMembers(project.members ?? []);
   const members = uniqueMembers.map((member) => ({
     id: member.userId,
@@ -348,9 +348,12 @@ export function mapProjectSummaryToUiProject(project: ProjectSummary): Project {
     status,
     statusReason: project.statusReason,
     statusSince: project.statusSince,
+    closeReasonCode: project.closeReasonCode,
     openWarningCount: project.openWarningCount,
+    hasPendingStatusProposal: project.hasPendingStatusProposal,
+    pendingStatusProposal: project.pendingStatusProposal,
     priority: project.priority ? `${project.priority[0].toUpperCase()}${project.priority.slice(1)}` as Project["priority"] : toUiPriority(statusCode, project.progressPercent),
-    progress: clampPercent(project.progressPercent ?? (taskCount > 0 ? Math.round((completedTaskCount / taskCount) * 100) : status === "Completed" ? 100 : 0)),
+    progress: clampPercent(project.progressPercent ?? (taskCount > 0 ? Math.round((completedTaskCount / taskCount) * 100) : statusCode === "completed" ? 100 : 0)),
     budget: project.budgetAmount ?? 0,
     spent: project.spentAmount ?? 0,
     startDate: formatUiDate(project.plannedStartAt),
@@ -367,7 +370,7 @@ export function mapProjectSummaryToUiProject(project: ProjectSummary): Project {
     tasks: { total: taskCount, done: completedTaskCount },
     plannedHours: minutesToHours(project.plannedMinutes),
     loggedHours: minutesToHours(project.loggedMinutes),
-    pnlHours: minutesToHours(project.approvedMinutes),
+    isTestProject: project.isTestProject,
     client: project.accountName || "Unassigned Account",
     color,
     tags: project.tags?.length ? project.tags : [project.code, status].filter(Boolean),
@@ -425,15 +428,9 @@ function uniqueStrings(values: string[]) {
 
 /** Stored value sent to the API for a catalogue label; "Chưa xác định" is display-only and sends nothing. */
 export function toBackendProjectStatus(status: Project["status"]) {
-  const map: Partial<Record<Project["status"], string>> = {
-    Active: "in_progress",
-    "In Review": "in_review",
-    Planning: "planning",
-    "On Hold": "on_hold",
-    Completed: "completed",
-    "At Risk": "at_risk"
-  };
-  return map[status];
+  const code = normalizeProjectStatus(status);
+  // Active projects keep the stored value older rows use.
+  return code === "active" ? "in_progress" : code ?? undefined;
 }
 
 export function buildAccountOptions(projects: ProjectSummary[]): LiveProjectAccountOption[] {

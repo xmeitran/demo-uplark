@@ -37,11 +37,11 @@ describe("buildTimesheetWorkbook", () => {
     expect(header("Theo dự án")).toEqual(["Tên dự án", "Mã dự án", "Khách hàng / tài khoản", "Trạng thái dự án", "Tổng_số_giờ", "Giờ_Estimate", "Số_nhân_sự", "Số_task", "Tỷ_lệ_so_với_Estimate_(%)"]);
     expect(header("Theo nhân sự")).toEqual(["Nhân sự", "Vai trò", "Phòng ban", "Tổng_số_giờ", "Số_dự_án", "Số_task", "Ngày_làm_việc_đã_log", "Trung_bình_giờ/ngày"]);
     expect(header("Tiến độ theo Ngày")).toEqual(["Ngày", "Tổng_số_giờ", "Số_nhân_sự", "Số_dự_án", "Số_task"]);
-    expect(header("Raw Data")).toEqual(["Ngày", "User ID", "Nhân sự", "Phòng ban", "Vai trò", "Project ID", "Mã dự án", "Tên dự án", "Khách hàng / tài khoản", "Trạng thái dự án", "Milestone", "Giai đoạn", "Task ID", "Task", "Trạng thái task", "Nhóm công việc", "Tính phí", "Số phút", "Số giờ", "Giờ estimate task", "Ghi chú"]);
+    expect(header("Raw Data")).toEqual(["Ngày", "User ID", "Nhân sự", "Phòng ban", "Vai trò", "Project ID", "Mã dự án", "Tên dự án", "Khách hàng / tài khoản", "Trạng thái dự án", "Milestone", "Giai đoạn", "Task ID", "Task", "Trạng thái task", "Nhóm công việc", "Lớp 2 không khớp", "Số phút", "Số giờ", "Giờ estimate task", "Ghi chú", "Hạng mục hợp đồng"]);
 
     // Raw Data keeps every filtered log; dates are real dates.
     expect(sheet("Raw Data").rowCount).toBe(logs.length + 1);
-    expect(sheet("Raw Data").autoFilter).toBe(`A1:U${logs.length + 1}`);
+    expect(sheet("Raw Data").autoFilter).toBe(`A1:V${logs.length + 1}`);
     expect(sheet("Raw Data").getCell("A2").value).toBeInstanceOf(Date);
     expect(sheet("Tiến độ theo Ngày").getCell("A2").value).toBeInstanceOf(Date);
 

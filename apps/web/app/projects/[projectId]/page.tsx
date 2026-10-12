@@ -1,6 +1,5 @@
 "use client";
 import { useProjectPeople } from "@/hooks/use-project-people";
-import { MoneyAmount } from "@/components/money-amount";
 
 
 import React, { useState, useCallback, useMemo, useRef, useEffect, useLayoutEffect } from "react";
@@ -8,7 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, ArrowRight, Edit3, MoreHorizontal, Plus, Calendar, Users,
   Check, CheckCircle2, Clock, AlertCircle, Flag,
-  MessageSquare, BarChart2, TrendingUp, Wallet, Layers, ChevronRight, ChevronLeft,
+  BarChart2, TrendingUp, Layers, ChevronRight, ChevronLeft,
   ListChecks, FileText, GitBranch, Download, ExternalLink, UserPlus,
   Target, X, ChevronDown, ChevronUp, Activity, Lock,
   Trash2, Pencil, Pin, History, Search, Upload, Paperclip
@@ -45,7 +44,6 @@ import type {
   ProjectRiskSummary,
   ProjectStatusHistoryItem,
   ProjectWarningItem,
-  UpdateProjectRiskInput,
   ProjectStageSummary,
   ProjectSummary,
   ProjectTaskSummary,
@@ -60,12 +58,16 @@ import {
 } from "@/lib/workspace-users";
 import { formatVietnamDate, formatVietnamTime, VIETNAM_TIME_ZONE, VIETNAM_TIME_ZONE_LABEL } from "@/lib/vietnam-time";
 import { PARTICIPATION_STATE, currentVietnamMonthRange } from "@/lib/member-participation";
-import { PROJECT_STATUS_LABELS, UNKNOWN_PROJECT_STATUS_LABEL } from "@/lib/project-status";
+import { PROJECT_CLOSE_REASONS, PROJECT_STATUS_CATALOGUE, PROJECT_STATUS_LABELS, UNKNOWN_PROJECT_STATUS_LABEL, manualProjectStatusOptions, normalizeProjectStatus, projectStatusStyleMap, type ProjectCloseReasonCode, type ProjectStatusDefinition } from "@/lib/project-status";
 import { PersonLink } from "@/components/person-link";
 import { hasAnyAuthRole } from "@/lib/auth-role";
 import { systemRoleLabel } from "@/lib/people-roles";
 import { formatProjectDateRange } from "@/lib/project-date";
+import { TASK_TYPE_LAYER1_FIELD_LABEL, TASK_TYPE_LAYER1_OPTIONS, TASK_TYPE_LAYER2_FIELD_LABEL, taskTypeLayer2Label } from "@/lib/task-classification";
 import { isCompletedTaskStatus } from "@/components/crm-workspace/task-display-helpers";
+import { CONTRACT_ITEM_FIELD_LABEL, CONTRACT_ITEM_KIND_LABELS, CONTRACT_ITEM_TYPE_OPTIONS, CONTRACT_ITEM_TYPE_PENDING_LABEL, NO_CONTRACT_ITEM_LABEL } from "@/lib/contract-item";
+import { defaultContractItemId, reloadProjectContractItems, useProjectContractItems } from "@/hooks/use-project-contract-items";
+import type { ProjectContractItemSummary } from "@b2b-crm/contracts";
 import {
   alignItemsToOrder,
   buildHierarchyOrderInput,
@@ -73,6 +75,15 @@ import {
   isSortableTopLevelTask
 } from "@/features/project-hierarchy/hierarchy-order";
 import { selectActiveMilestone } from "@/features/project-hierarchy/milestone-gate-ui";
+import { IssueLogPanel } from "@/features/issue-log/issue-log-panel";
+import { ApiResponseError, readApiError } from "@/lib/api-error";
+import { fetchAllPages } from "@/lib/api-pages";
+import { ProjectGatesPanel } from "@/features/project-gates/project-gates-panel";
+import { ProjectStatusProposalCard } from "@/features/project-gates/status-proposal-card";
+import { ProjectBaselineBlock } from "@/features/project-baseline/baseline-block";
+import { ProjectPnlSetup } from "@/features/project-pnl-setup/project-pnl-setup";
+import { FrameworkConversionButton } from "@/components/crm-workspace/framework-conversion-button";
+import { LarkGroupsControl } from "@/components/crm-workspace/lark-groups-control";
 import { putProjectHierarchyOrder } from "@/features/project-hierarchy/hierarchy-order-client";
 import {
   HierarchyDragHandle,
@@ -141,7 +152,7 @@ const PROJECT_NOT_FOUND: Project = {
   id: "__project_not_found__",
   name: "Project not found",
   description: "",
-  status: "On Hold",
+  status: PROJECT_STATUS_LABELS.on_hold,
   priority: "Low",
   progress: 0,
   budget: 1,
@@ -251,39 +262,17 @@ async function fetchLiveProjectWorkItems(projectId: string, signal?: AbortSignal
   };
 }
 
-async function fetchAllProjectTasks(projectId: string, signal?: AbortSignal) {
-  const tasks: ProjectTaskSummary[] = [];
-  const limit = 200;
-  let offset = 0;
-  let hasNextPage = true;
-
-  while (hasNextPage) {
-    const response = await fetch(withProjectPrincipal(`/api/tasks?projectId=${encodeURIComponent(projectId)}&limit=${limit}&offset=${offset}`), {
-      cache: "no-store",
-      credentials: "same-origin",
-      signal
-    });
-
-    if (response.status === 401) {
-      throw new LiveProjectDetailError("Unauthorized", 401);
-    }
-
-    if (!response.ok) {
-      throw new LiveProjectDetailError(`Could not load project tasks: ${response.status}`, response.status);
-    }
-
-    const payload = (await response.json()) as ResourceListResponse<ProjectTaskSummary>;
-    tasks.push(...payload.data);
-    const pagination = payload.meta.pagination;
-    hasNextPage = Boolean(pagination?.hasNextPage);
-    offset += pagination?.returned ?? payload.data.length;
-
-    if (!pagination || payload.data.length === 0) {
-      hasNextPage = false;
-    }
+/** Every page of a list (lib/api-pages), keeping the status so callers can send a 401 to the login page. */
+async function fetchAllProjectPages<T>(path: string, errorLabel: string, signal?: AbortSignal) {
+  try {
+    return await fetchAllPages<T>(path, { signal, errorLabel });
+  } catch (error) {
+    throw error instanceof ApiResponseError ? new LiveProjectDetailError(error.status === 401 ? "Unauthorized" : error.message, error.status) : error;
   }
+}
 
-  return tasks;
+function fetchAllProjectTasks(projectId: string, signal?: AbortSignal) {
+  return fetchAllProjectPages<ProjectTaskSummary>(withProjectPrincipal(`/api/tasks?projectId=${encodeURIComponent(projectId)}`), "Could not load project tasks", signal);
 }
 
 async function fetchProjectOperationalRecords(projectId: string, signal?: AbortSignal) {
@@ -296,41 +285,18 @@ async function fetchProjectOperationalRecords(projectId: string, signal?: AbortS
   return {
     documents: documentsPayload.data.map(mapProjectDocumentToDoc),
     activityLog: activityPayload.data.map(mapProjectActivityToLogItem),
-    risks: risksPayload.data.map(mapProjectRiskToRiskItem)
+    risks: toRiskRegistry(risksPayload.data)
   };
 }
 
 async function fetchProjectResource<T>(projectId: string, resource: "documents" | "activity" | "risks", signal?: AbortSignal) {
-  const limit = resource === "activity" ? 10 : 100;
-  const fetchPage = async (offset: number) => {
-    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/${resource}?limit=${limit}&offset=${offset}`, {
-      cache: "no-store",
-      credentials: "same-origin",
-      signal
-    });
-
-    if (response.status === 401) {
-      throw new LiveProjectDetailError("Unauthorized", 401);
-    }
-
-    if (!response.ok) {
-      throw new LiveProjectDetailError(`Could not load project ${resource}: ${response.status}`, response.status);
-    }
-
-    return (await response.json()) as ResourceListResponse<T>;
-  };
-
-  const payload = await fetchPage(0);
-  // Activity is a "latest 10" preview. Risks and documents are registers: the API caps a page at 100,
-  // so keep paging until hasNextPage is false instead of silently dropping row 101 onwards.
-  if (resource !== "activity") {
-    let page = payload;
-    while (page.meta?.pagination?.hasNextPage && page.data.length > 0) {
-      page = await fetchPage(payload.data.length);
-      payload.data.push(...page.data);
-    }
-  }
-  return payload;
+  const path = `/api/projects/${encodeURIComponent(projectId)}/${resource}`;
+  // Risks and documents are registers, loaded in full; activity is a "latest 10" preview.
+  if (resource !== "activity") return { data: await fetchAllProjectPages<T>(path, `Could not load project ${resource}`, signal) };
+  const response = await fetch(`${path}?limit=10&offset=0`, { cache: "no-store", credentials: "same-origin", signal });
+  if (response.status === 401) throw new LiveProjectDetailError("Unauthorized", 401);
+  if (!response.ok) throw new LiveProjectDetailError(`Could not load project ${resource}: ${response.status}`, response.status);
+  return (await response.json()) as ResourceListResponse<T>;
 }
 
 class LiveProjectDetailError extends Error {
@@ -502,31 +468,6 @@ function projectMemberMatches(left: ProjectTeamMember, right: ProjectTeamMember)
   return leftKeys.some((key) => rightKeys.includes(key));
 }
 
-function resolveProjectMemberUserId(member: ProjectTeamMember, workspaceMembers: ProjectTeamMember[]) {
-  const memberKeys = teamMemberStrongIdentityKeys(member);
-  if (memberKeys.length === 0) {
-    return undefined;
-  }
-
-  const workspaceMember = workspaceMembers.find((candidate) => {
-    const workspaceKeys = teamMemberStrongIdentityKeys(candidate);
-    return memberKeys.some((key) => workspaceKeys.includes(key));
-  });
-
-  return workspaceMember?.id;
-}
-
-function resolveProjectMemberUserIds(members: ProjectTeamMember[], workspaceMembers: ProjectTeamMember[]) {
-  const resolvedUserIds: string[] = [];
-  for (const member of members) {
-    const userId = resolveProjectMemberUserId(member, workspaceMembers);
-    if (userId && !resolvedUserIds.includes(userId)) {
-      resolvedUserIds.push(userId);
-    }
-  }
-  return resolvedUserIds;
-}
-
 function taskMatchesProjectMember(task: TaskItem, member: ProjectTeamMember) {
   const taskKeys = [
     normalizeIdentityValue(task.assigneeUserId),
@@ -609,13 +550,20 @@ interface TimeEntry {
   userName?: string;
   userColor?: string;
   userAvatarUrl?: string;
+  /** "Lớp 2 không khớp": the Layer 2 chosen for this log differs from the task's. */
+  layer2Mismatch?: boolean;
 }
 
 interface TaskItem {
   id: string; title: string;
   taskType?: string;
   taskTypeLayer1?: "PRE_SALE" | "DELIVERY" | "PM";
-  taskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE" | "DAY_OFF_COMPANY";
+  /** Derived by the API (D-04); shown read-only, never sent back. */
+  taskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE";
+  /** D-01: contract line item; undefined lets the API assign the project's only / root item (D-06). */
+  contractItemId?: string;
+  /** D-05: sent only when a PM (Admin) moves the task to another line item. */
+  contractItemChangeReason?: string;
   status: "todo" | "in-progress" | "done";
   priority: "critical" | "high" | "medium" | "low";
   assignee: string; aColor: string; due: string;
@@ -800,8 +748,14 @@ function mapProjectRiskToRiskItem(risk: ProjectRiskSummary): RiskItem {
     dueAt: risk.dueAt,
     ownerUserId: risk.ownerUserId,
     owner: risk.ownerDisplayName ?? "PMO",
-    status: risk.status
+    // The page-level summaries only tell open from handled; the issue-log panel shows the real status.
+    status: risk.isOpen === false ? "resolved" : "open"
   };
+}
+
+/** 5.1: change requests never count as a project risk, so the page summaries leave them out. */
+function toRiskRegistry(records: ProjectRiskSummary[]): RiskItem[] {
+  return records.filter((record) => record.type !== "change_request").map(mapProjectRiskToRiskItem);
 }
 
 function categoryFromArtifactType(value: string) {
@@ -996,6 +950,7 @@ function mapProjectTaskToTaskItem(task: ProjectTaskSummary): TaskItem {
     taskType: task.taskType,
     taskTypeLayer1: task.taskTypeLayer1,
     taskTypeLayer2: task.taskTypeLayer2,
+    contractItemId: task.contractItemId,
     status: toTaskStatus(task.status),
     priority: toTaskPriority(task.priority),
     assignee: initialsForDisplayName(assigneeName),
@@ -1029,26 +984,9 @@ function mapTimeEntryToUi(entry: TaskTimeEntrySummary): TimeEntry {
     userInitials: initialsForDisplayName(userName),
     userName,
     userColor: colorForIdentity(userName),
-    userAvatarUrl: entry.userAvatarUrl
+    userAvatarUrl: entry.userAvatarUrl,
+    layer2Mismatch: entry.layer2Mismatch
   };
-}
-
-function dateInputValue(date = new Date()) {
-  const copy = new Date(date);
-  copy.setMinutes(copy.getMinutes() - copy.getTimezoneOffset());
-  return copy.toISOString().slice(0, 10);
-}
-
-function buildLocalDateTimeIso(dateValue: string, timeValue: string) {
-  const [year, month, day] = dateValue.split("-").map(Number);
-  const [hour, minute] = timeValue.split(":").map(Number);
-  return new Date(year, (month || 1) - 1, day || 1, hour || 0, minute || 0, 0, 0).toISOString();
-}
-
-function buildWorkLogDateIso(dateValue: string, period: string) {
-  const match = period.match(/(\d{1,2}):(\d{2})/);
-  const timeValue = match ? `${match[1].padStart(2, "0")}:${match[2]}` : "09:00";
-  return buildLocalDateTimeIso(dateValue, timeValue);
 }
 
 function toMilestoneStatus(status: string): Milestone["status"] {
@@ -1304,15 +1242,6 @@ function formatApiDate(value?: string) {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-/**
- * Renders "start → due"; when start isn't set, the arrow still points at due.
- * Shared by tasks (fallback "Not set") and milestones/stages (fallback "TBD").
- */
-function formatDateRange(startDate: string | undefined, due: string | undefined, fallback: string = "Not set") {
-  if (!due || due === fallback) return fallback;
-  return <>{startDate} <ArrowRight aria-hidden="true" className="inline h-3 w-3 align-middle" /> {due}</>;
-}
-
 function formatActivityDate(value?: string) {
   if (!value) return "";
   const date = new Date(value);
@@ -1449,16 +1378,9 @@ function useModalMutation(onClose: () => void) {
   return { submit, submitting, submitError };
 }
 
+/** Message of a failed write, read by lib/api-error; `fallback` names the action when the body has none. */
 async function mutationErrorMessage(response: Response, fallback: string) {
-  try {
-    const payload = await response.json();
-    if (typeof payload?.message === "string") return payload.message;
-    if (Array.isArray(payload?.message)) return payload.message.join(", ");
-    if (typeof payload?.error === "string") return payload.error;
-  } catch {
-    // Ignore non-JSON error bodies from upstream/proxy responses.
-  }
-  return `${fallback}: ${response.status}`;
+  return (await readApiError(response, fallback)).message;
 }
 
 const EMPTY_MILESTONES: Milestone[] = [];
@@ -1503,18 +1425,6 @@ interface RiskItem {
 
 const EMPTY_RISK_REGISTRY: RiskItem[] = [];
 
-type ProjectRiskDraft = {
-  category: RiskItem["category"];
-  description: string;
-  likelihood: RiskItem["likelihood"];
-  impact: RiskItem["impact"];
-  response: string;
-  switchTrigger: string;
-  dueAt?: string;
-  ownerUserId?: string;
-  status: string;
-};
-
 function riskKindLabel(category: RiskItem["category"]) {
   if (category === "Blocker" || category === "Issue") return category;
   if (category === "Risk") return "Risk";
@@ -1528,315 +1438,6 @@ function riskKindTone(category: RiskItem["category"]) {
     : kind === "Issue"
       ? "bg-violet-50 text-violet-700"
       : "bg-amber-50 text-amber-700";
-}
-
-function riskSeverity(risk: RiskItem) {
-  if (risk.likelihood === "High" || risk.impact === "High") return "High";
-  if (risk.likelihood === "Medium" || risk.impact === "Medium") return "Medium";
-  return "Low";
-}
-
-function riskSeverityLabel(value: string) {
-  return value === "High" ? "Nghiêm trọng" : value === "Medium" ? "Cao" : "Vừa";
-}
-
-function ProjectIssuesPanel({
-  risks,
-  teamMembers,
-  onCreate,
-  onUpdate,
-  initialRiskId
-}: {
-  risks: RiskItem[];
-  teamMembers: ProjectTeamMember[];
-  onCreate: (draft: ProjectRiskDraft) => Promise<void>;
-  onUpdate: (riskId: string, input: UpdateProjectRiskInput) => Promise<void>;
-  initialRiskId?: string;
-}) {
-  const [description, setDescription] = useState("");
-  const [category, setCategory] = useState<RiskItem["category"]>("Risk");
-  const [likelihood, setLikelihood] = useState<RiskItem["likelihood"]>("Medium");
-  const [impact, setImpact] = useState<RiskItem["impact"]>("Medium");
-  const [response, setResponse] = useState("");
-  const [switchTrigger, setSwitchTrigger] = useState("");
-  const [dueAt, setDueAt] = useState("");
-  const [ownerUserId, setOwnerUserId] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [categoryFilter, setCategoryFilter] = useState("all");
-  const [severityFilter, setSeverityFilter] = useState("all");
-  const [ownerFilter, setOwnerFilter] = useState("all");
-  const [expandedRiskId, setExpandedRiskId] = useState<string | null>(null);
-  const [editingRiskId, setEditingRiskId] = useState<string | null>(null);
-  const [editResponse, setEditResponse] = useState("");
-  const [editDueAt, setEditDueAt] = useState("");
-  const [editStatus, setEditStatus] = useState("open");
-  const [editOwnerUserId, setEditOwnerUserId] = useState("");
-  const [updatingRiskId, setUpdatingRiskId] = useState<string | null>(null);
-  useEffect(() => {
-    if (!initialRiskId || !risks.some((risk) => risk.id === initialRiskId)) return;
-    setExpandedRiskId(initialRiskId);
-    window.requestAnimationFrame(() => document.getElementById(`issue-${initialRiskId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
-  }, [initialRiskId, risks]);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const overdueCount = risks.filter((risk) => risk.dueAt && new Date(risk.dueAt).getTime() < Date.now() && !["resolved", "closed", "done"].includes(risk.status.toLowerCase())).length;
-  const openCount = risks.filter((risk) => !["resolved", "closed", "done"].includes(risk.status.toLowerCase())).length;
-  const highCount = risks.filter((risk) => risk.likelihood === "High" || risk.impact === "High").length;
-  const visibleRisks = risks.filter((risk) => {
-    const isOpen = !["resolved", "closed", "done"].includes(risk.status.toLowerCase());
-    if (statusFilter !== "all" && (statusFilter === "open" ? !isOpen : risk.status.toLowerCase() !== statusFilter)) return false;
-    if (categoryFilter !== "all" && risk.category !== categoryFilter) return false;
-    if (severityFilter !== "all" && riskSeverity(risk) !== severityFilter) return false;
-    if (ownerFilter !== "all" && risk.owner !== ownerFilter) return false;
-    return true;
-  });
-
-  const exportVisibleRisks = () => {
-    const rows = [
-      ["Mã", "Loại", "Nội dung", "Mức độ", "Owner", "Trạng thái", "Hạn xử lý", "Phương án xử lý"],
-      ...visibleRisks.map((risk, index) => [`ISS-${String(index + 1).padStart(3, "0")}`, riskKindLabel(risk.category), risk.description, riskSeverityLabel(riskSeverity(risk)), risk.owner || "Chưa phân công", risk.status, risk.dueAt ? new Intl.DateTimeFormat("vi-VN").format(new Date(risk.dueAt)) : "Chưa có hạn xử lý", risk.response || "Chưa cập nhật"])
-    ];
-    const csv = `\ufeff${rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n")}`;
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "project-issues.csv";
-    anchor.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
-  };
-
-  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!description.trim()) {
-      setError("Hãy mô tả blocker, risk hoặc issue cần theo dõi.");
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      await onCreate({
-        category,
-        description: description.trim(),
-        likelihood,
-        impact,
-        response: response.trim(),
-        switchTrigger: switchTrigger.trim(),
-        dueAt: dueAt || undefined,
-        ownerUserId: ownerUserId || undefined,
-        status: "open"
-      });
-      setDescription("");
-      setResponse("");
-      setSwitchTrigger("");
-      setDueAt("");
-      setOwnerUserId("");
-    } catch (createError) {
-      setError(createError instanceof Error ? createError.message : "Không thể tạo bản ghi.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const beginEdit = (risk: RiskItem) => {
-    setExpandedRiskId(risk.id);
-    setEditingRiskId(risk.id);
-    setEditResponse(risk.response);
-    setEditDueAt(risk.dueAt ? risk.dueAt.slice(0, 10) : "");
-    setEditStatus(risk.status);
-    setEditOwnerUserId(risk.ownerUserId ?? "");
-  };
-
-  const saveEdit = async (event: React.FormEvent<HTMLFormElement>, riskId: string) => {
-    event.preventDefault();
-    setUpdatingRiskId(riskId);
-    try {
-      await onUpdate(riskId, {
-        response: editResponse.trim(),
-        dueAt: editDueAt || null,
-        status: editStatus,
-        ownerUserId: editOwnerUserId || null
-      });
-      setEditingRiskId(null);
-    } catch (updateError) {
-      setError(updateError instanceof Error ? updateError.message : "Không thể cập nhật vấn đề.");
-    } finally {
-      setUpdatingRiskId(null);
-    }
-  };
-
-  return (
-    <div className="flex flex-col gap-5">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div><p className="text-[10px] font-black uppercase tracking-[0.16em] text-primary">ISSUES</p><h2 className="mt-1 text-xl font-black tracking-tight text-foreground">Sổ Blocker / Risk / Issue</h2><p className="mt-1 text-xs text-muted-foreground">Dùng làm đầu vào cho cảnh báo tiến độ và điều phối owner.</p></div>
-        <button type="button" onClick={() => document.getElementById("issue-form")?.scrollIntoView({ behavior: "smooth", block: "start" })} className="inline-flex min-h-9 items-center justify-center rounded-lg bg-primary px-3 text-xs font-bold text-primary-foreground"><Plus className="mr-1.5 h-3.5 w-3.5" /> Báo vấn đề</button>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {[
-          { label: "Đang mở", value: openCount, detail: `${risks.filter((risk) => risk.category === "Blocker").length} blocker · ${risks.filter((risk) => risk.category === "Risk").length} risk · ${risks.filter((risk) => risk.category === "Issue").length} issue`, tone: "text-foreground" },
-          { label: "Mức cao trở lên", value: highCount, detail: "Theo khả năng hoặc tác động", tone: "text-rose-600" },
-          { label: "Quá hạn xử lý", value: overdueCount, detail: overdueCount ? "Cần xử lý ngay" : "Chưa có bản ghi quá hạn", tone: "text-amber-600" },
-          { label: "Chưa có owner", value: risks.filter((risk) => !risk.owner).length, detail: "Cần phân công", tone: "text-violet-600" },
-          { label: "Đang chặn điểm chốt", value: risks.filter((risk) => risk.category === "Blocker" && !["resolved", "closed", "done"].includes(risk.status.toLowerCase())).length, detail: "Cần xử lý trước khi chuyển stage", tone: "text-rose-600" }
-        ].map((card) => <div key={card.label} className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{card.label}</p><p className={`mt-1 text-2xl font-black ${card.tone}`}>{card.value}</p><p className="mt-1 text-[11px] text-muted-foreground">{card.detail}</p></div>)}
-      </div>
-
-      <form id="issue-form" onSubmit={submit} className="order-3 rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-bold text-foreground">Báo blocker / risk / issue</h3><p className="mt-1 text-xs text-muted-foreground">Bản ghi mới sẽ xuất hiện ngay trong danh sách điều phối của project.</p></div><AlertCircle className="h-5 w-5 text-amber-500" /></div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-          <label className="lg:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Mô tả vấn đề</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="Ví dụ: Chờ dữ liệu đầu vào từ khách hàng để hoàn thành stage…" className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15" /></label>
-          <div><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Loại bản ghi</span><CustomDropdown options={[{ value: "Blocker", label: "Blocker — đang chặn" }, { value: "Risk", label: "Risk — nguy cơ" }, { value: "Issue", label: "Issue — đã phát sinh" }]} value={category} onChange={(value) => setCategory(value as RiskItem["category"])} /></div>
-          <div><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Owner</span><TeamMemberSingleSelect members={teamMembers} value={teamMembers.find((member) => member.id === ownerUserId)} onChange={(member) => setOwnerUserId(member?.id ?? "")} placeholder="Chưa phân công" /></div>
-          <div><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Khả năng</span><CustomDropdown options={[{ value: "Low", label: "Thấp" }, { value: "Medium", label: "Vừa" }, { value: "High", label: "Cao" }]} value={likelihood} onChange={(value) => setLikelihood(value as RiskItem["likelihood"])} /></div>
-          <div><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Tác động</span><CustomDropdown options={[{ value: "Low", label: "Thấp" }, { value: "Medium", label: "Vừa" }, { value: "High", label: "Cao" }]} value={impact} onChange={(value) => setImpact(value as RiskItem["impact"])} /></div>
-          <label className="lg:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Phương án xử lý</span><input value={response} onChange={(event) => setResponse(event.target.value)} placeholder="Giảm thiểu, chờ phê duyệt, cập nhật dữ liệu…" className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-primary" /></label>
-          <label className="lg:col-span-2"><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Điều kiện chuyển trạng thái</span><input value={switchTrigger} onChange={(event) => setSwitchTrigger(event.target.value)} placeholder="Ví dụ: Khách hàng xác nhận trước 17:00" className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-primary" /></label>
-          <div><span className="mb-1.5 block text-xs font-semibold text-muted-foreground">Hạn xử lý</span><CustomDatePicker ariaLabel="Hạn xử lý" value={dueAt} onChange={setDueAt} placeholder="Chưa có hạn xử lý" /></div>
-        </div>
-        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs text-rose-600">{error}</p><button type="submit" disabled={saving} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"><Plus className="h-4 w-4" />{saving ? "Đang lưu…" : "Báo vấn đề"}</button></div>
-      </form>
-
-      <div className="order-2 overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-        <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h3 className="text-sm font-bold text-foreground">Danh sách theo dõi</h3><p className="mt-1 text-xs text-muted-foreground">Các bản ghi được dùng làm đầu vào cho cảnh báo tiến độ và điều phối owner.</p></div><span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">{risks.length} bản ghi</span></div>
-        <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
-          <CustomDropdown ariaLabel="Lọc loại vấn đề" options={[{ value: "all", label: "Loại: Tất cả" }, { value: "Blocker", label: "Blocker" }, { value: "Risk", label: "Risk" }, { value: "Issue", label: "Issue" }]} value={categoryFilter} onChange={setCategoryFilter} />
-          <CustomDropdown ariaLabel="Lọc mức độ" options={[{ value: "all", label: "Mức độ: Tất cả" }, { value: "High", label: "Nghiêm trọng / Cao" }, { value: "Medium", label: "Vừa" }, { value: "Low", label: "Thấp" }]} value={severityFilter} onChange={setSeverityFilter} />
-          <CustomDropdown ariaLabel="Lọc owner" options={[{ value: "all", label: "Owner: Tất cả" }, ...Array.from(new Set(risks.map((risk) => risk.owner).filter(Boolean))).map((owner) => ({ value: owner, label: owner }))]} value={ownerFilter} onChange={setOwnerFilter} />
-          <CustomDropdown ariaLabel="Lọc trạng thái" options={[{ value: "all", label: "Trạng thái: Tất cả" }, { value: "open", label: "Đang mở" }, { value: "resolved", label: "Đã xử lý" }]} value={statusFilter} onChange={setStatusFilter} />
-          <span className="ml-auto text-xs font-semibold text-muted-foreground">{visibleRisks.length} / {risks.length} bản ghi</span>
-          <button type="button" onClick={exportVisibleRisks} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground transition hover:bg-muted"><Download className="h-3.5 w-3.5" /> Xuất Excel</button>
-        </div>
-        {visibleRisks.length === 0 ? <div className="px-5 py-12 text-center"><AlertCircle className="mx-auto h-8 w-8 text-muted-foreground/50" /><p className="mt-3 text-sm font-semibold text-foreground">{risks.length === 0 ? "Chưa có Blocker, Risk hoặc Issue" : "Không có bản ghi phù hợp"}</p><p className="mt-1 text-xs text-muted-foreground">Báo vấn đề đầu tiên để project có lịch sử xử lý rõ ràng.</p></div> : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[980px] text-left text-sm">
-              <thead className="bg-muted/25 text-[10px] font-black uppercase tracking-wider text-muted-foreground"><tr><th className="px-4 py-3">Mã / Loại</th><th className="px-4 py-3">Nội dung</th><th className="px-4 py-3">Gắn với</th><th className="px-4 py-3">Mức độ</th><th className="px-4 py-3">Owner</th><th className="px-4 py-3">Trạng thái</th><th className="px-4 py-3">Phát hiện / Hạn</th></tr></thead>
-              <tbody className="divide-y divide-border">
-                {visibleRisks.map((risk, index) => {
-                  const isOpen = !["resolved", "closed", "done"].includes(risk.status.toLowerCase());
-                  const expanded = expandedRiskId === risk.id;
-                  const severity = riskSeverity(risk);
-                  return <React.Fragment key={risk.id}>
-                    <tr id={`issue-${risk.id}`} className="cursor-pointer align-top transition hover:bg-muted/15" onClick={() => setExpandedRiskId(expanded ? null : risk.id)}>
-                      <td className="px-4 py-3"><div className="flex items-center gap-2"><span className="text-xs font-black text-foreground">ISS-{String(index + 1).padStart(3, "0")}</span><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${riskKindTone(risk.category)}`}>{riskKindLabel(risk.category)}</span></div></td>
-                      <td className="max-w-[360px] px-4 py-3"><p className="line-clamp-2 font-semibold text-foreground">{risk.description}</p><p className="mt-1 text-[11px] text-muted-foreground">{risk.switch || "Chưa có điều kiện chuyển trạng thái"}</p></td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">Chưa gắn Milestone</td>
-                      <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${severity === "High" ? "bg-rose-100 text-rose-700" : severity === "Medium" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>{riskSeverityLabel(severity)}</span></td>
-                      <td className="px-4 py-3 text-xs font-semibold text-foreground">{risk.owner || "Chưa phân công"}</td>
-                      <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${isOpen ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{isOpen ? "Đang mở" : "Đã xử lý"}</span></td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">{risk.dueAt ? new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(risk.dueAt)) : "Chưa có hạn xử lý"} <span className="ml-1 text-[10px]">{expanded ? "▲" : "▼"}</span></td>
-                    </tr>
-                    {expanded && <tr className="bg-muted/10"><td colSpan={7} className="px-6 py-4">
-                      {editingRiskId === risk.id ? <form className="grid gap-3 rounded-lg border border-primary/20 bg-background p-3 md:grid-cols-2" onSubmit={(event) => void saveEdit(event, risk.id)}>
-                        <label className="md:col-span-2"><span className="mb-1 block text-xs font-bold text-foreground">Phương án xử lý</span><input value={editResponse} onChange={(event) => setEditResponse(event.target.value)} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary" /></label>
-                        <div><span className="mb-1 block text-xs font-bold text-foreground">Owner</span><TeamMemberSingleSelect members={teamMembers} value={teamMembers.find((member) => member.id === editOwnerUserId)} onChange={(member) => setEditOwnerUserId(member?.id ?? "")} placeholder="Chưa phân công" /></div>
-                        <div><span className="mb-1 block text-xs font-bold text-foreground">Trạng thái</span><CustomDropdown options={[{ value: "open", label: "Đang mở" }, { value: "resolved", label: "Đã xử lý" }]} value={editStatus} onChange={setEditStatus} /></div>
-                        <div><span className="mb-1 block text-xs font-bold text-foreground">Hạn xử lý</span><CustomDatePicker ariaLabel="Hạn xử lý" value={editDueAt} onChange={setEditDueAt} placeholder="Chưa có hạn xử lý" /></div>
-                        <div className="flex items-end justify-end gap-2"><button type="button" onClick={() => setEditingRiskId(null)} className="rounded-lg border border-border px-3 py-2 text-xs font-semibold">Hủy</button><button type="submit" disabled={updatingRiskId === risk.id} className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-60">{updatingRiskId === risk.id ? "Đang lưu…" : "Lưu cập nhật"}</button></div>
-                      </form> : <div className="grid gap-4 md:grid-cols-2"><div className="rounded-lg border border-border bg-background p-3"><p className="text-xs font-bold text-foreground">Phương án xử lý</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{risk.response || "Chưa cập nhật"}</p><p className="mt-3 text-xs font-bold text-foreground">Hạn xử lý</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{risk.dueAt ? new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(risk.dueAt)) : "Chưa có hạn xử lý"}</p><p className="mt-3 text-xs font-bold text-foreground">Điều kiện chuyển trạng thái</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{risk.switch || "Chưa cập nhật"}</p><button type="button" onClick={(event) => { event.stopPropagation(); beginEdit(risk); }} className="mt-4 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground">Cập nhật xử lý</button></div><div className="rounded-lg border border-border bg-background p-3"><p className="text-xs font-bold text-foreground">Nhật ký xử lý</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Các cập nhật mới nhất được lưu cùng Issue và hiển thị theo trạng thái hiện tại.</p></div></div>}
-                    </td></tr>}
-                  </React.Fragment>;
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-      <div className="order-4 grid gap-5 lg:grid-cols-2">
-        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm"><div className="flex items-center justify-between"><div><h3 className="text-sm font-bold text-foreground">Ma trận Khả năng × Tác động</h3><p className="mt-1 text-xs text-muted-foreground">Ưu tiên xử lý theo mức độ ảnh hưởng.</p></div><span className="rounded-full bg-muted px-2 py-1 text-[10px] font-bold text-muted-foreground">{risks.length} bản ghi</span></div><div className="mt-4 grid grid-cols-4 gap-1 text-center text-[10px] font-bold"><div /><div className="rounded bg-muted p-2 text-muted-foreground">Tác động thấp</div><div className="rounded bg-muted p-2 text-muted-foreground">Tác động vừa</div><div className="rounded bg-muted p-2 text-muted-foreground">Tác động cao</div>{(["High", "Medium", "Low"] as const).map((likelihood) => <React.Fragment key={likelihood}><div className="flex items-center justify-center rounded bg-muted p-2 text-muted-foreground">Khả năng {likelihood === "High" ? "cao" : likelihood === "Medium" ? "vừa" : "thấp"}</div>{(["Low", "Medium", "High"] as const).map((impactValue) => <div key={impactValue} className={`rounded p-3 ${likelihood === "High" && impactValue === "High" ? "bg-rose-100 text-rose-700" : likelihood === "Low" && impactValue === "Low" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{risks.filter((risk) => risk.likelihood === likelihood && risk.impact === impactValue).length}</div>)}</React.Fragment>)}</div></div>
-        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm"><h3 className="text-sm font-bold text-foreground">Tin bot khi mở một Blocker</h3><p className="mt-1 text-xs text-muted-foreground">Preview thông báo tới owner và người phụ trách milestone.</p><div className="mt-4 rounded-xl border border-dashed border-border bg-muted/20 p-4 text-xs leading-5 text-muted-foreground">Chưa có Blocker đang mở. Khi tạo mới, hệ thống sẽ ghi nhận owner, milestone bị chặn và điều kiện chuyển trạng thái.</div></div>
-      </div>
-    </div>
-  );
-}
-
-function ProjectOverviewSignals({
-  projectColor,
-  milestones,
-  tasks,
-  risks,
-  documents,
-  onOpenIssues,
-  onOpenDocuments
-}: {
-  projectColor: string;
-  milestones: Milestone[];
-  tasks: TaskItem[];
-  risks: RiskItem[];
-  documents: ProjectDoc[];
-  onOpenIssues: () => void;
-  onOpenDocuments: () => void;
-}) {
-  const orderedMilestones = [...milestones].sort((left, right) => left.order - right.order);
-  const today = new Date();
-  const openRisks = risks.filter((risk) => !["resolved", "closed", "done"].includes(risk.status.toLowerCase()));
-  const overdueTasks = tasks.filter((task) => {
-    if (task.status === "done" || !task.due || ["TBD", "Not set"].includes(task.due)) return false;
-    const due = new Date(task.due);
-    return Number.isFinite(due.getTime()) && due < today;
-  });
-  const atRiskMilestones = milestones.filter((milestone) => milestone.status === "at-risk");
-  const activeMilestone = selectActiveMilestone(orderedMilestones);
-  const deliveryPlanComplete = orderedMilestones.length > 0 && orderedMilestones.every((milestone) => milestone.gateStatus === "approved" || (!milestone.gateStatus && milestone.status === "done"));
-  const displayMilestone = activeMilestone ?? (deliveryPlanComplete ? orderedMilestones.at(-1) : undefined);
-  const signalCount = openRisks.length + overdueTasks.length + atRiskMilestones.length;
-
-  return (
-    <section aria-label="Tín hiệu điều phối project" className="space-y-3">
-      <div className={`flex flex-col gap-3 rounded-2xl border px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${signalCount > 0 ? "border-amber-200 bg-amber-50/70" : "border-emerald-200 bg-emerald-50/70"}`}>
-        <div className="flex min-w-0 items-start gap-3">
-          {signalCount > 0 ? <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" /> : <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />}
-          <div className="min-w-0">
-            <p className="text-sm font-bold text-foreground">{signalCount > 0 ? `${signalCount} tín hiệu cần điều phối` : "Chưa có tín hiệu cần xử lý"}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {openRisks.length} vấn đề mở · {overdueTasks.length} task quá hạn · {atRiskMilestones.length} milestone có rủi ro
-            </p>
-          </div>
-        </div>
-        <button type="button" onClick={onOpenIssues} className="inline-flex shrink-0 items-center justify-center rounded-lg border border-amber-300 bg-white/80 px-3 py-2 text-xs font-semibold text-amber-800 transition hover:bg-white">
-          Mở Sổ vấn đề →
-        </button>
-      </div>
-
-      <div className="grid gap-3 lg:grid-cols-[1.35fr_1fr]">
-        {openRisks.length > 0 ? (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 shadow-sm lg:col-span-2">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-              <div className="min-w-0">
-                <p className="text-xs font-bold uppercase tracking-wide text-amber-800">Operational risk</p>
-                <p className="mt-1 text-sm font-semibold text-foreground">{openRisks[0].description}</p>
-                <p className="mt-1 text-xs text-muted-foreground">Owner: {openRisks[0].owner || "Chưa phân công"}</p>
-              </div>
-            </div>
-          </div>
-        ) : null}
-        <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">{deliveryPlanComplete ? "Delivery plan" : "Milestone đang chạy"}</p>
-              <p className="mt-1 text-sm font-bold text-foreground">{displayMilestone?.name ?? "Chưa có milestone đang chạy"}</p>
-            </div>
-            <span className="rounded-full px-2.5 py-1 text-[10px] font-bold" style={{ backgroundColor: deliveryPlanComplete ? "#dcfce7" : `${projectColor}15`, color: deliveryPlanComplete ? "#15803d" : projectColor }}>{deliveryPlanComplete ? "Đã hoàn tất" : activeMilestone ? "Đang theo dõi" : "Chưa cấu hình"}</span>
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span>{displayMilestone ? `${displayMilestone.startDate || "TBD"} → ${displayMilestone.dueDate || "TBD"}` : "Bổ sung kế hoạch để xác định điểm chốt"}</span>
-            <span aria-hidden="true">·</span>
-            <span>{documents.length > 0 ? `${documents.length} tài liệu đã liên kết` : "Chưa có hồ sơ chuyển tiếp"}</span>
-          </div>
-        </div>
-        <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Hồ sơ chuyển tiếp</p>
-              <p className="mt-1 text-sm font-bold text-foreground">{documents.length > 0 ? `${documents.length} tài liệu trong project` : "Chưa có tài liệu bắt buộc"}</p>
-            </div>
-            <button type="button" onClick={onOpenDocuments} className="text-xs font-semibold text-primary hover:underline">Mở hồ sơ →</button>
-          </div>
-          <p className="mt-2 text-xs text-muted-foreground">Tài liệu được quản lý tập trung theo Milestone trong tab Điểm chốt &amp; Tài liệu.</p>
-        </div>
-      </div>
-    </section>
-  );
 }
 
 function MilestoneOverviewBar({
@@ -1920,9 +1521,9 @@ function MilestoneOverviewBar({
 }
 
 // One catalogue for every Project Status label on this page: @/lib/project-status.
-const PROJECT_STATUS_OPTIONS: Array<{ value: Project["status"]; label: string }> = Object.values(PROJECT_STATUS_LABELS).map((value) => ({ value, label: value }));
+const CLOSE_REASON_OPTIONS = Object.entries(PROJECT_CLOSE_REASONS).map(([value, label]) => ({ value, label }));
 // Status history stores canonical codes (EV-064); anything else is shown as stored.
-const PROJECT_STATUS_CODE_LABEL: Record<string, string> = PROJECT_STATUS_LABELS;
+const projectStatusCodeLabel = (stored: string) => { const code = normalizeProjectStatus(stored); return code ? PROJECT_STATUS_LABELS[code] : stored; };
 
 async function fetchProjectJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(withProjectPrincipal(path), { cache: "no-store", credentials: "same-origin", signal });
@@ -1937,9 +1538,15 @@ function ProjectStatusEditModal({ projectId, project, color, onClose, onSaved }:
   const [status, setStatus] = useState<Project["status"]>(project.status);
   const [reason, setReason] = useState("");
   const { submit, submitting, submitError } = useModalMutation(onClose);
-  const reasonRequired = status === "On Hold" || status === "At Risk";
-  const reasonLabel = status === "On Hold" ? "Lý do tạm dừng" : status === "At Risk" ? "Blocker hoặc hành động xử lý" : "Lý do";
-  const canSave = status !== project.status && (!reasonRequired || Boolean(reason.trim())) && !submitting;
+  const [closeReasonCode, setCloseReasonCode] = useState<ProjectCloseReasonCode | "">("");
+  const statusCode = normalizeProjectStatus(status);
+  const definition: ProjectStatusDefinition | null = statusCode ? PROJECT_STATUS_CATALOGUE[statusCode] : null;
+  const closing = statusCode === "closed";
+  const reopening = normalizeProjectStatus(project.status) === "closed" && !closing;
+  // Closing takes its required reason from the list; the text is then an optional note. Reopening a closed project needs a reason.
+  const reasonRequired = reopening || (!closing && Boolean(definition?.reasonRequired));
+  const reasonLabel = closing ? "Ghi chú đóng dự án" : reopening ? "Lý do mở lại" : definition?.reasonLabel ?? "Lý do";
+  const canSave = status !== project.status && (!reasonRequired || Boolean(reason.trim())) && (!closing || Boolean(closeReasonCode)) && !submitting;
   const save = () => {
     if (!canSave) return;
     void submit(async () => {
@@ -1947,7 +1554,7 @@ function ProjectStatusEditModal({ projectId, project, color, onClose, onSaved }:
         method: "PATCH",
         credentials: "same-origin",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ status: toBackendProjectStatus(status), statusReason: reason.trim() || undefined })
+        body: JSON.stringify({ status: toBackendProjectStatus(status), statusReason: reason.trim() || undefined, closeReasonCode: closing ? closeReasonCode : undefined })
       });
       if (!response.ok) throw new Error(await mutationErrorMessage(response, "Không thể cập nhật trạng thái"));
       await onSaved();
@@ -1965,9 +1572,14 @@ function ProjectStatusEditModal({ projectId, project, color, onClose, onSaved }:
       }>
       <Field label="Trạng thái" required>
         <div data-initial-focus="true">
-          <CustomDropdown ariaLabel="Trạng thái dự án" options={PROJECT_STATUS_OPTIONS} value={status} onChange={(value) => setStatus(value as Project["status"])} />
+          <CustomDropdown ariaLabel="Trạng thái dự án" options={manualProjectStatusOptions(project.status)} value={status} onChange={(value) => setStatus(value as Project["status"])} />
         </div>
       </Field>
+      {closing ? (
+        <Field label={PROJECT_STATUS_CATALOGUE.closed.reasonLabel} required>
+          <CustomDropdown ariaLabel={PROJECT_STATUS_CATALOGUE.closed.reasonLabel} placeholder="Chọn lý do đóng" options={CLOSE_REASON_OPTIONS} value={closeReasonCode} onChange={(value) => setCloseReasonCode(value as ProjectCloseReasonCode)} />
+        </Field>
+      ) : null}
       <Field label={reasonLabel} required={reasonRequired}>
         <textarea rows={3} value={reason} onChange={(event) => setReason(event.target.value)} aria-label={reasonLabel} aria-required={reasonRequired}
           className="w-full border border-input rounded-xl p-3 text-sm text-foreground bg-background focus:outline-none resize-none" />
@@ -2141,8 +1753,7 @@ function ProjectStatusSlaBar({
   // Always the real Project Status; a finished delivery plan is only a secondary note next to it.
   const statusLabel = formatProjectStatusLabel(project.status);
   const statusUnknown = project.status === UNKNOWN_PROJECT_STATUS_LABEL;
-  const normalizedProjectStatus = project.status.toLocaleLowerCase();
-  const slaPaused = normalizedProjectStatus.includes("hold") || normalizedProjectStatus.includes("risk") || normalizedProjectStatus.includes("cancel") || normalizedProjectStatus.includes("closed");
+  const slaPaused = ["on_hold", "at_risk", "closed"].includes(normalizeProjectStatus(project.status) ?? "");
   return (
     <section aria-label="Trạng thái dự án và SLA" className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-sm md:grid-cols-[1.15fr_1fr_1fr_auto] md:items-center">
       <div className="min-w-0">
@@ -2151,7 +1762,7 @@ function ProjectStatusSlaBar({
           <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${statusUnknown ? "bg-muted text-muted-foreground" : slaPaused ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{statusLabel}</span>
           <span className="text-xs text-muted-foreground">{activeMilestone?.name ?? (deliveryPlanComplete ? `Delivery plan hoàn tất · Milestone cuối: ${orderedMilestones.at(-1)?.name}` : "Chưa có milestone đang chạy")}</span>
         </div>
-        {project.statusReason || project.statusSince ? <p className="mt-1.5 text-xs text-muted-foreground">{[project.statusReason, project.statusSince ? `từ ${formatVietnamDate(project.statusSince)}` : ""].filter(Boolean).join(" · ")}</p> : null}
+        {project.closeReasonCode || project.statusReason || project.statusSince ? <p className="mt-1.5 text-xs text-muted-foreground">{[project.closeReasonCode ? PROJECT_CLOSE_REASONS[project.closeReasonCode] : "", project.statusReason, project.statusSince ? `từ ${formatVietnamDate(project.statusSince)}` : ""].filter(Boolean).join(" · ")}</p> : null}
         <button type="button" aria-expanded={historyOpen} aria-controls="project-status-history" onClick={() => setHistoryOpen((value) => !value)} className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:underline">
           {historyOpen ? <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" /> : <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />} Lịch sử trạng thái
         </button>
@@ -2175,12 +1786,16 @@ function ProjectStatusSlaBar({
             : history.length === 0 ? <p className="text-xs text-muted-foreground">Chưa có lần đổi trạng thái nào được ghi nhận.</p>
             : <ul className="space-y-2">{history.map((item) => (
               <li key={item.id} className="text-xs text-muted-foreground">
-                <span className="font-semibold text-foreground">{item.fromStatus ? `${PROJECT_STATUS_CODE_LABEL[item.fromStatus] ?? item.fromStatus} → ` : ""}{PROJECT_STATUS_CODE_LABEL[item.toStatus] ?? item.toStatus}</span>
-                {item.reason ? ` · ${item.reason}` : ""} · <PersonLink userId={item.changedByUserId}>{item.changedByDisplayName ?? "Hệ thống"}</PersonLink> · {formatVietnamDate(item.changedAt)} {formatVietnamTime(item.changedAt)}
+                <span className="font-semibold text-foreground">{item.fromStatus ? `${projectStatusCodeLabel(item.fromStatus)} → ` : ""}{projectStatusCodeLabel(item.toStatus)}</span>
+                {item.closeReasonCode ? ` · ${PROJECT_CLOSE_REASONS[item.closeReasonCode] ?? item.closeReasonCode}` : ""}{item.reason ? ` · ${item.reason}` : ""} · <PersonLink userId={item.changedByUserId}>{item.changedByDisplayName ?? "Hệ thống"}</PersonLink> · {formatVietnamDate(item.changedAt)} {formatVietnamTime(item.changedAt)}
               </li>
             ))}</ul>}
         </div>
       ) : null}
+      <ProjectStatusProposalCard projectId={projectId} pending={project.pendingStatusProposal} onDecided={onStatusChanged} className="md:col-span-4" />
+      <ProjectBaselineBlock projectId={projectId} refreshKey={`${project.status}|${project.statusSince ?? ""}`} className="md:col-span-4" />
+      <FrameworkConversionButton projectId={projectId} className="md:col-span-4" />
+      <LarkGroupsControl projectId={projectId} className="md:col-span-4" />
       {editing ? <ProjectStatusEditModal projectId={projectId} project={project} color={projectColor} onClose={() => setEditing(false)} onSaved={onStatusChanged} /> : null}
     </section>
   );
@@ -2367,16 +1982,15 @@ function ProjectDeliveryWireframePanels({
 
 // ─── Config maps ──────────────────────────────────────────────────────────────
 
-const STATUS_CFG = {
-  "Active":    { color:C.success, bg:"#dcfce7", icon:CheckCircle2 },
-  "In Review": { color:C.blue,    bg:"#dbeafe", icon:BarChart2 },
-  "Planning":  { color:C.info,    bg:"#cffafe", icon:Clock },
-  "On Hold":   { color:C.slate,   bg:"#f1f5f9", icon:Clock },
-  "Completed": { color:C.success, bg:"#dcfce7", icon:CheckCircle2 },
-  "At Risk":   { color:C.danger,  bg:"#fee2e2", icon:AlertCircle },
-  "Chưa xác định": { color:C.slate, bg:"#f1f5f9", icon:Clock },
-  "Cancelled": { color:C.slate,   bg:"#f1f5f9", icon:X },
-};
+const STATUS_CFG = projectStatusStyleMap({
+  active:    { color:C.success, bg:"#dcfce7", icon:CheckCircle2 },
+  in_review: { color:C.blue,    bg:"#dbeafe", icon:BarChart2 },
+  planning:  { color:C.info,    bg:"#cffafe", icon:Clock },
+  on_hold:   { color:C.slate,   bg:"#f1f5f9", icon:Clock },
+  completed: { color:C.success, bg:"#dcfce7", icon:CheckCircle2 },
+  at_risk:   { color:C.danger,  bg:"#fee2e2", icon:AlertCircle },
+  closed:    { color:"#475569", bg:"#e2e8f0", icon:X },
+}, { color:C.slate, bg:"#f1f5f9", icon:Clock });
 
 const PRIORITY_CFG = {
   critical: { label:"Critical", color:C.danger,  bg:"#fee2e2" },
@@ -2399,6 +2013,135 @@ const MILESTONE_STATUS = {
   "at-risk":     { color:C.danger,  bg:"#fee2e2", label:"Có rủi ro",     icon:AlertCircle },
 };
 
+// ─── Hạng mục hợp đồng (rules 2, D-06, D-22) ──────────────────────────────────
+const CONTRACT_ITEM_INPUT_CLASS = "w-full border border-input rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none";
+
+function ContractItemModal({ projectId, item, hasRoot, color, onClose }: {
+  projectId: string; item: ProjectContractItemSummary | null; hasRoot: boolean; color: string; onClose: () => void;
+}) {
+  const [name, setName] = useState(item?.name ?? "");
+  const [code, setCode] = useState(item?.code ?? "");
+  const [kind, setKind] = useState<string>(item?.kind ?? (hasRoot ? "APPENDIX" : "ROOT"));
+  const [contractType, setContractType] = useState<string>(item?.contractType ?? "");
+  const [valueAmount, setValueAmount] = useState(item?.valueAmount != null ? String(item.valueAmount) : "");
+  const [estimateHours, setEstimateHours] = useState(item?.estimateMinutes != null ? String(item.estimateMinutes / 60) : "");
+  const { submit, submitting, submitError } = useModalMutation(onClose);
+  // A change-request item is created from its approved request (D-23), not picked here.
+  const kindOptions = (Object.keys(CONTRACT_ITEM_KIND_LABELS) as Array<keyof typeof CONTRACT_ITEM_KIND_LABELS>)
+    .filter((value) => value === item?.kind || (value === "ROOT" ? !hasRoot : value === "APPENDIX"))
+    .map((value) => ({ value, label: CONTRACT_ITEM_KIND_LABELS[value] }));
+  const canSave = Boolean(name.trim()) && !submitting;
+  const save = () => {
+    if (!canSave) return;
+    void submit(async () => {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/contract-items${item ? `/${encodeURIComponent(item.id)}` : ""}`, {
+        method: item ? "PATCH" : "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: name.trim(), code: code.trim() || undefined, kind,
+          contractType: contractType || null,
+          valueAmount: valueAmount.trim() === "" ? null : Number(valueAmount),
+          estimateMinutes: estimateHours.trim() === "" ? null : Math.round(Number(estimateHours) * 60)
+        })
+      });
+      if (!response.ok) throw new Error(await mutationErrorMessage(response, "Không thể lưu hạng mục hợp đồng"));
+      await reloadProjectContractItems(projectId);
+    });
+  };
+  return (
+    <ModalShell title={item ? "Sửa hạng mục hợp đồng" : "Thêm hạng mục hợp đồng"} icon={FileText} iconColor={color} onClose={onClose} initialFocusSelector="input"
+      footer={
+        <>
+          <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted transition-colors">Hủy</button>
+          <button type="button" onClick={save} disabled={!canSave} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm disabled:opacity-40" style={{ backgroundColor: color }}>
+            {submitting ? "Đang lưu…" : "Lưu hạng mục"}
+          </button>
+        </>
+      }>
+      <Field label="Tên hạng mục" required>
+        <input value={name} onChange={(event) => setName(event.target.value)} aria-label="Tên hạng mục" aria-required className={CONTRACT_ITEM_INPUT_CLASS} />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Mã">
+          <input value={code} onChange={(event) => setCode(event.target.value)} aria-label="Mã hạng mục" placeholder="Tự sinh (HM-01…)" className={CONTRACT_ITEM_INPUT_CLASS} />
+        </Field>
+        <Field label="Nguồn">
+          <CustomDropdown ariaLabel="Nguồn hạng mục" options={kindOptions} value={kind} onChange={setKind} />
+        </Field>
+      </div>
+      <Field label="Loại hợp đồng">
+        <CustomDropdown ariaLabel="Loại hợp đồng" placeholder={CONTRACT_ITEM_TYPE_PENDING_LABEL} options={CONTRACT_ITEM_TYPE_OPTIONS} value={contractType} onChange={setContractType} />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Giá trị (VND)">
+          <input type="number" min={0} value={valueAmount} onChange={(event) => setValueAmount(event.target.value)} aria-label="Giá trị hạng mục" className={CONTRACT_ITEM_INPUT_CLASS} />
+        </Field>
+        <Field label="Estimate gốc (giờ)">
+          <input type="number" min={0} value={estimateHours} onChange={(event) => setEstimateHours(event.target.value)} aria-label="Estimate gốc" className={CONTRACT_ITEM_INPUT_CLASS} />
+        </Field>
+      </div>
+      {item?.locked ? <p className="text-[11px] text-muted-foreground">Hạng mục đã có giờ log hoặc hóa đơn: loại hợp đồng và giá trị gốc đã khóa, muốn đổi phải qua yêu cầu thay đổi.</p> : null}
+      <ModalMutationFeedback error={submitError} />
+    </ModalShell>
+  );
+}
+
+function ProjectContractItemsBlock({ projectId, projectColor, onOpenChangeRequests }: { projectId: string; projectColor: string; onOpenChangeRequests: () => void }) {
+  const { items, canManage, isInternalWorklog, loaded, error } = useProjectContractItems(projectId);
+  const [editing, setEditing] = useState<ProjectContractItemSummary | "new" | null>(null);
+  // The DX Internal Worklog project has no contract line items.
+  if (!loaded || isInternalWorklog) return null;
+  return (
+    <>
+      {error ? <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">{error}</p> : null}
+      {/* Mục 6.1 "Thiết lập P&L của dự án": the block reads /api/pnl/projects/:id/setup; this page keeps the item modal. */}
+      <ProjectPnlSetup projectId={projectId} canManage={canManage} fallbackItems={items}
+        refreshKey={items.map((item) => `${item.id}:${item.updatedAt}:${item.status}`).join("|")}
+        onAddItem={() => setEditing("new")} onEditItem={(itemId) => setEditing(items.find((item) => item.id === itemId) ?? null)}
+        onOpenChangeRequests={onOpenChangeRequests} />
+      {editing ? (
+        <ContractItemModal projectId={projectId} item={editing === "new" ? null : editing} color={projectColor} onClose={() => setEditing(null)}
+          hasRoot={items.some((item) => item.kind === "ROOT" && item.status === "active")} />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * Line-item select of the task forms. Hidden while the project has at most one line item (the system assigns it, D-06);
+ * only a PM (Admin) may pick another one, a sub-task repeats its parent, and moving an existing task needs a reason (D-05).
+ */
+function TaskContractItemField({ value, onChange, originalValue, reason, onReasonChange, readOnly = false }: {
+  value?: string; onChange: (value: string) => void; originalValue?: string; reason?: string; onReasonChange?: (value: string) => void; readOnly?: boolean;
+}) {
+  const params = useParams<{ projectId: string }>();
+  const { items, canManage } = useProjectContractItems(String(params?.projectId ?? ""));
+  const choices = items.filter((item) => item.status === "active" || item.id === value);
+  if (choices.length <= 1) return null;
+  const selected = value ?? defaultContractItemId(items) ?? "";
+  const labelOf = (item: ProjectContractItemSummary) => `${item.code} · ${item.name} (${item.contractTypeLabel})`;
+  const current = choices.find((item) => item.id === selected);
+  return (
+    <>
+      <Field label={CONTRACT_ITEM_FIELD_LABEL}>
+        {canManage && !readOnly ? (
+          <CustomDropdown ariaLabel={CONTRACT_ITEM_FIELD_LABEL} options={choices.map((item) => ({ value: item.id, label: labelOf(item) }))} value={selected} onChange={onChange} />
+        ) : (
+          <div className="px-3 py-2.5 rounded-xl border border-border bg-muted/30 text-sm text-muted-foreground" title={readOnly ? "Sub-task dùng hạng mục của task cha." : "Chỉ PM (Admin) được đổi hạng mục hợp đồng."}>
+            {current ? labelOf(current) : NO_CONTRACT_ITEM_LABEL}
+          </div>
+        )}
+      </Field>
+      {onReasonChange && originalValue && selected !== originalValue ? (
+        <Field label="Lý do đổi hạng mục" required>
+          <input value={reason ?? ""} onChange={(event) => onReasonChange(event.target.value)} aria-label="Lý do đổi hạng mục" aria-required className={CONTRACT_ITEM_INPUT_CLASS} />
+        </Field>
+      ) : null}
+    </>
+  );
+}
+
 // Keep the project detail navigation focused on delivery decisions. Dashboard
 // and Team were redundant views; their useful content now lives in Overview,
 // Project Sheet and the resource block. Issues remains a first-class tab so
@@ -2410,8 +2153,8 @@ const PROJECT_TAB_ITEMS: WorkspaceTabItem<Tab>[] = [
   { id: "Overview", label: "Overview", description: "Tổng quan dự án" },
   { id: "Project Sheet", label: "Project Sheet", description: "Milestone & ngân sách" },
   { id: "Tasks", label: "Tasks", description: "Công việc & tiến độ" },
-  { id: "Issues", label: "Issues", ariaLabel: "Issues", description: "Blocker / Risk / Issue" },
-  { id: "Documents", label: "Điểm chốt & Tài liệu", ariaLabel: "Documents", description: "Hồ sơ chuyển tiếp" },
+  { id: "Issues", label: "Sổ vấn đề", description: "Vấn đề & yêu cầu thay đổi" },
+  { id: "Documents", label: "Điểm chốt & Tài liệu", description: "Hồ sơ chuyển tiếp" },
   { id: "Timeline", label: "Timeline", description: "Lịch thực hiện" },
   { id: "Activity", label: "Activity", description: "Lịch sử thay đổi" }
 ];
@@ -2787,8 +2530,11 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
 }) {
   const [title,    setTitle]    = useState("");
   const [taskType, setTaskType] = useState("implementation");
-  const [taskTypeLayer1, setTaskTypeLayer1] = useState<TaskItem["taskTypeLayer1"]>("DELIVERY");
-  const [taskTypeLayer2, setTaskTypeLayer2] = useState<TaskItem["taskTypeLayer2"]>("CUSTOMER_PROJECT");
+  // undefined = take the stage's Layer 1 (D-02). Layer 2 is derived by the API and never chosen (D-04).
+  const [taskTypeLayer1, setTaskTypeLayer1] = useState<TaskItem["taskTypeLayer1"]>(undefined);
+  const [contractItemId, setContractItemId] = useState<string | undefined>(undefined);
+  const contractItemFieldProps = {};
+  const taskTypeLayer2Text = "Hệ thống tự gán khi lưu";
   const [priority, setPriority] = useState<TaskItem["priority"]>("medium");
   const [status,   setStatus]   = useState<TaskItem["status"]>("todo");
   const [startDate, setStartDate] = useState("");
@@ -2833,7 +2579,7 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
                     title:title.trim(),
                     taskType,
                     taskTypeLayer1,
-                    taskTypeLayer2,
+                    contractItemId,
                     status,
                     priority,
                     assignee:pic.initials,
@@ -2864,32 +2610,19 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
             className="w-full border border-input rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none" />
         </Field>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Task Type · Nhóm">
+          <Field label={TASK_TYPE_LAYER1_FIELD_LABEL}>
             <CustomDropdown
-              ariaLabel="Task Type · Nhóm"
-              value={taskTypeLayer1 || "DELIVERY"}
-              options={[
-                { value: "PRE_SALE", label: "Pre-sale · Công việc BD" },
-                { value: "DELIVERY", label: "Delivery" },
-                { value: "PM", label: "Quản trị nội bộ" }
-              ]}
-              onChange={(value) => setTaskTypeLayer1(value as TaskItem["taskTypeLayer1"])}
+              ariaLabel={TASK_TYPE_LAYER1_FIELD_LABEL}
+              value={taskTypeLayer1 || "inherit"}
+              options={[{ value: "inherit", label: "Theo stage (mặc định)" }, ...TASK_TYPE_LAYER1_OPTIONS]}
+              onChange={(value) => setTaskTypeLayer1(value === "inherit" ? undefined : value as TaskItem["taskTypeLayer1"])}
             />
           </Field>
-          <Field label="Task Type · Bối cảnh">
-            <CustomDropdown
-              ariaLabel="Task Type · Bối cảnh"
-              value={taskTypeLayer2 || "CUSTOMER_PROJECT"}
-              options={[
-                { value: "CUSTOMER_PROJECT", label: "Project khách hàng" },
-                { value: "INTERNAL_PROJECT", label: "Nội bộ / Project nội bộ" },
-                { value: "TICKET_MAINTENANCE", label: "Ticket / Bảo trì" },
-                { value: "DAY_OFF_COMPANY", label: "Ngày nghỉ công ty" }
-              ]}
-              onChange={(value) => setTaskTypeLayer2(value as TaskItem["taskTypeLayer2"])}
-            />
+          <Field label={TASK_TYPE_LAYER2_FIELD_LABEL}>
+            <div className="px-3 py-2.5 rounded-xl border border-border bg-muted/30 text-sm text-muted-foreground" title="Hệ thống suy ra từ dự án và stage; không chọn tay.">{taskTypeLayer2Text}</div>
           </Field>
         </div>
+        <TaskContractItemField value={contractItemId} onChange={setContractItemId} {...contractItemFieldProps} />
         <Field label="Loại công việc">
           <CustomDropdown
             ariaLabel="Loại công việc"
@@ -4250,8 +3983,12 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
 }) {
   const [title,    setTitle]    = useState(task.title);
   const [taskType, setTaskType] = useState(task.taskType || "implementation");
-  const [taskTypeLayer1, setTaskTypeLayer1] = useState<TaskItem["taskTypeLayer1"]>(task.taskTypeLayer1 || "DELIVERY");
-  const [taskTypeLayer2, setTaskTypeLayer2] = useState<TaskItem["taskTypeLayer2"]>(task.taskTypeLayer2 || "CUSTOMER_PROJECT");
+  // An empty Layer 1 stays empty ("Chờ phân loại") unless changed; Layer 2 is derived by the API and read-only (D-04).
+  const [taskTypeLayer1, setTaskTypeLayer1] = useState<TaskItem["taskTypeLayer1"]>(task.taskTypeLayer1);
+  const [contractItemId, setContractItemId] = useState<string | undefined>(task.contractItemId);
+  const [contractItemChangeReason, setContractItemChangeReason] = useState("");
+  const contractItemFieldProps = { originalValue: task.contractItemId, reason: contractItemChangeReason, onReasonChange: setContractItemChangeReason, readOnly: Boolean(task.parentTaskId) };
+  const taskTypeLayer2Text = taskTypeLayer2Label(task.taskTypeLayer2);
   const [priority, setPriority] = useState<TaskItem["priority"]>(task.priority);
   const [status,   setStatus]   = useState<TaskItem["status"]>(task.status);
   const [startDate, setStartDate] = useState(task.startDate ?? "");
@@ -4299,7 +4036,8 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
                     title:title.trim(),
                     taskType,
                     taskTypeLayer1,
-                    taskTypeLayer2,
+                    contractItemId,
+                    contractItemChangeReason: contractItemChangeReason.trim() || undefined,
                     status,
                     priority,
                     assignee:pic.initials,
@@ -4326,32 +4064,19 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
             className="w-full border border-input rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none" />
         </Field>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Task Type · Nhóm">
+          <Field label={TASK_TYPE_LAYER1_FIELD_LABEL}>
             <CustomDropdown
-              ariaLabel="Task Type · Nhóm"
-              value={taskTypeLayer1 || "DELIVERY"}
-              options={[
-                { value: "PRE_SALE", label: "Pre-sale · Công việc BD" },
-                { value: "DELIVERY", label: "Delivery" },
-                { value: "PM", label: "Quản trị nội bộ" }
-              ]}
-              onChange={(value) => setTaskTypeLayer1(value as TaskItem["taskTypeLayer1"])}
+              ariaLabel={TASK_TYPE_LAYER1_FIELD_LABEL}
+              value={taskTypeLayer1 || "inherit"}
+              options={[{ value: "inherit", label: "Theo stage (mặc định)" }, ...TASK_TYPE_LAYER1_OPTIONS]}
+              onChange={(value) => setTaskTypeLayer1(value === "inherit" ? undefined : value as TaskItem["taskTypeLayer1"])}
             />
           </Field>
-          <Field label="Task Type · Bối cảnh">
-            <CustomDropdown
-              ariaLabel="Task Type · Bối cảnh"
-              value={taskTypeLayer2 || "CUSTOMER_PROJECT"}
-              options={[
-                { value: "CUSTOMER_PROJECT", label: "Project khách hàng" },
-                { value: "INTERNAL_PROJECT", label: "Nội bộ / Project nội bộ" },
-                { value: "TICKET_MAINTENANCE", label: "Ticket / Bảo trì" },
-                { value: "DAY_OFF_COMPANY", label: "Ngày nghỉ công ty" }
-              ]}
-              onChange={(value) => setTaskTypeLayer2(value as TaskItem["taskTypeLayer2"])}
-            />
+          <Field label={TASK_TYPE_LAYER2_FIELD_LABEL}>
+            <div className="px-3 py-2.5 rounded-xl border border-border bg-muted/30 text-sm text-muted-foreground" title="Hệ thống suy ra từ dự án và stage; không chọn tay.">{taskTypeLayer2Text}</div>
           </Field>
         </div>
+        <TaskContractItemField value={contractItemId} onChange={setContractItemId} {...contractItemFieldProps} />
         <Field label="Loại công việc">
           <CustomDropdown
             ariaLabel="Loại công việc"
@@ -4448,1301 +4173,6 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
         <ModalMutationFeedback error={submitError ?? staleAssigneeError} />
       </ModalShell>
     </AnimatePresence>
-  );
-}
-
-function LegacyTaskDetailsDrawer({ task, milestoneName, stageName, color, onClose, onSaveHours, onEditTask, members = EMPTY_TEAM_MEMBERS }: {
-  task: TaskItem;
-  milestoneName: string;
-  stageName: string;
-  color: string;
-  onClose: () => void;
-  onSaveHours: (actualHours: number, plannedHours: number, timeEntries: TimeEntry[]) => void;
-  onEditTask: () => void;
-  members?: ProjectTeamMember[];
-}) {
-  const [actualHours, setActualHours] = useState<number>(task.actualHours ?? 0);
-  const [plannedHours, setPlannedHours] = useState<number>(task.plannedHours ?? 8);
-  const [timeEntries, setTimeEntries] = useState<TimeEntry[]>(task.timeEntries ?? []);
-  const [currentStatus, setCurrentStatus] = useState<TaskItem["status"]>(task.status);
-
-  const initPic = getSelectedTeamMember(members, task.assigneeUserId);
-
-  // Logging entry states
-  const [logHours, setLogHours] = useState<number>(1);
-  const [logDate, setLogDate] = useState<string>(dateInputValue());
-  const [logPeriod, setLogPeriod] = useState<string>("08:00 - 10:00");
-  const [logDescription, setLogDescription] = useState<string>("");
-  const [logUser, setLogUser] = useState<ProjectTeamMember | undefined>(initPic);
-  const [logSaving, setLogSaving] = useState(false);
-  const [logMessage, setLogMessage] = useState<string | null>(null);
-  const [logError, setLogError] = useState<string | null>(null);
-  const [planningUserId, setPlanningUserId] = useState<string>(initPic?.id ?? members[0]?.id ?? "");
-  const [planningDate, setPlanningDate] = useState<string>(dateInputValue());
-  const [planningStartTime, setPlanningStartTime] = useState<string>("09:00");
-  const [planningDurationHours, setPlanningDurationHours] = useState<number>(2);
-  const [planningNotes, setPlanningNotes] = useState<string>("");
-  const [planningSaving, setPlanningSaving] = useState(false);
-  const [planningMessage, setPlanningMessage] = useState<string | null>(null);
-  const [planningError, setPlanningError] = useState<string | null>(null);
-
-  const ts = TASK_STATUS[currentStatus];
-  const tp = PRIORITY_CFG[task.priority];
-
-  const handleAddLog = async () => {
-    if (logHours <= 0 || !logDescription.trim() || !logUser) return;
-
-    setLogSaving(true);
-    setLogError(null);
-    setLogMessage(null);
-
-    try {
-      const response = await fetch(`/api/tasks/${encodeURIComponent(task.id)}/time-entries`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          userId: logUser.id,
-          workDate: buildWorkLogDateIso(logDate, logPeriod),
-          minutes: Math.round(logHours * 60),
-          billable: true,
-          workType: logPeriod.trim() || "delivery",
-          approvalStatus: "submitted",
-          note: logDescription.trim()
-        })
-      });
-
-      if (response.status === 401) {
-        window.location.assign(`/login?returnTo=${encodeURIComponent(window.location.pathname)}`);
-        return;
-      }
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.message || `Could not log actual work: ${response.status}`);
-      }
-
-      const saved = mapTimeEntryToUi((await response.json()) as TaskTimeEntrySummary);
-      const updated = [...timeEntries, saved];
-      setTimeEntries(updated);
-
-      const totalActual = sumHours(updated.map(entry => entry.actualHours));
-      setActualHours(totalActual);
-      if (currentStatus === "todo") {
-        setCurrentStatus("in-progress");
-      }
-      onSaveHours(totalActual, plannedHours, updated);
-
-      setLogHours(1);
-      setLogDescription("");
-      setLogMessage("Đã lưu giờ thực tế, cập nhật trạng thái task và ghi Activity cho project.");
-    } catch (error) {
-      setLogError(error instanceof Error ? error.message : "Could not log actual work");
-    } finally {
-      setLogSaving(false);
-    }
-  };
-
-  const handleCreatePlanningBlock = async () => {
-    const selectedUser = members.find((member) => member.id === planningUserId);
-    if (!selectedUser || planningDurationHours <= 0 || !planningDate || !planningStartTime) return;
-
-    setPlanningSaving(true);
-    setPlanningError(null);
-    setPlanningMessage(null);
-
-    const startAt = buildLocalDateTimeIso(planningDate, planningStartTime);
-    const startDate = new Date(startAt);
-    const endAt = new Date(startDate.getTime() + planningDurationHours * 60 * 60 * 1000).toISOString();
-    const plannedMinutes = Math.round(planningDurationHours * 60);
-
-    try {
-      const response = await fetch(`/api/tasks/${encodeURIComponent(task.id)}/planning-blocks`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          userId: selectedUser.id,
-          title: task.title,
-          notes: planningNotes.trim() || undefined,
-          startAt,
-          endAt,
-          plannedMinutes,
-          status: "planned"
-        })
-      });
-
-      if (response.status === 401) {
-        window.location.assign(`/login?returnTo=${encodeURIComponent(window.location.pathname)}`);
-        return;
-      }
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.message || `Could not create planning block: ${response.status}`);
-      }
-
-      const endTime = new Date(endAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
-      setPlanningMessage(`Đã đưa lên Calendar: ${planningStartTime} - ${endTime} · ${selectedUser.name}`);
-      setPlanningNotes("");
-    } catch (error) {
-      setPlanningError(error instanceof Error ? error.message : "Could not create planning block");
-    } finally {
-      setPlanningSaving(false);
-    }
-  };
-
-  const PRESETS = ["08:00 - 10:00", "10:00 - 12:00", "13:30 - 15:30", "15:30 - 17:30"];
-
-  return (
-    <ModalLayer onClose={onClose}>
-    <div className="fixed inset-0 z-50 flex justify-end">
-      {/* Backdrop */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        onClick={onClose}
-        className="absolute inset-0 bg-slate-900/40 backdrop-blur-xs"
-      />
-
-      {/* Drawer Body */}
-      <motion.div
-        aria-label="Chi tiết công việc"
-        aria-modal="true"
-        initial={{ x: "100%" }}
-        animate={{ x: 0 }}
-        exit={{ x: "100%" }}
-        transition={{ type: "spring", damping: 25, stiffness: 220 }}
-        className="relative w-full max-w-[460px] h-full bg-background border-l border-border shadow-2xl z-50 flex flex-col p-6 overflow-y-auto"
-        role="dialog"
-        tabIndex={-1}
-      >
-        {/* Header */}
-        <div className="flex items-start justify-between pb-4 border-b border-border mb-6">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white" style={{ backgroundColor: color }}>
-              <ListChecks className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-sm font-bold text-foreground">Chi tiết công việc</h3>
-              <p className="text-[10px] text-muted-foreground mt-0.5 uppercase tracking-wider font-mono">ID: {task.id}</p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={onEditTask}
-              title="Chỉnh sửa công việc"
-              className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors flex items-center gap-1 text-xs font-semibold"
-            >
-              <Pencil className="w-4 h-4" /> Sửa
-            </button>
-            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Task Title */}
-        <div className="mb-6">
-          <h2 className="text-base font-extrabold text-foreground leading-snug">{task.title}</h2>
-        </div>
-
-        {/* Metadata Details Grid */}
-        <div className="space-y-4 mb-6 pb-6 border-b border-border">
-          {/* Milestone & Stage */}
-          <div className="grid grid-cols-3 gap-2 items-center">
-            <span className="text-xs font-semibold text-muted-foreground">Mốc & Giai đoạn:</span>
-            <span className="col-span-2 text-xs font-bold text-foreground">
-              {milestoneName} ➔ {stageName}
-            </span>
-          </div>
-
-          {/* Status */}
-          <div className="grid grid-cols-3 gap-2 items-center">
-            <span className="text-xs font-semibold text-muted-foreground">Trạng thái:</span>
-            <div className="col-span-2 flex">
-              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-md" style={{ backgroundColor: ts.bg, color: ts.color }}>
-                {ts.label}
-              </span>
-            </div>
-          </div>
-
-          {/* Priority */}
-          <div className="grid grid-cols-3 gap-2 items-center">
-            <span className="text-xs font-semibold text-muted-foreground">Độ ưu tiên:</span>
-            <div className="col-span-2 flex">
-              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-md" style={{ backgroundColor: tp.bg, color: tp.color }}>
-                {tp.label}
-              </span>
-            </div>
-          </div>
-
-          {/* Assignee */}
-          <div className="grid grid-cols-3 gap-2 items-center">
-            <span className="text-xs font-semibold text-muted-foreground">Người thực hiện:</span>
-            <div className="col-span-2 flex items-center gap-2">
-              <ProjectIdentityAvatar
-                member={initPic}
-                initials={task.assignee}
-                name={initPic?.name ?? task.assignee}
-                color={task.aColor}
-                avatarUrl={task.assigneeAvatarUrl}
-                size="sm"
-              />
-              <span className="text-xs font-bold text-foreground">{initPic?.name ?? "Unassigned"}</span>
-            </div>
-          </div>
-
-          {/* Planned date range */}
-          <div className="grid grid-cols-3 gap-2 items-center">
-            <span className="text-xs font-semibold text-muted-foreground">Thời gian kế hoạch:</span>
-            <ProjectDateRange
-              startDate={task.startDate}
-              dueDate={task.due}
-              className="col-span-2 text-xs font-bold text-foreground"
-            />
-          </div>
-        </div>
-
-        {/* Hours Overview */}
-        <div className="bg-muted/30 border border-border rounded-xl p-4 mb-6">
-          <h4 className="text-xs font-bold text-foreground mb-3 flex items-center gap-1.5">
-            <Clock className="w-4 h-4 text-muted-foreground" /> Thời gian làm việc (Hours Tracker)
-          </h4>
-
-          <div className="grid grid-cols-2 gap-4 text-center">
-            <div className="bg-card border border-border rounded-lg p-2.5">
-              <span className="text-[10px] font-semibold text-muted-foreground uppercase">Kế hoạch</span>
-              <p className="text-lg font-mono font-black text-foreground mt-0.5">{formatHours(plannedHours)}h</p>
-            </div>
-            <div className="bg-card border border-border rounded-lg p-2.5">
-              <span className="text-[10px] font-semibold text-muted-foreground uppercase">Thực tế đã làm</span>
-              <p className="text-lg font-mono font-black mt-0.5" style={{ color: actualHours > plannedHours ? C.danger : C.success }}>{formatHours(actualHours)}h</p>
-            </div>
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="rounded-full border border-border bg-card px-2.5 py-1 text-[10px] font-bold text-muted-foreground">
-              Planning syncs to Calendar
-            </span>
-            <span className="rounded-full border border-border bg-card px-2.5 py-1 text-[10px] font-bold text-muted-foreground">
-              Actual work syncs to Activity
-            </span>
-            <span className="rounded-full px-2.5 py-1 text-[10px] font-bold" style={{ backgroundColor: ts.bg, color: ts.color }}>
-              Task: {ts.label}
-            </span>
-          </div>
-
-          {/* Hour consumption progress bar */}
-          <div className="mt-4">
-            <div className="flex justify-between text-[10px] text-muted-foreground font-bold mb-1">
-              <span>Tỷ lệ tiêu hao giờ</span>
-              <span>{plannedHours > 0 ? Math.round((actualHours / plannedHours) * 100) : 0}%</span>
-            </div>
-            <div className="h-2 bg-muted border border-border rounded-full overflow-hidden">
-              <div
-                className="h-full rounded-full transition-all duration-300"
-                style={{
-                  width: `${Math.min(100, plannedHours > 0 ? (actualHours / plannedHours) * 100 : 0)}%`,
-                  backgroundColor: actualHours > plannedHours ? C.danger : color
-                }}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Planning Calendar Sync */}
-        <div className="bg-card border border-border rounded-xl p-4 mb-6">
-          <h4 className="text-xs font-bold text-foreground mb-3 flex items-center gap-1.5">
-            <Calendar className="w-4 h-4 text-muted-foreground" /> Planning cho Calendar
-          </h4>
-          <div className="space-y-3">
-            <div>
-              <span className="text-[10px] font-semibold text-muted-foreground block mb-1.5">PIC thực hiện</span>
-              <TeamMemberMultiSelect
-                members={members}
-                selectedIds={planningUserId ? [planningUserId] : []}
-                onChange={(ids) => setPlanningUserId(ids[ids.length - 1] ?? "")}
-                placeholder="Select PIC for planned work"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <span className="text-[10px] font-semibold text-muted-foreground block mb-1">Ngày planning</span>
-                <input
-                  type="date"
-                  value={planningDate}
-                  onChange={(event) => setPlanningDate(event.target.value)}
-                  className="w-full h-9 border border-input rounded-lg px-3 text-xs text-foreground bg-background focus:outline-none"
-                />
-              </div>
-              <div>
-                <span className="text-[10px] font-semibold text-muted-foreground block mb-1">Bắt đầu</span>
-                <input
-                  type="time"
-                  value={planningStartTime}
-                  onChange={(event) => setPlanningStartTime(event.target.value)}
-                  className="w-full h-9 border border-input rounded-lg px-3 text-xs text-foreground bg-background focus:outline-none"
-                />
-              </div>
-            </div>
-
-            <div>
-              <span className="text-[10px] font-semibold text-muted-foreground block mb-1.5">Thời lượng dự kiến</span>
-              <div className="flex gap-2 flex-wrap">
-                {[2, 3].map((hours) => (
-                  <button
-                    key={hours}
-                    type="button"
-                    onClick={() => setPlanningDurationHours(hours)}
-                    className={`px-3 py-1.5 rounded-lg border text-xs font-bold transition-all ${
-                      planningDurationHours === hours
-                        ? "border-foreground/30 bg-muted text-foreground"
-                        : "border-border/70 text-muted-foreground hover:bg-muted/50"
-                    }`}
-                  >
-                    {hours}h
-                  </button>
-                ))}
-                <input
-                  type="number"
-                  min={0.5}
-                  step={0.5}
-                  value={planningDurationHours}
-                  onChange={(event) => setPlanningDurationHours(Math.max(0.5, Number(event.target.value) || 2))}
-                  className="w-20 h-8 border border-input rounded-lg px-2 text-xs font-mono font-bold text-center text-foreground bg-background focus:outline-none"
-                  aria-label="Custom planning duration hours"
-                />
-              </div>
-            </div>
-
-            <div>
-              <span className="text-[10px] font-semibold text-muted-foreground block mb-1">Nội dung dự kiến làm</span>
-              <textarea
-                rows={2}
-                value={planningNotes}
-                onChange={(event) => setPlanningNotes(event.target.value)}
-                placeholder="Ví dụ: Hoàn thiện mapping dữ liệu, test luồng khách hàng, chuẩn bị UAT..."
-                className="w-full border border-input rounded-lg p-2.5 text-xs text-foreground bg-background focus:outline-none placeholder:text-muted-foreground/50 resize-none"
-              />
-            </div>
-
-            {planningError ? (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">
-                {planningError}
-              </div>
-            ) : null}
-            {planningMessage ? (
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700">
-                {planningMessage}
-              </div>
-            ) : null}
-
-            <button
-              type="button"
-              onClick={handleCreatePlanningBlock}
-              disabled={planningSaving || !planningUserId || !planningDate || !planningStartTime}
-              className="w-full h-9 rounded-lg text-xs font-semibold text-white shadow-sm flex items-center justify-center gap-1.5 disabled:opacity-50"
-              style={{ backgroundColor: color }}
-            >
-              <Calendar className="w-3.5 h-3.5" />
-              {planningSaving ? "Đang đồng bộ..." : "Đưa planning lên Calendar"}
-            </button>
-          </div>
-        </div>
-
-        {/* Log History */}
-        <div className="mb-6">
-          <h4 className="text-xs font-bold text-foreground mb-2.5 flex items-center gap-1.5">
-            <History className="w-4 h-4 text-muted-foreground" /> Lịch sử ghi nhận giờ làm (Work Log History)
-          </h4>
-          {timeEntries.length > 0 ? (
-            <div className="space-y-2.5 max-h-[220px] overflow-y-auto pr-1">
-              {timeEntries.map(entry => {
-                const entryMember = findTeamMember(members, entry.userInitials, entry.userName, entry.userId);
-                return (
-                  <div key={entry.id} className="p-3 rounded-xl border border-border/80 bg-muted/20 text-xs flex flex-col gap-1.5 transition-colors hover:bg-muted/30">
-                    <div className="flex items-center justify-between text-muted-foreground font-mono text-[10px]">
-                      <div className="flex items-center gap-2">
-                        <ProjectIdentityAvatar
-                          member={entryMember}
-                          initials={entry.userInitials || task.assignee}
-                          name={entry.userName || entryMember?.name || "PIC"}
-                          color={entry.userColor || color}
-                          avatarUrl={entry.userAvatarUrl}
-                          size="xs"
-                        />
-                        <span className="font-semibold text-foreground/85">{entry.date} · {entry.period}</span>
-                      </div>
-                      <span className="font-bold text-white px-2 py-0.5 rounded-md text-[9px] shrink-0" style={{ backgroundColor: color }}>
-                        +{formatHours(entry.actualHours)}h
-                      </span>
-                    </div>
-                    <p className="text-foreground/95 font-medium leading-relaxed pl-7">{entry.description}</p>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="p-5 text-center border border-dashed border-border rounded-xl">
-              <p className="text-xs text-muted-foreground">Chưa có nhật ký log giờ nào cho công việc này</p>
-            </div>
-          )}
-        </div>
-
-        {/* Hour Logger Mechanism */}
-        <div className="flex-1 flex flex-col justify-end">
-          <div className="border-t border-border pt-6 mt-auto">
-            <h4 className="text-xs font-bold text-foreground mb-3 flex items-center gap-1.5">
-              <Plus className="w-4 h-4 text-muted-foreground" /> Thêm ghi nhận giờ làm mới (Add Log Entry)
-            </h4>
-
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <span className="text-[10px] font-semibold text-muted-foreground block mb-1">Số giờ làm thực tế</span>
-                  <div className="flex items-center border border-input rounded-lg overflow-hidden bg-background h-9">
-                    <button
-                      onClick={() => setLogHours(h => Math.max(0.5, h - 0.5))}
-                      className="w-9 h-full flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-foreground transition-colors font-bold text-sm border-r border-input shrink-0"
-                    >
-                      -
-                    </button>
-                    <input
-                      type="number"
-                      min={0.5}
-                      step={0.5}
-                      value={logHours}
-                      onChange={e => setLogHours(Math.max(0.5, parseFloat(e.target.value) || 1))}
-                      className="w-full h-full text-center font-mono font-black text-xs text-foreground bg-transparent focus:outline-none border-0"
-                    />
-                    <button
-                      onClick={() => setLogHours(h => h + 0.5)}
-                      className="w-9 h-full flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-foreground transition-colors font-bold text-sm border-l border-input shrink-0"
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <span className="text-[10px] font-semibold text-muted-foreground block mb-1">Số giờ kế hoạch (Task)</span>
-                  <input
-                    type="number"
-                    min={0}
-                    value={plannedHours}
-                    onChange={e => setPlannedHours(Math.max(0, parseInt(e.target.value) || 0))}
-                    className="w-full h-9 border border-input rounded-lg text-center font-mono font-black text-xs text-foreground bg-background focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* Logged by user selection */}
-              <div>
-                <span className="text-[10px] font-semibold text-muted-foreground block mb-1.5">Người thực tế thực hiện và log giờ</span>
-                <div className="flex gap-2 flex-wrap">
-                  {members.map(m => {
-                    const isSelected = logUser?.initials === m.initials;
-                    return (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() => setLogUser(m)}
-                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-all ${
-                          isSelected
-                            ? "bg-muted border-foreground/30 text-foreground"
-                            : "border-border/60 text-muted-foreground hover:bg-muted/40"
-                        }`}
-                      >
-                        <TeamMemberAvatar member={m} size="xs" />
-                        <span>{m.name}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div>
-                <span className="text-[10px] font-semibold text-muted-foreground block mb-1">Ngày làm thực tế</span>
-                <input
-                  type="date"
-                  value={logDate}
-                  onChange={e => setLogDate(e.target.value)}
-                  className="w-full h-9 border border-input rounded-lg px-3 text-xs text-foreground bg-background focus:outline-none"
-                />
-              </div>
-
-              {/* Log Time Period */}
-              <div>
-                <span className="text-[10px] font-semibold text-muted-foreground block mb-1">Khung giờ làm việc</span>
-                <input
-                  type="text"
-                  value={logPeriod}
-                  onChange={e => setLogPeriod(e.target.value)}
-                  placeholder="Ví dụ: 08:00 - 10:00"
-                  className="w-full h-9 border border-input rounded-lg px-3 text-xs text-foreground bg-background focus:outline-none placeholder:text-muted-foreground/50"
-                />
-
-                {/* Presets badges */}
-                <div className="flex gap-1.5 mt-1.5 flex-wrap">
-                  {PRESETS.map(p => (
-                    <button
-                      key={p}
-                      onClick={() => setLogPeriod(p)}
-                      style={logPeriod === p ? {
-                        backgroundColor: `${color}20`,
-                        borderColor: `${color}50`,
-                        color: color
-                      } : {}}
-                      className={`px-2.5 py-1 rounded-lg text-[9px] font-bold border transition-all ${
-                        logPeriod === p
-                          ? ""
-                          : "border-border/60 text-muted-foreground hover:bg-muted"
-                      }`}
-                    >
-                      {p}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Log completed items */}
-              <div>
-                <span className="text-[10px] font-semibold text-muted-foreground block mb-1">Nội dung hoàn thành / Chi tiết công việc đã hoàn thành</span>
-                <textarea
-                  rows={2}
-                  value={logDescription}
-                  onChange={e => setLogDescription(e.target.value)}
-                  placeholder="Ghi cụ thể các phần công việc đã hoàn thành trong khung giờ này..."
-                  className="w-full border border-input rounded-lg p-2.5 text-xs text-foreground bg-background focus:outline-none placeholder:text-muted-foreground/50 resize-none"
-                />
-              </div>
-
-              {logError ? (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">
-                  {logError}
-                </div>
-              ) : null}
-              {logMessage ? (
-                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700">
-                  {logMessage}
-                </div>
-              ) : null}
-
-              {/* Add log entry trigger button */}
-              <button
-                type="button"
-                onClick={handleAddLog}
-                disabled={logSaving || logHours <= 0 || !logDescription.trim() || !logUser}
-                className="w-full h-9 border border-dashed rounded-lg text-xs font-semibold hover:bg-muted flex items-center justify-center gap-1.5 transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
-                style={{ borderColor: `${color}60`, color: color }}
-              >
-                <Plus className="w-3.5 h-3.5" /> {logSaving ? "Đang lưu..." : "Lưu work log & đồng bộ Activity"}
-              </button>
-
-              {/* Action Buttons */}
-              <div className="grid grid-cols-2 gap-3 pt-2">
-                <button
-                  onClick={onClose}
-                  className="w-full h-11 rounded-xl border border-border text-sm font-semibold text-muted-foreground hover:bg-muted transition-colors"
-                >
-                  Đóng
-                </button>
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => {
-                    onSaveHours(actualHours, plannedHours, timeEntries);
-                    onClose();
-                  }}
-                  className="w-full h-11 rounded-xl text-sm font-semibold text-white shadow-sm flex items-center justify-center gap-1.5"
-                  style={{ backgroundColor: color }}
-                >
-                  <Clock className="w-4 h-4" /> Lưu & Hoàn thành
-                </motion.button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </motion.div>
-    </div>
-    </ModalLayer>
-  );
-}
-
-function TaskDetailsDrawer({ task, milestoneName, stageName, color, onClose, onSaveHours, onEditTask, members = EMPTY_TEAM_MEMBERS }: {
-  task: TaskItem;
-  milestoneName: string;
-  stageName: string;
-  color: string;
-  onClose: () => void;
-  onSaveHours: (actualHours: number, plannedHours: number, timeEntries: TimeEntry[]) => void;
-  onEditTask: () => void;
-  members?: ProjectTeamMember[];
-}) {
-  const [actualHours, setActualHours] = useState<number>(task.actualHours ?? 0);
-  const [plannedHours, setPlannedHours] = useState<number>(task.plannedHours ?? 8);
-  const [timeEntries, setTimeEntries] = useState<TimeEntry[]>(task.timeEntries ?? []);
-  const [currentStatus, setCurrentStatus] = useState<TaskItem["status"]>(task.status);
-  const initPic = getSelectedTeamMember(members, task.assigneeUserId);
-
-  const [planningModalOpen, setPlanningModalOpen] = useState(false);
-  const [actualModalOpen, setActualModalOpen] = useState(false);
-
-  const [logHours, setLogHours] = useState<number>(1);
-  const [logDate, setLogDate] = useState<string>(dateInputValue());
-  const [logPeriod, setLogPeriod] = useState<string>("08:00 - 10:00");
-  const [logDescription, setLogDescription] = useState<string>("");
-  const [logUser, setLogUser] = useState<ProjectTeamMember | undefined>(initPic);
-  const [logSaving, setLogSaving] = useState(false);
-  const [logMessage, setLogMessage] = useState<string | null>(null);
-  const [logError, setLogError] = useState<string | null>(null);
-
-  const [planningUserId, setPlanningUserId] = useState<string>(initPic?.id ?? members[0]?.id ?? "");
-  const [planningDate, setPlanningDate] = useState<string>(dateInputValue());
-  const [planningStartTime, setPlanningStartTime] = useState<string>("09:00");
-  const [planningDurationHours, setPlanningDurationHours] = useState<number>(2);
-  const [planningNotes, setPlanningNotes] = useState<string>("");
-  const [planningSaving, setPlanningSaving] = useState(false);
-  const [planningMessage, setPlanningMessage] = useState<string | null>(null);
-  const [planningError, setPlanningError] = useState<string | null>(null);
-
-  const ts = TASK_STATUS[currentStatus];
-  const tp = PRIORITY_CFG[task.priority];
-  const selectedPlanningUser = members.find((member) => member.id === planningUserId);
-  const hourConsumption = plannedHours > 0 ? Math.round((actualHours / plannedHours) * 100) : 0;
-  const PRESETS = ["08:00 - 10:00", "10:00 - 12:00", "13:30 - 15:30", "15:30 - 17:30"];
-
-  const handleAddLog = async () => {
-    if (logHours <= 0 || !logDescription.trim() || !logUser) return;
-
-    setLogSaving(true);
-    setLogError(null);
-    setLogMessage(null);
-
-    try {
-      const response = await fetch(`/api/tasks/${encodeURIComponent(task.id)}/time-entries`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          userId: logUser.id,
-          workDate: buildWorkLogDateIso(logDate, logPeriod),
-          minutes: Math.round(logHours * 60),
-          billable: true,
-          workType: logPeriod.trim() || "delivery",
-          approvalStatus: "submitted",
-          note: logDescription.trim()
-        })
-      });
-
-      if (response.status === 401) {
-        window.location.assign(`/login?returnTo=${encodeURIComponent(window.location.pathname)}`);
-        return;
-      }
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.message || `Could not log actual work: ${response.status}`);
-      }
-
-      const saved = mapTimeEntryToUi((await response.json()) as TaskTimeEntrySummary);
-      const updated = [...timeEntries, saved];
-      const totalActual = sumHours(updated.map(entry => entry.actualHours));
-
-      setTimeEntries(updated);
-      setActualHours(totalActual);
-      if (currentStatus === "todo") {
-        setCurrentStatus("in-progress");
-      }
-      onSaveHours(totalActual, plannedHours, updated);
-
-      setLogHours(1);
-      setLogDescription("");
-      setLogMessage("Đã lưu Actual Work và đồng bộ Activity cho project.");
-      setActualModalOpen(false);
-    } catch (error) {
-      setLogError(error instanceof Error ? error.message : "Could not log actual work");
-    } finally {
-      setLogSaving(false);
-    }
-  };
-
-  const handleCreatePlanningBlock = async () => {
-    const selectedUser = members.find((member) => member.id === planningUserId);
-    if (!selectedUser || planningDurationHours <= 0 || !planningDate || !planningStartTime) return;
-
-    setPlanningSaving(true);
-    setPlanningError(null);
-    setPlanningMessage(null);
-
-    const startAt = buildLocalDateTimeIso(planningDate, planningStartTime);
-    const startDate = new Date(startAt);
-    const endAt = new Date(startDate.getTime() + planningDurationHours * 60 * 60 * 1000).toISOString();
-    const plannedMinutes = Math.round(planningDurationHours * 60);
-
-    try {
-      const response = await fetch(`/api/tasks/${encodeURIComponent(task.id)}/planning-blocks`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          userId: selectedUser.id,
-          title: task.title,
-          notes: planningNotes.trim() || undefined,
-          startAt,
-          endAt,
-          plannedMinutes,
-          status: "planned"
-        })
-      });
-
-      if (response.status === 401) {
-        window.location.assign(`/login?returnTo=${encodeURIComponent(window.location.pathname)}`);
-        return;
-      }
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.message || `Could not create planning block: ${response.status}`);
-      }
-
-      const endTime = new Date(endAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
-      onSaveHours(actualHours, plannedHours, timeEntries);
-      setPlanningMessage(`Đã tạo Planning trên Calendar: ${planningStartTime} - ${endTime} · ${selectedUser.name}`);
-      setPlanningNotes("");
-      setPlanningModalOpen(false);
-    } catch (error) {
-      setPlanningError(error instanceof Error ? error.message : "Could not create planning block");
-    } finally {
-      setPlanningSaving(false);
-    }
-  };
-
-  const ActionDialog = ({
-    title,
-    description,
-    icon: Icon,
-    open,
-    onOpenChange,
-    children
-  }: {
-    title: string;
-    description: string;
-    icon: React.ElementType;
-    open: boolean;
-    onOpenChange: (open: boolean) => void;
-    children: React.ReactNode;
-  }) => {
-    if (!open) return null;
-
-    return (
-      <ModalLayer onClose={() => onOpenChange(false)}>
-      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" role="presentation">
-        <div className="absolute inset-0 bg-slate-900/45 backdrop-blur-xs" onClick={() => onOpenChange(false)} />
-        <motion.div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby={`${title.replace(/\s+/g, "-").toLowerCase()}-title`}
-          initial={{ opacity: 0, scale: 0.96, y: 12 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.96, y: 12 }}
-          onClick={(event) => event.stopPropagation()}
-          className="relative z-[61] w-full max-w-xl rounded-2xl border border-border bg-card shadow-2xl overflow-hidden"
-        >
-          <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl text-white" style={{ backgroundColor: color }}>
-                <Icon className="h-4 w-4" />
-              </div>
-              <div>
-                <h3 id={`${title.replace(/\s+/g, "-").toLowerCase()}-title`} className="text-base font-bold text-foreground">{title}</h3>
-                <p className="mt-0.5 text-xs font-medium text-muted-foreground">{description}</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => onOpenChange(false)}
-              aria-label={`Close ${title}`}
-              className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <div className="max-h-[70vh] overflow-y-auto p-5">{children}</div>
-        </motion.div>
-      </div>
-      </ModalLayer>
-    );
-  };
-
-  return (
-    <ModalLayer onClose={onClose}>
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        onClick={onClose}
-        className="absolute inset-0 bg-slate-900/45 backdrop-blur-xs"
-      />
-
-      <motion.div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="task-detail-title"
-        initial={{ opacity: 0, scale: 0.96, y: 18 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.96, y: 18 }}
-        transition={{ type: "spring", damping: 26, stiffness: 240 }}
-        onClick={(event) => event.stopPropagation()}
-        className="relative z-50 flex h-[min(92vh,860px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
-      >
-        <header className="flex items-start justify-between gap-4 border-b border-border bg-card px-6 py-5">
-          <div className="flex min-w-0 items-start gap-4">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white" style={{ backgroundColor: color }}>
-              <ListChecks className="h-5 w-5" />
-            </div>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Chi tiết công việc</p>
-                <span className="rounded-full bg-muted px-2 py-0.5 font-mono text-[10px] font-bold text-muted-foreground">ID: {task.id}</span>
-              </div>
-              <h2 id="task-detail-title" className="mt-2 max-w-3xl text-2xl font-black leading-tight text-foreground">{task.title}</h2>
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={onEditTask}
-              className="flex h-9 items-center gap-1.5 rounded-xl border border-border px-3 text-xs font-bold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <Pencil className="h-4 w-4" /> Sửa
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close task detail"
-              className="flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </header>
-
-        <div className="flex-1 overflow-y-auto px-6 py-5">
-          <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
-            <section className="space-y-5">
-              <div className="rounded-xl border border-border bg-card p-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Mốc & giai đoạn</p>
-                    <p className="mt-1 text-sm font-bold text-foreground">{milestoneName} <ArrowRight aria-hidden="true" className="inline h-3 w-3 align-middle" /> {stageName}</p>
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Người thực hiện</p>
-                    <div className="mt-1 flex items-center gap-2">
-                      <ProjectIdentityAvatar
-                        member={initPic}
-                        initials={task.assignee}
-                        name={initPic?.name ?? task.assignee}
-                        color={task.aColor}
-                        avatarUrl={task.assigneeAvatarUrl}
-                        size="sm"
-                      />
-                      <span className="text-sm font-bold text-foreground">{initPic?.name ?? "Unassigned"}</span>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Trạng thái</p>
-                    <span className="mt-1 inline-flex rounded-lg px-2.5 py-1 text-xs font-bold" style={{ backgroundColor: ts.bg, color: ts.color }}>
-                      {ts.label}
-                    </span>
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Ưu tiên & thời gian kế hoạch</p>
-                    <div className="mt-1 flex flex-wrap items-center gap-2">
-                      <span className="rounded-lg px-2.5 py-1 text-xs font-bold" style={{ backgroundColor: tp.bg, color: tp.color }}>{tp.label}</span>
-                      <ProjectDateRange
-                        startDate={task.startDate}
-                        dueDate={task.due}
-                        className="text-xs font-bold text-foreground"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-border bg-card p-4">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h3 className="flex items-center gap-2 text-sm font-black text-foreground">
-                      <Clock className="h-4 w-4 text-muted-foreground" /> Work clarity
-                    </h3>
-                    <p className="mt-1 text-xs font-medium text-muted-foreground">Planning là giờ dự kiến đưa lên Calendar. Actual là giờ đã làm, ghi vào Activity.</p>
-                  </div>
-                  <span className="rounded-full px-2.5 py-1 text-[10px] font-bold" style={{ backgroundColor: ts.bg, color: ts.color }}>
-                    Task: {ts.label}
-                  </span>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-xl border border-border bg-muted/20 p-4">
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Planning baseline</p>
-                    <p className="mt-2 font-mono text-3xl font-black text-foreground">{formatHours(plannedHours)}h</p>
-                    <p className="mt-1 text-xs font-semibold text-muted-foreground">Dùng để so sánh kế hoạch tổng của task.</p>
-                  </div>
-                  <div className="rounded-xl border border-border bg-muted/20 p-4">
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Actual completed</p>
-                    <p className="mt-2 font-mono text-3xl font-black" style={{ color: actualHours > plannedHours ? C.danger : C.success }}>{formatHours(actualHours)}h</p>
-                    <p className="mt-1 text-xs font-semibold text-muted-foreground">Tổng giờ thực tế từ Work Log History.</p>
-                  </div>
-                </div>
-
-                <div className="mt-4">
-                  <div className="mb-1 flex justify-between text-[11px] font-bold text-muted-foreground">
-                    <span>Tỷ lệ tiêu hao giờ</span>
-                    <span>{hourConsumption}%</span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full border border-border bg-muted">
-                    <div
-                      className="h-full rounded-full transition-all duration-300"
-                      style={{
-                        width: `${Math.min(100, hourConsumption)}%`,
-                        backgroundColor: actualHours > plannedHours ? C.danger : color
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPlanningError(null);
-                    setPlanningModalOpen(true);
-                  }}
-                  className="group rounded-xl border border-border bg-card p-4 text-left transition-all hover:border-foreground/20 hover:shadow-sm"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="flex h-10 w-10 items-center justify-center rounded-xl text-white" style={{ backgroundColor: color }}>
-                      <Calendar className="h-4 w-4" />
-                    </span>
-                    <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-                  </div>
-                  <h3 className="mt-3 text-sm font-black text-foreground">Plan work</h3>
-                  <p className="mt-1 text-xs font-medium leading-relaxed text-muted-foreground">Chọn PIC, ngày, giờ bắt đầu và thời lượng dự kiến cho Calendar.</p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLogError(null);
-                    setActualModalOpen(true);
-                  }}
-                  className="group rounded-xl border border-border bg-card p-4 text-left transition-all hover:border-foreground/20 hover:shadow-sm"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="flex h-10 w-10 items-center justify-center rounded-xl text-white" style={{ backgroundColor: color }}>
-                      <Plus className="h-4 w-4" />
-                    </span>
-                    <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-                  </div>
-                  <h3 className="mt-3 text-sm font-black text-foreground">Log actual work</h3>
-                  <p className="mt-1 text-xs font-medium leading-relaxed text-muted-foreground">Ghi giờ thực tế đã làm, nội dung hoàn thành và đồng bộ Activity.</p>
-                </button>
-              </div>
-
-              {(planningMessage || logMessage) && (
-                <div className="rounded-xl border border-border bg-card px-4 py-3 text-xs font-bold" style={{ color: C.success }}>
-                  {planningMessage ?? logMessage}
-                </div>
-              )}
-            </section>
-
-            <aside className="space-y-5">
-              <div className="rounded-xl border border-border bg-card p-4">
-                <h3 className="flex items-center gap-2 text-sm font-black text-foreground">
-                  <History className="h-4 w-4 text-muted-foreground" /> Work Log History
-                </h3>
-                <p className="mt-1 text-xs font-medium text-muted-foreground">Chỉ hiển thị lịch sử đã log. Form nhập mới nằm trong modal Actual.</p>
-
-                {timeEntries.length > 0 ? (
-                  <div className="mt-4 space-y-2.5">
-                    {timeEntries.map((entry) => {
-                      const entryMember = findTeamMember(members, entry.userInitials, entry.userName, entry.userId);
-                      return (
-                        <div key={entry.id} className="rounded-xl border border-border/80 bg-muted/20 p-3 text-xs">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex min-w-0 items-center gap-2">
-                              <ProjectIdentityAvatar
-                                member={entryMember}
-                                initials={entry.userInitials || task.assignee}
-                                name={entry.userName || entryMember?.name || "PIC"}
-                                color={entry.userColor || color}
-                                avatarUrl={entry.userAvatarUrl}
-                                size="xs"
-                              />
-                              <span className="truncate font-mono font-bold text-foreground/85">{entry.date} · {entry.period}</span>
-                            </div>
-                            <span className="shrink-0 rounded-md px-2 py-0.5 text-[10px] font-bold text-white" style={{ backgroundColor: color }}>
-                              +{formatHours(entry.actualHours)}h
-                            </span>
-                          </div>
-                          <p className="mt-2 pl-7 text-xs font-medium leading-relaxed text-foreground/90">{entry.description}</p>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="mt-4 rounded-xl border border-dashed border-border p-5 text-center">
-                    <p className="text-xs font-medium text-muted-foreground">Chưa có nhật ký giờ thực tế cho task này.</p>
-                  </div>
-                )}
-              </div>
-
-              <div className="rounded-xl border border-border bg-card p-4">
-                <h3 className="flex items-center gap-2 text-sm font-black text-foreground">
-                  <Target className="h-4 w-4 text-muted-foreground" /> Planning vs Actual
-                </h3>
-                <dl className="mt-4 space-y-3 text-xs">
-                  <div className="flex justify-between gap-3">
-                    <dt className="font-bold text-muted-foreground">Calendar intent</dt>
-                    <dd className="text-right font-bold text-foreground">Planning blocks</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="font-bold text-muted-foreground">Delivery evidence</dt>
-                    <dd className="text-right font-bold text-foreground">Actual work logs</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="font-bold text-muted-foreground">Variance</dt>
-                    <dd className="text-right font-mono font-black" style={{ color: actualHours > plannedHours ? C.danger : C.success }}>
-                      {formatHours(actualHours - plannedHours)}h
-                    </dd>
-                  </div>
-                </dl>
-              </div>
-            </aside>
-          </div>
-        </div>
-
-        <footer className="flex items-center justify-between gap-3 border-t border-border bg-card px-6 py-4">
-          <button type="button" onClick={onClose} className="h-10 rounded-xl border border-border px-4 text-sm font-bold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
-            Đóng
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              onSaveHours(actualHours, plannedHours, timeEntries);
-              onClose();
-            }}
-            className="flex h-10 items-center gap-2 rounded-xl px-4 text-sm font-bold text-white shadow-sm"
-            style={{ backgroundColor: color }}
-          >
-            <Clock className="h-4 w-4" /> Lưu trạng thái giờ
-          </button>
-        </footer>
-      </motion.div>
-
-      <ActionDialog
-        title="Planning for Calendar"
-        description="Dự kiến làm gì, khi nào, bởi ai. Không ghi Actual Hours."
-        icon={Calendar}
-        open={planningModalOpen}
-        onOpenChange={setPlanningModalOpen}
-      >
-        <div className="space-y-4">
-          <Field label="PIC thực hiện">
-            <TeamMemberSingleSelect
-              members={members}
-              value={selectedPlanningUser}
-              onChange={(member) => setPlanningUserId(member?.id ?? "")}
-              placeholder="Select PIC for planned work"
-            />
-          </Field>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Ngày planning">
-              <input
-                type="date"
-                value={planningDate}
-                onChange={(event) => setPlanningDate(event.target.value)}
-                className="h-10 w-full rounded-xl border border-input bg-background px-3 text-sm text-foreground focus:outline-none"
-              />
-            </Field>
-            <Field label="Bắt đầu">
-              <input
-                type="time"
-                value={planningStartTime}
-                onChange={(event) => setPlanningStartTime(event.target.value)}
-                className="h-10 w-full rounded-xl border border-input bg-background px-3 text-sm text-foreground focus:outline-none"
-              />
-            </Field>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-[1fr_140px]">
-            <Field label="Thời lượng dự kiến">
-              <div className="flex flex-wrap gap-2">
-                {[2, 3].map((hours) => (
-                  <button
-                    key={hours}
-                    type="button"
-                    onClick={() => setPlanningDurationHours(hours)}
-                    className={`h-9 rounded-xl border px-4 text-sm font-bold transition-colors ${
-                      planningDurationHours === hours
-                        ? "border-foreground/30 bg-muted text-foreground"
-                        : "border-border text-muted-foreground hover:bg-muted/50"
-                    }`}
-                  >
-                    {hours}h
-                  </button>
-                ))}
-                <input
-                  type="number"
-                  min={0.5}
-                  step={0.5}
-                  value={planningDurationHours}
-                  onChange={(event) => setPlanningDurationHours(Math.max(0.5, Number(event.target.value) || 2))}
-                  aria-label="Custom planning duration hours"
-                  className="h-9 w-24 rounded-xl border border-input bg-background px-2 text-center font-mono text-sm font-black text-foreground focus:outline-none"
-                />
-              </div>
-            </Field>
-            <Field label="Task baseline">
-              <input
-                type="number"
-                min={0}
-                value={plannedHours}
-                onChange={(event) => setPlannedHours(Math.max(0, Number(event.target.value) || 0))}
-                className="h-10 w-full rounded-xl border border-input bg-background px-3 text-center font-mono text-sm font-black text-foreground focus:outline-none"
-              />
-            </Field>
-          </div>
-
-          <Field label="Nội dung dự kiến làm">
-            <textarea
-              rows={3}
-              value={planningNotes}
-              onChange={(event) => setPlanningNotes(event.target.value)}
-              placeholder="Ví dụ: Hoàn thiện mapping dữ liệu, test luồng khách hàng, chuẩn bị UAT..."
-              className="w-full resize-none rounded-xl border border-input bg-background p-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
-            />
-          </Field>
-
-          {planningError && <div className="rounded-xl border border-border bg-muted/30 px-3 py-2 text-xs font-bold" style={{ color: C.danger }}>{planningError}</div>}
-
-          <div className="flex justify-end gap-2 pt-1">
-            <button type="button" onClick={() => setPlanningModalOpen(false)} className="h-10 rounded-xl border border-border px-4 text-sm font-bold text-muted-foreground hover:bg-muted">Cancel</button>
-            <button
-              type="button"
-              onClick={handleCreatePlanningBlock}
-              disabled={planningSaving || !planningUserId || !planningDate || !planningStartTime}
-              className="flex h-10 items-center gap-2 rounded-xl px-4 text-sm font-bold text-white shadow-sm disabled:opacity-50"
-              style={{ backgroundColor: color }}
-            >
-              <Calendar className="h-4 w-4" /> {planningSaving ? "Đang lưu..." : "Đưa lên Calendar"}
-            </button>
-          </div>
-        </div>
-      </ActionDialog>
-
-      <ActionDialog
-        title="Actual Work Log"
-        description="Giờ đã làm thực tế. Lưu xong sẽ cập nhật Activity và trạng thái task."
-        icon={Plus}
-        open={actualModalOpen}
-        onOpenChange={setActualModalOpen}
-      >
-        <div className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Số giờ thực tế">
-              <div className="flex h-10 overflow-hidden rounded-xl border border-input bg-background">
-                <button type="button" onClick={() => setLogHours((hours) => Math.max(0.5, hours - 0.5))} className="w-10 border-r border-input text-sm font-black text-muted-foreground hover:bg-muted">-</button>
-                <input
-                  type="number"
-                  min={0.5}
-                  step={0.5}
-                  value={logHours}
-                  onChange={(event) => setLogHours(Math.max(0.5, parseFloat(event.target.value) || 1))}
-                  className="h-full flex-1 border-0 bg-transparent text-center font-mono text-sm font-black text-foreground focus:outline-none"
-                />
-                <button type="button" onClick={() => setLogHours((hours) => hours + 0.5)} className="w-10 border-l border-input text-sm font-black text-muted-foreground hover:bg-muted">+</button>
-              </div>
-            </Field>
-            <Field label="Ngày làm">
-              <input
-                type="date"
-                value={logDate}
-                onChange={(event) => setLogDate(event.target.value)}
-                className="h-10 w-full rounded-xl border border-input bg-background px-3 text-sm text-foreground focus:outline-none"
-              />
-            </Field>
-          </div>
-
-          <Field label="Người thực tế thực hiện">
-            <TeamMemberSingleSelect
-              members={members}
-              value={logUser}
-              onChange={setLogUser}
-              placeholder="Select actual work owner"
-            />
-          </Field>
-
-          <Field label="Khung giờ làm việc">
-            <input
-              type="text"
-              value={logPeriod}
-              onChange={(event) => setLogPeriod(event.target.value)}
-              placeholder="Ví dụ: 08:00 - 10:00"
-              className="h-10 w-full rounded-xl border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
-            />
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {PRESETS.map((period) => (
-                <button
-                  key={period}
-                  type="button"
-                  onClick={() => setLogPeriod(period)}
-                  className="rounded-lg border px-2.5 py-1 text-[10px] font-bold transition-colors hover:bg-muted"
-                  style={logPeriod === period ? { backgroundColor: `${color}20`, borderColor: `${color}50`, color } : { borderColor: "var(--color-border)", color: "var(--color-muted-foreground)" }}
-                >
-                  {period}
-                </button>
-              ))}
-            </div>
-          </Field>
-
-          <Field label="Nội dung đã hoàn thành">
-            <textarea
-              rows={3}
-              value={logDescription}
-              onChange={(event) => setLogDescription(event.target.value)}
-              placeholder="Ghi rõ phần việc đã hoàn thành trong khung giờ này..."
-              className="w-full resize-none rounded-xl border border-input bg-background p-3 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
-            />
-          </Field>
-
-          {logError && <div className="rounded-xl border border-border bg-muted/30 px-3 py-2 text-xs font-bold" style={{ color: C.danger }}>{logError}</div>}
-
-          <div className="flex justify-end gap-2 pt-1">
-            <button type="button" onClick={() => setActualModalOpen(false)} className="h-10 rounded-xl border border-border px-4 text-sm font-bold text-muted-foreground hover:bg-muted">Cancel</button>
-            <button
-              type="button"
-              onClick={handleAddLog}
-              disabled={logSaving || logHours <= 0 || !logDescription.trim() || !logUser}
-              className="flex h-10 items-center gap-2 rounded-xl px-4 text-sm font-bold text-white shadow-sm disabled:opacity-50"
-              style={{ backgroundColor: color }}
-            >
-              <Plus className="h-4 w-4" /> {logSaving ? "Đang lưu..." : "Lưu Actual Work"}
-            </button>
-          </div>
-        </div>
-      </ActionDialog>
-    </div>
-    </ModalLayer>
   );
 }
 
@@ -6264,57 +4694,6 @@ function getWeekDateRange(startDateStr: string, weekNum: number): string {
   } catch (e) {
     return `Khoảng thời gian tuần ${weekNum}`;
   }
-}
-
-// ─── Milestone Row (for Overview tab) ─────────────────────────────────────────
-
-function MilestoneRow({ milestone, isNext, members = EMPTY_TEAM_MEMBERS }: { milestone: Milestone; isNext: boolean; members?: ProjectTeamMember[] }) {
-  const cfg = MILESTONE_STATUS[milestone.status];
-  const picMember = findTeamMember(members, milestone.pic, milestone.picName, milestone.picUserId);
-  return (
-    <div className="flex items-start gap-4">
-      <div className="flex flex-col items-center shrink-0">
-        <div className="w-9 h-9 rounded-xl flex items-center justify-center border-2"
-          style={{ backgroundColor:`${cfg.color}20`, borderColor:milestone.status==="done"?cfg.color:"var(--color-border)" }}>
-          <cfg.icon className="w-4 h-4" style={{ color:cfg.color }} />
-        </div>
-      </div>
-      <div className="flex-1 rounded-xl border p-4 transition-all hover:shadow-sm"
-        style={{ borderColor:isNext?`${cfg.color}60`:"var(--color-border)", backgroundColor:isNext?`${cfg.color}06`:"var(--color-card)" }}>
-        <div className="flex items-start justify-between gap-3 mb-2">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-              <p className={`text-sm font-semibold ${milestone.status==="done" ? "line-through text-muted-foreground" : "text-foreground"}`}>{milestone.name}</p>
-              {isNext && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md" style={{ backgroundColor:`${cfg.color}20`, color:cfg.color }}>NEXT</span>}
-            </div>
-            {milestone.description && <p className="text-[11px] text-muted-foreground leading-relaxed">{milestone.description}</p>}
-          </div>
-          <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-lg shrink-0" style={{ backgroundColor:cfg.bg, color:cfg.color }}>
-            <cfg.icon className="w-2.5 h-2.5" />{cfg.label}
-          </span>
-        </div>
-        <div className="flex items-center gap-4 flex-wrap">
-          <ProjectDateRange
-            startDate={milestone.startDate}
-            dueDate={milestone.dueDate}
-            fallback="TBD"
-            className="max-w-full text-[11px] text-muted-foreground"
-          />
-          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-            <ProjectIdentityAvatar
-              member={picMember}
-              initials={milestone.pic}
-              name={milestone.picName}
-              color={milestone.picColor}
-              avatarUrl={milestone.picAvatarUrl}
-              size="xs"
-            />
-            {milestone.picName}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 // ─── Timeline Date Helpers ──────────────────────────────────────────────────
@@ -6936,47 +5315,13 @@ export default function ProjectDetailPage() {
   const [activitySourceFilter, setActivitySourceFilter] = useState<"all" | "project" | "work-log">("all");
   const [activityUserFilter, setActivityUserFilter] = useState("all");
   const [riskRegistry, setRiskRegistry] = useState<RiskItem[]>(EMPTY_RISK_REGISTRY);
-  const handleCreateProjectRisk = useCallback(async (draft: ProjectRiskDraft) => {
-    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/risks`, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(draft)
-    });
-    if (response.status === 401) {
-      window.location.assign(`/login?returnTo=${encodeURIComponent(`/projects/${projectId}?tab=Issues`)}`);
-      return;
-    }
-    if (!response.ok) {
-      const payload = await response.json().catch(() => null) as { message?: string } | null;
-      throw new Error(payload?.message || "Không thể lưu bản ghi vấn đề.");
-    }
-    const created = await response.json() as ProjectRiskSummary;
-    setRiskRegistry((current) => [mapProjectRiskToRiskItem(created), ...current]);
-  }, [projectId]);
-  const handleUpdateProjectRisk = useCallback(async (riskId: string, input: UpdateProjectRiskInput) => {
-    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/risks/${encodeURIComponent(riskId)}`, {
-      method: "PATCH",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(input)
-    });
-    if (response.status === 401) {
-      window.location.assign(`/login?returnTo=${encodeURIComponent(`/projects/${projectId}?tab=Issues&issueId=${riskId}`)}`);
-      return;
-    }
-    if (!response.ok) {
-      const payload = await response.json().catch(() => null) as { message?: string } | null;
-      throw new Error(payload?.message || "Không thể cập nhật vấn đề.");
-    }
-    const updated = await response.json() as ProjectRiskSummary;
-    setRiskRegistry((current) => current.map((risk) => risk.id === riskId ? mapProjectRiskToRiskItem(updated) : risk));
-  }, [projectId]);
   const [showAddDocModal, setShowAddDocModal] = useState(false);
   const [showAddLinkModal, setShowAddLinkModal] = useState(false);
   const [assignDocumentFor, setAssignDocumentFor] = useState<ProjectDoc | null>(null);
   const [addVersionForDoc, setAddVersionForDoc] = useState<ProjectDoc | null>(null);
   const [showVersionHistoryForDoc, setShowVersionHistoryForDoc] = useState<ProjectDoc | null>(null);
+  // Document types the project's G1–G8 gates ask for (empty for projects that keep milestone gates).
+  const [gateDocumentTypes, setGateDocumentTypes] = useState<string[]>([]);
   const [docSearchQuery, setDocSearchQuery] = useState("");
   const [docCategoryFilter, setDocCategoryFilter] = useState("All");
   const [docMilestoneFilter, setDocMilestoneFilter] = useState("All");
@@ -7314,29 +5659,8 @@ export default function ProjectDetailPage() {
   }, [projectId]);
 
 
-  const handleSaveTaskHours = useCallback((milestoneId: string, stageId: string, taskId: string, actualHours: number, plannedHours: number, timeEntries: TimeEntry[]) => {
-    setMilestoneGroups(prev => prev.map(mg =>
-      mg.milestoneId === milestoneId
-        ? {
-            ...mg,
-            stages: mg.stages.map(s =>
-              s.id === stageId
-                ? {
-                    ...s,
-                    tasks: s.tasks.map(t =>
-                      t.id === taskId ? { ...t, actualHours, plannedHours, timeEntries } : t
-                    )
-                  }
-                : s
-            )
-          }
-        : mg
-    ));
-  }, []);
-
   const sc = STATUS_CFG[project.status];
   const pc = PRIORITY_CFG[project.priority.toLowerCase() as keyof typeof PRIORITY_CFG];
-  const budgetPct = project.budget > 0 ? Math.round((project.spent / project.budget) * 100) : 0;
 
   const nextMilestoneIdx = milestones.findIndex(m => m.status !== "done");
 
@@ -7532,7 +5856,7 @@ export default function ProjectDetailPage() {
         title: task.title,
         taskType: task.taskType,
         taskTypeLayer1: task.taskTypeLayer1,
-        taskTypeLayer2: task.taskTypeLayer2,
+        contractItemId: task.contractItemId,
         status: toApiTaskStatus(task.status),
         priority: task.priority,
         assigneeUserId: assignee?.id,
@@ -7580,7 +5904,8 @@ export default function ProjectDetailPage() {
         description: updated.description ?? null,
         taskType: updated.taskType,
         taskTypeLayer1: updated.taskTypeLayer1,
-        taskTypeLayer2: updated.taskTypeLayer2,
+        contractItemId: updated.contractItemId,
+        contractItemChangeReason: updated.contractItemChangeReason,
         status: toApiTaskStatus(updated.status),
         priority: updated.priority,
         assigneeUserId: assignee?.id ?? null,
@@ -7841,7 +6166,7 @@ export default function ProjectDetailPage() {
         <AddDocModal
           projectColor={project.color}
           milestones={milestones}
-          documentTypeOptions={Array.from(new Set(milestones.flatMap((milestone) => milestone.requiredDocumentTypes ?? []))).filter(Boolean)}
+          documentTypeOptions={gateDocumentTypes.length ? gateDocumentTypes : Array.from(new Set(milestones.flatMap((milestone) => milestone.requiredDocumentTypes ?? []))).filter(Boolean)}
           onClose={() => setShowAddDocModal(false)}
           onAdd={handleAddDocument}
         />
@@ -7850,7 +6175,7 @@ export default function ProjectDetailPage() {
         <AddLinkDocModal
           projectColor={project.color}
           milestones={milestones}
-          documentTypeOptions={Array.from(new Set(milestones.flatMap((milestone) => milestone.requiredDocumentTypes ?? []))).filter(Boolean)}
+          documentTypeOptions={gateDocumentTypes.length ? gateDocumentTypes : Array.from(new Set(milestones.flatMap((milestone) => milestone.requiredDocumentTypes ?? []))).filter(Boolean)}
           onClose={() => setShowAddLinkModal(false)}
           onAdd={handleAddLinkDocument}
         />
@@ -8062,7 +6387,7 @@ export default function ProjectDetailPage() {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1 rounded-lg" style={{ backgroundColor:sc.bg, color:sc.color }}>
                   <sc.icon className="w-3 h-3" />{formatProjectStatusLabel(project.status)}
-                  {project.status === "Active" ? <span className="sr-only">In progress</span> : null}
+                  {project.status === PROJECT_STATUS_LABELS.active ? <span className="sr-only">In progress</span> : null}
                 </span>
                 <span className="text-[11px] font-semibold px-3 py-1 rounded-lg" style={{ backgroundColor:pc.bg, color:pc.color }}>{project.priority}</span>
                 {project.tags.slice(0, 3).map(t => (
@@ -8144,12 +6469,14 @@ export default function ProjectDetailPage() {
               )}
 
               {tab === "Issues" && (
-                <ProjectIssuesPanel
-                  risks={riskRegistry}
+                <IssueLogPanel
+                  projectId={projectId}
                   teamMembers={teamMembers}
-                  onCreate={handleCreateProjectRisk}
-                  onUpdate={handleUpdateProjectRisk}
+                  milestones={milestones}
+                  milestoneGroups={milestoneGroups}
                   initialRiskId={searchParams.get("issueId") ?? undefined}
+                  onRecordsChange={(records) => setRiskRegistry(toRiskRegistry(records))}
+                  onChanged={refreshProject}
                 />
               )}
 
@@ -8158,6 +6485,7 @@ export default function ProjectDetailPage() {
                 <div className="space-y-5">
                   <ProjectWarningsBlock projectId={projectId} projectColor={project.color} teamMembers={teamMembers} onChanged={clearLiveProjectSnapshotCache} />
                   <ProjectStatusSlaBar projectId={projectId} project={project} milestones={milestones} tasks={allTasks} projectColor={project.color} onStatusChanged={refreshProject} />
+                  <ProjectContractItemsBlock projectId={projectId} projectColor={project.color} onOpenChangeRequests={() => handleTabChange("Issues")} />
                   <MilestoneOverviewBar
                     milestones={milestones}
                     milestoneGroups={milestoneGroups}
@@ -9641,6 +7969,7 @@ export default function ProjectDetailPage() {
                       </div>
                       <span className="text-xs font-semibold text-muted-foreground">{documents.length} tài liệu đã liên kết</span>
                     </div>
+                    <ProjectGatesPanel projectId={projectId} members={teamMembers} onChanged={refreshProject} onDocumentTypes={setGateDocumentTypes} refreshKey={documents.map((doc) => `${doc.id}:${doc.versions.length}:${getDocumentMilestoneId(doc)}`).join("|")} />
                     <div className="grid gap-3 sm:grid-cols-3">
                       <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Tổng tài liệu theo template</p><p className="mt-1 text-xl font-black text-foreground">{documents.length}</p><p className="mt-1 text-[11px] text-muted-foreground">Từ project hiện tại</p></div>
                       <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Đã nộp &amp; có version</p><p className="mt-1 text-xl font-black text-emerald-700">{documents.filter((doc) => doc.versions.length > 0).length}</p><p className="mt-1 text-[11px] text-muted-foreground">Có thể mở lịch sử</p></div>

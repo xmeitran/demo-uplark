@@ -14,7 +14,7 @@ describe("accounts.mapper", () => {
       picUser: { displayName: "Kha Nguyen", email: "kha@example.com", avatarUrl: null },
       annualValue: { toNumber: () => 120000000 },
       commercialNote: "Enterprise pilot"
-    });
+    }, true);
 
     expect(account).toMatchObject({
       id: "acc-1",
@@ -24,6 +24,12 @@ describe("accounts.mapper", () => {
       health: "amber",
       annualValue: 120000000
     });
+  });
+
+  it("leaves the annual value out for a viewer without the cost permission", () => {
+    const account = mapAccountSummary({ id: "acc-1", code: "ACME", name: "Acme Co", stage: "new", annualValue: { toNumber: () => 120000000 } }, false);
+    expect(account).not.toHaveProperty("annualValue");
+    expect(account).toMatchObject({ id: "acc-1", name: "Acme Co" });
   });
 
   it("maps contacts with account context", () => {

@@ -11,7 +11,7 @@ export const CLOSED_TASK_STATUSES = ["completed", "done", "cancelled", "canceled
  * Stored project statuses whose tasks get no reminder: On Hold and completed (with their legacy aliases, see
  * PROJECT_STATUS_ALIASES in the API's project-status.ts) plus the shut-down values older rows still hold.
  */
-export const REMINDER_INACTIVE_PROJECT_STATUSES = ["on_hold", "paused", "pause", "completed", "done", "closed", "cancelled", "archived"];
+export const REMINDER_INACTIVE_PROJECT_STATUSES = ["on_hold", "paused", "pause", "completed", "done", "hoàn_thành", "đã_hoàn_thành", "tạm_dừng", "closed", "cancelled", "canceled", "archived", "đã_đóng"];
 
 const HCM_OFFSET_MINUTES = 7 * 60;
 const MINUTE_MS = 60_000;

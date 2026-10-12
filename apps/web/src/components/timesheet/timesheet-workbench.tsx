@@ -83,7 +83,6 @@ function buildFilterDetail(
   };
   const detailLogs = kind === "scope" ? filterLogs(scopedDataset, filters) : filterLogs(scopedDataset, contextFilters);
   const minutes = detailLogs.reduce((sum, log) => sum + log.minutes, 0);
-  const billableMinutes = detailLogs.filter((log) => log.billable).reduce((sum, log) => sum + log.minutes, 0);
   const peopleCount = new Set(detailLogs.map((log) => log.personId)).size;
   const projectCount = new Set(detailLogs.map((log) => log.projectId)).size;
   const dates = new Set(detailLogs.map((log) => log.date));
@@ -114,8 +113,7 @@ function buildFilterDetail(
       { label: "Tổng giờ", value: formatHours(minutes) },
       { label: "Nhân sự", value: `${peopleCount}` },
       { label: "Dự án", value: `${projectCount}` },
-      { label: "Ngày có log", value: `${dates.size}` },
-      { label: "Giờ tính phí", value: formatHours(billableMinutes) }
+      { label: "Ngày có log", value: `${dates.size}` }
     ],
     relatedLogs
   };
@@ -177,7 +175,8 @@ export function TimesheetWorkbench() {
       personId: personIds.length === 1 ? personIds[0] : personIds.length > 1 ? "multiple" : "all",
       personIds,
       projectId: searchParams.get("project") ?? "all",
-      workGroup: (searchParams.get("group") as WorkGroup | null) ?? "all"
+      // A link saved with a removed group ("Họp", "Khác"…) falls back to all groups.
+      workGroup: WORK_GROUPS.find((group) => group === searchParams.get("group")) ?? "all"
       };
     },
     [searchParams, dataset.months]

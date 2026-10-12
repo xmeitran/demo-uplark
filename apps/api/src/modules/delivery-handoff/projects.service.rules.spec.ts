@@ -187,7 +187,7 @@ describe("task rules", () => {
 
     const log = setup({ member: true });
     locked(log.prisma);
-    await expect(log.service.createTimeEntry("task-1", { minutes: 60 } as any, as("usr-1"), "usr-1")).rejects.toThrow("UAT");
+    await expect(log.service.createTimeEntry("task-1", { minutes: 60, workDate: "2026-07-14T02:00:00.000Z", selectedTaskTypeLayer2: "CUSTOMER_PROJECT" } as any, as("usr-1"), "usr-1")).rejects.toThrow("UAT");
     expect(log.prisma.taskTimeEntry.create).not.toHaveBeenCalled();
 
     // An open milestone is unaffected.
@@ -215,30 +215,32 @@ describe("project status", () => {
     return ctx;
   }
 
-  it("rejects a status outside the catalogue on create and update", async () => {
-    const create = createSetup();
-    await expect(create.service.createProject({ ...createInput, status: "pilot" } as any, as("usr-1"))).rejects.toBeInstanceOf(BadRequestException);
-    expect(create.prisma.project.create).not.toHaveBeenCalled();
-
+  it("rejects a status outside the catalogue on update", async () => {
     const update = setup({ pic: "usr-1" });
-    await expect(update.service.updateProject("prj-1", { status: "archived" } as any, as("usr-1"))).rejects.toThrow("Trạng thái dự án không hợp lệ");
+    await expect(update.service.updateProject("prj-1", { status: "hold on" } as any, as("usr-1"))).rejects.toThrow("Trạng thái dự án không hợp lệ");
     expect(update.prisma.project.update).not.toHaveBeenCalled();
   });
 
-  it("applies the reason rule on create and writes the first status history row", async () => {
-    const noReason = createSetup();
-    await expect(noReason.service.createProject({ ...createInput, status: "on_hold" } as any, as("usr-1"))).rejects.toThrow("On Hold bắt buộc phải nhập lý do");
-    expect(noReason.prisma.project.create).not.toHaveBeenCalled();
+  it("always creates a project at Lên kế hoạch, ignoring a status sent by the client (5.1), and writes the first status history row", async () => {
+    for (const status of ["on_hold", "paused", "completed", "hold on"]) {
+      const sent = createSetup();
+      await sent.service.createProject({ ...createInput, status, statusReason: "Chờ khách hàng ký" } as any, as("usr-1"));
+      expect(sent.prisma.project.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "planning" }) }));
+      expect(sent.prisma.projectStatusHistory.create).toHaveBeenCalledWith({ data: expect.objectContaining({ fromStatus: undefined, toStatus: "planning" }) });
+      expect(sent.prisma.projectWarning.create).not.toHaveBeenCalled();
+    }
 
     const planning = createSetup();
     await planning.service.createProject(createInput as any, as("usr-1"));
     expect(planning.prisma.project.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "planning" }) }));
     expect(planning.prisma.projectStatusHistory.create).toHaveBeenCalledWith({ data: { workspaceId: "twk-1", projectId: "prj-new", fromStatus: undefined, toStatus: "planning", reason: undefined, changedByUserId: "usr-1" } });
+  });
 
-    // Legacy alias accepted; created On Hold with open assigned tasks raises NL-02 like a later change would.
-    const onHold = createSetup();
+  it("raises NL-02 when a project with open assigned tasks is put On Hold (legacy alias accepted)", async () => {
+    const onHold = setup({ pic: "usr-1" });
+    onHold.prisma.project.findFirstOrThrow.mockResolvedValue({ ...project, account: { name: "Acme" }, members: [], budgets: [], costs: [], stages: [], tasks: [] });
     onHold.prisma.projectTask.count.mockResolvedValue(2);
-    await onHold.service.createProject({ ...createInput, status: "paused", statusReason: "Chờ khách hàng ký" } as any, as("usr-1"));
+    await onHold.service.updateProject("prj-1", { status: "paused", statusReason: "Chờ khách hàng ký" } as any, as("usr-1"));
     expect(onHold.prisma.projectStatusHistory.create).toHaveBeenCalledWith({ data: expect.objectContaining({ toStatus: "on_hold", reason: "Chờ khách hàng ký" }) });
     expect(onHold.prisma.projectWarning.create).toHaveBeenCalledWith({ data: expect.objectContaining({ typeCode: "NL-02", dedupeKey: "NL-02:on-hold-open-tasks" }) });
   });
@@ -255,7 +257,8 @@ describe("project status", () => {
     await service.updateProject("prj-1", { status: "active" } as any, as("usr-1"));
 
     expect(order[0]).toBe("lock");
-    expect(prisma.project.findFirst.mock.calls.at(-1)?.[0]).toEqual({ where: { id: "prj-1", workspaceId: "twk-1" }, select: { status: true } });
+    // (The last read of all is the status-proposal recompute that follows a status change.)
+    expect(prisma.project.findFirst).toHaveBeenCalledWith({ where: { id: "prj-1", workspaceId: "twk-1" }, select: { status: true } });
     // active -> active under the lock: no second history row and no second NL-02 closure.
     expect(prisma.projectStatusHistory.create).not.toHaveBeenCalled();
   });
@@ -270,6 +273,42 @@ describe("project status", () => {
     await service.updateProject("prj-1", { status: "active" } as any, as("usr-1"));
 
     expect(prisma.projectWarning.create).toHaveBeenCalledWith({ data: expect.objectContaining({ typeCode: "NL-03", dedupeKey: "NL-03:task:task-1" }) });
+  });
+
+  const summary = { ...project, account: { name: "Acme" }, members: [], budgets: [], costs: [], stages: [], tasks: [] };
+
+  it("closing needs a close reason and is open to the project manager, admins and BD only", async () => {
+    const noReason = setup({ pic: "usr-1" });
+    await expect(noReason.service.updateProject("prj-1", { status: "closed" } as any, as("usr-1"))).rejects.toThrow("lý do đóng");
+    expect(noReason.prisma.project.update).not.toHaveBeenCalled();
+
+    const outsider = setup({ pic: "usr-pic" });
+    await expect(outsider.service.updateProject("prj-1", { status: "closed", closeReasonCode: "lost_deal" } as any, as("usr-1", "FINANCE_ADMIN"))).rejects.toBeInstanceOf(ForbiddenException);
+
+    // BD does not manage the project: may close, but not smuggle other edits into the same request.
+    const bdEdit = setup({ pic: "usr-pic" });
+    await expect(bdEdit.service.updateProject("prj-1", { status: "closed", closeReasonCode: "lost_deal", name: "Renamed" } as any, as("usr-bd", "SALES_OWNER"))).rejects.toBeInstanceOf(ForbiddenException);
+
+    const bd = setup({ pic: "usr-pic" });
+    bd.prisma.project.findFirstOrThrow.mockResolvedValue(summary);
+    await bd.service.updateProject("prj-1", { status: "closed", closeReasonCode: "lost_deal", statusReason: "Khách chọn bên khác" } as any, as("usr-bd", "SALES_OWNER"));
+    expect(bd.prisma.projectStatusHistory.create).toHaveBeenCalledWith({ data: expect.objectContaining({ fromStatus: "active", toStatus: "closed", closeReasonCode: "lost_deal", reason: "Khách chọn bên khác" }) });
+    expect(bd.prisma.auditEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({ action: "project.closed" }) });
+  });
+
+  it("a closed project only changes status when an admin reopens it with a reason", async () => {
+    const pic = setup({ pic: "usr-1", project: { status: "closed" } });
+    await expect(pic.service.updateProject("prj-1", { status: "active", statusReason: "Làm tiếp" } as any, as("usr-1"))).rejects.toBeInstanceOf(ForbiddenException);
+    expect(pic.prisma.project.update).not.toHaveBeenCalled();
+
+    const noReason = setup({ project: { status: "closed" } });
+    await expect(noReason.service.updateProject("prj-1", { status: "active" } as any, as("usr-admin", "WORKSPACE_ADMIN"))).rejects.toThrow("Mở lại");
+
+    const admin = setup({ project: { status: "closed" } });
+    admin.prisma.project.findFirstOrThrow.mockResolvedValue(summary);
+    await admin.service.updateProject("prj-1", { status: "active", statusReason: "Khách quay lại" } as any, as("usr-admin", "WORKSPACE_ADMIN"));
+    expect(admin.prisma.projectStatusHistory.create).toHaveBeenCalledWith({ data: expect.objectContaining({ fromStatus: "closed", toStatus: "active", reason: "Khách quay lại" }) });
+    expect(admin.prisma.auditEvent.create).toHaveBeenCalledWith({ data: expect.objectContaining({ action: "project.reopened" }) });
   });
 });
 
@@ -357,7 +396,7 @@ describe("reads", () => {
   it("filters the project list by PIC (first stage owner) for a comma-separated list instead of an unknown column", async () => {
     const { prisma, service } = setup();
     prisma.$queryRaw.mockResolvedValue([{ id: "prj-1" }, { id: "prj-7" }]);
-    await expect(service.listProjects({ ownerUserId: "usr-a, usr-b" }, as("usr-1"))).resolves.toMatchObject({ data: [] });
+    await expect(service.listProjects({ ownerUserId: "usr-a, usr-b" }, as("usr-1", "WORKSPACE_ADMIN"))).resolves.toMatchObject({ data: [] });
     const where = prisma.project.findMany.mock.calls[0][0].where;
     expect(where).not.toHaveProperty("ownerUserId");
     expect(where.AND).toEqual([{ id: { in: ["prj-1", "prj-7"] } }]);

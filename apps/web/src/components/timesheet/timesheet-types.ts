@@ -6,34 +6,33 @@
  */
 
 import type { ProjectStatusCode } from "@/lib/project-status";
+import { TASK_TYPE_LAYER2_LABELS, TASK_TYPE_PENDING_LABEL } from "@/lib/task-classification";
 import { TASK_STATUS_LABEL } from "@/components/crm-workspace/task-display-helpers";
 
-/** MTS-03 work-group taxonomy. Replaces the free-text `workType` column. */
-export type WorkGroup =
-  | "customer_project"
-  | "internal_project"
-  | "ticket_maintenance"
-  | "meeting"
-  | "training"
-  | "other";
+/**
+ * Work group = Layer 2 (bối cảnh công việc, rules 4.2) of the log, as derived by the API. Nobody picks it and the
+ * Timesheet no longer guesses it from free text; a log without a derived value is "Chờ phân loại".
+ */
+export type WorkGroup = "customer_project" | "ticket_maintenance" | "internal_project" | "unclassified";
 
-export const WORK_GROUPS: readonly WorkGroup[] = [
-  "customer_project",
-  "internal_project",
-  "ticket_maintenance",
-  "meeting",
-  "training",
-  "other"
-];
+export const WORK_GROUPS: readonly WorkGroup[] = ["customer_project", "ticket_maintenance", "internal_project", "unclassified"];
 
 export const WORK_GROUP_LABELS: Record<WorkGroup, string> = {
-  customer_project: "Dự án khách hàng",
-  internal_project: "Dự án nội bộ",
-  ticket_maintenance: "Ticket / Bảo trì",
-  meeting: "Họp",
-  training: "Đào tạo",
-  other: "Khác"
+  customer_project: TASK_TYPE_LAYER2_LABELS.CUSTOMER_PROJECT,
+  ticket_maintenance: TASK_TYPE_LAYER2_LABELS.TICKET_MAINTENANCE,
+  internal_project: TASK_TYPE_LAYER2_LABELS.INTERNAL_PROJECT,
+  unclassified: TASK_TYPE_PENDING_LABEL
 };
+
+const WORK_GROUP_BY_LAYER2: Record<string, WorkGroup> = {
+  CUSTOMER_PROJECT: "customer_project",
+  TICKET_MAINTENANCE: "ticket_maintenance",
+  INTERNAL_PROJECT: "internal_project"
+};
+
+export function workGroupOfLayer2(layer2: unknown): WorkGroup {
+  return (typeof layer2 === "string" && WORK_GROUP_BY_LAYER2[layer2]) || "unclassified";
+}
 
 /** Canonical Project Status (see @/lib/project-status); null = unknown, shown as "Chưa xác định". */
 export type ProjectStatus = ProjectStatusCode | null;
@@ -156,7 +155,17 @@ export interface TimeLog {
   minutes: number;
   workGroup: WorkGroup;
   billable: boolean;
+  /** Layer 2 the person chose for this log (label); undefined on rows logged before the choice existed. */
+  selectedLayer2Label?: string;
+  /** "Lớp 2 không khớp": the choice differs from the task's Layer 2. */
+  layer2Mismatch?: boolean;
   note: string;
+  /** D-16: logged while the project was "Tạm dừng"; the PM reviews it. */
+  loggedWhileOnHold?: boolean;
+  /** 9.2: part of a day above 8 hours dated before the effective date; kept as logged. */
+  beforeEightHourRule?: boolean;
+  /** D-03: "code · name" of the contract line item the entry was written with; undefined = "Chưa có hạng mục". */
+  contractItem?: string;
 }
 
 /** Everything a Timesheet screen needs, in one bundle. */

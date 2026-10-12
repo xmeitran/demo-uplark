@@ -92,6 +92,14 @@ describe("NotificationsService milestone approval requests", () => {
     expect(fetcher).not.toHaveBeenCalled();
     expect(prisma.appNotification.upsert).toHaveBeenCalledTimes(1);
   });
+
+  it("asks every Admin account type for approval: PM, Dx Director and BD Lead hold no WORKSPACE_ADMIN binding of their own", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const prisma = fakePrisma();
+    await new NotificationsService(prisma as never).createMilestoneApprovalRequest({ projectId: "project-1", milestoneId: "ms-1", principal });
+    const codes = prisma.user.findMany.mock.calls[0][0].where.roleBindings.some.role.code.in;
+    expect([...codes].sort()).toEqual(["BD_LEAD", "DX_DIRECTOR", "FOUNDER_GM", "PM", "WORKSPACE_ADMIN"]);
+  });
 });
 
 describe("NotificationsService project risk notifications", () => {

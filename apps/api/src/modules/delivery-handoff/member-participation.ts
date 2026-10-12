@@ -42,7 +42,7 @@ export interface MemberParticipationInput {
 }
 
 export function deriveMemberParticipation(input: MemberParticipationInput): { state: MemberParticipationState; reason: string } {
-  if (input.projectOnHold) return { state: "on_hold", reason: "Project đang On Hold" };
+  if (input.projectOnHold) return { state: "on_hold", reason: "Project đang Tạm dừng" };
   if (input.actualMinutes > 0) return { state: "active", reason: "Có Time Log thực tế trong kỳ" };
   if (input.projectCompleted) return { state: "no_log", reason: "Project đã hoàn thành, không có Time Log thực tế trong kỳ" };
   if (input.openTasks.length === 0) return { state: "missing_data", reason: "Chưa có Task đang mở được giao trong Project" };

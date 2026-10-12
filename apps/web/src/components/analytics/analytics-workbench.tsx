@@ -44,9 +44,11 @@ import {
   ANALYTICS_BREAKDOWN_LABELS,
   ANALYTICS_METRIC_LABELS,
   analyticsUnavailableLabel,
+  businessProjectStatusLabel,
   businessStatusLabel,
   businessWarningLabel
 } from "./analytics-copy";
+import { projectStatusOrder } from "@/lib/project-status";
 
 /* Recharts widgets are lazy-loaded so the analytics route bundle stays lean. */
 const chartLoading = () => <div className="h-[280px] animate-pulse rounded-lg bg-muted" aria-hidden />;
@@ -443,11 +445,11 @@ function ActiveFilterChips({ state, summary, onChange }: {
   for (const id of state.userIds) chips.push({ key: `user-${id}`, label: `Nhân sự: ${labelFor(options?.users, id)}`, onRemove: () => onChange({ userIds: state.userIds.filter((value) => value !== id) }) });
   for (const id of state.accountIds) chips.push({ key: `acc-${id}`, label: `Khách hàng: ${labelFor(options?.accounts, id)}`, onRemove: () => onChange({ accountIds: state.accountIds.filter((value) => value !== id) }) });
   for (const id of state.projectIds) chips.push({ key: `prj-${id}`, label: `Dự án: ${labelFor(options?.projects, id)}`, onRemove: () => onChange({ projectIds: state.projectIds.filter((value) => value !== id) }) });
-  for (const id of state.projectStatuses) chips.push({ key: `ps-${id}`, label: `Trạng thái dự án: ${businessStatusLabel(labelFor(options?.projectStatuses, id))}`, onRemove: () => onChange({ projectStatuses: state.projectStatuses.filter((value) => value !== id) }) });
+  for (const id of state.projectStatuses) chips.push({ key: `ps-${id}`, label: `Trạng thái dự án: ${businessProjectStatusLabel(labelFor(options?.projectStatuses, id))}`, onRemove: () => onChange({ projectStatuses: state.projectStatuses.filter((value) => value !== id) }) });
   for (const id of state.taskStatuses) chips.push({ key: `ts-${id}`, label: `Trạng thái công việc: ${businessStatusLabel(labelFor(options?.taskStatuses, id))}`, onRemove: () => onChange({ taskStatuses: state.taskStatuses.filter((value) => value !== id) }) });
   for (const id of state.workTypes) chips.push({ key: `wt-${id}`, label: `Loại công việc: ${businessStatusLabel(labelFor(options?.workTypes, id))}`, onRemove: () => onChange({ workTypes: state.workTypes.filter((value) => value !== id) }) });
-  for (const id of state.taskTypeLayer1Ids) chips.push({ key: `tt1-${id}`, label: `Task Type: ${labelFor(options?.taskTypeLayer1, id)}`, onRemove: () => onChange({ taskTypeLayer1Ids: state.taskTypeLayer1Ids.filter((value) => value !== id) }) });
-  for (const id of state.taskTypeLayer2Ids) chips.push({ key: `tt2-${id}`, label: `Bối cảnh: ${labelFor(options?.taskTypeLayer2, id)}`, onRemove: () => onChange({ taskTypeLayer2Ids: state.taskTypeLayer2Ids.filter((value) => value !== id) }) });
+  for (const id of state.taskTypeLayer1Ids) chips.push({ key: `tt1-${id}`, label: `Lớp 1: ${labelFor(options?.taskTypeLayer1, id)}`, onRemove: () => onChange({ taskTypeLayer1Ids: state.taskTypeLayer1Ids.filter((value) => value !== id) }) });
+  for (const id of state.taskTypeLayer2Ids) chips.push({ key: `tt2-${id}`, label: `Lớp 2: ${labelFor(options?.taskTypeLayer2, id)}`, onRemove: () => onChange({ taskTypeLayer2Ids: state.taskTypeLayer2Ids.filter((value) => value !== id) }) });
   if (state.billable !== "all") chips.push({ key: "billable", label: state.billable === "billable" ? "Chỉ giờ có tính phí" : "Chỉ giờ không tính phí", onRemove: () => onChange({ billable: "all" }) });
 
   if (chips.length === 0) return null;
@@ -659,7 +661,7 @@ function OverviewView({ summary, slot, onRetry, compare }: {
       bucket.allocationMinutes > 0 ||
       (bucket.capacityMinutes ?? 0) > 0
   );
-  const statusRows = (summary?.filterOptions.projectStatuses ?? []).map((option) => ({ status: businessStatusLabel(option.label), count: option.count ?? 0 })).filter((row) => row.count > 0).slice(0, 8);
+  const statusRows = [...(summary?.filterOptions.projectStatuses ?? [])].sort((a, b) => projectStatusOrder(a.id) - projectStatusOrder(b.id)).map((option) => ({ status: businessProjectStatusLabel(option.label), count: option.count ?? 0 })).filter((row) => row.count > 0).slice(0, 8);
   const exceptions = (summary?.breakdowns.projects ?? []).filter((row) => (row.metrics.overdueTasks ?? 0) > 0 || (row.metrics.blockedTasks ?? 0) > 0);
   const overdueTotal = summary?.totals.find((metric) => metric.key === "overdueTasks");
   const blockedTotal = summary?.totals.find((metric) => metric.key === "blockedTasks");
@@ -973,7 +975,7 @@ function DataQualityPanel({ summary }: { summary?: WorkforceProjectsSummaryRespo
   if (quality.usersMissingTeam > 0) items.push(`${quality.usersMissingTeam} người chưa thuộc nhóm nào.`);
   if (quality.unassignedActualMinutes > 0) items.push(`${formatHours(quality.unassignedActualMinutes)} giờ đã duyệt chưa gán dự án.`);
   const unclassified = summary.taskTypeBreakdowns.find((row) => row.layer1Id === "UNCLASSIFIED" || row.layer2Id === "UNCLASSIFIED");
-  if (unclassified) items.push(`${formatHours(unclassified.actualMinutes)} giờ chưa có đủ 2 lớp Task Type; cần PM/BD Lead rà soát, hệ thống không tự xếp nhóm.`);
+  if (unclassified) items.push(`${formatHours(unclassified.actualMinutes)} giờ đang Chờ phân loại (chưa đủ Lớp 1 / Lớp 2); cần PM rà soát, hệ thống không tự xếp nhóm.`);
   if (quality.suppressedGroups > 0) items.push(`${quality.suppressedGroups} nhóm nhỏ được ẩn để bảo vệ danh tính.`);
   for (const warning of summary.meta.warnings) items.push(businessWarningLabel(warning));
   if (items.length === 0) return null;
@@ -995,10 +997,10 @@ function TaskTypeMixPanel({ summary }: { summary?: WorkforceProjectsSummaryRespo
   const rows = summary?.taskTypeBreakdowns ?? [];
   if (!summary || rows.length === 0) return null;
   return (
-    <section aria-label="Phân bổ giờ theo Task Type" className="rounded-xl border border-border bg-card p-4">
+    <section aria-label="Phân bổ giờ theo phân loại công việc" className="rounded-xl border border-border bg-card p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-[13px] font-bold text-foreground">Phân bổ giờ theo Task Type</h3>
+          <h3 className="text-[13px] font-bold text-foreground">Phân bổ giờ theo phân loại công việc</h3>
           <p className="mt-0.5 text-[12px] text-muted-foreground">Đối soát giờ đã duyệt theo 2 lớp nghiệp vụ; dùng bộ lọc để xem riêng BD / Pre-sale.</p>
         </div>
         <span className="rounded-full bg-primary/10 px-2 py-1 text-[11px] font-semibold text-primary">{rows.length} nhóm</span>

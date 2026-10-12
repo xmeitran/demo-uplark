@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import { accountTypeOf } from "@b2b-crm/contracts";
 import { primaryAuthRole } from "./auth-role";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -15,6 +16,10 @@ export interface AuthUser {
   avatarUrl?: string;
   role: string;
   roleCodes?: string[];
+  /** Derived by the API from the roles held ("Hai loại tài khoản: Admin và User"). */
+  accountType?: "ADMIN" | "USER";
+  /** 7.7: an Admin may work in user view. */
+  viewMode?: "admin" | "user";
 }
 
 interface AuthContextValue {
@@ -31,6 +36,8 @@ interface SessionPrincipal {
   email?: string;
   avatarUrl?: string;
   roleCodes?: string[];
+  accountType?: "ADMIN" | "USER";
+  viewMode?: "admin" | "user";
   subjectId?: string;
 }
 
@@ -50,7 +57,9 @@ function authUserFromPrincipal(principal: SessionPrincipal): AuthUser {
     avatarColor: "#059669",
     avatarUrl: principal.avatarUrl,
     role: primaryAuthRole(principal.roleCodes),
-    roleCodes: principal.roleCodes ?? []
+    roleCodes: principal.roleCodes ?? [],
+    accountType: principal.accountType ?? accountTypeOf(principal.roleCodes ?? []),
+    viewMode: principal.viewMode ?? "admin"
   };
 }
 

@@ -5420,12 +5420,6 @@ textarea.task-text-input {
   overflow: hidden;
 }
 
-.finance-pl-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
 .finance-chart-empty {
   min-height: 240px;
 }

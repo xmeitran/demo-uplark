@@ -1,6 +1,7 @@
 "use client";
 import { apiErrorMessage, isNetworkFailure, readApiError } from "@/lib/api-error";
-import { isActualTimeEntry } from "@/lib/time-entry-actual";
+import { isActualTimeEntry, ON_HOLD_LOG_REVIEW_LABEL, timeEntryRecordLabel } from "@/lib/time-entry-actual";
+import { LAYER2_MISMATCH_LABEL, TASK_TYPE_LAYER1_FIELD_LABEL, TASK_TYPE_LAYER2_FIELD_LABEL, isLayer2ReasonRequired, layer2OptionsForTask, taskTypeLabel, taskTypeLayer2Label } from "@/lib/task-classification";
 import { PersonLink } from "@/components/person-link";
 import { useTaskPeople } from "@/hooks/use-task-people";
 import { TaskChangeHistory } from "./task-change-history";
@@ -597,6 +598,8 @@ export function TaskDetailWorkbench({
   const [showTransitionModal, setShowTransitionModal] = useState(false);
   const [showLogModal, setShowLogModal] = useState(false);
   const [selectedTimeEntry, setSelectedTimeEntry] = useState<any | null>(null);
+  // After G7 the API only accepts a Layer 2 change from an Admin with a reason: the pending change waits here for it.
+  const [layer2ReasonRequest, setLayer2ReasonRequest] = useState<{ entryId: string; value: string; reason: string; message: string; saving: boolean } | null>(null);
   const [confirmDeleteEntry, setConfirmDeleteEntry] = useState<any | null>(null); // entry to delete (with confirm modal)
   const [isDeletingTimeEntry, setIsDeletingTimeEntry] = useState(false);
   const [deleteTimeEntryError, setDeleteTimeEntryError] = useState<string | null>(null);
@@ -909,7 +912,6 @@ export function TaskDetailWorkbench({
       description: draftDescription,
       taskType: draftTaskType,
       taskTypeLayer1: currentTask.taskTypeLayer1,
-      taskTypeLayer2: currentTask.taskTypeLayer2,
       priority: draftPriority,
       assigneeUserId: primaryAssigneeUserId,
       assigneeUserIds: draftAssigneeUserIds,
@@ -927,7 +929,8 @@ export function TaskDetailWorkbench({
       description: taskInput.description,
       taskType: taskInput.taskType,
       taskTypeLayer1: taskInput.taskTypeLayer1,
-      taskTypeLayer2: taskInput.taskTypeLayer2,
+      contractItemId: taskInput.contractItemId,
+      contractItemChangeReason: taskInput.contractItemChangeReason,
       priority: taskInput.priority,
       assigneeUserId: taskInput.assigneeUserId,
       assigneeUserIds: taskInput.assigneeUserIds,
@@ -1079,7 +1082,8 @@ export function TaskDetailWorkbench({
       description: taskInput.description,
       taskType: taskInput.taskType,
       taskTypeLayer1: taskInput.taskTypeLayer1,
-      taskTypeLayer2: taskInput.taskTypeLayer2,
+      contractItemId: taskInput.contractItemId,
+      contractItemChangeReason: taskInput.contractItemChangeReason,
       priority: taskInput.priority,
       assigneeUserId: taskInput.assigneeUserId,
       assigneeUserIds: taskInput.assigneeUserIds,
@@ -1366,7 +1370,8 @@ export function TaskDetailWorkbench({
       minutes: logInput.minutes,
       billable: logInput.billable,
       workType: logInput.workType,
-      note: logInput.note
+      note: logInput.note,
+      selectedTaskTypeLayer2: logInput.selectedTaskTypeLayer2
     };
 
     try {
@@ -1388,6 +1393,7 @@ export function TaskDetailWorkbench({
       const userDisplayName = savedEntry.userDisplayName ?? selectedAssignee?.label ?? "Authenticated user";
       const capacityFeedback = getDailyActualLogFeedback(savedEntry.dailyActualLog, userDisplayName);
       announceDailyCapacity(capacityFeedback);
+      if (savedEntry.savedInLockedPeriod) triggerToast("Giờ đã được lưu, nhưng tháng này đã khóa kỳ chi phí nên giờ nằm ở Chờ xử lý cho tới khi Admin mở lại kỳ.", "warning");
       const { dailyActualLog: _dailyActualLog, ...savedTimeEntry } = savedEntry;
 
       const newEntry = {
@@ -1497,7 +1503,7 @@ export function TaskDetailWorkbench({
         minutes: logInput.minutes,
         billable: logInput.billable,
         workType: logInput.workType,
-        approvalStatus: "submitted",
+        approvalStatus: "approved",
         note: logInput.note,
         createdAt: new Date().toISOString()
       };
@@ -1534,6 +1540,33 @@ export function TaskDetailWorkbench({
       syncTasks(updated);
       setShowLogModal(false);
       triggerToast(`Đã ghi thời gian ngoại tuyến${offlineNextStatus ? " và hoàn thành công việc" : ""}.`, "info");
+    }
+  };
+
+  // P&L spec 12/10 point 5: correcting a wrongly chosen Layer 2; the API checks who may and whether the cost period is open.
+  const handleChangeEntryLayer2 = async (entry: any, selectedTaskTypeLayer2: string, reason?: string) => {
+    if (!selectedTaskTypeLayer2 || typeof entry?.id !== "string") return;
+    try {
+      const response = await fetch(`/api/tasks/time-entries/${encodeURIComponent(entry.id)}/layer2`, {
+        method: "PATCH", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ selectedTaskTypeLayer2, ...(reason ? { reason } : {}) })
+      });
+      if (!response.ok) {
+        const error = await readApiError(response);
+        // 409 = project past G7 (P&L closed): ask for the reason, and keep showing the API message if it still refuses (non-Admin).
+        if (isLayer2ReasonRequired(error.status, error.message)) {
+          setLayer2ReasonRequest({ entryId: entry.id, value: selectedTaskTypeLayer2, reason: reason ?? "", message: error.message, saving: false });
+          return;
+        }
+        throw error;
+      }
+      setLayer2ReasonRequest(null);
+      const saved = await response.json();
+      setSelectedTimeEntry((current: any) => (current?.id === entry.id ? { ...current, selectedTaskTypeLayer2: saved.selectedTaskTypeLayer2, layer2Mismatch: saved.layer2Mismatch } : current));
+      replaceWithCanonicalTask(await loadCanonicalTask());
+      triggerToast(saved.layer2Mismatch ? "Đã lưu Lớp 2. Lựa chọn vẫn lệch với task nên giờ còn Chờ xử lý." : "Đã cập nhật Lớp 2 của giờ log.", saved.layer2Mismatch ? "warning" : "success");
+    } catch (err) {
+      setLayer2ReasonRequest((current) => (current ? { ...current, saving: false } : current));
+      triggerToast(err instanceof Error ? err.message : "Không thể cập nhật Lớp 2 của giờ log.", "danger");
     }
   };
 
@@ -1657,20 +1690,11 @@ export function TaskDetailWorkbench({
         throw new Error(message);
       }
 
-      const savedBlock = await response.json() as TaskPlanningBlockSummary;
-      const canonicalTask = await loadCanonicalTask();
-      const generatedActual = canonicalTask.timeEntries?.find(item => item.sourcePlanningBlockId === savedBlock.id);
-      if (!generatedActual) {
-        throw new Error("Kế hoạch đã hoàn thành nhưng giờ thực tế chưa xuất hiện trong dữ liệu mới nhất. Vui lòng tải lại trang.");
-      }
-
-      replaceWithCanonicalTask(canonicalTask);
+      // D-15: completing a plan only closes the plan; actual hours are logged by the person, never copied from planned hours.
+      replaceWithCanonicalTask(await loadCanonicalTask());
       setSelectedTimeEntry(null);
       setConfirmCompletePlanningEntry(null);
-      triggerToast(
-        `Đã hoàn thành kế hoạch. ${formatTaskMinutes(generatedActual.minutes)} đã được tính vào tổng thời gian.`,
-        "success"
-      );
+      triggerToast("Đã hoàn thành kế hoạch. Giờ thực tế không tự ghi theo giờ kế hoạch — hãy log giờ thực tế của bạn.", "success");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Không thể hoàn thành kế hoạch trên backend.";
       setPlanningCompletionError(message);
@@ -2009,6 +2033,11 @@ export function TaskDetailWorkbench({
                     {/* Status + priority badges */}
                     <div className="mt-2 flex items-center gap-2 flex-wrap">
                       <span className="text-[11px] text-slate-400 font-medium">{displayTaskType}</span>
+                      <span className="text-slate-200">·</span>
+                      {/* Read-only: Layer 1 comes from the stage, Layer 2 is derived by the system (D-02, D-04). */}
+                      <span className="text-[11px] text-slate-400 font-medium" title={`${TASK_TYPE_LAYER1_FIELD_LABEL} / ${TASK_TYPE_LAYER2_FIELD_LABEL}`}>
+                        {taskTypeLabel(currentTask.taskTypeLayer1, currentTask.taskTypeLayer2)}
+                      </span>
                       <span className="text-slate-200">·</span>
                       <span
                         className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold tracking-wide"
@@ -2368,8 +2397,6 @@ export function TaskDetailWorkbench({
                       <div className="flex flex-col gap-2 max-h-[220px] overflow-auto p-0.5">
                         {timeHistoryEntries.map((entry: any) => {
                             const isPlanned = entry.entryKind === "planning";
-                            const isApproved = entry.approvalStatus === "approved";
-                            const isRejected = entry.approvalStatus === "rejected";
                             const entryDisplayName = formatAssigneeName(entry.userId, entry.userDisplayName);
                             const entryAvatarUrl =
                               entry.userAvatarUrl ||
@@ -2379,7 +2406,6 @@ export function TaskDetailWorkbench({
                             const WORK_TYPE_PILL: Record<string, { bg: string; color: string; label: string }> = {
                               delivery:       { bg: "#dbeafe", color: "#1d4ed8", label: "Triển khai" },
                               consulting:     { bg: "#f3e8ff", color: "#7e22ce", label: "Tư vấn KH" },
-                              meeting:        { bg: "#e0f2fe", color: "#0369a1", label: "Họ p" },
                               training:       { bg: "#d1fae5", color: "#065f46", label: "Đào tạo" },
                               support:        { bg: "#fef3c7", color: "#92400e", label: "Hỗ trợ" },
                               blueprint:      { bg: "#ede9fe", color: "#6d28d9", label: "Thiết kế" },
@@ -2401,11 +2427,9 @@ export function TaskDetailWorkbench({
                                     ? "Kế hoạch đã hủy"
                                     : "Kế hoạch"
                                 }
-                              : isApproved
-                              ? { bg: "#d1fae5", color: "#065f46", label: "Đã duyệt" }
-                              : isRejected
-                              ? { bg: "#f1f5f9", color: "#475569", label: "Từ chối" }
-                              : { bg: "#fef3c7", color: "#92400e", label: "Chờ duyệt" };
+                              : isActualTimeEntry(entry)
+                              ? { bg: "#d1fae5", color: "#065f46", label: timeEntryRecordLabel(entry) }
+                              : { bg: "#f1f5f9", color: "#475569", label: timeEntryRecordLabel(entry) };
 
                             return (
                               <div
@@ -2479,6 +2503,11 @@ export function TaskDetailWorkbench({
                                       >
                                         {approvalConfig.label}
                                       </span>
+                                      {entry.loggedWhileOnHold ? (
+                                        <span className="inline-flex rounded-full px-1.5 py-px text-[9px] font-semibold" style={{ background: "#fef3c7", color: "#92400e" }}>
+                                          {ON_HOLD_LOG_REVIEW_LABEL}
+                                        </span>
+                                      ) : null}
                                       {/* Work type */}
                                       {entry.workType && (
                                         <span
@@ -2496,6 +2525,9 @@ export function TaskDetailWorkbench({
                                           {entry.billingExemptReason ? "Ngày nghỉ · không tính phí" : entry.billable ? "💰 Tính phí" : "Không tính phí"}
                                         </span>
                                       )}
+                                      {entry.layer2Mismatch ? (
+                                        <span className="inline-flex rounded-full bg-amber-50 px-1.5 py-px text-[9px] font-semibold text-amber-700">{LAYER2_MISMATCH_LABEL}</span>
+                                      ) : null}
                                     </div>
 
                                     {/* Row 3: Description / note */}
@@ -2939,15 +2971,12 @@ export function TaskDetailWorkbench({
               const ent = selectedTimeEntry;
               const isPlanned   = ent.entryKind === "planning";
               const canCompletePlanning = isPlanned && ["planned", "in_progress"].includes(ent.planningStatus);
-              const isApproved  = ent.approvalStatus === "approved";
-              const isRejected  = ent.approvalStatus === "rejected";
               const entryName   = formatAssigneeName(ent.userId, ent.userDisplayName);
               const entryAvatar = ent.userAvatarUrl || workspaceAssigneeOptions.find((o: any) => o.value === ent.userId)?.avatarUrl;
 
               const WORK_TYPE_PILL: Record<string, { bg: string; color: string; label: string }> = {
                 delivery:       { bg: "#dbeafe", color: "#1d4ed8", label: "Triển khai" },
                 consulting:     { bg: "#f3e8ff", color: "#7e22ce", label: "Tư vấn KH" },
-                meeting:        { bg: "#e0f2fe", color: "#0369a1", label: "Họ p" },
                 training:       { bg: "#d1fae5", color: "#065f46", label: "Đào tạo" },
                 support:        { bg: "#fef3c7", color: "#92400e", label: "Hỗ trợ" },
                 blueprint:      { bg: "#ede9fe", color: "#6d28d9", label: "Thiết kế" },
@@ -2969,11 +2998,9 @@ export function TaskDetailWorkbench({
                       : "Kế hoạch",
                     border: "1px solid #bfdbfe"
                   }
-                : isApproved
-                ? { bg: "#d1fae5", color: "#065f46", label: "Đã duyệt",  border: "1px solid #a7f3d0" }
-                : isRejected
-                ? { bg: "#f1f5f9", color: "#475569", label: "Từ chối",   border: "1px solid #cbd5e1" }
-                : { bg: "#fef3c7", color: "#92400e", label: "Chờ duyệt", border: "1px solid #fde68a" };
+                : isActualTimeEntry(ent)
+                ? { bg: "#d1fae5", color: "#065f46", label: timeEntryRecordLabel(ent), border: "1px solid #a7f3d0" }
+                : { bg: "#f1f5f9", color: "#475569", label: timeEntryRecordLabel(ent), border: "1px solid #cbd5e1" };
 
               return (
                 <ModalLayer onClose={() => setSelectedTimeEntry(null)}>
@@ -3063,13 +3090,18 @@ export function TaskDetailWorkbench({
 
                         {/* Approval */}
                         <div className="flex flex-col gap-0.5">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Trạng thái duyệt</span>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Trạng thái</span>
                           <span
                             className="self-start inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold"
                             style={{ background: approvalConfig.bg, color: approvalConfig.color, border: approvalConfig.border }}
                           >
                             {approvalConfig.label}
                           </span>
+                          {ent.loggedWhileOnHold ? (
+                            <span className="self-start inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}>
+                              {ON_HOLD_LOG_REVIEW_LABEL}
+                            </span>
+                          ) : null}
                         </div>
 
                         {/* Work type */}
@@ -3094,6 +3126,53 @@ export function TaskDetailWorkbench({
                             }`}>
                               {ent.billingExemptReason ? "Ngày nghỉ · không tính phí" : ent.billable ? "💰 Có tính phí" : "Không tính phí"}
                             </span>
+                          </div>
+                        )}
+
+                        {/* Layer 2 chosen for this log: the author, the project's PM or an Admin may correct it while the cost period is open. */}
+                        {ent.entryKind !== "planning" && ent.approvalStatus !== undefined && (
+                          <div className="flex flex-col gap-0.5 col-span-2">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{TASK_TYPE_LAYER2_FIELD_LABEL} (người ghi chọn)</span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <select
+                                aria-label="Lớp 2 của giờ log"
+                                value={ent.selectedTaskTypeLayer2 ?? ""}
+                                onChange={(event) => void handleChangeEntryLayer2(ent, event.target.value)}
+                                className="h-7 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700"
+                              >
+                                {ent.selectedTaskTypeLayer2 ? null : <option value="">Chưa chọn (dữ liệu cũ)</option>}
+                                {layer2OptionsForTask(ent.taskTypeLayer1).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                              </select>
+                              {ent.layer2Mismatch ? <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">{LAYER2_MISMATCH_LABEL} · task là {taskTypeLayer2Label(ent.taskTypeLayer2)}</span> : null}
+                            </div>
+                            {layer2ReasonRequest && layer2ReasonRequest.entryId === ent.id ? (
+                              <form
+                                className="mt-1 flex flex-col gap-1.5 rounded-lg border border-amber-200 bg-amber-50 p-2"
+                                onSubmit={(event) => {
+                                  event.preventDefault();
+                                  const pending = layer2ReasonRequest;
+                                  if (!pending.reason.trim() || pending.saving) return;
+                                  setLayer2ReasonRequest({ ...pending, saving: true });
+                                  void handleChangeEntryLayer2(ent, pending.value, pending.reason.trim());
+                                }}
+                              >
+                                <p role="alert" className="text-[11px] font-medium text-amber-800">{layer2ReasonRequest.message}</p>
+                                <label className="flex flex-col gap-1 text-[10px] font-bold text-slate-500">
+                                  Lý do đổi sang {taskTypeLayer2Label(layer2ReasonRequest.value)} *
+                                  <textarea
+                                    required
+                                    rows={2}
+                                    value={layer2ReasonRequest.reason}
+                                    onChange={(event) => setLayer2ReasonRequest((current) => (current ? { ...current, reason: event.target.value } : current))}
+                                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-normal text-slate-700"
+                                  />
+                                </label>
+                                <div className="flex justify-end gap-2">
+                                  <button type="button" onClick={() => setLayer2ReasonRequest(null)} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600">Hủy</button>
+                                  <button type="submit" disabled={!layer2ReasonRequest.reason.trim() || layer2ReasonRequest.saving} className="rounded-lg bg-blue-600 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-60">{layer2ReasonRequest.saving ? "Đang lưu…" : "Lưu kèm lý do"}</button>
+                                </div>
+                              </form>
+                            ) : null}
                           </div>
                         )}
 
@@ -3203,7 +3282,7 @@ export function TaskDetailWorkbench({
             <ConfirmModal
               isOpen={confirmCompletePlanningEntry !== null}
               title="Hoàn thành kế hoạch"
-              message="Bạn có chắc chắn muốn hoàn thành mốc kế hoạch này không? Thời lượng kế hoạch sẽ được ghi nhận một lần vào giờ thực tế."
+              message="Bạn có chắc chắn muốn hoàn thành mốc kế hoạch này không? Giờ kế hoạch không tự chuyển thành giờ thực tế; bạn cần log giờ thực tế riêng."
               confirmLabel="Hoàn thành kế hoạch"
               cancelLabel="Hủy"
               loading={isCompletingPlanningEntry}

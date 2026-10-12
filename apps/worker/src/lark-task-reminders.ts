@@ -16,6 +16,7 @@ import {
   type TaskReminderSlot,
   type VietnamWorkdayWindow
 } from "./task-reminder-rules.js";
+import { deliverReminder, directMessageConfigFromEnv, loadLeaveMinutes, type DirectMessageConfig } from "./lark-direct-message.js";
 
 type RedisLike = {
   get: (key: string) => Promise<string | null>;
@@ -36,6 +37,8 @@ export type TaskReminderConfig = {
   excludedDates: Set<string>;
   includedUserIds: Set<string>;
   pmOpenIds: string[];
+  /** Set when LARK_MESSAGING_ENABLED=true and the app credentials exist: reminders go as private messages. */
+  directMessage?: DirectMessageConfig;
 };
 
 const RELEASE_SCRIPT = `
@@ -108,7 +111,8 @@ export function taskReminderConfigFromEnv(env: NodeJS.ProcessEnv): TaskReminderC
     startupDelayMs: positiveInteger(env.LARK_TASK_REMINDER_STARTUP_DELAY_MS, 5_000, "LARK_TASK_REMINDER_STARTUP_DELAY_MS"),
     excludedDates: new Set(csv(env.LARK_TASK_REMINDER_EXCLUDED_DATES)),
     includedUserIds: new Set(csv(env.LARK_TASK_REMINDER_USER_IDS)),
-    pmOpenIds: csv(env.LARK_TASK_REMINDER_PM_OPEN_IDS)
+    pmOpenIds: csv(env.LARK_TASK_REMINDER_PM_OPEN_IDS),
+    directMessage: directMessageConfigFromEnv(env)
   };
 }
 
@@ -298,6 +302,15 @@ async function postWebhook(config: TaskReminderConfig, payload: Record<string, u
   throw lastError;
 }
 
+/** 7.5: a private message per person when Lark messaging is enabled; today's group webhook otherwise. */
+async function send(options: { prisma: PrismaClient; config: TaskReminderConfig }, payload: Record<string, unknown>, openId?: string) {
+  const logModel = (options.prisma as unknown as { larkDeliveryLog?: { create: (input: unknown) => Promise<unknown> } }).larkDeliveryLog;
+  await deliverReminder({
+    directMessage: options.config.directMessage, openId, payload, postWebhook: () => postWebhook(options.config, payload),
+    log: async (entry) => logModel?.create({ data: { workspaceId: options.config.workspaceId, bot: "Nhắc việc hằng ngày", action: "send_message", ...entry } })
+  });
+}
+
 async function loadReminderFacts(prisma: PrismaClient, config: TaskReminderConfig, window: VietnamWorkdayWindow): Promise<ReminderUserFacts[]> {
   const workspace = await prisma.tenantWorkspace.findUnique({
     where: { id: config.workspaceId },
@@ -437,24 +450,28 @@ export async function runTaskReminderSlot(options: {
   if (!(await isWorkspaceWorkday(options.prisma, options.config, window, options.weekdaysOnly ?? true))) return { skipped: "non_working_day", sent: 0 };
   const prefix = `b2b-crm:task-reminder:${options.config.workspaceId}:${window.localDate}:${options.slot}`;
   if (await options.redis.get(`${prefix}:complete`)) return { skipped: "already_complete", sent: 0 };
-  const facts = await loadReminderFacts(options.prisma, options.config, window);
+  // D-09 / V-06: a person on approved leave for the whole day is not reminded; half a day off halves the day's target.
+  const leave = await loadLeaveMinutes(options.prisma, options.config.workspaceId, window.localDate, options.config.targetMinutes);
+  const facts = (await loadReminderFacts(options.prisma, options.config, window)).filter((user) => (leave.get(user.userId) ?? 0) < options.config.targetMinutes);
   let sent = 0;
 
   if (options.slot === "pm_follow_up") {
     const issues = findPlanIssues(facts, window);
     if (issues.length === 0 || options.config.pmOpenIds.length === 0) return { issues: issues.length, sent: 0 };
     for (const openId of options.config.pmOpenIds) {
-      if (await sendOnce(options.redis, `${prefix}:pm:${openId}`, () => postWebhook(options.config, pmFollowUpCard(options.config, issues, window.localDate)))) sent += 1;
+      if (await sendOnce(options.redis, `${prefix}:pm:${openId}`, () => send(options, pmFollowUpCard(options.config, issues, window.localDate), openId))) sent += 1;
     }
     await options.redis.set(`${prefix}:complete`, "1", "EX", 8 * 24 * 60 * 60);
     return { issues: issues.length, sent };
   }
 
   if (options.slot === "evening_actual") {
-    const issues = findActualIssues(facts, options.config.targetMinutes);
+    const issues = findActualIssues(facts, options.config.targetMinutes)
+      .map((issue) => ({ ...issue, targetMinutes: issue.targetMinutes - (leave.get(issue.userId) ?? 0) }))
+      .filter((issue) => issue.totalMinutes < issue.targetMinutes || issue.taskWithoutActual.length > 0);
     for (const issue of issues) {
       if (!issue.larkOpenId) continue;
-      if (await sendOnce(options.redis, `${prefix}:user:${issue.userId}`, () => postWebhook(options.config, actualCard(options.config, issue, window.localDate)))) sent += 1;
+      if (await sendOnce(options.redis, `${prefix}:user:${issue.userId}`, () => send(options, actualCard(options.config, issue, window.localDate), issue.larkOpenId))) sent += 1;
     }
     await options.redis.set(`${prefix}:complete`, "1", "EX", 8 * 24 * 60 * 60);
     return { issues: issues.length, unaddressable: issues.filter((issue) => !issue.larkOpenId).length, sent };
@@ -463,7 +480,7 @@ export async function runTaskReminderSlot(options: {
   const issues = findPlanIssues(facts, window);
   for (const issue of issues) {
     if (!issue.larkOpenId) continue;
-    if (await sendOnce(options.redis, `${prefix}:user:${issue.userId}`, () => postWebhook(options.config, planCard(options.config, issue, window.localDate)))) sent += 1;
+    if (await sendOnce(options.redis, `${prefix}:user:${issue.userId}`, () => send(options, planCard(options.config, issue, window.localDate), issue.larkOpenId))) sent += 1;
   }
   await options.redis.set(`${prefix}:complete`, "1", "EX", 8 * 24 * 60 * 60);
   return { issues: issues.length, unaddressable: issues.filter((issue) => !issue.larkOpenId).length, sent };

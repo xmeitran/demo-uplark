@@ -26,10 +26,12 @@ import {
   MessagesSquare,
   ShieldCheck,
   LogOut,
+  ArrowLeftRight,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth";
+import { isAdminView } from "@/lib/auth-role";
 import { APP_NAME, AppBrandLogo } from "@/components/app-brand";
 import {
   FRONTEND_STORE_EVENT,
@@ -190,7 +192,17 @@ export function Sidebar({ activeRoute = "/", onCreateProjectClick, variant = "de
   const activeProjectId = getProjectIdFromPath(pathname);
   const projectsHref = getProjectsReturnHref(searchParams, Boolean(activeProjectId));
   const { user } = useAuth();
-  const isWorkspaceAdmin = Boolean(user?.roleCodes?.some((role) => role === "FOUNDER_GM" || role === "WORKSPACE_ADMIN"));
+  // 7.7: an Admin account has an admin view and a user view; the user view hides the Admin screens.
+  const isAdminAccount = user?.accountType === "ADMIN";
+  const isWorkspaceAdmin = isAdminView(user);
+  const [viewModeError, setViewModeError] = useState("");
+  const switchViewMode = async () => {
+    setViewModeError("");
+    const response = await fetch("/api/auth/view-mode", { method: "PATCH", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ viewMode: isWorkspaceAdmin ? "user" : "admin" }) }).catch(() => null);
+    // Lists already on screen were loaded for the other view, so start from a fresh page.
+    if (response?.ok) window.location.assign("/");
+    else setViewModeError("Chưa đổi được chế độ. Thử lại.");
+  };
   const pushedProjectOwnerKey = getPushedProjectsOwnerKey(user);
   const [availableFlaggedRoutes, setAvailableFlaggedRoutes] = useState<string[]>([]);
   useEffect(() => {
@@ -599,6 +611,21 @@ export function Sidebar({ activeRoute = "/", onCreateProjectClick, variant = "de
             </div>
           </Link>
         ) : null}
+
+        {isAdminAccount ? (
+          <button
+            type="button"
+            onClick={() => void switchViewMode()}
+            title={isWorkspaceAdmin ? "Chuyển sang chế độ người dùng" : "Chuyển sang chế độ quản trị"}
+            className={`flex items-center mx-2 px-3 py-2 rounded-xl cursor-pointer transition-all text-muted-foreground hover:bg-muted hover:text-foreground ${collapsed ? "justify-center" : compactRowClass} min-h-11 w-[calc(100%-1rem)]`}
+          >
+            <div className={`flex items-center gap-3 ${collapsed ? "justify-center" : compactRowClass}`}>
+              <ArrowLeftRight className="w-4 h-4 shrink-0" />
+              {!collapsed && <span className={`text-[13.5px] ${expandedInlineClass}`}>{isWorkspaceAdmin ? "Chế độ người dùng" : "Chế độ quản trị"}</span>}
+            </div>
+          </button>
+        ) : null}
+        {viewModeError ? <p role="alert" title={viewModeError} className="mx-2 px-3 pb-1 text-[11px] font-medium text-destructive">{collapsed ? "!" : viewModeError}</p> : null}
 
         {/* 4. More section */}
         {!collapsed && visibleMoreItems.length > 0 && (

@@ -1,6 +1,6 @@
 import { ForbiddenException, NotFoundException } from "@nestjs/common";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AuthService } from "./auth.service";
+import { AuthService, keptOnRoleChange } from "./auth.service";
 
 describe("AuthService admin user management", () => {
   afterEach(() => {
@@ -290,6 +290,29 @@ describe("AuthService membership lifecycle", () => {
     await expect(admin.service.changeUserRole("Bearer admin", "usr-target", "WORKSPACE_USER")).rejects.toBeInstanceOf(ForbiddenException);
     await expect(admin.service.createInternalUser("Bearer admin", { email: "f@example.com", displayName: "F", roleCode: "FOUNDER_GM" } as any)).rejects.toBeInstanceOf(ForbiddenException);
     expect(admin.prisma.roleBinding.upsert).not.toHaveBeenCalled();
+  });
+  it("a demotion to a User-type system role also ends the Admin-type business role, and says so in the audit", async () => {
+    // PM / Dx Director / BD Lead imply WORKSPACE_ADMIN: kept, the "demoted" account would still be an Admin.
+    expect(keptOnRoleChange("WORKSPACE_USER")).toEqual(expect.arrayContaining(["COST_VIEW", "BD", "DX", "PQA", "CS", "FINANCE_ADMIN"]));
+    for (const code of ["PM", "DX_DIRECTOR", "BD_LEAD"]) {
+      for (const next of ["WORKSPACE_USER", "SALES_OWNER", "DELIVERY_LEAD", "FINANCE_ADMIN"]) expect(keptOnRoleChange(next)).not.toContain(code);
+      for (const next of ["WORKSPACE_ADMIN", "FOUNDER_GM"]) expect(keptOnRoleChange(next)).toContain(code);
+    }
+
+    const { service, prisma } = makeService();
+    prisma.user.findFirst.mockResolvedValue({ id: "usr-target", roleBindings: [{ role: { code: "WORKSPACE_ADMIN" } }, { role: { code: "PM" } }, { role: { code: "COST_VIEW" } }] });
+    prisma.user.count.mockResolvedValue(1);
+    Object.assign(prisma.role, { findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "role-user", code: "WORKSPACE_USER" }) });
+    Object.assign(prisma.roleBinding, { updateMany: vi.fn().mockResolvedValue({ count: 2 }) });
+    prisma.auditEvent = { create: vi.fn() };
+    await expect(service.changeUserRole("Bearer founder", "usr-target", "WORKSPACE_USER")).resolves.toEqual({ userId: "usr-target", roleCode: "WORKSPACE_USER" });
+    const kept = prisma.roleBinding.updateMany.mock.calls[0][0].where.role.code.notIn;
+    expect(kept).not.toContain("PM");
+    expect(kept).toContain("COST_VIEW");
+    expect(prisma.auditEvent.create.mock.calls[0][0].data).toMatchObject({ action: "auth.member.role_changed", after: { roleCode: "WORKSPACE_USER", endedRoleCodes: ["WORKSPACE_ADMIN", "PM"] } });
+    // Promoted or kept Admin: the business role stays.
+    await service.changeUserRole("Bearer founder", "usr-target", "WORKSPACE_ADMIN");
+    expect(prisma.roleBinding.updateMany.mock.calls[1][0].where.role.code.notIn).toContain("PM");
   });
   it("never accepts a cost permission code as a member role", async () => {
     const { service, prisma } = makeService();

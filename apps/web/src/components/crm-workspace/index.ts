@@ -1,6 +1,5 @@
 export { AccountsFunctionPage } from "./accounts";
 export { BusinessFunctionWorkbench } from "./business-function-workbench";
-export { CrmDashboardPage, CrmWorkspace } from "./dashboard";
 export { DataFunctionPage } from "./data";
 export { FinanceFunctionPage, FinanceScheduleDetailPage } from "./finance-workbench";
 export { PipelineFunctionPage } from "./pipeline";

@@ -1,10 +1,9 @@
 "use client";
-import { MoneyAmount } from "@/components/money-amount";
-
-import { useEffect, useState } from "react";
-import type { CreateTaskTimeEntryResponse, ProjectPlSummaryItem, ProjectPlSummaryResponse, ProjectTaskSummary, ResourceListResponse, TaskTimeEntrySummary } from "@b2b-crm/contracts";
-import { ShopifyAppShell, ShopifyBanner, ShopifyDataTable, ShopifyPage, ShopifySection } from "../shopify-ui";
+import { useEffect, useMemo, useState } from "react";
+import type { CreateTaskTimeEntryResponse, ProjectTaskSummary, ResourceListResponse, TaskTimeEntrySummary } from "@b2b-crm/contracts";
+import { ShopifyAppShell, ShopifyBanner, ShopifyPage, ShopifySection } from "../shopify-ui";
 import { CrmSelect } from "./crm-select";
+import { LAYER2_MISMATCH_LABEL, TASK_TYPE_LAYER2_FIELD_LABEL, defaultSelectedLayer2, layer2OptionsForTask } from "@/lib/task-classification";
 
 import { useAuth } from "../../lib/auth";
 import {
@@ -23,30 +22,11 @@ interface TimeEntry {
   note: string;
   status: "draft" | "submitted" | "approved" | "rejected";
   taskId: string;
+  layer2Mismatch?: boolean;
   updatedAt: string;
 }
 
-interface ProjectPL {
-  accountName?: string;
-  actualHours: number;
-  actualLaborCostAmount: number;
-  directCostAmount: number;
-  grossMarginAmount: number;
-  grossMarginPercent?: number;
-  id: string;
-  name: string;
-  paidRevenueAmount: number;
-  plannedCostAmount: number;
-  plannedHours: number;
-  plannedRevenueAmount: number;
-  state: "On Plan" | "Margin Watch" | "Margin Risk" | "Over Budget" | "Needs Reforecast";
-  targetMargin: number;
-  totalCostAmount: number;
-  writeOffAmount: number;
-}
-
 const initialTimeEntries: TimeEntry[] = [];
-const fallbackProjects: ProjectPL[] = [];
 
 function vietnamWorkDate() {
   return new Intl.DateTimeFormat("en-CA", {
@@ -59,53 +39,22 @@ function vietnamWorkDate() {
 
 export function ProjectControlsFunctionPage() {
   const { user } = useAuth();
-  const canReviewTimeEntries = ["FOUNDER_GM", "DELIVERY_LEAD"].includes(user?.role || "");
-  const roleMode: "founder" | "delivery_lead" | "consultant" = ["FOUNDER_GM", "FINANCE_ADMIN"].includes(user?.role || "")
-    ? "founder"
-    : user?.role === "DELIVERY_LEAD" ? "delivery_lead" : "consultant";
   const [timeEntries, setTimeEntries] = useState<TimeEntry[]>(initialTimeEntries);
-  const [projects, setProjects] = useState<ProjectPL[]>(fallbackProjects);
   const [apiState, setApiState] = useState<"loading" | "ready" | "fallback">("loading");
-  const [apiMeta, setApiMeta] = useState("Đang tải dữ liệu dự án...");
 
   const [inputProject, setInputProject] = useState("");
   const [tasks, setTasks] = useState<ProjectTaskSummary[]>([]);
   const [inputTaskId, setInputTaskId] = useState("");
   const [inputHours, setInputHours] = useState("8");
   const [inputWorkType, setInputWorkType] = useState("Billable Delivery");
+  // P&L spec 12/10 point 5: Layer 2 is chosen per time log, pre-selected to the task's derived value.
+  const [inputLayer2, setInputLayer2] = useState("");
+  const inputTask = tasks.find((task) => task.id === inputTaskId);
+  useEffect(() => { setInputLayer2(defaultSelectedLayer2(inputTask?.taskTypeLayer2)); }, [inputTask?.id, inputTask?.taskTypeLayer2]);
   const [inputNote, setInputNote] = useState("");
   const [mutationPending, setMutationPending] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [dailyCapacityFeedback, setDailyCapacityFeedback] = useState<DailyActualLogFeedback | null>(null);
-  const [reviewReason, setReviewReason] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadPlSummary() {
-      try {
-        const response = await fetch("/api/project-controls/pl-summary", { cache: "no-store" });
-        if (!response.ok) throw new Error("Chưa lấy được dữ liệu mới nhất.");
-        const payload = (await response.json()) as ProjectPlSummaryResponse;
-        if (cancelled) return;
-        const nextProjects = payload.data.map(adaptProjectPlSummary);
-        setProjects(nextProjects);
-        setInputProject((current) => nextProjects.some((project) => project.id === current) ? current : nextProjects[0]?.id ?? "");
-        setApiState("ready");
-        setApiMeta("Dữ liệu dự án đã đồng bộ");
-      } catch (error) {
-        if (cancelled) return;
-        setProjects(fallbackProjects);
-        setApiState("fallback");
-        setApiMeta(error instanceof Error ? error.message : "Chưa có dữ liệu dự án mới nhất.");
-      }
-    }
-
-    loadPlSummary();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   async function loadTimeEntriesAndTasks() {
     const [tasksResponse, entriesResponse] = await Promise.all([
@@ -116,13 +65,25 @@ export function ProjectControlsFunctionPage() {
     const taskPayload = await tasksResponse.json() as ResourceListResponse<ProjectTaskSummary>;
     const entryPayload = await entriesResponse.json() as ResourceListResponse<TaskTimeEntrySummary>;
     setTasks(taskPayload.data);
+    setApiState("ready");
     setInputTaskId((current) => taskPayload.data.some((task) => task.id === current) ? current : taskPayload.data[0]?.id ?? "");
     setTimeEntries(entryPayload.data.map(adaptTimeEntry));
   }
 
   useEffect(() => {
-    void loadTimeEntriesAndTasks().catch((error) => setMutationError(error instanceof Error ? error.message : "Could not load time entries."));
+    void loadTimeEntriesAndTasks().catch(() => setApiState("fallback"));
   }, []);
+
+  // Projects offered for logging are the ones that own a loaded task: hours are always logged against a task.
+  const projects = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const task of tasks) if (task.projectId && !byId.has(task.projectId)) byId.set(task.projectId, task.projectName || "Dự án");
+    return [...byId].map(([id, name]) => ({ id, name }));
+  }, [tasks]);
+
+  useEffect(() => {
+    setInputProject((current) => projects.some((project) => project.id === current) ? current : projects[0]?.id ?? "");
+  }, [projects]);
 
   useEffect(() => {
     const available = tasks.filter((task) => !inputProject || task.projectId === inputProject);
@@ -140,6 +101,10 @@ export function ProjectControlsFunctionPage() {
       setMutationError("Select a real task before submitting hours.");
       return;
     }
+    if (!inputLayer2) {
+      setMutationError(`Chọn ${TASK_TYPE_LAYER2_FIELD_LABEL} cho giờ log này.`);
+      return;
+    }
     setMutationPending(true);
     setMutationError(null);
     setDailyCapacityFeedback(null);
@@ -152,8 +117,8 @@ export function ProjectControlsFunctionPage() {
           minutes: Math.round(hours * 60),
           billable: inputWorkType !== "Rework" && inputWorkType !== "Internal/Admin",
           workType: inputWorkType,
-          approvalStatus: "submitted",
-          note: inputNote
+          note: inputNote,
+          selectedTaskTypeLayer2: inputLayer2
         })
       });
       if (!response.ok) throw new Error(`Could not submit hours: ${response.status}`);
@@ -168,39 +133,14 @@ export function ProjectControlsFunctionPage() {
     }
   }
 
-  async function handleReviewEntry(entry: TimeEntry, status: "approved" | "rejected") {
-    const reason = status === "rejected" ? reviewReason.trim() : undefined;
-    if (status === "rejected" && !reason) {
-      setMutationError("Enter a rejection reason before rejecting submitted hours.");
-      return;
-    }
-    setMutationPending(true);
-    setMutationError(null);
-    try {
-      const response = await fetch(`/api/tasks/time-entries/${encodeURIComponent(entry.id)}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ status, reason, expectedUpdatedAt: entry.updatedAt })
-      });
-      if (!response.ok) throw new Error(`Could not ${status === "approved" ? "approve" : "reject"} hours: ${response.status}`);
-      if (status === "rejected") setReviewReason("");
-      await loadTimeEntriesAndTasks();
-    } catch (error) {
-      setMutationError(error instanceof Error ? error.message : "Could not review hours.");
-    } finally {
-      setMutationPending(false);
-    }
-  }
-
   return (
     <ShopifyAppShell active="project-controls" principal={user?.name || "Workspace user"}>
       <ShopifyPage heading="Kiểm soát dự án">
         <div className="shopify-status-row" aria-label="Cấu hình kiểm soát dự án">
           <s-badge tone="success">1 ngày công = 8 giờ</s-badge>
           <s-badge tone={apiState === "ready" ? "success" : apiState === "loading" ? "info" : "warning"}>
-            {apiState === "ready" ? apiMeta : apiState === "loading" ? "Đang tải dữ liệu dự án" : `Đang dùng dữ liệu dự phòng: ${apiMeta}`}
+            {apiState === "ready" ? "Dữ liệu công việc đã đồng bộ" : apiState === "loading" ? "Đang tải dữ liệu công việc" : "Chưa tải được dữ liệu công việc"}
           </s-badge>
-          <s-badge tone="neutral">Chế độ: {formatRoleMode(roleMode)}</s-badge>
         </div>
         {mutationError ? <div role="alert" style={{ marginTop: "12px" }}><ShopifyBanner heading="Thao tác chưa hoàn tất" tone="critical"><s-paragraph>{mutationError}</s-paragraph></ShopifyBanner></div> : null}
         {dailyCapacityFeedback ? (
@@ -213,13 +153,12 @@ export function ProjectControlsFunctionPage() {
 
         {apiState === "fallback" ? (
           <div style={{ marginTop: "16px" }}>
-            <ShopifyBanner heading="Đang dùng dữ liệu dự phòng" tone="warning">
-              <s-paragraph>Chưa đọc được dữ liệu dự án mới nhất. Các thao tác ghi dữ liệu được tắt cho đến khi kết nối phục hồi.</s-paragraph>
+            <ShopifyBanner heading="Chưa tải được dữ liệu" tone="warning">
+              <s-paragraph>Chưa đọc được danh sách công việc và giờ đã ghi. Tải lại trang để thử lại; việc gửi giờ được tắt cho đến khi kết nối phục hồi.</s-paragraph>
             </ShopifyBanner>
           </div>
         ) : null}
 
-        {roleMode === "consultant" ? (
           <div className="shopify-two-column" style={{ marginTop: "16px" }}>
             <div className="shopify-stack">
               <ShopifySection heading="Gửi giờ làm tuần">
@@ -241,6 +180,10 @@ export function ProjectControlsFunctionPage() {
                   <div>
                     <label htmlFor="time-entry-work-type" style={fieldLabelStyle}>Loại công việc</label>
                     <CrmSelect id="time-entry-work-type" options={[{ value: "Billable Delivery", label: "Triển khai tính phí" }, { value: "Non-billable Delivery", label: "Triển khai không tính phí" }, { value: "Rework", label: "Làm lại" }, { value: "Support", label: "Hỗ trợ" }, { value: "Change Request", label: "Yêu cầu thay đổi" }, { value: "Internal/Admin", label: "Nội bộ / hành chính" }]} value={inputWorkType} onChange={setInputWorkType} />
+                  </div>
+                  <div>
+                    <label htmlFor="time-entry-layer2" style={fieldLabelStyle}>{TASK_TYPE_LAYER2_FIELD_LABEL} *</label>
+                    <CrmSelect id="time-entry-layer2" options={[...(inputLayer2 ? [] : [{ value: "", label: "Chọn Lớp 2" }]), ...layer2OptionsForTask(inputTask?.taskTypeLayer1)]} value={inputLayer2} onChange={setInputLayer2} />
                   </div>
                   <div>
                     <label htmlFor="time-entry-note" style={fieldLabelStyle}>Ghi chú công việc</label>
@@ -267,6 +210,7 @@ export function ProjectControlsFunctionPage() {
                       <div>
                         <strong>{entry.project} · {entry.hours}h ({formatWorkType(entry.workType)})</strong>
                         <span style={{ fontSize: "12px" }}>{entry.note}</span>
+                        {entry.layer2Mismatch ? <span style={{ fontSize: "12px", color: "#b45309" }}>{LAYER2_MISMATCH_LABEL}</span> : null}
                       </div>
                       <s-badge tone={entry.status === "approved" ? "success" : entry.status === "rejected" ? "critical" : "warning"}>
                         {formatEntryStatus(entry.status)}
@@ -277,117 +221,6 @@ export function ProjectControlsFunctionPage() {
               </ShopifySection>
             </div>
           </div>
-        ) : (
-          <div className="shopify-stack" style={{ marginTop: "16px" }}>
-            <ShopifySection heading="Tổng quan tài chính dự án">
-              {(() => {
-                const isFounder = roleMode === "founder";
-                const columns = [
-                  { key: "project", header: "Dự án", width: isFounder ? "20%" : "30%" },
-                  { key: "revenue", header: "Doanh thu / đã thu", width: isFounder ? "14%" : "18%" },
-                  { key: "effort", header: "Giờ kế hoạch / thực tế", width: isFounder ? "16%" : "20%" },
-                  { key: "variance", header: "Chênh lệch giờ", width: isFounder ? "13%" : "18%" },
-                  ...(isFounder ? [
-                    { key: "cost", header: "Chi phí kế hoạch / thực tế", width: "19%" },
-                    { key: "margin", header: "Biên lợi nhuận", width: "10%" }
-                  ] : []),
-                  { key: "state", header: "Trạng thái", width: isFounder ? "8%" : "14%" }
-                ];
-
-                return (
-                  <ShopifyDataTable
-                    ariaLabel="Tổng quan tài chính dự án"
-                    columns={columns}
-                    minWidth={isFounder ? 1120 : 860}
-                    rows={projects.map((project) => {
-                      const variance = project.actualHours - project.plannedHours;
-                      const variancePct = project.plannedHours > 0 ? Math.round((variance / project.plannedHours) * 100) : 0;
-                      const margin = project.grossMarginPercent ?? 0;
-
-                      return {
-                        key: project.id,
-                        cells: [
-                          (
-                            <div style={{ display: "grid", gap: "2px" }}>
-                              <strong>{project.name}</strong>
-                              <span className="shopify-muted" style={{ fontSize: "12px" }}>{project.accountName ?? "Chưa gắn khách hàng"}</span>
-                            </div>
-                          ),
-                          <span className="font-mono tabular-nums text-right"><MoneyAmount value={project.plannedRevenueAmount} /> / <MoneyAmount value={project.paidRevenueAmount} /></span>,
-                          <span className="font-mono tabular-nums">{project.plannedHours}h / {project.actualHours}h</span>,
-                          (
-                            <span className="font-mono tabular-nums" style={{ color: variance > 0 ? "var(--danger)" : "var(--success)" }}>
-                              {variance > 0 ? `+${variance}h` : `${variance}h`} ({variancePct > 0 ? `+${variancePct}%` : `${variancePct}%`})
-                            </span>
-                          ),
-                          ...(isFounder ? [
-                            <span key="cost" className="font-mono tabular-nums text-right"><MoneyAmount value={project.plannedCostAmount} /> / <MoneyAmount value={project.totalCostAmount} /></span>,
-                            (
-                              <span key="margin">
-                                <span className="font-mono tabular-nums text-right" style={{ color: margin < project.targetMargin ? "var(--danger)" : "var(--success)" }}>{margin}%</span>{" "}
-                                <span className="shopify-muted" style={{ fontSize: "12px" }}>(Mục tiêu: {project.targetMargin}%)</span>
-                              </span>
-                            )
-                          ] : []),
-                          (
-                            <s-badge tone={project.state === "On Plan" ? "success" : project.state === "Margin Watch" ? "warning" : "critical"}>
-                              {formatProjectState(project.state)}
-                            </s-badge>
-                          )
-                        ]
-                      };
-                    })}
-                  />
-                );
-              })()}
-            </ShopifySection>
-
-            {roleMode === "delivery_lead" && (
-              <p className="shopify-muted" style={{ padding: "8px 12px", background: "var(--panel-strong)", borderRadius: "8px" }}>
-                <strong>Chi phí đang được ẩn:</strong> Project Manager chỉ xem giờ làm và cảnh báo vận hành. Chi tiết chi phí và biên lợi nhuận chỉ dành cho Founder/Tài chính.
-              </p>
-            )}
-
-            {canReviewTimeEntries ? <div style={{ marginTop: "20px" }}>
-                <ShopifySection heading="Giờ làm đang chờ duyệt">
-                  <div style={{ marginBottom: "12px" }}>
-                    <label htmlFor="time-entry-review-reason" style={fieldLabelStyle}>Lý do từ chối</label>
-                    <input id="time-entry-review-reason" value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} placeholder="Bắt buộc khi từ chối" style={fieldStyle} />
-                  </div>
-                  {timeEntries.some((entry) => entry.status === "submitted") ? (
-                    <ShopifyDataTable
-                      ariaLabel="Giờ làm đang chờ duyệt"
-                      columns={[
-                        { key: "consultant", header: "Consultant", width: "15%" },
-                        { key: "project", header: "Dự án", width: "18%" },
-                        { key: "hours", header: "Giờ", width: "10%" },
-                        { key: "note", header: "Ghi chú hoạt động", width: "32%" },
-                        { key: "type", header: "Loại việc", width: "13%" },
-                        { key: "action", header: "Thao tác", width: "12%" }
-                      ]}
-                      minWidth={900}
-                      rows={timeEntries.filter((entry) => entry.status === "submitted").map((entry) => ({
-                        key: entry.id,
-                        cells: [
-                          <strong>{entry.consultant}</strong>,
-                          entry.project,
-                          <span className="font-mono tabular-nums">{entry.hours}h</span>,
-                          entry.note,
-                          <s-badge tone={entry.workType === "Rework" ? "warning" : "info"}>{formatWorkType(entry.workType)}</s-badge>,
-                          <div style={{ display: "flex", gap: "6px" }}>
-                            <s-button disabled={mutationPending} onClick={() => handleReviewEntry(entry, "approved")} variant="primary">Duyệt</s-button>
-                            <s-button disabled={mutationPending} onClick={() => handleReviewEntry(entry, "rejected")}>Từ chối</s-button>
-                          </div>
-                        ]
-                      }))}
-                    />
-                  ) : (
-                    <p className="shopify-muted">Không có giờ làm nào đang chờ duyệt.</p>
-                  )}
-                </ShopifySection>
-            </div> : null}
-          </div>
-        )}
       </ShopifyPage>
     </ShopifyAppShell>
   );
@@ -405,58 +238,9 @@ function adaptTimeEntry(entry: TaskTimeEntrySummary): TimeEntry {
     note: entry.note || "",
     status: (["submitted", "approved", "rejected"] as const).includes(entry.approvalStatus as "submitted" | "approved" | "rejected") ? entry.approvalStatus as TimeEntry["status"] : "draft",
     taskId: entry.taskId,
+    layer2Mismatch: entry.layer2Mismatch,
     updatedAt: entry.updatedAt || entry.createdAt
   };
-}
-
-function adaptProjectPlSummary(item: ProjectPlSummaryItem): ProjectPL {
-  const plannedHours = Math.round(item.plannedCostAmount > 0 && item.approvedLaborMinutes > 0
-    ? Math.max(item.approvedLaborMinutes, 480) / 60
-    : 0);
-  const actualHours = Math.round(item.approvedLaborMinutes / 60);
-  const grossMarginPercent = item.grossMarginPercent === undefined ? undefined : Number(item.grossMarginPercent.toFixed(2));
-  const targetMargin = 50;
-
-  return {
-    accountName: item.accountName,
-    actualHours,
-    actualLaborCostAmount: item.actualLaborCostAmount,
-    directCostAmount: item.directCostAmount,
-    grossMarginAmount: item.grossMarginAmount,
-    grossMarginPercent,
-    id: item.projectId,
-    name: item.projectName,
-    paidRevenueAmount: item.paidRevenueAmount,
-    plannedCostAmount: item.plannedCostAmount,
-    plannedHours,
-    plannedRevenueAmount: item.plannedRevenueAmount,
-    state: derivePlState(grossMarginPercent, targetMargin, item.totalCostAmount, item.plannedCostAmount),
-    targetMargin,
-    totalCostAmount: item.totalCostAmount,
-    writeOffAmount: item.writeOffAmount
-  };
-}
-
-function derivePlState(
-  grossMarginPercent: number | undefined,
-  targetMargin: number,
-  totalCostAmount: number,
-  plannedCostAmount: number
-): ProjectPL["state"] {
-  if (plannedCostAmount > 0 && totalCostAmount > plannedCostAmount * 1.1) return "Over Budget";
-  if (grossMarginPercent === undefined) return "Needs Reforecast";
-  if (grossMarginPercent < targetMargin - 15) return "Margin Risk";
-  if (grossMarginPercent < targetMargin) return "Margin Watch";
-  return "On Plan";
-}
-
-function formatRoleMode(role: "founder" | "delivery_lead" | "consultant") {
-  const labels = {
-    founder: "Founder / Tài chính",
-    delivery_lead: "Project Manager",
-    consultant: "Consultant"
-  };
-  return labels[role];
 }
 
 function formatWorkType(value: string) {
@@ -474,20 +258,10 @@ function formatWorkType(value: string) {
 function formatEntryStatus(value: TimeEntry["status"]) {
   const labels = {
     draft: "Nháp",
-    submitted: "Chờ duyệt",
-    approved: "Đã duyệt",
-    rejected: "Từ chối"
-  };
-  return labels[value];
-}
-
-function formatProjectState(value: ProjectPL["state"]) {
-  const labels: Record<ProjectPL["state"], string> = {
-    "On Plan": "Đúng kế hoạch",
-    "Margin Watch": "Cần theo dõi biên lợi nhuận",
-    "Margin Risk": "Rủi ro biên lợi nhuận",
-    "Over Budget": "Vượt ngân sách",
-    "Needs Reforecast": "Cần dự báo lại"
+    // V-07: time logs have no approval step; "submitted" only survives on rows written before that.
+    submitted: "Đã ghi nhận",
+    approved: "Đã ghi nhận",
+    rejected: "Không tính"
   };
   return labels[value];
 }

@@ -27,6 +27,11 @@ export class SessionController {
     return this.principals.switchWorkspace(authorization, nonEmptyString(body?.workspaceId, "workspaceId"));
   }
 
+  @Patch("me/view-mode")
+  viewMode(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Body() body: { viewMode?: string }) {
+    return this.auth.setViewMode(authorization, nonEmptyString(body?.viewMode, "viewMode"), principalFallback);
+  }
+
   @Post("admin/users/:id/reactivate")
   reactivate(@Headers("authorization") authorization: string | undefined, @Param("id") id: string) { return this.auth.reactivateUser(authorization, id); }
 

@@ -10,6 +10,8 @@ export type TaskTimeEntryFormInput = {
   userId?: string;
   workDate: string;
   workType?: string;
+  /** Layer 2 chosen in the log form (P&L spec 12/10 point 5). */
+  selectedTaskTypeLayer2?: CreateTaskTimeEntryInput["selectedTaskTypeLayer2"];
 };
 
 export function getDefaultTaskTimeEntryUserId(principal: string) {
@@ -38,6 +40,7 @@ export function buildCreateTaskTimeEntryInput(
     minutes: logInput.minutes,
     billable: logInput.billable,
     workType: logInput.workType,
-    note: logInput.note
+    note: logInput.note,
+    selectedTaskTypeLayer2: logInput.selectedTaskTypeLayer2
   };
 }

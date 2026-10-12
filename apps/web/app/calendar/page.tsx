@@ -5,6 +5,7 @@ import { CalendarDays, ChevronLeft, ChevronRight, Clock, UserRound, Plus, Trash2
 import Link from "next/link";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { useAuth } from "@/lib/auth";
+import { isAdminView } from "@/lib/auth-role";
 import type { ResourceListResponse, TaskPlanningBlockSummary, TaskTimeEntrySummary, WorkspaceDayOffSummary } from "@b2b-crm/contracts";
 import { fetchWorkspaceUserOptions, type WorkspaceUserOption } from "@/lib/workspace-users";
 import { CustomDatePicker } from "@/components/constructor-x/custom-controls";
@@ -365,7 +366,7 @@ const CalendarConfirmModal = ({
 
 export default function CalendarPage() {
   const { user, isLoading } = useAuth();
-  const canManageWorkspace = Boolean(user?.roleCodes?.some((role) => role === "FOUNDER_GM" || role === "WORKSPACE_ADMIN"));
+  const canManageWorkspace = isAdminView(user);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const loadGenerationRef = useRef(0);
   const loadAbortControllerRef = useRef<AbortController | null>(null);
@@ -778,14 +779,11 @@ export default function CalendarPage() {
         }
         throw new Error(message);
       }
-      const savedBlock = await response.json() as TaskPlanningBlockSummary;
       setBlockToComplete(null);
       setDetailBlock(null);
       await loadPlanningBlocks();
-      triggerToast(
-        `Đã hoàn thành kế hoạch. ${formatHours(savedBlock.plannedMinutes)} đã được tính vào giờ thực tế.`,
-        "success"
-      );
+      // D-15: completing a plan never logs hours; the person logs actual hours themselves.
+      triggerToast("Đã hoàn thành kế hoạch. Giờ thực tế không tự ghi theo giờ kế hoạch — hãy log giờ thực tế của bạn.", "success");
     } catch (completeError) {
       const message = completeError instanceof Error ? completeError.message : "Không thể hoàn thành kế hoạch trên backend.";
       setCompletionError(message);
@@ -1486,7 +1484,7 @@ export default function CalendarPage() {
       <CalendarConfirmModal
         isOpen={blockToComplete !== null}
         title="Hoàn thành kế hoạch"
-        message="Bạn có chắc chắn muốn hoàn thành mốc kế hoạch này không? Thời lượng kế hoạch sẽ được ghi nhận một lần vào giờ thực tế."
+        message="Bạn có chắc chắn muốn hoàn thành mốc kế hoạch này không? Giờ kế hoạch không tự chuyển thành giờ thực tế; bạn cần log giờ thực tế riêng."
         confirmLabel="Hoàn thành kế hoạch"
         cancelLabel="Hủy"
         loading={isCompletingBlock}

@@ -1,8 +1,9 @@
-import type { ProjectMilestoneReviewerMode } from "@b2b-crm/contracts";
+import { ADMIN_ROLE_CODES, type ProjectMilestoneReviewerMode } from "@b2b-crm/contracts";
 
 export const DEFAULT_MILESTONE_REVIEWER_MODE: ProjectMilestoneReviewerMode = "workspace_admin";
 export const MILESTONE_REVIEWER_MODES = new Set<ProjectMilestoneReviewerMode>(["workspace_admin", "specific_user"]);
-export const WORKSPACE_ADMIN_ROLE_CODES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN"]);
+/** Every role code whose holder is an Admin account (ROLE_CATALOGUE): Founder/GM, Workspace Admin, PM, Dx Director, BD Lead. */
+export const WORKSPACE_ADMIN_ROLE_CODES = new Set(ADMIN_ROLE_CODES);
 
 export function normalizeMilestoneReviewerMode(value: unknown): ProjectMilestoneReviewerMode {
   return MILESTONE_REVIEWER_MODES.has(value as ProjectMilestoneReviewerMode)

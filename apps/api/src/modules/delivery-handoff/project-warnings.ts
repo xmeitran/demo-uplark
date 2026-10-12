@@ -1,3 +1,6 @@
+import { resolveAlertTriggers, type AlertTriggerDef, type AlertTriggerOverrides } from "@b2b-crm/contracts";
+import { loadLatestParameterRows } from "../../shared/system-parameters";
+
 /** EV-065: the shared project warning record. Callers pass their transaction client so a warning commits with the change that caused it. */
 export interface OpenProjectWarningInput {
   workspaceId: string;
@@ -13,6 +16,16 @@ export interface OpenProjectWarningInput {
   ownerUserId?: string | null;
   dueAt?: Date | null;
   actorUserId?: string | null;
+  /** The caller already filtered by the enabled triggers (the daily scan); skips the lookup below. */
+  triggerChecked?: boolean;
+}
+
+/** Key of the SystemParameter row that holds the Admin's trigger overrides (V-38). */
+export const TRIGGER_OVERRIDES_KEY = "alertTriggerOverrides";
+
+export async function loadAlertTriggers(client: any, workspaceId: string): Promise<AlertTriggerDef[]> {
+  const row = (await loadLatestParameterRows(client, workspaceId, [TRIGGER_OVERRIDES_KEY])).get(TRIGGER_OVERRIDES_KEY);
+  return resolveAlertTriggers((row?.value && typeof row.value === "object" ? row.value : {}) as AlertTriggerOverrides);
 }
 
 // Unit specs mock only the Prisma models they exercise; without the warning model the triggers are no-ops.
@@ -23,7 +36,9 @@ function hasWarningModel(client: any) {
 /** Idempotent: an open warning with the same dedupe key is refreshed, never duplicated. */
 export async function openOrRefreshProjectWarning(client: any, input: OpenProjectWarningInput) {
   if (!hasWarningModel(client)) return null;
-  const { actorUserId, workspaceId, projectId, dedupeKey, ...fields } = input;
+  const { actorUserId, workspaceId, projectId, dedupeKey, triggerChecked, ...fields } = input;
+  // V-38: a trigger the Admin switched off opens nothing, whoever raises it (event code or scan). Codes outside the catalogue pass.
+  if (!triggerChecked && (await loadAlertTriggers(client, workspaceId)).some((trigger) => trigger.code === fields.typeCode && !trigger.enabled)) return null;
   // Concurrent openers of the same key queue here; inside a transaction the lock is held until commit,
   // so the second one sees the first one's row instead of hitting the partial unique index.
   if (typeof client.$queryRaw === "function") {
@@ -76,7 +91,8 @@ export const REARM_ACTION = "condition_cleared";
 /** A warning someone closed by hand stays closed while its cause is unchanged; it is re-armed only after the cause cleared once. */
 export function isSuppressedByManualClose(warning: { status: string; events?: ReadonlyArray<{ action: string }> } | null | undefined): boolean {
   if (!warning || warning.status !== "closed") return false;
-  return warning.events?.[warning.events.length - 1]?.action === MANUAL_CLOSE_ACTION;
+  // "notified" is the send log of the daily scan (alerts/alert-notifications.ts), not a change of state.
+  return warning.events?.filter((event) => event.action !== "notified").at(-1)?.action === MANUAL_CLOSE_ACTION;
 }
 
 async function latestWarning(client: any, projectId: string, dedupeKey: string) {

@@ -708,12 +708,5 @@ export function sum(values: readonly number[]): number {
 }
 
 function emptyWorkGroupTotals(): Record<WorkGroup, number> {
-  return {
-    customer_project: 0,
-    internal_project: 0,
-    ticket_maintenance: 0,
-    meeting: 0,
-    training: 0,
-    other: 0
-  };
+  return { customer_project: 0, ticket_maintenance: 0, internal_project: 0, unclassified: 0 };
 }

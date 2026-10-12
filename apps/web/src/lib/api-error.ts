@@ -6,16 +6,16 @@ export class ApiResponseError extends Error {
   }
 }
 
-/** Build the error for a failed response: `if (!response.ok) throw await readApiError(response)`. */
-export async function readApiError(response: Response) {
+/** Build the error for a failed response: `if (!response.ok) throw await readApiError(response)`. `fallback` names the action when the body has no message. */
+export async function readApiError(response: Response, fallback?: string) {
   let message = "";
   try {
     const body = await response.json();
-    message = Array.isArray(body?.message) ? body.message.join(", ") : typeof body?.message === "string" ? body.message : "";
+    message = Array.isArray(body?.message) ? body.message.join(", ") : typeof body?.message === "string" ? body.message : typeof body?.error === "string" ? body.error : "";
   } catch {
     // Not JSON: fall through to the generic status message.
   }
-  return new ApiResponseError(message || `Yêu cầu thất bại (${response.status}).`, response.status);
+  return new ApiResponseError(message || (fallback ? `${fallback}: ${response.status}` : `Yêu cầu thất bại (${response.status}).`), response.status);
 }
 
 /** Message to show the user for a failed write; `fallback` covers failures that never reached the API. */

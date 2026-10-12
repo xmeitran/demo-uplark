@@ -10,11 +10,9 @@ import type { WorkGroup } from "./timesheet-types";
 /** Every color is a design token; no raw hex anywhere in the Timesheet UI. */
 export const WORK_GROUP_COLORS: Record<WorkGroup, string> = {
   customer_project: "var(--color-chart-1)",
-  internal_project: "var(--color-chart-2)",
   ticket_maintenance: "var(--color-chart-5)",
-  meeting: "var(--color-chart-6)",
-  training: "var(--color-chart-3)",
-  other: "var(--color-gray-400)"
+  internal_project: "var(--color-chart-2)",
+  unclassified: "var(--color-gray-400)"
 };
 
 export function formatHours(minutes: number | null | undefined, fallback = "—"): string {
@@ -104,8 +102,11 @@ export function nodeStatusTone(status: string): "success" | "warning" | "danger"
 export function projectStatusTone(status: string | null): "success" | "warning" | "danger" | "info" | "neutral" {
   switch (status) {
     case "completed":
+    case "maintenance":
       return "success";
     case "active":
+    case "pilot":
+    case "onboarding":
       return "info";
     case "in_review":
       return "warning";

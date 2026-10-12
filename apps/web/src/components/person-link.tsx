@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
+import { isAdminView } from "@/lib/auth-role";
 
 /**
  * Links a person's name to their profile. The profile API is admin-only, so
@@ -10,7 +11,7 @@ import { useAuth } from "@/lib/auth";
  */
 export function PersonLink({ userId, className, title, children }: Readonly<{ userId?: string | null; className?: string; title?: string; children: ReactNode }>) {
   const { user } = useAuth();
-  const canOpen = Boolean(userId && user?.roleCodes?.some((role) => role === "FOUNDER_GM" || role === "WORKSPACE_ADMIN"));
+  const canOpen = Boolean(userId) && isAdminView(user);
   if (!canOpen || !userId) return <span className={className} title={title}>{children}</span>;
   return <Link href={`/users/${encodeURIComponent(userId)}`} className={className} title={title}>{children}</Link>;
 }

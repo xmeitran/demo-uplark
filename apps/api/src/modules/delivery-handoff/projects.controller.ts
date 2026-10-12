@@ -1,8 +1,10 @@
-import { Body, Controller, Delete, Get, Headers, Inject, Param, Patch, Post, Put, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Headers, Inject, Param, Patch, Post, Put, Query, UseGuards } from "@nestjs/common";
 import { PrincipalService } from "../identity-access/principal.service";
+import { ProjectVisibilityGuard } from "./project-visibility";
 import { ProjectsService } from "./projects.service";
 
 @Controller()
+@UseGuards(ProjectVisibilityGuard)
 export class ProjectsController {
   constructor(
     @Inject(ProjectsService)
@@ -106,6 +108,37 @@ export class ProjectsController {
     return this.projects.listProjectMembers(projectId, query, principal);
   }
 
+  /** D-07 / decision 5: Pre-sale minutes of lost deals per month ("Chi phí Pre-sale", company level). */
+  @Get("pre-sale-cost/lost-deals")
+  async lostDealPreSaleSummary(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.lostDealPreSaleSummary(principal);
+  }
+
+  @Get("projects/:projectId/contract-items")
+  async listProjectContractItems(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("projectId") projectId: string) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.listProjectContractItems(projectId, principal);
+  }
+
+  @Post("projects/:projectId/contract-items")
+  async createProjectContractItem(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("projectId") projectId: string, @Body() body: any) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.createProjectContractItem(projectId, body, principal);
+  }
+
+  @Patch("projects/:projectId/contract-items/:itemId")
+  async updateProjectContractItem(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("projectId") projectId: string, @Param("itemId") itemId: string, @Body() body: any) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.updateProjectContractItem(projectId, itemId, body, principal);
+  }
+
+  @Delete("projects/:projectId/contract-items/:itemId")
+  async deleteProjectContractItem(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("projectId") projectId: string, @Param("itemId") itemId: string) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.deleteProjectContractItem(projectId, itemId, principal);
+  }
+
   @Get("projects/:projectId")
   async getProject(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("projectId") projectId: string) {
     const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
@@ -143,6 +176,26 @@ export class ProjectsController {
   ) {
     const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
     return this.projects.getProjectHierarchy(projectId, principal);
+  }
+
+  /** Stage gates G1–G8 (rules 7.2, 8.1). One action endpoint: body { action, ...fields of ProjectGateActionInput }. */
+  @Get("projects/:projectId/gates")
+  async listProjectGates(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("projectId") projectId: string) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.listProjectGates(projectId, principal);
+  }
+
+  @Post("projects/:projectId/gates/:gateId/actions")
+  async actOnProjectGate(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("projectId") projectId: string, @Param("gateId") gateId: string, @Body() body: any) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.actOnProjectGate(projectId, gateId, body ?? {}, principal);
+  }
+
+  /** V-17: confirm or decline the pending status proposal. Body { decision: "confirm" | "decline", reason? }. */
+  @Post("projects/:projectId/status-proposals/:proposalId/decision")
+  async decideProjectStatusProposal(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("projectId") projectId: string, @Param("proposalId") proposalId: string, @Body() body: any) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.decideProjectStatusProposal(projectId, proposalId, body ?? {}, principal);
   }
 
   @Get("projects/:projectId/milestones")
@@ -369,10 +422,24 @@ export class ProjectsController {
     @Headers("authorization") authorization: string | undefined,
     @Query("principal") principalFallback: string | undefined,
     @Param("projectId") projectId: string,
-    @Param("riskId") riskId: string
+    @Param("riskId") riskId: string,
+    @Query("reason") reason: string | undefined,
+    @Body() body: any
   ) {
     const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
-    return this.projects.deleteProjectRisk(projectId, riskId, principal);
+    return this.projects.deleteProjectRisk(projectId, riskId, principal, body?.reason ?? reason);
+  }
+
+  @Post("projects/:projectId/risks/:riskId/transition")
+  async transitionProjectRisk(
+    @Headers("authorization") authorization: string | undefined,
+    @Query("principal") principalFallback: string | undefined,
+    @Param("projectId") projectId: string,
+    @Param("riskId") riskId: string,
+    @Body() body: any
+  ) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.transitionProjectRisk(projectId, riskId, body, principal);
   }
 
   @Get("tasks")
@@ -439,6 +506,42 @@ export class ProjectsController {
   ) {
     const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
     return this.projects.reviewTaskTimeEntry(entryId, body, principal);
+  }
+
+  /** P&L spec 12/10 point 5: correct the Layer 2 chosen when the hour was logged. */
+  @Patch("tasks/time-entries/:entryId/layer2")
+  async updateTimeEntryLayer2(
+    @Headers("authorization") authorization: string | undefined,
+    @Query("principal") principalFallback: string | undefined,
+    @Param("entryId") entryId: string,
+    @Body() body: any
+  ) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.updateTimeEntryLayer2(entryId, body, principal);
+  }
+
+  /** Section 9.2: the PM confirms an old "Họp"/"Khác" hour stays in its customer project. */
+  @Post("tasks/time-entries/:entryId/legacy-group-confirmation")
+  async confirmLegacyTimeEntryGroup(
+    @Headers("authorization") authorization: string | undefined,
+    @Query("principal") principalFallback: string | undefined,
+    @Param("entryId") entryId: string
+  ) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.confirmLegacyTimeEntryGroup(entryId, principal);
+  }
+
+  /** Section 9.2 worklist: Layer 1 and side of the P&L closing point of a stage the legacy conversion could not map. */
+  @Patch("projects/:projectId/stages/:stageId/classification")
+  async classifyStage(
+    @Headers("authorization") authorization: string | undefined,
+    @Query("principal") principalFallback: string | undefined,
+    @Param("projectId") projectId: string,
+    @Param("stageId") stageId: string,
+    @Body() body: any
+  ) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.classifyStage(projectId, stageId, body, principal);
   }
 
   @Get("tasks/:taskId/assignment-history")

@@ -333,6 +333,7 @@ model User {
   subjectType                    SubjectType                 @default(INTERNAL_USER)
   status                         SubjectStatus               @default(ACTIVE)
   departmentCode                 String?
+  viewMode                       String                      @default("admin")
   createdAt                      DateTime                    @default(now())
   updatedAt                      DateTime                    @updatedAt
   identities                     PortalIdentity[]
@@ -1284,6 +1285,15 @@ model Project {
   tags                   String[]                    @default([])
   color                  String?
   hierarchyOrderVersion  Int                         @default(0)
+  /// PL-02 "Dự án thử nghiệm": the P&L record exists but is left out of every total, fund split and warning.
+  isTestProject          Boolean                     @default(false)
+  /// V-02: Lark chat ids of the project's two groups (nội bộ, khách hàng).
+  larkInternalChatId     String?
+  larkCustomerChatId     String?
+  /// not_created | created | failed ("Chưa tạo được nhóm")
+  larkGroupStatus        String                      @default("not_created")
+  larkGroupError         String?
+  larkGroupSyncedAt      DateTime?
   createdAt              DateTime                    @default(now())
   updatedAt              DateTime                    @updatedAt
   workspace              TenantWorkspace             @relation(fields: [workspaceId], references: [id])
@@ -1299,6 +1309,7 @@ model Project {
   comments               ProjectComment[]
   activities             ProjectActivity[]
   risks                  ProjectRisk[]
+  riskCounters           ProjectRiskCounter[]
   attachments            ProjectAttachment[]
   taskComments           TaskComment[]
   taskAttachments        TaskAttachment[]
@@ -1322,6 +1333,13 @@ model Project {
   pnlPeriods             PnlPeriod[]
   statusHistory          ProjectStatusHistory[]
   warnings               ProjectWarning[]
+  contractItems          ProjectContractItem[]
+  gates                  ProjectGate[]
+  statusProposals        ProjectStatusProposal[]
+  baselines              ProjectBaseline[]
+  stageExtensions        ProjectStageExtension[]
+  /// PL-28: exactly one P&L record per project, created by a database trigger with the project.
+  pnlRecord              ProjectPnlRecord?
 
   @@unique([workspaceId, code])
   @@index([workspaceId, status])
@@ -1332,6 +1350,156 @@ model Project {
   @@index([opportunityId])
 }
 
+/// Hạng mục hợp đồng (rules 2 / 3.1 / D-22): the unit a project's money comes from. Codes live in contract-item.ts.
+model ProjectContractItem {
+  id              String        @id @default(cuid())
+  workspaceId     String        @default("twk-foundation")
+  projectId       String
+  code            String
+  name            String
+  /// ROOT (HĐ gốc) | APPENDIX (phụ lục) | CHANGE_REQUEST (yêu cầu thay đổi)
+  kind            String        @default("ROOT")
+  /// FIXED_PRICE (Trọn gói) | TIME_AND_MATERIAL (Theo giờ) | INTERNAL (Nội bộ); NULL = Chờ phân loại
+  contractType    String?
+  valueAmount     Decimal?
+  currency        String        @default("VND")
+  /// Estimate gốc, in minutes.
+  estimateMinutes Int?
+  /// The issue-log record (ProjectRisk) of the change request a CHANGE_REQUEST item belongs to (D-23).
+  changeRequestId String?
+  status          String        @default("active")
+  sortOrder       Int           @default(10)
+  createdByUserId String?
+  archivedAt      DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  /// Mục 6.1 khối D/E: warn when the ceiling (Theo giờ) or the cost cap (Nội bộ) is used beyond this percentage.
+  warnThresholdPercent Int      @default(80)
+  project         Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks           ProjectTask[]
+  installments    ProjectContractInstallment[]
+
+  @@unique([projectId, code])
+  @@index([workspaceId, projectId, status, sortOrder])
+}
+
+/// Rules 7.2 / 8.1: one "điểm chốt" G1–G8 at the end of a stage. The definition (documents, roles, customer step)
+/// is PROJECT_GATE_CATALOGUE[code] in packages/contracts/src/gates.ts; this row holds the project's state.
+model ProjectGate {
+  id                       String       @id @default(cuid())
+  workspaceId              String
+  projectId                String
+  milestoneId              String
+  stageId                  String       @unique
+  code                     String
+  sortOrder                Int
+  /// not_submitted | submitted | rejected | awaiting_customer | approved | exception
+  status                   String       @default("not_submitted")
+  submittedAt              DateTime?
+  submittedByUserId        String?
+  /// approved | conditional | rejected
+  decision                 String?
+  decidedAt                DateTime?
+  decidedByUserId          String?
+  decisionReason           String?
+  /// ProjectRisk (Issue) created by a conditional approval (V-13).
+  conditionIssueId         String?
+  /// G1, chốt 11/10 #9: PM confirms BD collected instalment 1.
+  paymentConfirmedAt       DateTime?
+  paymentConfirmedByUserId String?
+  paymentNote              String?
+  /// V-14: the customer step after the internal approval.
+  customerRequestedAt      DateTime?
+  customerDueAt            DateTime?
+  customerReminderCount    Int          @default(0)
+  customerConfirmedAt      DateTime?
+  customerConfirmedBy      String?
+  customerEvidence         String?
+  customerRecordedByUserId String?
+  /// V-11 exception: Dx Director only, reason mandatory.
+  exceptionAt              DateTime?
+  exceptionByUserId        String?
+  exceptionReason          String?
+  /// G8, V-16.
+  goLiveDate               DateTime?    @db.Date
+  /// Append-only ProjectGateHistoryEntry[].
+  history                  Json         @default("[]")
+  createdAt                DateTime     @default(now())
+  updatedAt                DateTime     @updatedAt
+  project                  Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage                    ProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, code])
+  @@index([workspaceId, status])
+}
+
+/// V-17: a status the rules imply but a person must confirm. At most one pending row per project
+/// (partial unique index in the migration SQL); decided rows are the history.
+model ProjectStatusProposal {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  projectId       String
+  fromStatus      String
+  proposedStatus  String
+  basis           String
+  suggestedReason String?
+  /// pending | confirmed | declined | superseded
+  status          String    @default("pending")
+  createdAt       DateTime  @default(now())
+  decidedAt       DateTime?
+  decidedByUserId String?
+  declineReason   String?
+  project         Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, status])
+  @@index([projectId, createdAt(sort: Desc)])
+}
+
+/// D-20: one immutable version of a baseline layer. B0 = scope and signed price (contract line items);
+/// B1 = milestones, timeline and estimated hours. Rows are never updated (DB trigger); a change writes the next version.
+model ProjectBaseline {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  projectId       String
+  /// B0 | B1
+  layer           String
+  version         Int
+  snapshot        Json
+  reason          String
+  /// gate | change_request | stage_extension | timeline_change | plan_edit | manual
+  causeType       String
+  causeId         String?
+  causeCode       String?
+  createdByUserId String?
+  createdByName   String?
+  createdAt       DateTime @default(now())
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, layer, version])
+  @@index([workspaceId, projectId])
+}
+
+/// TD-04 / TD-05, D-21: an approved extension of a stage's due date, with before/after, approver and reason.
+/// Extensions caused by a change request (V-40) carry its id and are not counted by TD-05.
+model ProjectStageExtension {
+  id               String       @id @default(cuid())
+  workspaceId      String
+  projectId        String
+  stageId          String
+  previousDueAt    DateTime?
+  newDueAt         DateTime
+  reason           String
+  changeRequestId  String?
+  approvedByUserId String
+  approvedByName   String?
+  approvedAt       DateTime     @default(now())
+  project          Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage            ProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  @@index([stageId, approvedAt])
+  @@index([workspaceId, projectId])
+}
+
 /// EV-064: append-only log of project status changes. Statuses are stored as canonical codes (project-status.ts).
 model ProjectStatusHistory {
   id              String   @id @default(cuid())
@@ -1340,6 +1508,8 @@ model ProjectStatusHistory {
   fromStatus      String?
   toStatus        String
   reason          String?
+  /// Set when toStatus is "closed": a PROJECT_CLOSE_REASONS code; `reason` then holds the optional note.
+  closeReasonCode String?
   changedByUserId String?
   changedAt       DateTime @default(now())
   project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -1423,6 +1593,7 @@ model ProjectMilestone {
   project                      Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
   ownerTeam                    WorkspaceTeam?  @relation("MilestoneOwnerTeam", fields: [ownerTeamId], references: [id], onDelete: SetNull)
   stages                       ProjectStage[]
+  issueLogRecords              ProjectRisk[]
   artifacts                    ProjectArtifact[]
 
   @@unique([projectId, normalizedKey])
@@ -1502,7 +1673,19 @@ model ProjectStage {
   blockerSummary     String?
   scopeSummary       String?
   standardMinutes    Int?
+  /// D-02: Layer 1 (PRE_SALE | DELIVERY | PM) the tasks of this stage inherit; null = "Chờ phân loại".
+  taskTypeLayer1     String?
+  /// Section 3.4: position against the P&L close gate; drives the derived Layer 2. null = not known.
+  afterPnlClose      Boolean?
+  /// Section 9.2: Layer 1 / position were filled by the legacy conversion (convert-legacy-data.ts) at this time.
+  legacyConvertedAt  DateTime?
   progressPercent    Int              @default(0)
+  /// Stage SLA in working days, copied from the template (8.1). null = no SLA.
+  slaDays            Int?
+  /// V-19: set while the stage's gate waits for the customer; the SLA clock is stopped.
+  slaPausedAt        DateTime?
+  /// V-19: working days already spent waiting for the customer; counted separately, never as delay.
+  customerWaitDays   Int              @default(0)
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
   workspace          TenantWorkspace  @relation(fields: [workspaceId], references: [id])
@@ -1511,6 +1694,11 @@ model ProjectStage {
   milestone          ProjectMilestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
   owner              User?            @relation(fields: [ownerUserId], references: [id])
   tasks              ProjectTask[]
+  issueLogRecords    ProjectRisk[]
+  gate               ProjectGate?
+  /// V-39: the change request (ProjectRisk.id) this stage was generated for; null for ordinary stages.
+  changeRequestId    String?          @unique
+  extensions         ProjectStageExtension[]
 
   @@unique([projectId, stageKey])
   @@index([workspaceId, status])
@@ -1591,6 +1779,7 @@ model ResourceAllocation {
   @@index([approvedByUserId])
 }
 
+// unused since 2026-10 (the P&L reads ResourceMonthlyCost; only seed scripts still write here): kept to avoid a destructive migration
 model CostRateProfile {
   id             String    @id @default(cuid())
   // Null on legacy rows; rates entered through the P&L cost screen are per workspace.
@@ -1647,6 +1836,8 @@ model ProjectCost {
   costType        ProjectCostType @default(OTHER)
   // BRD expense group key (welfare-related, basic-activities, business-location, sell-marketing, functional-operation).
   category        String?
+  /// PL-18: the "Nhập tay" cost item (PnlCostItem.code) the line belongs to; NULL on lines entered before the tree.
+  itemCode        String?
   label           String
   currency        String          @default("VND")
   amount          Decimal
@@ -1930,6 +2121,11 @@ model ProjectTask {
   taskTypeLayer1          String?
   taskTypeLayer2          String?
   taskTypeVersion         Int                         @default(1)
+  /// Section 9.2: Layer 1 was filled by the legacy conversion at this time.
+  legacyConvertedAt       DateTime?
+  /// D-01: the contract line item; NULL only before the project has one (D-07) and in the internal worklog project.
+  contractItemId          String?
+  contractItem            ProjectContractItem?        @relation(fields: [contractItemId], references: [id])
   status                  String                      @default("todo")
   priority                String                      @default("medium")
   ownerUserId             String?
@@ -1974,6 +2170,7 @@ model ProjectTask {
   timeEntries             TaskTimeEntry[]
   planningBlocks          TaskPlanningBlock[]
   comments                TaskComment[]
+  issueLogRecords         ProjectRisk[]
   attachments             TaskAttachment[]
   timelineChangeRequests  TaskTimelineChangeRequest[]
   planHistories           TaskPlanHistory[]
@@ -2126,16 +2323,42 @@ model ProjectRisk {
   switchTrigger   String?
   dueAt           DateTime?
   ownerUserId     String?
-  status          String          @default("open")
+  status          String          @default("pending")
   createdByUserId String?
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
+  // Issue log (rules 5.4, V-23…V-32, 8.2). `category`, `impact`, `switchTrigger` above are legacy and no longer written.
+  code                   String
+  type                   String    @default("issue")
+  severity               String    @default("medium")
+  milestoneId            String?
+  stageId                String?
+  taskId                 String?
+  evidence               String?
+  nextStep               String?
+  impactArea             String?
+  escalationLevel        String    @default("none")
+  escalatedAt            DateTime?
+  resolutionEvidence     String?
+  resolutionProposedAt   DateTime?
+  acceptPmUserId         String?
+  acceptLeaderUserId     String?
+  closedAt               DateTime?
+  cancelReason           String?
+  crStep                 String?
+  stepDueAt              DateTime?
+  extension              Json      @default("{}")
+  milestone              ProjectMilestone? @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  stage                  ProjectStage?     @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  task                   ProjectTask?      @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  events                 ProjectRiskEvent[]
   workspace       TenantWorkspace @relation(fields: [workspaceId], references: [id])
   project         Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
   account         Account         @relation(fields: [accountId], references: [id])
   owner           User?           @relation("ProjectRiskOwner", fields: [ownerUserId], references: [id])
   createdBy       User?           @relation("ProjectRiskCreatedBy", fields: [createdByUserId], references: [id])
 
+  @@unique([projectId, code])
   @@index([workspaceId, status])
   @@index([projectId, status])
   @@index([accountId, status])
@@ -2143,6 +2366,35 @@ model ProjectRisk {
   @@index([dueAt, status])
   @@index([category])
   @@index([createdByUserId])
+}
+
+/// Append-only history of an issue-log record: every status, step, classification and field change.
+model ProjectRiskEvent {
+  id          String      @id @default(cuid())
+  riskId      String
+  action      String
+  fromStatus  String?
+  toStatus    String?
+  fromStep    String?
+  toStep      String?
+  note        String?
+  changes     Json?
+  actorUserId String?
+  actorName   String?
+  at          DateTime    @default(now())
+  risk        ProjectRisk @relation(fields: [riskId], references: [id], onDelete: Cascade)
+
+  @@index([riskId, at])
+}
+
+/// Last running number handed out per project and code prefix. Only ever increases, so a code is never reused.
+model ProjectRiskCounter {
+  projectId String
+  prefix    String
+  last      Int     @default(0)
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, prefix])
 }
 
 model TaskAttachment {
@@ -2239,19 +2491,32 @@ model TaskTimeEntry {
   billable               Boolean                 @default(true)
   workType               String                  @default("delivery")
   taskTypeLayer1         String?
+  /// Derived from the task (deriveTaskTypeLayer2); the P&L hour gate compares it with selectedTaskTypeLayer2.
   taskTypeLayer2         String?
+  /// P&L spec 12/10 point 5: the Layer 2 the person chose when logging. null = legacy row written before the picker.
+  selectedTaskTypeLayer2 String?
   approvalStatus         String                  @default("approved")
   overtimeApprovalStatus String                  @default("not_required")
   overtimePlanId         String?
   pnlStatus              String                  @default("pending")
   pnlReason              String?
   classificationVersion  Int                     @default(1)
+  /// D-03: copy of the task's contract line item at write time; follows the task only in unlocked P&L months.
+  contractItemId         String?
   note                   String?
   reviewedByUserId       String?
   reviewedAt             DateTime?
   reviewNote             String?
   sourcePlanningBlockId  String?                 @unique
   dayOffId               String?
+  /// D-16: logged while the project was "Tạm dừng"; the PM reviews these.
+  loggedWhileOnHold      Boolean                 @default(false)
+  /// Section 9.2: the legacy conversion processed this entry at this time; the "Chờ xử lý" deadline counts from it.
+  legacyConvertedAt      DateTime?
+  /// Section 9.2: why the conversion could not map it (codes in legacy-conversion.ts); null = mapped or resolved by the PM.
+  legacyPendingReason    String?
+  /// Section 9.2: belongs to a person-day above the daily cap dated before the effective date ("trước quy tắc 8 giờ"); never cut.
+  beforeEightHourRule    Boolean                 @default(false)
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
   workspace              TenantWorkspace         @relation(fields: [workspaceId], references: [id])
@@ -2461,10 +2726,19 @@ model ResourceMonthlyCost {
   pitAmount             Decimal         @default(0)
   otherAmount           Decimal         @default(0)
   totalMonthlyIncome    Decimal         @default(0)
+  /// D-34: derived when the month's cost is saved = totalMonthlyIncome / (Mon-Fri days of the month x "Giờ chuẩn một ngày").
   hourlyCostRate        Decimal?
   status                String          @default("DRAFT")
+  /// manual | converted_hourly_rate ("quy đổi từ đơn giá giờ", rows converted from CostRateProfile)
   source                String          @default("manual")
+  /// Section 2 "Nhân sự và chi phí": role and level of the person in that month.
+  role                  String?
+  level                 String?
   lockedAt              DateTime?
+  /// PL-08: DRAFT (Nháp) -> APPROVED (Đã duyệt); only an approved row yields a cost rate. "Đã khóa" = approved + locked period.
+  approvedAt            DateTime?
+  approvedByUserId      String?
+  approvedByName        String?
   createdAt             DateTime        @default(now())
   updatedAt             DateTime        @updatedAt
   workspace             TenantWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -2509,6 +2783,7 @@ model PnlPeriod {
   @@index([projectId, periodStart, periodEnd])
 }
 
+// unused since 2026-10 (replaced by PnlCostItem, PnlParameterValue, PnlItemTemplate): kept to avoid a destructive migration
 model PnlConfiguration {
   id             String          @id @default(cuid())
   workspaceId    String
@@ -2859,4 +3134,271 @@ model ProjectCreateReceipt {
   createdAt   DateTime @default(now())
 
   @@index([workspaceId, actorUserId, createdAt])
+}
+
+// 7.6 configuration parameters, append-only: the newest row of (workspaceId, key) is the value, older rows its history.
+// A JSON null value means "reset to the catalogue default". Keys: packages/contracts/src/system-parameters.ts.
+model SystemParameter {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  key             String
+  value           Json?
+  updatedByUserId String?
+  updatedByName   String?
+  createdAt       DateTime @default(now())
+
+  @@index([workspaceId, key, createdAt(sort: Desc)])
+}
+
+// 7.5 / V-36: every attempt to reach Lark (create chat, members, message, approval read) — what, to whom, result.
+// status: sent | disabled ("chưa bật kênh Lark") | failed. dedupeKey makes "send once" checkable.
+model LarkDeliveryLog {
+  id          String   @id @default(cuid())
+  workspaceId String?
+  projectId   String?
+  bot         String?
+  action      String
+  target      String
+  status      String
+  detail      String?
+  dedupeKey   String?
+  createdAt   DateTime @default(now())
+
+  @@index([dedupeKey])
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([projectId, createdAt(sort: Desc)])
+}
+
+// D-09: personal leave, synced from APPROVED instances of the Lark leave Approval (chốt 11/10 #7). Read-only in the app.
+model PersonalLeave {
+  id               String   @id @default(cuid())
+  workspaceId      String
+  userId           String
+  startDate        DateTime @db.Date
+  endDate          DateTime @db.Date
+  /// The first / last day of the range is only half a day off.
+  startHalfDay     Boolean  @default(false)
+  endHalfDay       Boolean  @default(false)
+  leaveType        String?
+  source           String   @default("lark_approval")
+  /// Lark Approval instance code.
+  sourceInstanceId String
+  /// approved | cancelled
+  status           String   @default("approved")
+  syncedAt         DateTime @default(now())
+  createdAt        DateTime @default(now())
+
+  @@unique([workspaceId, sourceInstanceId])
+  @@index([workspaceId, userId, startDate, endDate])
+}
+
+// ---------------------------------------------------------------------------
+// Tab P&L (Yêu cầu tab P&L – hệ thống PM, 12/10/2026). Rules: apps/api/src/modules/resource-controls/pnl-*.ts
+// ---------------------------------------------------------------------------
+
+/// PL-28 / mục 2.2: one P&L record per project. Created by trigger "Project_create_pnl_record" (migration SQL) in the
+/// same statement that creates the project; removed only by the project cascade. Its STATE is derived, never stored.
+model ProjectPnlRecord {
+  id                    String    @id
+  workspaceId           String
+  projectId             String    @unique
+  /// PL-22: this project's deviation from its template; a reason is mandatory.
+  overrideDisabledCodes String[]  @default([])
+  overrideEnabledCodes  String[]  @default([])
+  overrideReason        String?
+  overrideByUserId      String?
+  overrideByName        String?
+  overrideAt            DateTime?
+  /// Mục 6.1 khối A: draft (Nháp) | signed (Đã ký — base values read-only).
+  contractStatus        String    @default("draft")
+  contractSignedAt      DateTime?
+  contractSignedByUserId String?
+  /// Mục 6.6: "dự án đã qua G7 giữ mẫu tại thời điểm nghiệm thu" — the switched-off codes frozen at the closing point.
+  frozenDisabledCodes   String[]  @default([])
+  frozenAt              DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  project               Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+/// PL-20 / PL-21: the workspace's one cost-item tree. `draft` holds unapplied changes of an active item.
+model PnlCostItem {
+  id                  String   @id @default(cuid())
+  workspaceId         String
+  code                String
+  name                String
+  parentCode          String?
+  sign                Int      @default(1)
+  roleGroup           String?
+  unit                String   @default("VND")
+  /// MANUAL | SYSTEM | FORMULA | FUND | GROUP
+  method              String
+  systemSource        String?
+  formula             Json?
+  required            Boolean  @default(false)
+  effectiveFromPeriod String?
+  /// active | draft | retired
+  status              String   @default("active")
+  sourceNote          String?
+  sortOrder           Int      @default(10)
+  draft               Json?
+  updatedByUserId     String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([workspaceId, code])
+}
+
+/// PL-22: a template only switches items of the tree off.
+model PnlItemTemplate {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  key             String
+  name            String
+  disabledCodes   String[] @default([])
+  consumable      Boolean  @default(false)
+  updatedByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([workspaceId, key])
+}
+
+/// PL-19: append-only parameter values with scope and effective period. Never updated in place.
+model PnlParameterValue {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  /// standardDayHours | usdRate | pnlCloseGate | commissionPercent | sellRate
+  key             String
+  subKey          String?
+  /// company | customer | project_type | project
+  scopeType       String   @default("company")
+  scopeId         String?
+  value           Json
+  /// YYYY-MM
+  effectiveFrom   String
+  reason          String?
+  createdByUserId String?
+  createdByName   String?
+  createdAt       DateTime @default(now())
+
+  @@index([workspaceId, key, effectiveFrom])
+}
+
+/// PL-17: declaration of a shared cost fund.
+model PnlFund {
+  id                 String          @id @default(cuid())
+  workspaceId        String
+  code               String
+  name               String
+  targetItemCode     String
+  criterion          String          @default("pnl_hours")
+  /// billable_with_hours | selected_projects
+  eligibility        String          @default("billable_with_hours")
+  eligibleProjectIds String[]        @default([])
+  active             Boolean         @default(true)
+  createdByUserId    String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  periods            PnlFundPeriod[]
+
+  @@unique([workspaceId, code])
+}
+
+/// The fund's amount of one month, by invoice. status: unallocated | allocated (confirmed by the Admin).
+model PnlFundPeriod {
+  id                String              @id @default(cuid())
+  workspaceId       String
+  fundId            String
+  periodKey         String
+  amount            Decimal
+  sourceCurrency    String              @default("VND")
+  sourceAmount      Decimal
+  exchangeRate      Decimal?
+  invoiceRef        String?
+  status            String              @default("unallocated")
+  confirmedAt       DateTime?
+  confirmedByUserId String?
+  confirmedByName   String?
+  updatedByUserId   String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  fund              PnlFund             @relation(fields: [fundId], references: [id], onDelete: Cascade)
+  allocations       PnlFundAllocation[]
+
+  @@unique([fundId, periodKey])
+  @@index([workspaceId, periodKey])
+}
+
+/// A confirmed share: this is what enters the project's P&L.
+model PnlFundAllocation {
+  id           String        @id @default(cuid())
+  workspaceId  String
+  fundPeriodId String
+  projectId    String
+  periodKey    String
+  itemCode     String
+  minutes      Int
+  amount       Decimal
+  createdAt    DateTime      @default(now())
+  fundPeriod   PnlFundPeriod @relation(fields: [fundPeriodId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, projectId])
+  @@index([workspaceId, periodKey])
+}
+
+/// PL-23 / PL-24: one row per lock of a month — the snapshot the P&L reads while the month stays locked, and the
+/// lock / reopen history. The row with reopenedAt = NULL is the live one. PnlPeriod.status stays the lock authority.
+model PnlPeriodSnapshot {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  periodKey        String
+  data             Json
+  summary          Json
+  lockedAt         DateTime  @default(now())
+  lockedByUserId   String?
+  lockedByName     String?
+  reopenedAt       DateTime?
+  reopenedByUserId String?
+  reopenedByName   String?
+  reopenReason     String?
+
+  @@index([workspaceId, periodKey, lockedAt(sort: Desc)])
+}
+
+/// Mục 6.1 khối C: payment instalments of a Trọn gói line item. Cash tracking only — never revenue (PL-16).
+model ProjectContractInstallment {
+  id                    String              @id @default(cuid())
+  workspaceId           String
+  projectId             String
+  contractItemId        String
+  sequence              Int
+  label                 String
+  gateCode              String?
+  percent               Decimal
+  expectedOn            DateTime?           @db.Date
+  /// not_due (Chưa đến) -> accepted (Đã nghiệm thu) -> invoiced (Đã xuất hóa đơn) -> paid (Đã thu tiền)
+  status                String              @default("not_due")
+  statusChangedAt       DateTime?
+  statusChangedByUserId String?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  contractItem          ProjectContractItem @relation(fields: [contractItemId], references: [id], onDelete: Cascade)
+
+  @@unique([contractItemId, sequence])
+  @@index([workspaceId, projectId])
+}
+
+/// Mục 6.7: "Mã nhân sự (đúng mã của hệ thống lương)" — what an import row is matched on.
+model PnlStaffCode {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  userId       String
+  employeeCode String
+  createdAt    DateTime @default(now())
+
+  @@unique([workspaceId, userId])
+  @@unique([workspaceId, employeeCode])
 }

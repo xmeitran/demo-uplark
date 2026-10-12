@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { ArrowDown, ArrowRight, ArrowUp, BriefcaseBusiness, Pencil, Pin, Trash2, Users } from "lucide-react";
-import { MoneyAmount } from "../../components/money-amount";
 import type { Project } from "../../../app/projects/data";
 import { formatProjectStatusLabel } from "../../../app/projects/live-projects";
+import { projectStatusStyleMap } from "@/lib/project-status";
 
-export type ProjectSheetSortKey = "name" | "status" | "progress" | "budget" | "dueDate" | "priority";
+export type ProjectSheetSortKey = "name" | "status" | "progress" | "dueDate" | "priority";
 export type ProjectSheetSortDir = "asc" | "desc";
 
 type ProjectSheetProps = {
@@ -21,15 +21,15 @@ type ProjectSheetProps = {
   onDelete: (project: Project) => void;
 };
 
-const STATUS_STYLES: Record<Project["status"], string> = {
-  Active: "bg-emerald-50 text-emerald-700",
-  "In Review": "bg-blue-50 text-blue-700",
-  Planning: "bg-cyan-50 text-cyan-700",
-  "On Hold": "bg-slate-100 text-slate-600",
-  Completed: "bg-emerald-50 text-emerald-700",
-  "At Risk": "bg-red-50 text-red-700",
-  "Chưa xác định": "bg-slate-100 text-slate-600"
-};
+const STATUS_STYLES: Record<Project["status"], string> = projectStatusStyleMap({
+  active: "bg-emerald-50 text-emerald-700",
+  in_review: "bg-blue-50 text-blue-700",
+  planning: "bg-cyan-50 text-cyan-700",
+  on_hold: "bg-slate-100 text-slate-600",
+  completed: "bg-emerald-50 text-emerald-700",
+  at_risk: "bg-red-50 text-red-700",
+  closed: "bg-slate-200 text-slate-700"
+}, "bg-slate-100 text-slate-600");
 
 /** Columns of the sheet; `sortKey` marks the ones that sort the list (same handler and URL state as the page). */
 const COLUMNS: Array<{ label: string; sortKey?: ProjectSheetSortKey }> = [
@@ -39,8 +39,6 @@ const COLUMNS: Array<{ label: string; sortKey?: ProjectSheetSortKey }> = [
   { label: "Tasks" },
   { label: "Plan hour" },
   { label: "Logwork hour" },
-  { label: "P&L hour" },
-  { label: "Spent" },
   { label: "Members" }
 ];
 
@@ -53,8 +51,7 @@ function roundHours(value: number) {
 function projectHours(project: Project) {
   const planned = project.plannedHours ?? project.tasks.total * 8;
   const logged = project.loggedHours ?? roundHours(planned * project.progress / 100);
-  const pnl = project.pnlHours ?? logged;
-  return { planned, logged, pnl };
+  return { planned, logged };
 }
 
 function formatHours(value: number) {
@@ -94,13 +91,13 @@ export function ProjectSheet({ projects, returnTo, pushedIds, sortKey, sortDir, 
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"><BriefcaseBusiness className="h-4 w-4" /></span>
             <h2 className="text-lg font-bold text-foreground">Project Sheet</h2>
           </div>
-          <p className="text-sm text-muted-foreground">Tổng quan kế hoạch, tiến độ, giờ và chi phí của từng project.</p>
+          <p className="text-sm text-muted-foreground">Tổng quan kế hoạch, tiến độ và giờ của từng project.</p>
         </div>
         <span className="w-fit rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">{projects.length} project đang hiển thị</span>
       </header>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <table className="w-full min-w-[1180px] border-separate border-spacing-0 text-left">
+        <table className="w-full min-w-[980px] border-separate border-spacing-0 text-left">
           <thead className="sticky top-0 z-20 bg-card/95 backdrop-blur">
             <tr>
               {COLUMNS.map((column) => {
@@ -122,7 +119,6 @@ export function ProjectSheet({ projects, returnTo, pushedIds, sortKey, sortDir, 
           <tbody>
             {projects.map((project) => {
               const hours = projectHours(project);
-              const spentPercent = project.budget > 0 ? Math.round(project.spent / project.budget * 100) : 0;
               const href = `/projects/${encodeURIComponent(project.id)}?tab=Project%20Sheet&returnTo=${encodeURIComponent(returnTo)}`;
               return (
                 <tr key={project.id} className={`group transition-colors hover:bg-muted/25${(project.openWarningCount ?? 0) > 0 ? " bg-red-50/50" : ""}`}>
@@ -145,11 +141,6 @@ export function ProjectSheet({ projects, returnTo, pushedIds, sortKey, sortDir, 
                   <td className="border-b border-border/70 px-4 py-4 font-mono text-sm font-bold tabular-nums text-foreground">{project.tasks.done} / {project.tasks.total}</td>
                   <td className="border-b border-border/70 px-4 py-4 font-mono text-sm font-semibold tabular-nums text-foreground">{formatHours(hours.planned)}</td>
                   <td className="border-b border-border/70 px-4 py-4 font-mono text-sm font-semibold tabular-nums text-foreground">{formatHours(hours.logged)}</td>
-                  <td className="border-b border-border/70 px-4 py-4 font-mono text-sm font-semibold tabular-nums text-foreground">{formatHours(hours.pnl)}</td>
-                  <td className="border-b border-border/70 px-4 py-4">
-                    <div className="font-mono text-sm font-bold tabular-nums text-foreground"><MoneyAmount value={project.spent} /></div>
-                    <div className="mt-0.5 text-[11px] font-semibold text-muted-foreground">{spentPercent}% ngân sách</div>
-                  </td>
                   <td className="border-b border-border/70 px-4 py-4"><MemberStack project={project} /></td>
                   <td className="border-b border-border/70 px-3 py-4">
                     <div className="flex items-center gap-1.5">

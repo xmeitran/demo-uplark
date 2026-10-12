@@ -15,6 +15,9 @@ import { WorkforceAnalyticsModule } from './modules/workforce-analytics/workforc
 import { WorkspaceCalendarModule } from './modules/workspace-calendar/workspace-calendar.module';
 import { BrdGovernanceModule } from './modules/brd-governance/brd-governance.module';
 import { WorkspaceAdminModule } from './modules/workspace-admin/workspace-admin.module';
+import { AlertsModule } from './modules/alerts/alerts.module';
+import { FrameworkConversionModule } from './modules/framework-conversion/framework-conversion.module';
+import { LarkIntegrationModule } from './modules/lark-integration/lark-integration.module';
 
 @Module({
   imports: [
@@ -34,6 +37,9 @@ import { WorkspaceAdminModule } from './modules/workspace-admin/workspace-admin.
     WorkspaceCalendarModule,
     BrdGovernanceModule,
     WorkspaceAdminModule,
+    AlertsModule,
+    FrameworkConversionModule,
+    LarkIntegrationModule,
   ],
   controllers: [],
   providers: [],

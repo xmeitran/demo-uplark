@@ -2,7 +2,6 @@ import type {
   ProjectActivitySummary,
   ProjectDocumentSummary,
   EmploymentStatus,
-  ProjectRiskSummary,
   ProjectStageSummary,
   ProjectSummary,
   ProjectTaskSummary,
@@ -14,7 +13,34 @@ import type {
 import { toIso, toMoneyNumber } from "../../shared/http/request-context";
 import { isClosedWorkStatus, isCompletedTaskStatus } from "./task-status";
 import { sumActualMinutes } from "./member-participation";
-import { normalizeProjectStatus } from "./project-status";
+import { normalizeProjectStatus, projectStatusLabel } from "./project-status";
+import { isInternalWorklogProjectType, isLayer2Mismatch } from "./task-classification";
+import { CONTRACT_ITEM_KIND_LABELS, contractItemTypeLabel, isContractItemKind, isContractItemType } from "./contract-item";
+import type { ProjectContractItemSummary } from "@b2b-crm/contracts";
+
+export function mapProjectContractItemSummary(item: any, locked = false): ProjectContractItemSummary {
+  const kind: ProjectContractItemSummary["kind"] = isContractItemKind(item.kind) ? item.kind : "ROOT";
+  return {
+    id: item.id,
+    projectId: item.projectId,
+    code: item.code,
+    name: item.name,
+    kind,
+    kindLabel: CONTRACT_ITEM_KIND_LABELS[kind],
+    contractType: isContractItemType(item.contractType) ? item.contractType : undefined,
+    contractTypeLabel: contractItemTypeLabel(item.contractType),
+    valueAmount: toMoneyNumber(item.valueAmount),
+    currency: item.currency ?? "VND",
+    estimateMinutes: item.estimateMinutes ?? undefined,
+    changeRequestId: item.changeRequestId ?? undefined,
+    status: item.status === "archived" ? "archived" : "active",
+    sortOrder: item.sortOrder ?? 10,
+    taskCount: item._count?.tasks ?? 0,
+    locked,
+    createdAt: toIso(item.createdAt) ?? new Date().toISOString(),
+    updatedAt: toIso(item.updatedAt) ?? new Date().toISOString()
+  };
+}
 
 export function mapProjectSummary(project: any): ProjectSummary {
   const tasks = project.tasks ?? [];
@@ -62,6 +88,7 @@ export function mapProjectSummary(project: any): ProjectSummary {
     name: project.name,
     status: project.status,
     statusCode: normalizeProjectStatus(project.status) ?? undefined,
+    statusLabel: projectStatusLabel(project.status),
     projectType: project.projectType ?? project.opportunity?.stage ?? "delivery",
     scopeSummary: project.scopeSummary ?? firstStage?.scopeSummary ?? undefined,
     marginPercent: toMoneyNumber(project.marginPercent),
@@ -95,8 +122,10 @@ export function mapProjectSummary(project: any): ProjectSummary {
     plannedStartAt: minDateIso(startCandidates),
     plannedEndAt: maxDateIso(endCandidates),
     hierarchyOrderVersion: project.hierarchyOrderVersion ?? 0,
+    isTestProject: project.isTestProject === true ? true : undefined,
     milestoneMode: project.milestoneMode ?? "auto",
-    milestoneTemplateKey: project.milestoneTemplateKey ?? undefined
+    milestoneTemplateKey: project.milestoneTemplateKey ?? undefined,
+    isInternalWorklog: isInternalWorklogProjectType(project.projectType) || undefined
   };
 }
 
@@ -225,6 +254,8 @@ export function mapProjectStageSummary(stage: any): ProjectStageSummary {
     description: stage.description ?? undefined,
     upbaseRole: stage.upbaseRole ?? undefined,
     customerRole: stage.customerRole ?? undefined,
+    taskTypeLayer1: stage.taskTypeLayer1 ?? undefined,
+    afterPnlClose: stage.afterPnlClose ?? undefined,
     status: stage.status,
     ownerUserId: stage.ownerUserId ?? undefined,
     ownerDisplayName: stage.owner?.displayName ?? undefined,
@@ -305,30 +336,6 @@ export function mapProjectActivitySummary(activity: any): ProjectActivitySummary
   };
 }
 
-export function mapProjectRiskSummary(risk: any): ProjectRiskSummary {
-  return {
-    id: risk.id,
-    accountId: risk.accountId,
-    accountName: risk.account?.name ?? "",
-    projectId: risk.projectId,
-    projectName: risk.project?.name ?? "",
-    category: normalizeRiskCategory(risk.category),
-    description: risk.description,
-    likelihood: normalizeRiskLevel(risk.likelihood),
-    impact: normalizeRiskLevel(risk.impact),
-    response: risk.response,
-    switchTrigger: risk.switchTrigger ?? undefined,
-    dueAt: toIso(risk.dueAt) ?? undefined,
-    ownerUserId: risk.ownerUserId ?? undefined,
-    ownerDisplayName: risk.owner?.displayName ?? undefined,
-    status: risk.status,
-    createdByUserId: risk.createdByUserId ?? undefined,
-    createdByDisplayName: risk.createdBy?.displayName ?? undefined,
-    createdAt: toIso(risk.createdAt) ?? new Date().toISOString(),
-    updatedAt: toIso(risk.updatedAt) ?? new Date().toISOString()
-  };
-}
-
 export function mapTaskSummary(task: any): ProjectTaskSummary {
   const loggedMinutes = sumActualMinutes(task.timeEntries);
   const approvedMinutes = sumMinutes((task.timeEntries ?? []).filter((entry: any) => normalizeTaskTimeEntryApprovalStatus(entry.approvalStatus) === "approved"));
@@ -368,6 +375,9 @@ export function mapTaskSummary(task: any): ProjectTaskSummary {
     taskType: task.taskType,
     taskTypeLayer1: task.taskTypeLayer1 ?? undefined,
     taskTypeLayer2: task.taskTypeLayer2 ?? undefined,
+    contractItemId: task.contractItemId ?? undefined,
+    contractItemCode: task.contractItem?.code ?? undefined,
+    contractItemName: task.contractItem?.name ?? undefined,
     status: task.status,
     priority: task.priority,
     ownerUserId: task.ownerUserId ?? undefined,
@@ -413,16 +423,6 @@ export function mapTaskSummary(task: any): ProjectTaskSummary {
       : undefined,
     subtasks: Array.isArray(task.subtasks) ? task.subtasks.map(mapTaskSummary) : undefined
   };
-}
-
-function normalizeRiskCategory(value: unknown): ProjectRiskSummary["category"] {
-  return value === "Financial" || value === "External" || value === "Strategic" || value === "Blocker" || value === "Risk" || value === "Issue"
-    ? value
-    : "Operational";
-}
-
-function normalizeRiskLevel(value: unknown): ProjectRiskSummary["likelihood"] {
-  return value === "Low" || value === "High" ? value : "Medium";
 }
 
 export function mapTaskTimeEntrySummary(entry: any): TaskTimeEntrySummary {
@@ -477,6 +477,13 @@ export function mapTaskTimeEntrySummary(entry: any): TaskTimeEntrySummary {
     reviewedAt: toIso(entry.reviewedAt),
     reviewNote: entry.reviewNote ?? undefined,
     sourcePlanningBlockId: entry.sourcePlanningBlockId ?? undefined,
+    taskTypeLayer1: entry.taskTypeLayer1 ?? undefined,
+    taskTypeLayer2: entry.taskTypeLayer2 ?? undefined,
+    selectedTaskTypeLayer2: entry.selectedTaskTypeLayer2 ?? undefined,
+    layer2Mismatch: isLayer2Mismatch(entry.selectedTaskTypeLayer2, entry.taskTypeLayer2) ? true : undefined,
+    contractItemId: entry.contractItemId ?? undefined,
+    loggedWhileOnHold: entry.loggedWhileOnHold === true ? true : undefined,
+    beforeEightHourRule: entry.beforeEightHourRule === true ? true : undefined,
     createdAt: toIso(entry.createdAt) ?? new Date().toISOString(),
     updatedAt: toIso(entry.updatedAt) ?? new Date().toISOString()
   };

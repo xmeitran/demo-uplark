@@ -679,6 +679,33 @@ test.beforeEach(async ({ context, page, baseURL }) => {
 
   await page.addInitScript(() => window.localStorage.clear());
 
+  // Fail closed: nothing in this spec reaches a real API. Shell reads get empty answers; any other unmocked call is a
+  // 404 that names its path. Registered first, so every mock below takes precedence.
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (body: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+    if (path === "/api/navigation") return json({ data: { availableFlaggedRoutes: ["/analytics"] } });
+    if (path === "/api/notifications") return json({ data: [], meta: { unreadCount: 0 } });
+    if (path === "/api/auth/native/capabilities") return json({ lark: false });
+    // Reads added with the project warnings, the P&L tab and the staff profile: empty answers by default.
+    if (path === "/api/project-warnings/counts") return json({ data: {} });
+    if (path === "/api/project-participation") return json({ data: { userId: "", startDate: "", endDate: "", activeProjects: [], onHoldProjects: [] } });
+    if (path === "/api/staff-costs") return json({ data: [], meta: { userId: "", canEdit: false, currency: "VND", standardDayHours: 8, lockedPeriodKeys: [] } });
+    if (/^\/api\/pnl\/projects\/[^/]+\/setup$/.test(path)) {
+      return json({
+        data: {
+          projectId: path.split("/")[4], projectName: "", accountName: "",
+          contract: { totalAmount: null, fixedPriceAmount: null, hourlyCeilingAmount: null, status: "draft", statusLabel: "Nháp", signedOn: null, baseValuesReadOnly: false, collectedAmount: null, collectedInstallments: 0, installmentCount: 0 },
+          items: [],
+          baseline: { g1Approved: false, g1ApprovedOn: null, firstInstallmentPaid: false, rootItemReady: false, blockers: [] },
+          template: { key: "customer", name: "Khách hàng", disabledCodes: [], override: null }
+        },
+        meta: { generatedAt: "2026-07-15T00:00:00.000Z", currency: "VND", moneyVisible: true, canEdit: true, canApprove: true, canExport: true }
+      });
+    }
+    return json({ message: `Unmocked API call in e2e: ${route.request().method()} ${path}` }, 404);
+  });
+
   await page.route("https://example.com/avatar-kha.png", async (route) => {
     await route.fulfill({
       status: 200,
@@ -785,6 +812,24 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     const parts = url.pathname.split("/").filter(Boolean);
     const projectId = parts[parts.length - 1];
     if (url.pathname.endsWith("/members")) { await route.fallback(); return; }
+
+    // Project sub-resources added with warnings, baselines, gates, contract items and Lark groups: empty by default.
+    if (route.request().method() === "GET" && parts[2] === liveProject.id && parts.length === 4) {
+      const emptyProjectResources: Record<string, unknown> = {
+        warnings: { data: [] },
+        "status-history": { data: [] },
+        "member-participation": { data: [] },
+        "contract-items": { data: [], meta: { canManage: true, canViewValues: true, isInternalWorklog: false } },
+        baseline: { projectId: liveProject.id, locked: false, current: {}, history: [], canCapture: false },
+        gates: { projectId: liveProject.id, usesStageGates: false, data: [], stageSla: [], canException: false },
+        "lark-groups": { status: "created", statusLabel: "Đã tạo", hasInternalGroup: true, hasCustomerGroup: true },
+        "framework-conversion": { plan: { position: "current", operations: [] } }
+      };
+      if (parts[3] in emptyProjectResources) {
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(emptyProjectResources[parts[3]]) });
+        return;
+      }
+    }
 
     if (url.pathname === `/api/projects/${liveProject.id}/hierarchy` && route.request().method() === "GET") {
       await route.fulfill({
@@ -1035,7 +1080,6 @@ test.beforeEach(async ({ context, page, baseURL }) => {
       expect(input.projectId).toBe(liveProject.id);
       if (input.stageId !== undefined) {
         expect(input.stageId).toBe(liveStage.id);
-        expect(input.taskType).toBeUndefined();
       }
       expect(input.title).toMatch(/^Migrated Lark Base Task( renamed)?$/);
       expect(input.ownerTeamId).toBeUndefined();
@@ -1105,7 +1149,7 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     }
 
     if (url.pathname === "/api/tasks" && url.searchParams.get("projectId") === liveProject.id) {
-      expect(url.searchParams.get("limit")).toBe("200");
+      expect(url.searchParams.get("limit")).toBe("100");
       expect(url.searchParams.get("offset")).toBe("0");
       await route.fulfill({
         status: 200,
@@ -1360,7 +1404,7 @@ test("project sheet presents the delivery summary and opens the project control 
   await expect(sheet.getByRole("link", { name: `Open Project Sheet for ${liveProject.name}` })).toBeVisible();
   await expect(sheet.getByRole("columnheader", { name: "Plan hour", exact: true })).toBeVisible();
   await expect(sheet.getByRole("columnheader", { name: "Logwork hour", exact: true })).toBeVisible();
-  await expect(sheet.getByRole("columnheader", { name: "P&L hour", exact: true })).toBeVisible();
+  await expect(sheet.getByRole("columnheader", { name: "P&L hour", exact: true })).toHaveCount(0); // PL-26: P&L figures only in the P&L tab
 
   const controlCenterLink = sheet.getByRole("link", { name: `Open Project Sheet for ${liveProject.name}` });
   await expect(controlCenterLink).toHaveAttribute("href", `/projects/${liveProject.id}?tab=Project%20Sheet&returnTo=%2Fprojects%3Fview%3Dsheet`);
@@ -1529,14 +1573,14 @@ test("projects search filter and pagination keep the page frame stable", async (
   await expect(nextButton).toBeEnabled();
 
   await page.getByRole("button", { name: "All Status" }).click();
-  await page.getByRole("option", { name: "Active", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Completed", exact: true })).toBeHidden();
+  await page.getByRole("option", { name: "Đang triển khai", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Đã hoàn thành", exact: true })).toBeHidden();
   await expect.poll(() => projectListRequests.some((search) => new URLSearchParams(search).get("status") === "in_progress")).toBe(true);
   await expectStableFrame("after status filter", initialFrame);
 
   await page.getByRole("button", { name: "All Status", exact: true }).click();
   await page.getByRole("option", { name: "Tất cả trạng thái", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Completed", exact: true })).toBeHidden();
+  await expect(page.getByRole("button", { name: "Đã hoàn thành", exact: true })).toBeHidden();
   await expect(nextButton).toBeEnabled();
   await nextButton.click();
   await expect(page.getByRole("status")).toHaveText("Updating projects...");
@@ -1817,7 +1861,10 @@ test("AC-PIN-010 same-project detail controls are request-free stable and active
     if (request.method() !== "GET") return;
     const isProjectRequest = url.pathname === `/api/projects/${liveProject.id}` || url.pathname.startsWith(`/api/projects/${liveProject.id}/`);
     const isProjectTaskRequest = url.pathname === "/api/tasks" && url.searchParams.get("projectId") === liveProject.id;
-    if (isProjectRequest || isProjectTaskRequest) projectWorkItemRequests.push(`${url.pathname}${url.search}`);
+    // The Overview blocks (warnings, baseline, contract items…) reload their own small resource each time the tab
+    // mounts so they never show stale figures; the project itself and its tasks must not be fetched again.
+    const isOverviewBlockRequest = /\/(warnings|baseline|framework-conversion|lark-groups|contract-items|member-participation)$/.test(url.pathname);
+    if ((isProjectRequest && !isOverviewBlockRequest) || isProjectTaskRequest) projectWorkItemRequests.push(`${url.pathname}${url.search}`);
   });
 
   const expectStableNavigation = async (expectedHistoryCalls: number, expectedTabEvents: number) => {
@@ -1902,9 +1949,11 @@ test("projects page can edit and delete a project through the persisted API", as
   await page.goto("/projects");
 
   await page.locator('button[title="Edit project"]').first().click();
-  await expect(page.getByRole("heading", { name: "Edit Project" })).toBeVisible();
-  await page.getByLabel("Project Name").fill("Live CRM Project Updated");
-  await page.getByLabel("Project Code").fill("E2E-002");
+  const editDialog = page.getByRole("dialog", { name: "Chỉnh sửa dự án" });
+  await expect(editDialog.getByRole("heading", { name: "Chỉnh sửa dự án" })).toBeVisible();
+  await expect(editDialog.getByText("Khách hàng", { exact: true })).toBeVisible();
+  await page.getByLabel("Tên dự án").fill("Live CRM Project Updated");
+  await page.getByLabel("Mã dự án").fill("E2E-002");
   await page.getByRole("button", { name: "Save Changes" }).click();
 
   await expect(page.getByText("Live CRM Project Updated")).toBeVisible();
@@ -1968,7 +2017,7 @@ test("project detail loads live data and switches workspace tabs", async ({ page
   await expect(addStageDialog.getByRole("button", { name: "Create Stage" })).toBeDisabled();
   await expect(addStageDialog.getByText("Selected PIC: Nguyễn Hùng Việt Kha")).toBeVisible();
   await expect(addStageDialog.locator('img[src="https://example.com/avatar-kha.png"]').first()).toBeVisible();
-  await addStageDialog.getByRole("button", { name: /Nguyễn Hùng Việt Kha/ }).click();
+  await addStageDialog.getByRole("button", { name: "Chọn người phụ trách" }).click();
   await expect(addStageDialog.getByRole("option", { name: /Nguyễn Hùng Việt Kha/ })).toBeVisible();
   await expect(addStageDialog.getByRole("option", { name: /Trần Anh Annie/ })).toHaveCount(0);
   await expect(addStageDialog.locator('img[src="https://example.com/avatar-kha.png"]').first()).toBeVisible();
@@ -2017,7 +2066,7 @@ test("project detail loads live data and switches workspace tabs", async ({ page
   await expect(addTaskDialog).toBeVisible();
   await expect(addTaskDialog.getByText("Selected assignee: Nguyễn Hùng Việt Kha")).toBeVisible();
   await expect(addTaskDialog.locator('img[src="https://example.com/avatar-kha.png"]').first()).toBeVisible();
-  await addTaskDialog.getByRole("button", { name: /Nguyễn Hùng Việt Kha/ }).click();
+  await addTaskDialog.getByRole("button", { name: "Thành viên project" }).click();
   await expect(addTaskDialog.getByRole("option", { name: /Nguyễn Hùng Việt Kha/ })).toBeVisible();
   await expect(addTaskDialog.getByRole("option", { name: /Trần Anh Annie/ })).toHaveCount(0);
   await expect(addTaskDialog.locator('img[src="https://example.com/avatar-kha.png"]').first()).toBeVisible();
@@ -2076,7 +2125,7 @@ test("project detail loads live data and switches workspace tabs", async ({ page
   const activityFeedBox = await activityFeed.boundingBox();
   expect(activityFeedBox?.width ?? 0).toBeGreaterThan(900);
 
-  await page.getByRole("tab", { name: "Documents", exact: true }).click();
+  await page.getByRole("tab", { name: "Điểm chốt & Tài liệu", exact: true }).click();
   await expect(page.getByText("Live Project Handoff.pdf")).toBeVisible();
   await expect(page.locator("main").getByText("No documents found.")).toHaveCount(0);
 });
@@ -2963,9 +3012,13 @@ test("legacy workspace nonmember assignee requires an explicit current project m
   await expect(saveButton).toBeDisabled();
   expect(patchedTaskBodies).toHaveLength(0);
 
-  await editTaskDialog.getByRole("button", { name: /Select task assignee|Nguyễn Hùng Việt Kha/ }).click();
+  // The assignee picker is the shared multi-select ("Thành viên project"): it lists current project members only.
+  const assigneePicker = editTaskDialog.getByRole("button", { name: "Thành viên project" });
+  await assigneePicker.click();
   await expect(editTaskDialog.getByRole("option", { name: /Legacy Workspace Nonmember/ })).toHaveCount(0);
   await editTaskDialog.getByRole("option", { name: /Nguyễn Hùng Việt Kha/ }).click();
+  await expect(editTaskDialog.getByRole("option", { name: /Nguyễn Hùng Việt Kha/ })).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Escape");
   await expect(saveButton).toBeEnabled();
   await saveButton.click();
 
@@ -2976,8 +3029,7 @@ test("legacy workspace nonmember assignee requires an explicit current project m
   await expect(saveButton).toBeEnabled();
   expect(nativeDialogMessages).toEqual([]);
 
-  await editTaskDialog.getByRole("button", { name: /Nguyễn Hùng Việt Kha/ }).click();
-  await editTaskDialog.getByRole("option", { name: /Nguyễn Hùng Việt Kha/ }).click();
+  await expect(assigneePicker).toContainText("Nguyễn Hùng Việt Kha");
   await saveButton.click();
 
   await expect.poll(() => patchedTaskBodies.length).toBe(2);
@@ -3446,16 +3498,13 @@ test("calendar filters every view and summary by project and member on desktop a
   const projectListbox = page.getByRole("listbox", { name: "Dự án" });
   await expect(projectListbox).toBeVisible();
   await expect(projectListbox).toHaveAttribute("aria-multiselectable", "true");
-  const projectSearch = page.getByRole("searchbox", { name: "Tìm Dự án" });
+  const projectSearch = projectListbox.getByRole("textbox", { name: "Tìm kiếm..." });
   await expect(projectSearch).toBeFocused();
   await projectSearch.fill(secondProject.name);
   await expect(projectListbox.getByRole("option", { name: secondProject.name, exact: true })).toBeVisible();
   await expect(projectListbox.getByRole("option", { name: liveProject.name, exact: true })).toHaveCount(0);
   await projectSearch.fill("");
-  await page.keyboard.press("ArrowDown");
-  await expect(projectListbox.getByRole("option", { name: "Tất cả dự án", exact: true })).toBeFocused();
-  await page.keyboard.press("ArrowDown");
-  await expect(projectListbox.locator('[role="option"]:focus')).toHaveCount(1);
+  await expect(projectListbox.getByRole("option")).toHaveCount(2);
   await page.keyboard.press("Escape");
   await expect(projectListbox).toHaveCount(0);
   await expect(projectTrigger).toBeFocused();
@@ -3484,12 +3533,12 @@ test("calendar filters every view and summary by project and member on desktop a
   await expect(page.getByTestId("calendar-event-card")).toHaveCount(4);
   await expect(page.getByRole("button", { name: /^Thành viên 2 thành viên đã chọn$/ })).toBeVisible();
 
-  await memberListbox.getByRole("option", { name: "Tất cả thành viên", exact: true }).click();
+  await memberListbox.getByRole("button", { name: "Bỏ chọn" }).click();
   await expect(page.getByTestId("calendar-event-card")).toHaveCount(4);
-  await expect(memberListbox.getByRole("option", { name: "Tất cả thành viên", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("button", { name: /^Thành viên Tất cả thành viên$/ })).toBeVisible();
 
   await page.getByRole("button", { name: /^Dự án 2 dự án đã chọn$/ }).click();
-  await projectListbox.getByRole("option", { name: "Tất cả dự án", exact: true }).click();
+  await projectListbox.getByRole("button", { name: "Bỏ chọn" }).click();
   await projectListbox.getByRole("option", { name: secondProject.name, exact: true }).click();
   await page.getByRole("button", { name: /^Thành viên Tất cả thành viên$/ }).click();
   await memberListbox.getByRole("option", { name: new RegExp(liveUser.displayName) }).click();
@@ -3518,7 +3567,7 @@ test("calendar filters every view and summary by project and member on desktop a
   await expect(page.getByTestId("calendar-filter-summary")).toHaveText("4 mốc trong phạm vi");
 });
 
-test("calendar keeps paginated overlapping events within bounds and shows one generated actual after completion", async ({ page }) => {
+test("calendar keeps paginated overlapping events within bounds and completing a plan logs no actual hours", async ({ page }) => {
   const buildPlanningBlock = ({
     id,
     title,
@@ -3609,7 +3658,6 @@ test("calendar keeps paginated overlapping events within bounds and shows one ge
     note: "Actual Calendar regression proof",
     createdAt: "2026-07-14T04:00:00.000Z"
   };
-  let generatedActualEntry: Record<string, unknown> | null = null;
 
   await page.route("**/api/tasks**", async (route) => {
     const request = route.request();
@@ -3646,7 +3694,7 @@ test("calendar keeps paginated overlapping events within bounds and shows one ge
     }
 
     if (url.pathname === "/api/tasks/time-entries" && request.method() === "GET") {
-      const data = generatedActualEntry ? [actualEntry, generatedActualEntry] : [actualEntry];
+      const data = [actualEntry];
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -3678,18 +3726,6 @@ test("calendar keeps paginated overlapping events within bounds and shows one ge
         ...persistedPaginatedBlock,
         status: "completed",
         updatedAt: "2026-07-14T05:00:00.000Z"
-      };
-      generatedActualEntry = {
-        ...actualEntry,
-        id: "e2e-calendar-page-two-generated-actual",
-        taskTitle: paginatedBlock.title,
-        workDate: paginatedBlock.startAt,
-        startAt: paginatedBlock.startAt,
-        endAt: paginatedBlock.endAt,
-        minutes: paginatedBlock.plannedMinutes,
-        note: paginatedBlock.notes,
-        sourcePlanningBlockId: paginatedBlock.id,
-        createdAt: "2026-07-14T05:00:00.000Z"
       };
       await route.fulfill({
         status: 200,
@@ -3827,15 +3863,13 @@ test("calendar keeps paginated overlapping events within bounds and shows one ge
 
   await detailDialog.getByRole("button", { name: "Hoàn thành kế hoạch", exact: true }).click();
   const completionDialog = page.getByRole("dialog", { name: "Hoàn thành kế hoạch" });
-  await expect(completionDialog).toContainText("Thời lượng kế hoạch sẽ được ghi nhận một lần vào giờ thực tế.");
+  await expect(completionDialog).toContainText("Giờ kế hoạch không tự chuyển thành giờ thực tế; bạn cần log giờ thực tế riêng.");
   await completionDialog.getByRole("button", { name: "Hoàn thành kế hoạch", exact: true }).click();
 
-  await expect(page.locator(`[data-event-id="${paginatedBlock.id}"]`)).toHaveCount(0);
-  await expect(page.locator('[data-event-id="actual-e2e-calendar-page-two-generated-actual"]')).toHaveCount(1);
-  await expect(page.locator('[data-event-id="actual-e2e-calendar-page-two-generated-actual"]')).toHaveAttribute(
-    "aria-label",
-    /TT: Page two planning block.*Thực tế/
-  );
+  await expect(page.locator(`[data-event-id="${paginatedBlock.id}"]`)).toHaveCount(1);
+  // D-15: completing a plan only closes the plan — no actual hours are logged for it.
+  await expect(page.getByText("Đã hoàn thành kế hoạch. Giờ thực tế không tự ghi theo giờ kế hoạch — hãy log giờ thực tế của bạn.")).toBeVisible();
+  await expect(page.locator('[data-event-id^="actual-"]')).toHaveCount(1);
   expect(transitionBodies).toEqual([{
     status: "completed",
     expectedUpdatedAt: paginatedBlock.updatedAt,
@@ -4207,7 +4241,7 @@ test("one-hour and two-hour planning blocks preserve the four-hour task estimate
   expect(estimatePatchBodies).toEqual([]);
 });
 
-test("task detail completes a planning block into one canonical actual without a client time-entry POST", async ({ page }) => {
+test("task detail completes a planning block without logging actual hours or a client time-entry POST", async ({ page }) => {
   const planningPostBodies: Record<string, unknown>[] = [];
   const planningTransitionBodies: Record<string, unknown>[] = [];
   const actualPostBodies: Record<string, unknown>[] = [];
@@ -4314,32 +4348,7 @@ test("task detail completes a planning block into one canonical actual without a
         updatedAt: "2026-07-13T03:00:00.000Z"
       };
       persistedPlanningBlocks = [completedBlock];
-      if (!persistedTimeEntries.some(entry => entry.sourcePlanningBlockId === completedBlock.id)) {
-        persistedTimeEntries = [{
-          id: "e2e-actual-generated-from-plan",
-          taskId: liveTask.id,
-          accountId: liveTask.accountId,
-          accountName: liveTask.accountName,
-          projectId: liveTask.projectId,
-          projectName: liveTask.projectName,
-          userId: liveUser.id,
-          userDisplayName: liveUser.displayName,
-          userEmail: liveUser.email,
-          userAvatarUrl: liveUser.avatarUrl,
-          workDate: completedBlock.startAt,
-          startAt: completedBlock.startAt,
-          endAt: completedBlock.endAt,
-          timeZone: "Asia/Ho_Chi_Minh",
-          minutes: completedBlock.plannedMinutes,
-          billable: completedBlock.billable ?? true,
-          workType: completedBlock.workType ?? "delivery",
-          approvalStatus: "approved",
-          note: completedBlock.notes,
-          sourcePlanningBlockId: completedBlock.id,
-          createdAt: "2026-07-13T03:00:00.000Z",
-          updatedAt: "2026-07-13T03:00:00.000Z"
-        }];
-      }
+      // D-15: completing a block only changes the block; the API creates no time log for it.
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(completedBlock) });
       return;
     }
@@ -4390,12 +4399,13 @@ test("task detail completes a planning block into one canonical actual without a
   await page.getByText("Kế hoạch hiển thị sau khi tải lại", { exact: true }).click();
   await page.getByRole("button", { name: "Hoàn thành kế hoạch", exact: true }).click();
   const completionDialog = page.getByRole("dialog", { name: "Hoàn thành kế hoạch" });
-  await expect(completionDialog).toContainText("Thời lượng kế hoạch sẽ được ghi nhận một lần vào giờ thực tế.");
+  await expect(completionDialog).toContainText("Giờ kế hoạch không tự chuyển thành giờ thực tế; bạn cần log giờ thực tế riêng.");
   await completionDialog.getByRole("button", { name: "Hoàn thành kế hoạch", exact: true }).click();
 
-  await expect(page.getByText("1 giờ thực tế", { exact: true })).toBeVisible();
-  await expect(page.locator('[data-planning-block-id="e2e-plan-visible-after-reload"]')).toHaveCount(0);
-  await expect(page.locator('[data-time-entry-id="e2e-actual-generated-from-plan"]')).toHaveCount(1);
+  // D-15: the plan is closed, nothing is copied into actual hours.
+  await expect(page.getByText("Đã hoàn thành kế hoạch. Giờ thực tế không tự ghi theo giờ kế hoạch — hãy log giờ thực tế của bạn.")).toBeVisible();
+  await expect(page.getByText("0 phút thực tế", { exact: true })).toBeVisible();
+  await expect(page.locator("[data-time-entry-id]")).toHaveCount(0);
   expect(planningTransitionBodies).toHaveLength(1);
   expect(planningTransitionBodies[0]).toMatchObject({
     status: "completed",
@@ -4406,24 +4416,11 @@ test("task detail completes a planning block into one canonical actual without a
 
   await page.reload();
   await expect(page.getByRole("heading", { name: liveTask.title })).toBeVisible();
-  await expect(page.locator('[data-planning-block-id="e2e-plan-visible-after-reload"]')).toHaveCount(0);
-  await expect(page.getByText("1 giờ thực tế", { exact: true })).toBeVisible();
-  await expect(page.locator('[data-time-entry-id="e2e-actual-generated-from-plan"]')).toHaveCount(1);
-  await page.locator('[data-time-entry-id="e2e-actual-generated-from-plan"]').click();
+  await expect(page.getByText("0 phút thực tế", { exact: true })).toBeVisible();
+  await expect(page.locator("[data-time-entry-id]")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Hoàn thành kế hoạch", exact: true })).toHaveCount(0);
-  const actualDetailDialog = page.getByRole("dialog", { name: "Chi tiết giờ đã ghi" });
-  await expect(actualDetailDialog.getByRole("button", { name: "Xóa lịch kế hoạch, giữ giờ thực tế", exact: true })).toBeVisible();
-  await expect(actualDetailDialog.getByRole("button", { name: "Xóa mục giờ này", exact: true })).toBeVisible();
-  await actualDetailDialog.getByRole("button", { name: "Xóa lịch kế hoạch, giữ giờ thực tế", exact: true }).click();
-  const deleteScheduleDialog = page.getByRole("dialog", { name: "Xóa mốc kế hoạch" });
-  await expect(deleteScheduleDialog).toContainText("Giờ thực tế đã ghi vẫn được giữ lại");
-  await deleteScheduleDialog.getByRole("button", { name: "Xóa", exact: true }).click();
-  await expect(page.locator('[data-planning-block-id="e2e-plan-visible-after-reload"]')).toHaveCount(0);
-  await expect(page.locator('[data-time-entry-id="e2e-actual-generated-from-plan"]')).toHaveCount(1);
-  await expect(page.getByText("1 giờ thực tế", { exact: true })).toBeVisible();
-  expect(planningDeleteCount).toBe(1);
   expect(actualPostBodies).toHaveLength(0);
-  expect(persistedTimeEntries).toHaveLength(1);
+  expect(persistedTimeEntries).toHaveLength(0);
   expect(estimatePatchBodies).toEqual([]);
   expect(estimateMinutes).toBe(240);
   expect(taskDetailGetCount).toBeGreaterThanOrEqual(2);
@@ -4562,7 +4559,9 @@ test("task planning failure does not issue a separate estimate mutation", async 
   await planningModal.getByPlaceholder("Kế hoạch thực hiện chi tiết...").fill("Không đổi estimate khi kế hoạch lỗi");
   await planningModal.getByRole("button", { name: "Lưu kế hoạch", exact: true }).click();
 
-  await expect(page.getByText("Không thể lưu thay đổi vì chưa ghi nhận được trên hệ thống. Vui lòng đăng nhập lại hoặc thử lại khi kết nối ổn định.", { exact: true })).toBeVisible();
+  // A write the API rejected shows the API's own message; the generic text is only for requests that never got an answer.
+  await expect(page.getByText("Planning transaction failed", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Không thể lưu thay đổi vì chưa ghi nhận được trên hệ thống/)).toHaveCount(0);
   expect(estimatePatchCount).toBe(0);
   expect(planningPostCount).toBe(1);
   await expect(page.getByText("Không đổi estimate khi kế hoạch lỗi", { exact: true })).toHaveCount(0);

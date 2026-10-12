@@ -35,6 +35,8 @@ interface CustomDropdownProps {
   ariaLabel?: string;
   /** Opens a detail surface for an option without changing the selected value. */
   onOptionInfo?: (option: DropdownOption) => void;
+  /** Passed to CrmSelect: menu in a body portal, for dropdowns inside a scrolling dialog body. */
+  menuPortal?: boolean;
 }
 
 interface CustomDatePickerProps {
@@ -46,7 +48,7 @@ interface CustomDatePickerProps {
 
 // ─── CUSTOM DROPDOWN COMPONENT ────────────────────────────────────────────────
 
-export function CustomDropdown({ options, value, onChange, placeholder = "Select option", className = "", ariaLabel, onOptionInfo }: CustomDropdownProps) {
+export function CustomDropdown({ options, value, onChange, placeholder = "Select option", className = "", ariaLabel, onOptionInfo, menuPortal }: CustomDropdownProps) {
   return <CrmSelect
     options={options.map((option) => ({ ...option, color: option.avatarColor ?? option.color }))}
     value={value}
@@ -54,6 +56,7 @@ export function CustomDropdown({ options, value, onChange, placeholder = "Select
     placeholder={placeholder}
     className={className}
     ariaLabel={ariaLabel}
+    menuPortal={menuPortal}
     onOptionInfo={onOptionInfo ? (option) => onOptionInfo(option as DropdownOption) : undefined}
   />;
 }

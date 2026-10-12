@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, UnauthorizedException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
+import { ADMIN_ROLE_CODES } from "@b2b-crm/contracts";
 import type { Prisma, User } from "@prisma/client";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { PrincipalService } from "./principal.service";
@@ -277,7 +278,7 @@ export class NativeAuthService {
   }
   private async assertAdminLocked(tx: Tx, authorization: string | undefined, userId: string, workspaceId: string) {
     await lockWorkspaceAuth(tx, workspaceId);
-    const adminBinding = await tx.roleBinding.findFirst({ where: { userId, workspaceId, user: { status: "ACTIVE" }, workspace: { status: "active" }, role: { code: { in: ["FOUNDER_GM", "WORKSPACE_ADMIN"] } }, startsAt: { lte: new Date() }, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] } });
+    const adminBinding = await tx.roleBinding.findFirst({ where: { userId, workspaceId, user: { status: "ACTIVE" }, workspace: { status: "active" }, role: { code: { in: ADMIN_ROLE_CODES } }, startsAt: { lte: new Date() }, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] } });
     if (!adminBinding) throw new ForbiddenException("Workspace administrator required");
     await this.assertCurrentSession(tx, authorization, userId);
   }

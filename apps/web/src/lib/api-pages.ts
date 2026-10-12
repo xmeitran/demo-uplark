@@ -1,3 +1,5 @@
+import { ApiResponseError } from "./api-error";
+
 type PagedResponse<T> = { data?: T[]; meta?: { pagination?: { hasNextPage?: boolean; offset?: number; returned?: number; total?: number } } };
 
 export const API_PAGE_LIMIT = 100;
@@ -11,7 +13,7 @@ export function remainingPageOffsets(total: number, loaded: number, limit = API_
 
 async function readPage<T>(url: string, signal: AbortSignal | undefined, errorLabel: string): Promise<PagedResponse<T>> {
   const response = await fetch(url, { cache: "no-store", credentials: "same-origin", signal });
-  if (!response.ok) throw new Error(`${errorLabel} (${response.status}).`);
+  if (!response.ok) throw new ApiResponseError(`${errorLabel} (${response.status}).`, response.status);
   return response.json() as Promise<PagedResponse<T>>;
 }
 

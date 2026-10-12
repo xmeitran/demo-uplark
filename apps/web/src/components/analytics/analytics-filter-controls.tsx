@@ -15,7 +15,8 @@ import {
   type AnalyticsPreset,
   type AnalyticsUiState
 } from "@/lib/analytics-url-state";
-import { businessStatusLabel } from "./analytics-copy";
+import { businessProjectStatusLabel, businessStatusLabel } from "./analytics-copy";
+import { projectStatusOrder } from "@/lib/project-status";
 
 const PRESET_OPTIONS: Array<{ id: Exclude<AnalyticsPreset, "custom">; label: string }> = [
   { id: "7d", label: "7 ngày gần nhất" },
@@ -134,11 +135,11 @@ export function AnalyticsFilterControls({ state, summary, onChange, onReset, onE
       <AppliedMultiSelect immediate={inline} label="Phòng ban" options={options?.departments ?? []} selected={state.departmentIds} onApply={(departmentIds) => onChange({ departmentIds })} />
       <AppliedMultiSelect immediate={inline} label="Nhóm" options={options?.teams ?? []} selected={state.teamIds} onApply={(teamIds) => onChange({ teamIds })} />
       <AppliedMultiSelect immediate={inline} label="Nhân sự" options={options?.users ?? []} selected={state.userIds} onApply={(userIds) => onChange({ userIds })} />
-      <AppliedMultiSelect immediate={inline} label="Trạng thái dự án" options={options?.projectStatuses ?? []} selected={state.projectStatuses} onApply={(projectStatuses) => onChange({ projectStatuses })} mapLabel={businessStatusLabel} />
+      <AppliedMultiSelect immediate={inline} label="Trạng thái dự án" options={[...(options?.projectStatuses ?? [])].sort((a, b) => projectStatusOrder(a.id) - projectStatusOrder(b.id))} selected={state.projectStatuses} onApply={(projectStatuses) => onChange({ projectStatuses })} mapLabel={businessProjectStatusLabel} />
       <AppliedMultiSelect immediate={inline} label="Trạng thái công việc" options={options?.taskStatuses ?? []} selected={state.taskStatuses} onApply={(taskStatuses) => onChange({ taskStatuses })} mapLabel={businessStatusLabel} />
       <AppliedMultiSelect immediate={inline} label="Loại công việc" options={options?.workTypes ?? []} selected={state.workTypes} onApply={(workTypes) => onChange({ workTypes })} mapLabel={businessStatusLabel} />
-      <AppliedMultiSelect immediate={inline} label="Task Type · Nhóm" options={options?.taskTypeLayer1 ?? []} selected={state.taskTypeLayer1Ids} onApply={(taskTypeLayer1Ids) => onChange({ taskTypeLayer1Ids })} />
-      <AppliedMultiSelect immediate={inline} label="Task Type · Bối cảnh" options={options?.taskTypeLayer2 ?? []} selected={state.taskTypeLayer2Ids} onApply={(taskTypeLayer2Ids) => onChange({ taskTypeLayer2Ids })} />
+      <AppliedMultiSelect immediate={inline} label="Lớp 1 · Vai trò đóng góp" options={options?.taskTypeLayer1 ?? []} selected={state.taskTypeLayer1Ids} onApply={(taskTypeLayer1Ids) => onChange({ taskTypeLayer1Ids })} />
+      <AppliedMultiSelect immediate={inline} label="Lớp 2 · Bối cảnh công việc" options={options?.taskTypeLayer2 ?? []} selected={state.taskTypeLayer2Ids} onApply={(taskTypeLayer2Ids) => onChange({ taskTypeLayer2Ids })} />
       <FilterField label="Loại giờ">
         <CrmSelect ariaLabel="Loại giờ" options={BILLABLE_OPTIONS} value={state.billable} onChange={(billable) => onChange({ billable: billable as AnalyticsUiState["billable"] })} />
       </FilterField>

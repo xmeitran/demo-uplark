@@ -91,7 +91,6 @@ export const workTypeLabels: Record<string, string> = {
   training: "Đào tạo",
   support: "Hỗ trợ",
   blueprint: "Thiết kế giải pháp",
-  meeting: "Họp",
   billable_delivery: "Triển khai tính phí",
   non_billable_delivery: "Triển khai không tính phí",
   rework: "Làm lại",

@@ -377,7 +377,7 @@ export function ResourceMgmtFunctionPage({
                         </div>
                         <span>{consultant.role}</span>
                         <small>{consultant.email ?? "Chưa có email"}</small>
-                        {utilization.onHoldHours > 0 ? <small>{utilization.onHoldHours}h giải phóng từ Project On Hold</small> : null}
+                        {utilization.onHoldHours > 0 ? <small>{utilization.onHoldHours}h giải phóng từ Project Tạm dừng</small> : null}
                         <div className="resource-member-tags">
                           <span>{consultant.larkOpenId ? "Đã đồng bộ" : "Chưa có định danh"}</span>
                           <span>{formatDays(utilization.allocated)}d / {formatDays(utilization.available)}d</span>
@@ -446,7 +446,7 @@ export function ResourceMgmtFunctionPage({
                       <div key={week} style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
                         <span className="font-mono tabular-nums" style={{ fontSize: "13px", fontWeight: 650, color: "var(--text)" }}>{formatDays(allocated)}d / {formatDays(available)}d</span>
                         <span className="font-mono tabular-nums" style={{ fontSize: "11px", color: "var(--text-muted)" }}>({percentage}%)</span>
-                        {onHoldHours > 0 ? <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{onHoldHours}h giải phóng từ Project On Hold</span> : null}
+                        {onHoldHours > 0 ? <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{onHoldHours}h giải phóng từ Project Tạm dừng</span> : null}
                         <div style={{ marginTop: "3px" }}>
                           <s-badge tone={tone}>{statusText}</s-badge>
                         </div>

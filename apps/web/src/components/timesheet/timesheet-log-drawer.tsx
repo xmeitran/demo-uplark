@@ -4,7 +4,6 @@ import { PersonLink } from "@/components/person-link";
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  Banknote,
   Briefcase,
   Building2,
   CalendarDays,
@@ -12,7 +11,6 @@ import {
   Ellipsis,
   ExternalLink,
   FileText,
-  GraduationCap,
   LifeBuoy,
   Users
 } from "lucide-react";
@@ -27,6 +25,8 @@ import {
 } from "./timesheet-types";
 import { Avatar, Drawer, EmptyState, Pagination, usePagination } from "./timesheet-ui";
 import { formatDepartmentLabel } from "@/lib/department-labels";
+import { BEFORE_EIGHT_HOUR_RULE_LABEL, ON_HOLD_LOG_REVIEW_LABEL } from "@/lib/time-entry-actual";
+import { LAYER2_MISMATCH_LABEL } from "@/lib/task-classification";
 
 export interface LogDrawerRequest {
   title: string;
@@ -40,11 +40,9 @@ type IconType = React.ComponentType<{ className?: string }>;
 
 const WORK_GROUP_ICONS: Record<WorkGroup, IconType> = {
   customer_project: Briefcase,
-  internal_project: Building2,
   ticket_maintenance: LifeBuoy,
-  meeting: Users,
-  training: GraduationCap,
-  other: Ellipsis
+  internal_project: Building2,
+  unclassified: Ellipsis
 };
 
 /**
@@ -200,11 +198,14 @@ export function LogDrawer({
                                 <GroupIcon className="h-3 w-3" aria-hidden />
                                 {WORK_GROUP_LABELS[entry.workGroup]}
                               </span>
-                              {entry.billable ? (
-                                <span className="inline-flex items-center gap-1 text-success">
-                                  <Banknote className="h-3 w-3" aria-hidden />
-                                  Tính phí
-                                </span>
+                              {entry.layer2Mismatch ? (
+                                <span className="inline-flex items-center gap-1 font-semibold text-warning">{LAYER2_MISMATCH_LABEL}</span>
+                              ) : null}
+                              {entry.loggedWhileOnHold ? (
+                                <span className="inline-flex items-center gap-1 font-semibold text-warning">{ON_HOLD_LOG_REVIEW_LABEL}</span>
+                              ) : null}
+                              {entry.beforeEightHourRule ? (
+                                <span className="inline-flex items-center gap-1 text-muted-foreground" title="Ngày này có hơn 8 giờ và được ghi trước ngày áp dụng quy tắc 8 giờ: giữ nguyên, không cắt giờ.">{BEFORE_EIGHT_HOUR_RULE_LABEL}</span>
                               ) : null}
                               <span className="ml-auto text-[10px] font-semibold text-primary">{expanded ? "Thu gọn" : "Xem chi tiết →"}</span>
                             </div>
@@ -259,8 +260,8 @@ function TimeLogDetail({
     <div className="border-t border-border bg-muted/20 px-4 pb-4 pt-3" role="region" aria-label="Chi tiết time log">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <DetailMetric label="Thời lượng" value={formatHours(log.minutes)} tone="primary" />
-        <DetailMetric label="Nhóm việc" value={WORK_GROUP_LABELS[log.workGroup]} />
-        <DetailMetric label="Tính phí" value={log.billable ? "Có" : "Không"} />
+        <DetailMetric label="Bối cảnh công việc" value={WORK_GROUP_LABELS[log.workGroup]} />
+        <DetailMetric label="Lớp 2 người ghi chọn" value={log.selectedLayer2Label ? `${log.selectedLayer2Label}${log.layer2Mismatch ? ` · ${LAYER2_MISMATCH_LABEL}` : ""}` : "—"} />
         <DetailMetric label="Ngày ghi nhận" value={formatDate(log.date)} />
       </div>
 

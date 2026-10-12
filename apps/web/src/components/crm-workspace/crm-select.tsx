@@ -1,8 +1,10 @@
 "use client";
 
 import React, { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, Info, Search } from "lucide-react";
 import { ShopifyIcon, type ShopifyIconName } from "../shopify-ui";
+import { portalMenuStyle } from "./crm-select-position";
 
 export type CrmSelectOption = {
   value: string;
@@ -28,6 +30,8 @@ export type CrmSelectProps = {
   onChange: (value: string) => void;
   disabled?: boolean;
   openDirection?: "up" | "down";
+  /** Renders the menu in a body portal with fixed positioning, for triggers inside a scrolling dialog body that would clip it. */
+  menuPortal?: boolean;
   searchable?: boolean;
   searchPlaceholder?: string;
   placeholder?: string;
@@ -109,6 +113,7 @@ export function CrmSelect({
   onChange,
   disabled = false,
   openDirection = "down",
+  menuPortal = false,
   searchable = false,
   searchPlaceholder = "Tìm kiếm...",
   placeholder = "Chọn một lựa chọn",
@@ -123,6 +128,8 @@ export function CrmSelect({
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);
   const selectedOption = options.find((option) => option.value === value);
   const filteredOptions = searchable && query.trim()
     ? options.filter((option) => `${option.label} ${optionText(option) ?? ""}`.toLocaleLowerCase("vi").includes(query.trim().toLocaleLowerCase("vi")))
@@ -135,7 +142,7 @@ export function CrmSelect({
     }
 
     const onPointerDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      if (!rootRef.current?.contains(event.target as Node) && !menuRef.current?.contains(event.target as Node)) setOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -152,42 +159,36 @@ export function CrmSelect({
     };
   }, [open]);
 
-  return (
-    <div ref={rootRef} className={`task-select-control relative min-w-0 ${className}`}>
-      {label ? <span className="task-field-label text-slate-400 text-[10px] font-bold block mb-1" id={`${controlId}-label`}>{label}</span> : null}
-      <button
-        ref={triggerRef}
-        aria-label={ariaLabel}
-        aria-controls={listboxId}
-        aria-disabled={disabled}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        aria-labelledby={label ? `${controlId}-label ${controlId}-value` : undefined}
-        className={`task-select-trigger ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
-        data-open={open ? "true" : "false"}
-        disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
-        type="button"
-      >
-        <span className="task-select-current min-w-0" id={`${controlId}-value`}>
-          {selectedOption ? renderOption ? renderOption(selectedOption, "trigger") : <>
-            {optionIcon(selectedOption, "trigger")}
-            <span className="min-w-0">
-                <span className="task-select-value block truncate">{selectedOption.label}</span>
-                {optionText(selectedOption) ? <span className="block truncate text-[10px] font-normal text-slate-400">{optionText(selectedOption)}</span> : null}
-            </span>
-          </> : <span className="task-select-value text-slate-400">{placeholder}</span>}
-        </span>
-        <ShopifyIcon className="task-select-chevron" name="chevron-down" size={14} />
-      </button>
+  useEffect(() => {
+    if (!open || !menuPortal) {
+      setMenuStyle(null);
+      return;
+    }
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setMenuStyle(portalMenuStyle(rect, window.innerHeight, openDirection));
+    // The menu does not follow its trigger: any outside scroll or a resize closes it.
+    const onScroll = (event: Event) => {
+      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onResize = () => setOpen(false);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [open, menuPortal, openDirection]);
 
-      {open ? (
+  const menu = open && (!menuPortal || menuStyle) ? (
         <div
+          ref={menuRef}
           aria-labelledby={label ? `${controlId}-label` : undefined}
-          className={`task-select-menu ${openDirection === "up" ? "bottom-[calc(100%+6px)]" : "top-[calc(100%+6px)]"}`}
+          className={`task-select-menu ${menuPortal ? "" : openDirection === "up" ? "bottom-[calc(100%+6px)]" : "top-[calc(100%+6px)]"}`}
           data-direction={openDirection}
           id={listboxId}
           role="listbox"
+          style={menuPortal ? menuStyle ?? undefined : undefined}
         >
           {searchable ? (
             <div className="relative mb-1 border-b border-slate-100 px-1 pb-2">
@@ -221,7 +222,38 @@ export function CrmSelect({
             );
           }) : <p className="px-3 py-3 text-center text-xs text-slate-400">Không có lựa chọn</p>}
         </div>
-      ) : null}
+      ) : null;
+
+  return (
+    <div ref={rootRef} className={`task-select-control relative min-w-0 ${className}`}>
+      {label ? <span className="task-field-label text-slate-400 text-[10px] font-bold block mb-1" id={`${controlId}-label`}>{label}</span> : null}
+      <button
+        ref={triggerRef}
+        aria-label={ariaLabel}
+        aria-controls={listboxId}
+        aria-disabled={disabled}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-labelledby={label ? `${controlId}-label ${controlId}-value` : undefined}
+        className={`task-select-trigger ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
+        data-open={open ? "true" : "false"}
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+        type="button"
+      >
+        <span className="task-select-current min-w-0" id={`${controlId}-value`}>
+          {selectedOption ? renderOption ? renderOption(selectedOption, "trigger") : <>
+            {optionIcon(selectedOption, "trigger")}
+            <span className="min-w-0">
+                <span className="task-select-value block truncate">{selectedOption.label}</span>
+                {optionText(selectedOption) ? <span className="block truncate text-[10px] font-normal text-slate-400">{optionText(selectedOption)}</span> : null}
+            </span>
+          </> : <span className="task-select-value text-slate-400">{placeholder}</span>}
+        </span>
+        <ShopifyIcon className="task-select-chevron" name="chevron-down" size={14} />
+      </button>
+
+      {menuPortal ? (menu ? createPortal(menu, document.body) : null) : menu}
     </div>
   );
 }

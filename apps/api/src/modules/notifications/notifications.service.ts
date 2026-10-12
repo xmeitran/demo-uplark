@@ -8,9 +8,10 @@ import type {
 } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { activeMembershipWhere } from "../identity-access/active-membership";
-import { canApproveMilestoneReviewer, isWorkspaceAdmin, normalizeMilestoneReviewerMode } from "../delivery-handoff/milestone-reviewer";
+import { canApproveMilestoneReviewer, isWorkspaceAdmin, normalizeMilestoneReviewerMode, WORKSPACE_ADMIN_ROLE_CODES } from "../delivery-handoff/milestone-reviewer";
 
-const APPROVER_ROLES = ["FOUNDER_GM", "WORKSPACE_ADMIN"];
+// Role bindings store the role actually held: PM / Dx Director / BD Lead are Admin accounts without a WORKSPACE_ADMIN binding.
+const APPROVER_ROLES = [...WORKSPACE_ADMIN_ROLE_CODES];
 
 function appPublicOrigin() {
   return (process.env.PUBLIC_APP_URL ?? process.env.CRM_AUTH_PUBLIC_ORIGIN ?? "http://localhost:3000").replace(/\/$/, "");
@@ -147,6 +148,30 @@ export class NotificationsService {
         actedAt: null,
         data
       }
+    });
+  }
+
+  /** Issue-log events other than "you are the owner": new record for the PM, resolution to confirm, escalation (in-app only). */
+  async notifyIssueLogEvent(input: { workspaceId: string; recipientUserIds: string[]; projectId: string; riskId: string; event: string; title: string; body: string }) {
+    const href = `/projects/${encodeURIComponent(input.projectId)}?tab=Issues&issueId=${encodeURIComponent(input.riskId)}`;
+    for (const recipientUserId of input.recipientUserIds) {
+      const dedupeKey = `issue-log:${input.riskId}:${input.event}:${recipientUserId}`;
+      const content = { title: input.title, body: input.body, href, data: { projectId: input.projectId, riskId: input.riskId, event: input.event } };
+      await this.prisma.appNotification.upsert({
+        where: { dedupeKey },
+        create: { workspaceId: input.workspaceId, recipientUserId, kind: "project_risk_owner", entityType: "project_risk", entityId: input.riskId, status: "pending", dedupeKey, ...content },
+        update: { ...content, status: "pending", readAt: null, actedAt: null }
+      });
+    }
+  }
+
+  /** 7.5 / V-37: one merged project-warning message of a daily scan, for one recipient (alerts/alert-scan.ts). */
+  async notifyProjectWarnings(input: { workspaceId: string; recipientUserId: string; dedupeKey: string; title: string; body: string; href: string; warningId: string; data: Prisma.InputJsonValue }) {
+    const { warningId, ...content } = input;
+    return this.prisma.appNotification.upsert({
+      where: { dedupeKey: input.dedupeKey },
+      create: { ...content, kind: "project_warning", entityType: "project_warning", entityId: warningId, status: "pending" },
+      update: {}
     });
   }
 

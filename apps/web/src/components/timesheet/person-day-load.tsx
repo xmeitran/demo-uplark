@@ -21,6 +21,7 @@ import {
 } from "./timesheet-types";
 import { Avatar, EmptyState, Pagination, Pill, SectionCard, TableScroll, Td, Th, usePagination } from "./timesheet-ui";
 import type { LogDrawerRequest } from "./timesheet-log-drawer";
+import { LAYER2_MISMATCH_LABEL } from "@/lib/task-classification";
 
 const PEOPLE_PAGE_SIZE = 8;
 const WEEKDAY_SHORT = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
@@ -284,7 +285,7 @@ function DayDetailCard({
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
               <span className="text-muted-foreground">{WORK_GROUP_LABELS[entry.workGroup]}</span>
-              {entry.billable ? <span className="text-success">· tính phí</span> : null}
+              {entry.layer2Mismatch ? <span className="font-semibold text-warning">· {LAYER2_MISMATCH_LABEL}</span> : null}
             </div>
           </li>
         ))}
