@@ -1,28 +1,30 @@
 /**
- * Baselines B0 / B1 (rules 6.3: D-19, D-20, D-21). Pure: no database access; persistence is in baseline.service.ts.
+ * Baseline (rules 6.3: D-19, D-20, D-21; v2, chốt 13/10). Pure: no database access; persistence is in baseline.service.ts.
  *
- * D-20: "Baseline có hai lớp: B0 thương mại (phạm vi và giá đã ký) và B1 triển khai (milestone, timeline, giờ dự kiến
- * đã khóa). Yêu cầu thay đổi được duyệt sinh phiên bản mới; phiên bản cũ giữ để đối soát."
- *   B0 = the contract line items: code, name, source, type, value, estimate gốc.
- *   B1 = milestones (name, order), stages (order, planned start/end, SLA) and top-level tasks (dates, estimate, line item).
- *        Sub-tasks are not baselined: they are the staff's own planning under a task (V-03, D-19).
- * 8.1, G1: "estimate gốc khóa thành B0 và B1" — both layers get version 1 when G1 passes.
+ * D-20: "Baseline gồm milestone, timeline và giờ dự kiến, khóa tại G1. Thay đổi kế hoạch sau khi khóa được duyệt (D-21)
+ * thì sinh phiên bản mới; phiên bản cũ giữ để đối soát." — the plan only:
+ *   milestones (name, order), stages (order, planned start/end, SLA) and top-level tasks (dates, estimate).
+ *   Sub-tasks are not baselined: they are the staff's own planning under a task (V-03, D-19).
+ * Stored under layer code "B1" (BASELINE_LAYER). Rows of the retired commercial layer "B0" are left in place, unread.
  */
-import type { BaselineDiffEntry, BaselineLayer, BaselineSnapshot } from "@b2b-crm/contracts";
+import type { BaselineDiffEntry, BaselineSnapshot } from "@b2b-crm/contracts";
+
+/** The one stored layer: the plan. */
+export const BASELINE_LAYER = "B1";
 
 type Row = Record<string, unknown> & { id: string };
 
 const FIELD_LABELS: Record<string, string> = {
-  code: "Mã", name: "Tên", kind: "Nguồn", contractType: "Loại hợp đồng", valueAmount: "Giá trị", currency: "Tiền tệ", estimateMinutes: "Giờ dự kiến (phút)",
+  name: "Tên", estimateMinutes: "Giờ dự kiến (phút)",
   sortOrder: "Thứ tự", milestoneId: "Milestone", plannedStartAt: "Ngày bắt đầu", plannedEndAt: "Ngày kết thúc", slaDays: "SLA (ngày làm việc)",
-  title: "Tên", stageId: "Stage", dueAt: "Hạn hoàn thành", contractItemId: "Hạng mục"
+  title: "Tên", stageId: "Stage", dueAt: "Hạn hoàn thành"
 };
-const COLLECTIONS: ReadonlyArray<[keyof BaselineSnapshot, BaselineDiffEntry["entity"]]> = [["lineItems", "lineItem"], ["milestones", "milestone"], ["stages", "stage"], ["tasks", "task"]];
+const COLLECTIONS: ReadonlyArray<[keyof BaselineSnapshot, BaselineDiffEntry["entity"]]> = [["milestones", "milestone"], ["stages", "stage"], ["tasks", "task"]];
 
 const scalar = (value: unknown): string | number | null => (value === undefined || value === null ? null : typeof value === "number" ? value : String(value));
 const rowName = (row: Row) => String(row.name ?? row.title ?? row.code ?? row.id);
 
-/** What changed between two versions of one layer: added, removed and changed rows with before/after per field. */
+/** What changed between two versions: added, removed and changed rows with before/after per field. */
 export function diffBaselines(previous: BaselineSnapshot | null | undefined, next: BaselineSnapshot): BaselineDiffEntry[] {
   const entries: BaselineDiffEntry[] = [];
   for (const [key, entity] of COLLECTIONS) {
@@ -32,7 +34,7 @@ export function diffBaselines(previous: BaselineSnapshot | null | undefined, nex
       const old = before.get(id);
       if (!old) { entries.push({ entity, id, name: rowName(row), change: "added" }); continue; }
       // A task's title and the display order are labels, not baselined values: renaming or reordering is not a baseline change.
-      const fields = Object.keys(row).filter((field) => field !== "id" && !(entity !== "lineItem" && (field === "title" || field === "sortOrder")) && scalar(row[field]) !== scalar(old[field]))
+      const fields = Object.keys(row).filter((field) => field !== "id" && field !== "title" && field !== "sortOrder" && scalar(row[field]) !== scalar(old[field]))
         .map((field) => ({ field: FIELD_LABELS[field] ?? field, before: scalar(old[field]), after: scalar(row[field]) }));
       if (fields.length) entries.push({ entity, id, name: rowName(row), change: "changed", fields });
     }
@@ -41,19 +43,14 @@ export function diffBaselines(previous: BaselineSnapshot | null | undefined, nex
   return entries;
 }
 
-export function baselineTotals(layer: BaselineLayer, snapshot: BaselineSnapshot) {
-  const sum = (rows: ReadonlyArray<{ estimateMinutes?: number | null }> = []) => rows.reduce((total, row) => total + (row.estimateMinutes ?? 0), 0);
-  if (layer === "B0") {
-    const items = snapshot.lineItems ?? [];
-    return { lineItems: items.length, valueAmount: items.reduce((total, item) => total + (item.valueAmount ?? 0), 0), estimateMinutes: sum(items) };
-  }
-  return { tasks: snapshot.tasks?.length ?? 0, estimateMinutes: sum(snapshot.tasks) };
+export function baselineTotals(snapshot: BaselineSnapshot) {
+  return { tasks: snapshot.tasks?.length ?? 0, estimateMinutes: (snapshot.tasks ?? []).reduce((total, row) => total + (row.estimateMinutes ?? 0), 0) };
 }
 
-/** D-21: after B1 is locked a change of timeline or estimated hours needs an Admin (PM or Dx Director). */
-export function baselineChangeBlocker(input: { b1Locked: boolean; isApprover: boolean }): string | null {
-  if (!input.b1Locked || input.isApprover) return null;
-  return "Baseline B1 đã khóa: đổi timeline hoặc giờ dự kiến phải được Admin (PM hoặc Dx Director) duyệt (D-21). Hãy gửi yêu cầu thay đổi timeline của task, hoặc nhờ PM gia hạn stage.";
+/** D-21: after the baseline is locked a change of timeline or estimated hours needs an Admin (PM or Dx Director). */
+export function baselineChangeBlocker(input: { locked: boolean; isApprover: boolean }): string | null {
+  if (!input.locked || input.isApprover) return null;
+  return "Baseline đã khóa: đổi timeline hoặc giờ dự kiến phải được Admin (PM hoặc Dx Director) duyệt (D-21). Hãy gửi yêu cầu thay đổi timeline của task, hoặc nhờ PM gia hạn stage.";
 }
 
 export interface EstimateFinding {
@@ -64,25 +61,13 @@ export interface EstimateFinding {
 }
 
 /**
- * D-19, level Ghi nhận (record and remind the PM, never block):
- *  - "Giờ dự kiến của task lấy từ estimate gốc của hạng mục": the top-level tasks of a line item together may not
- *    plan more hours than the item's estimate gốc;
- *  - "Tổng giờ dự kiến các sub-task vượt giờ của task": the sub-tasks of a task together against the task.
- * An item or task without an estimate (0 / null) has nothing to compare against.
+ * D-19, level Ghi nhận (record and remind the PM, never block): "Giờ dự kiến của task đặt trong khung milestone (D-37).
+ * Tổng giờ dự kiến các sub-task vượt giờ của task thì ghi nhận và nhắc PM" — the sub-tasks of a task together against
+ * the task's own estimate. A task without an estimate (0 / null) has nothing to compare against.
  */
-export function estimateFindings(
-  items: ReadonlyArray<{ id: string; code: string; name: string; estimateMinutes: number | null }>,
-  tasks: ReadonlyArray<{ id: string; title: string; parentTaskId: string | null; contractItemId: string | null; estimateMinutes: number }>
-): EstimateFinding[] {
+export function estimateFindings(tasks: ReadonlyArray<{ id: string; title: string; parentTaskId: string | null; estimateMinutes: number }>): EstimateFinding[] {
   const hours = (minutes: number) => `${Math.round((minutes / 60) * 10) / 10} giờ`;
   const findings: EstimateFinding[] = [];
-  for (const item of items) {
-    if (!item.estimateMinutes) continue;
-    const planned = tasks.filter((task) => !task.parentTaskId && task.contractItemId === item.id).reduce((total, task) => total + task.estimateMinutes, 0);
-    if (planned > item.estimateMinutes) {
-      findings.push({ dedupeKey: `D-19:item:${item.id}`, title: `Giờ dự kiến các task vượt estimate gốc của hạng mục ${item.code}`, detail: `Hạng mục "${item.name}": các task dự kiến ${hours(planned)}, estimate gốc ${hours(item.estimateMinutes)}.` });
-    }
-  }
   for (const task of tasks) {
     if (task.parentTaskId || !task.estimateMinutes) continue;
     const planned = tasks.filter((child) => child.parentTaskId === task.id).reduce((total, child) => total + child.estimateMinutes, 0);

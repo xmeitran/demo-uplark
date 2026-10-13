@@ -38,7 +38,7 @@ import { isLayer2Mismatch, isTaskTypeLayer2, isValidTaskTypePair, LAYER2_MISMATC
 import { closeProjectWarnings, openOrRefreshProjectWarning } from "./project-warnings";
 import type { UpdateTaskTimeEntryLayer2Input } from "@b2b-crm/contracts";
 import { isGatePassed } from "./gates";
-import { TIME_REVIEW_ROLE_CODES, workspaceDayOffMessage, taskPlanningBlockInclude, taskTimeEntryInclude, optionalEnum } from "./projects.shared";
+import { TIME_REVIEW_ROLE_CODES, dayCapMessage, workspaceDayOffMessage, taskPlanningBlockInclude, taskTimeEntryInclude, optionalEnum } from "./projects.shared";
 import { ProjectPermissionsService } from "./project-permissions.service";
 
 
@@ -104,7 +104,7 @@ export class TimeEntriesService {
     const startAt = optionalDate(query.startAt, "startAt") ?? defaultStart;
     const endAt = optionalDate(query.endAt, "endAt") ?? defaultEnd;
     if (endAt <= startAt) {
-      throw new BadRequestException("endAt must be after startAt");
+      throw new BadRequestException("Giờ kết thúc phải sau giờ bắt đầu.");
     }
     assertRangeWithinLimit(startAt, endAt, "Planning calendar range");
 
@@ -159,17 +159,17 @@ export class TimeEntriesService {
       throw new BadRequestException("startAt and endAt are required");
     }
     if (endAt <= startAt) {
-      throw new BadRequestException("endAt must be after startAt");
+      throw new BadRequestException("Giờ kết thúc phải sau giờ bắt đầu.");
     }
 
     const diffMinutes = Math.round((endAt.getTime() - startAt.getTime()) / 60000);
     const plannedMinutes = optionalInteger(input.plannedMinutes, "plannedMinutes") ?? diffMinutes;
     if (plannedMinutes <= 0) {
-      throw new BadRequestException("plannedMinutes must be greater than 0");
+      throw new BadRequestException("Số phút kế hoạch phải lớn hơn 0.");
     }
     const standardDayMinutes = await this.standardDayMinutes(this.prisma, principal.workspaceId);
     if (plannedMinutes > standardDayMinutes) {
-      throw new BadRequestException(`Daily plan cannot exceed ${Math.round(standardDayMinutes / 6) / 10} hours; create a separate approved overtime plan`);
+      throw new BadRequestException(this.dayCapMessage(standardDayMinutes, "plan", 0));
     }
     const workType = optionalString(input.workType, "workType") ?? "delivery";
     if (workType.length > 80) {
@@ -202,7 +202,7 @@ export class TimeEntriesService {
         : { _sum: { plannedMinutes: 0 } };
       const planCapMinutes = await this.standardDayCapMinutes(tx, principal.workspaceId, userId, planningDay.localDate);
       if ((plannedToday._sum.plannedMinutes ?? 0) + plannedMinutes > planCapMinutes) {
-        throw new ConflictException(this.dayCapMessage(planCapMinutes, "plan", "use a separate approved overtime plan"));
+        throw new ConflictException(this.dayCapMessage(planCapMinutes, "plan", plannedToday._sum.plannedMinutes ?? 0));
       }
       const created = await tx.taskPlanningBlock.create({
         data: {
@@ -387,7 +387,7 @@ export class TimeEntriesService {
     const startAt = optionalDate(query.startAt, "startAt") ?? defaultStart;
     const endAt = optionalDate(query.endAt, "endAt") ?? defaultEnd;
     if (endAt <= startAt) {
-      throw new BadRequestException("endAt must be after startAt");
+      throw new BadRequestException("Giờ kết thúc phải sau giờ bắt đầu.");
     }
     assertRangeWithinLimit(startAt, endAt, "Actual work calendar range");
 
@@ -562,14 +562,14 @@ export class TimeEntriesService {
       throw new BadRequestException("userId is required");
     }
     if (userId !== principal.subjectId && !principal.roleCodes.some((roleCode) => TIME_REVIEW_ROLE_CODES.has(roleCode))) {
-      throw new ForbiddenException("Only Founder/GM or Delivery Lead can log time for another user");
+      throw new ForbiddenException("Bạn chỉ ghi giờ cho chính mình. Ghi giờ hộ người khác cần quyền Founder/GM, Workspace Admin hoặc Delivery Lead.");
     }
 
     const inputStartAt = optionalDate(input.startAt, "startAt");
     const inputEndAt = optionalDate(input.endAt, "endAt");
     let minutes = optionalInteger(input.minutes, "minutes") ?? 0;
     if (minutes <= 0) {
-      throw new BadRequestException("minutes must be greater than 0");
+      throw new BadRequestException("Số phút ghi nhận phải lớn hơn 0.");
     }
     let startAt = inputStartAt;
     let endAt = inputEndAt;
@@ -580,7 +580,7 @@ export class TimeEntriesService {
     }
     if (startAt && endAt) {
       if (endAt <= startAt) {
-        throw new BadRequestException("endAt must be after startAt");
+        throw new BadRequestException("Giờ kết thúc phải sau giờ bắt đầu.");
       }
       minutes = Math.round((endAt.getTime() - startAt.getTime()) / 60000);
       if (minutes <= 0) {
@@ -590,7 +590,7 @@ export class TimeEntriesService {
     // D-10: a time log without a day is not saved; the server never fills in "now".
     const workDate = startAt ?? optionalDate(input.workDate, "workDate");
     if (!workDate) {
-      throw new BadRequestException("workDate is required");
+      throw new BadRequestException("Hãy chọn ngày làm việc cho giờ log.");
     }
     const timeZone = optionalString(input.timeZone, "timeZone") ?? DEFAULT_TIME_ENTRY_TIME_ZONE;
     if (timeZone.length > 80) {
@@ -720,7 +720,7 @@ export class TimeEntriesService {
         const startMinutes = startLocal.hour * 60 + startLocal.minute;
         const endMinutes = endLocal.hour * 60 + endLocal.minute;
         if (startMinutes < 7 * 60 || endMinutes > 19 * 60 || endMinutes <= startMinutes) {
-          throw new BadRequestException("Time entry window must be within 07:00–19:00 and end after start");
+          throw new BadRequestException("Khung giờ ghi nhận phải nằm trong 07:00–19:00 của cùng một ngày và giờ kết thúc phải sau giờ bắt đầu.");
         }
       } catch (error) {
         if (error instanceof BadRequestException) throw error;
@@ -790,7 +790,7 @@ export class TimeEntriesService {
     // D-13: standard hours per person per day across all projects. D-14: overtime is its own hour type and never counts here.
     const dayCapMinutes = await this.standardDayCapMinutes(tx, principal.workspaceId, userId, dailyLogWindow.localDate);
     if (minutes > dayCapMinutes) {
-      throw new BadRequestException(this.dayCapMessage(dayCapMinutes, "log", "log approved overtime separately"));
+      throw new BadRequestException(this.dayCapMessage(dayCapMinutes, "log", 0));
     }
     // Serialize the per-user/day write before reading the current total. Without
     // this lock, two concurrent entries can both observe the same remaining
@@ -811,7 +811,7 @@ export class TimeEntriesService {
     }) : { _sum: { minutes: 0, overtimeMinutes: 0 } };
     const standardMinutesLogged = (dailyMinutes._sum.minutes ?? 0) - (dailyMinutes._sum.overtimeMinutes ?? 0);
     if (standardMinutesLogged + minutes > dayCapMinutes) {
-      throw new ConflictException(this.dayCapMessage(dayCapMinutes, "log", "create an approved overtime plan for the remainder"));
+      throw new ConflictException(this.dayCapMessage(dayCapMinutes, "log", standardMinutesLogged));
     }
 
     const taskEstimateMinutes = Math.max(0, Number(task.estimateMinutes ?? 0));
@@ -868,7 +868,6 @@ export class TimeEntriesService {
         taskTypeLayer1: task.taskTypeLayer1,
         taskTypeLayer2: task.taskTypeLayer2,
         selectedTaskTypeLayer2: entry.selectedTaskTypeLayer2 ?? undefined,
-        contractItemId: task.contractItemId ?? undefined,
         loggedWhileOnHold,
         approvalStatus: entry.approvalStatus,
         note,
@@ -973,9 +972,8 @@ export class TimeEntriesService {
   }
 
   /** Why a plan or a log does not fit the day: approved full-day leave has its own message; otherwise the day's standard hours. */
-  private dayCapMessage(capMinutes: number, kind: "plan" | "log", advice: string) {
-    if (capMinutes === 0) return `Ngày này đã có đơn nghỉ phép cả ngày được duyệt nên không ${kind === "plan" ? "lập kế hoạch" : "ghi giờ"} hành chính được.`;
-    return `Daily ${kind} cannot exceed ${Math.round(capMinutes / 6) / 10} office hours; ${advice}`;
+  private dayCapMessage(capMinutes: number, kind: "plan" | "log", usedMinutes: number) {
+    return dayCapMessage(capMinutes, kind, usedMinutes);
   }
 
   private assertCanMaterializePlanningActual(userId: string, principal: PrincipalContext) {
@@ -983,7 +981,7 @@ export class TimeEntriesService {
       return;
     }
     if (!principal.roleCodes.some((roleCode) => TIME_REVIEW_ROLE_CODES.has(roleCode))) {
-      throw new ForbiddenException("Only Founder/GM or Delivery Lead can complete planning for another user");
+      throw new ForbiddenException("Chỉ người được lập kế hoạch, Founder/GM, Workspace Admin hoặc Delivery Lead mới được hoàn thành kế hoạch của người khác.");
     }
   }
 
@@ -992,7 +990,7 @@ export class TimeEntriesService {
       return;
     }
     if (!principal.roleCodes.some((roleCode) => TIME_REVIEW_ROLE_CODES.has(roleCode))) {
-      throw new ForbiddenException("Only the planning owner, Founder/GM, or Delivery Lead can delete this planning block");
+      throw new ForbiddenException("Chỉ người được lập kế hoạch, Founder/GM, Workspace Admin hoặc Delivery Lead mới được xóa khối kế hoạch này.");
     }
   }
 

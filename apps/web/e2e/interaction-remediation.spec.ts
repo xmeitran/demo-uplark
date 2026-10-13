@@ -376,7 +376,7 @@ test.describe("interaction audit remediation", () => {
     await command.fill("clients");
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/\/clients$/);
-    await expect(page.getByRole("heading", { name: "Client Accounts" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Khách hàng", exact: true })).toBeVisible();
 
     const notifications = page.getByRole("button", { name: "Notifications" });
     await notifications.click();
@@ -503,11 +503,20 @@ test.describe("interaction audit remediation", () => {
     await expect(page.getByText("Create New Project", { exact: true })).toBeVisible();
 
     await page.getByPlaceholder("e.g. Mobile App Redesign").fill("All Fields QA Project");
-    // The create form carries no money and no status: budget lives in the project's P&L setup, a new project starts at "Lên kế hoạch".
+    // The create form carries no money and no status: Giá trị dự án is entered on the project's P&L screen, a new project starts at "Lên kế hoạch".
     await expect(page.getByPlaceholder("e.g. 50000")).toHaveCount(0);
     await page.getByLabel("Không tính vào số tổng P&L").check();
     await page.getByPlaceholder("Describe the scope, objectives, and deliverables of this project...").fill("All visible create fields must survive the request contract.");
     await page.getByPlaceholder("e.g. Core, Design, Marketing").fill("Audit, Persistence");
+
+    // V-01: Loại dự án is required — without it the form does not submit.
+    await page.getByRole("button", { name: "Create Project", exact: true }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "Chọn Loại dự án: Khách hàng, Nội bộ hoặc Đào tạo." })).toBeVisible();
+    expect(submitted).toBeNull();
+    const typeField = page.getByText("Loại dự án *", { exact: true }).locator("..");
+    await typeField.getByRole("button").click();
+    await expect(page.getByRole("option")).toHaveText(["Khách hàng", "Nội bộ", "Đào tạo"]);
+    await page.getByRole("option", { name: "Khách hàng", exact: true }).click();
 
     const priorityField = page.getByText("Priority", { exact: true }).locator("..");
     await priorityField.getByRole("button").click();
@@ -522,6 +531,7 @@ test.describe("interaction audit remediation", () => {
     expect(submittedPayload).toMatchObject({
       accountId: account.id,
       name: "All Fields QA Project",
+      projectType: "delivery",
       ownerUserId: workspaceUser.id,
       memberUserIds: [workspaceUser.id],
       isTestProject: true,

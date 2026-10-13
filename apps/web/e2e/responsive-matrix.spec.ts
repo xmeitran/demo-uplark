@@ -150,12 +150,12 @@ const routeSurfaces: RouteSurface[] = [
   {
     name: "users",
     path: "/users",
-    ready: (page) => page.getByRole("heading", { name: "Team Members" })
+    ready: (page) => page.getByRole("heading", { name: "Nhân sự", exact: true })
   },
   {
     name: "clients",
     path: "/clients",
-    ready: (page) => page.getByRole("heading", { name: "Client Accounts" })
+    ready: (page) => page.getByRole("heading", { name: "Khách hàng", exact: true })
   },
   {
     name: "calendar",
@@ -437,19 +437,6 @@ async function installResponsiveApi(page: Page) {
     }
     if (path === "/api/workspace/day-offs" || path === "/api/milestone-templates" || path === `/api/tasks/${task.id}/history`) {
       await fulfillJson(route, listResponse([]));
-      return;
-    }
-    if (path === `/api/pnl/projects/${project.id}/setup`) {
-      await fulfillJson(route, {
-        data: {
-          projectId: project.id, projectName: project.name, accountName: account.name,
-          contract: { totalAmount: null, fixedPriceAmount: null, hourlyCeilingAmount: null, status: "draft", statusLabel: "Nháp", signedOn: null, baseValuesReadOnly: false, collectedAmount: null, collectedInstallments: 0, installmentCount: 0 },
-          items: [],
-          baseline: { g1Approved: false, g1ApprovedOn: null, firstInstallmentPaid: false, rootItemReady: false, blockers: [] },
-          template: { key: "customer", name: "Khách hàng", disabledCodes: [], override: null }
-        },
-        meta: { generatedAt: "2026-07-15T08:00:00.000Z", currency: "VND", moneyVisible: true, canEdit: true, canApprove: true, canExport: true }
-      });
       return;
     }
 

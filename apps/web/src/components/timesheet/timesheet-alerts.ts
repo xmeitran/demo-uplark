@@ -1,5 +1,5 @@
-import { isWorkingDay, monthOf } from "./timesheet-dates";
-import { buildProjectSummaries, peopleInScope, type TimesheetFilters } from "./timesheet-selectors";
+import { isWorkingDay, monthBounds } from "./timesheet-dates";
+import { buildProjectSummaries, peopleInScope, selectedProjectIds, type TimesheetFilters } from "./timesheet-selectors";
 import type { TimeLog, TimesheetDataset } from "./timesheet-types";
 
 export type TimesheetAlertTone = "danger" | "warning" | "info";
@@ -19,14 +19,18 @@ export interface TimesheetAlert {
  * the viewed period contains today and today is a working day.
  */
 export function buildTimesheetAlerts(dataset: TimesheetDataset, logs: TimeLog[], today: string, filters: TimesheetFilters): TimesheetAlert[] {
-  const summaries = buildProjectSummaries(dataset, logs, today).filter((row) => filters.projectId === "all" || row.project.id === filters.projectId);
+  const projectIds = selectedProjectIds(filters);
+  const summaries = buildProjectSummaries(dataset, logs, today).filter((row) => projectIds.length === 0 || projectIds.includes(row.project.id));
   const overdueTasks = summaries.reduce((total, row) => total + row.overdueTaskCount, 0);
   const blockedTasks = summaries.reduce((total, row) => total + row.blockedTaskCount, 0);
   // All-time actual vs all-time estimate (see buildProjectSummaries), not the period's hours.
   const overPlanProjects = summaries.filter((row) => row.risk === "over").length;
   // Anyone with an entry today has logged, whatever project/work-group filter narrows `logs`.
   const loggedToday = new Set(dataset.logs.filter((log) => log.date === today).map((log) => log.personId));
-  const todayInPeriod = monthOf(today) === filters.month && isWorkingDay(today, dataset.holidays);
+  const monthRange = monthBounds(filters.month);
+  const periodStart = filters.dateFrom || monthRange.start;
+  const periodEnd = filters.dateTo || monthRange.end;
+  const todayInPeriod = today >= periodStart && today <= periodEnd && isWorkingDay(today, dataset.holidays);
   const missingPeople = todayInPeriod ? peopleInScope(dataset, filters).filter((person) => !loggedToday.has(person.id)).length : 0;
 
   const alerts: TimesheetAlert[] = [];

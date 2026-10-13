@@ -2,7 +2,7 @@
  * Cây khoản mục (PL-20, PL-21, mục 6.2) and Mẫu khoản mục (PL-22, mục 6.6). Pure.
  * One tree for the workspace, one currency. Every cost group a screen shows is generated from it.
  */
-import type { PnlCostItemMethod, PnlFormulaToken } from "@b2b-crm/contracts";
+import { INTERNAL_WORKLOG_PROJECT_TYPE, projectKindOf, type PnlCostItemMethod, type PnlFormulaToken } from "@b2b-crm/contracts";
 import { ROLE_GROUP_LABELS, type RoleGroup } from "./pnl-rules";
 
 export interface CostItemDef {
@@ -97,12 +97,11 @@ export const DEFAULT_ITEM_TEMPLATES: ItemTemplateDef[] = [
   { key: "training", name: "Đào tạo", disabledCodes: INTERNAL_DISABLED, consumable: true }
 ];
 
-/** Project.projectType → template key. Anything that is not an internal or training project is a customer project. */
+/** Project.projectType (Loại dự án) → template key: Khách hàng, Nội bộ (the fixed worklog project too) or Đào tạo. */
 export function templateKeyOfProjectType(projectType: unknown): string {
-  const kind = String(projectType ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
-  if (kind === "internal" || kind === "internal_worklog" || kind === "noi_bo") return "internal";
-  if (kind === "training" || kind === "dao_tao") return "training";
-  return "customer";
+  const kind = projectKindOf(projectType);
+  if (kind === "internal" || kind === INTERNAL_WORKLOG_PROJECT_TYPE) return "internal";
+  return kind === "training" ? "training" : "customer";
 }
 
 /** A code is off when it, or any ancestor, is switched off. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  HOLDING_STAGE_KEY, LEGACY_STAGE_KEYS, ROOT_ITEM_REF, milestoneKey, planFrameworkConversion, templateStageKeyFor,
+  HOLDING_STAGE_KEY, LEGACY_STAGE_KEYS, milestoneKey, planFrameworkConversion, templateStageKeyFor,
   type FrameworkConversionPlan, type FrameworkOperation, type FrameworkSnapshot
 } from "./framework-conversion";
 import { LEGACY_NAME_MAP, TPL_001_KEY } from "./legacy-conversion";
@@ -11,10 +11,10 @@ type Task = FrameworkSnapshot["tasks"][number];
 const stage = (id: string, milestoneId: string, activity: string, extra: Partial<Stage> = {}): Stage =>
   ({ id, milestoneId, stageKey: id, activity, status: "not_started", sortOrder: 10, taskTypeLayer1: null, afterPnlClose: null, slaDays: null, loggedMinutes: 0, ...extra });
 const task = (id: string, stageId: string | null, extra: Partial<Task> = {}): Task =>
-  ({ id, stageId, parentTaskId: null, status: "todo", archivedAt: null, taskTypeLayer1: null, contractItemId: null, ...extra });
+  ({ id, stageId, parentTaskId: null, status: "todo", archivedAt: null, taskTypeLayer1: null, ...extra });
 const snapshot = (input: Partial<FrameworkSnapshot> & { status?: string }): FrameworkSnapshot => ({
   project: { id: "p1", code: "P-1", name: "Dự án A", status: input.status ?? "in_progress", projectType: "delivery", milestoneTemplateKey: null },
-  milestones: [], stages: [], gates: [], contractItems: [], tasks: [], ...input
+  milestones: [], stages: [], gates: [], tasks: [], ...input
 });
 const ops = <T extends FrameworkOperation["type"]>(plan: FrameworkConversionPlan, type: T) => plan.operations.filter((operation): operation is Extract<FrameworkOperation, { type: T }> => operation.type === type);
 
@@ -42,13 +42,8 @@ function applied(before: FrameworkSnapshot, plan: FrameworkConversionPlan): Fram
     } else if (operation.type === "create_gate") next.gates.push({ stageId: stageId(operation.stageKey), code: operation.code });
     else if (operation.type === "set_template_key") next.project.milestoneTemplateKey = operation.templateKey;
     else if (operation.type === "set_project_status") next.project.status = operation.to;
-    else if (operation.type === "create_root_contract_item") next.contractItems.push({ id: "root-created", kind: "ROOT", status: "active", sortOrder: 10 });
     else if (operation.type === "move_task") next.tasks.find((item) => item.id === operation.taskId)!.stageId = stageId(operation.toStageKey);
-    else if (operation.type === "classify_task") {
-      const row = next.tasks.find((item) => item.id === operation.taskId)!;
-      if (operation.taskTypeLayer1) row.taskTypeLayer1 = operation.taskTypeLayer1;
-      if (operation.contractItemId) row.contractItemId = operation.contractItemId === ROOT_ITEM_REF ? "root-created" : operation.contractItemId;
-    }
+    else if (operation.type === "classify_task") next.tasks.find((item) => item.id === operation.taskId)!.taskTypeLayer1 = operation.taskTypeLayer1;
   }
   return next;
 }
@@ -67,14 +62,13 @@ const milestone2 = snapshot({
     stage("c", "m2", "Thiết kế giải pháp Lark", { status: "completed" }), stage("d", "m2", "[BUILD] Quy trình nghỉ việc", { status: "in_progress", sortOrder: 20 }),
     stage("e", "m2", "Feature Build: báo cáo", { sortOrder: 30 }), stage("f", "m2", "Việc phát sinh", { sortOrder: 40 })
   ],
-  tasks: [task("t1", "d"), task("t2", "d", { status: "done" }), task("t3", "f"), task("t4", "a", { taskTypeLayer1: "PM", contractItemId: "x" })]
+  tasks: [task("t1", "d"), task("t2", "d", { status: "done" }), task("t3", "f"), task("t4", "a", { taskTypeLayer1: "PM" })]
 });
 
 const milestone34 = snapshot({
   milestones: [{ id: "m3", name: "Triển khai, nghiệm thu, vận hành", normalizedKey: "old-3", sortOrder: 30 }],
   stages: [stage("on", "m3", "Onboarding", { status: "in_progress", taskTypeLayer1: "DELIVERY" }), stage("nt", "m3", "Nghiệm thu", { sortOrder: 20 })],
-  contractItems: [{ id: "root", kind: "ROOT", status: "active", sortOrder: 10 }],
-  tasks: [task("t1", "on"), task("t2", "nt"), task("t2a", null, { parentTaskId: "t2" }), task("t3", "on", { status: "completed" }), task("t4", "on", { taskTypeLayer1: "DELIVERY", contractItemId: "root" })]
+  tasks: [task("t1", "on"), task("t2", "nt"), task("t2a", null, { parentTaskId: "t2" }), task("t3", "on", { status: "completed" }), task("t4", "on", { taskTypeLayer1: "DELIVERY" })]
 });
 
 describe("planFrameworkConversion (table 9.1)", () => {
@@ -91,17 +85,16 @@ describe("planFrameworkConversion (table 9.1)", () => {
   it("chưa qua G1: creates TPL-001, re-homes tasks, parks unmapped ones, retires the old framework in place", () => {
     const plan = planFrameworkConversion(beforeG1);
     expect(plan.position).toBe("before_g1");
-    expect(plan.totals).toMatchObject({ milestonesCreated: 4, stagesCreated: 11, gatesCreated: 8, milestonesRetired: 2, stagesRetired: 3, tasksRehomed: 3, tasksToHolding: 2, contractItemsCreated: 1 });
+    expect(plan.totals).toMatchObject({ milestonesCreated: 4, stagesCreated: 11, gatesCreated: 8, milestonesRetired: 2, stagesRetired: 3, tasksRehomed: 3, tasksToHolding: 2, tasksClassified: 2 });
+    expect(JSON.stringify(plan.operations)).not.toMatch(/contractItem/i); // v2 13/10: no contract line item is created or assigned
     expect(ops(plan, "move_task").map((operation) => [operation.taskId, operation.toStageKey])).toEqual([["t1", "intake"], ["t2", "intake"], ["t3", HOLDING_STAGE_KEY], ["t3a", HOLDING_STAGE_KEY], ["t4", "intake"]]);
     expect(ops(plan, "create_stage").filter((operation) => operation.started).map((operation) => operation.stageKey)).toEqual(["intake"]);
     expect(ops(plan, "create_gate").every((operation) => !operation.passed)).toBe(true);
     expect(ops(plan, "set_template_key")).toEqual([{ type: "set_template_key", templateKey: TPL_001_KEY }]);
     // Open tasks: Layer 1 of the stage they land in; the parked ones wait for the PM. Closed t4 is not classified.
     expect(ops(plan, "classify_task")).toEqual([
-      { type: "classify_task", taskId: "t1", taskTypeLayer1: "PRE_SALE", contractItemId: ROOT_ITEM_REF },
-      { type: "classify_task", taskId: "t2", taskTypeLayer1: "PRE_SALE", contractItemId: ROOT_ITEM_REF },
-      { type: "classify_task", taskId: "t3", contractItemId: ROOT_ITEM_REF },
-      { type: "classify_task", taskId: "t3a", contractItemId: ROOT_ITEM_REF }
+      { type: "classify_task", taskId: "t1", taskTypeLayer1: "PRE_SALE" },
+      { type: "classify_task", taskId: "t2", taskTypeLayer1: "PRE_SALE" }
     ]);
     expect(plan.steps.join(" ")).toContain("Chờ xếp stage");
     // Framework operations come before anything that needs the new stages.
@@ -110,34 +103,34 @@ describe("planFrameworkConversion (table 9.1)", () => {
     expect(order.lastIndexOf("create_stage")).toBeLessThan(order.indexOf("create_gate"));
   });
 
-  it("Milestone 2: maps milestones and stages in place, creates their gates, root item and classification of open tasks", () => {
+  it("Milestone 2: maps milestones and stages in place, creates their gates and the classification of open tasks", () => {
     const plan = planFrameworkConversion(milestone2);
     expect(plan.position).toBe("milestone_2");
-    expect(plan.totals).toMatchObject({ milestonesCreated: 0, stagesCreated: 0, milestonesRetired: 0, tasksRehomed: 0, milestonesMapped: 2, stagesMapped: 4, contractItemsCreated: 1 });
+    expect(plan.totals).toMatchObject({ milestonesCreated: 0, stagesCreated: 0, milestonesRetired: 0, tasksRehomed: 0, milestonesMapped: 2, stagesMapped: 4 });
     expect(ops(plan, "map_stage").map((operation) => [operation.stageId, operation.stageKey])).toEqual([["a", "intake"], ["b", "validate"], ["c", "design"], ["d", "build"]]);
     expect(ops(plan, "map_stage")[3]).toMatchObject({ taskTypeLayer1: "DELIVERY", afterPnlClose: false, slaDays: 5 });
     expect(ops(plan, "map_milestone").map((operation) => operation.normalizedKey)).toEqual(["nhận brief & kick-off dự án", "xây dựng hệ thống"]);
     // G1 and G2 stand before the stage being worked on (build): passed. G3 is build's own gate: open.
     expect(ops(plan, "create_gate").map((operation) => [operation.code, operation.passed])).toEqual([["G1", true], ["G2", true], ["G3", false]]);
     expect(ops(plan, "classify_task")).toEqual([
-      { type: "classify_task", taskId: "t1", taskTypeLayer1: "DELIVERY", contractItemId: ROOT_ITEM_REF },
+      { type: "classify_task", taskId: "t1", taskTypeLayer1: "DELIVERY" },
       // 9.2: a stage whose own name says nothing takes its milestone's Layer 1.
-      { type: "classify_task", taskId: "t3", taskTypeLayer1: "DELIVERY", contractItemId: ROOT_ITEM_REF }
+      { type: "classify_task", taskId: "t3", taskTypeLayer1: "DELIVERY" }
     ]);
     // "Feature Build" is a second Build stage and "Việc phát sinh" maps to nothing: both stay as they are.
     expect(plan.notes.join(" ")).toContain("Feature Build: báo cáo; Việc phát sinh");
   });
 
-  it("Milestone 3–4: keeps the framework; only root item, classification of open tasks and the status code", () => {
+  it("Milestone 3–4: keeps the framework; only the classification of open tasks and the status code", () => {
     const plan = planFrameworkConversion(milestone34);
     expect(plan.position).toBe("milestone_3_4");
     expect(plan.operations).toEqual([
-      { type: "classify_task", taskId: "t1", taskTypeLayer1: "DELIVERY", contractItemId: "root" },
-      { type: "classify_task", taskId: "t2", taskTypeLayer1: "PM", contractItemId: "root" },
-      { type: "classify_task", taskId: "t2a", taskTypeLayer1: "PM", contractItemId: "root" },
+      { type: "classify_task", taskId: "t1", taskTypeLayer1: "DELIVERY" },
+      { type: "classify_task", taskId: "t2", taskTypeLayer1: "PM" },
+      { type: "classify_task", taskId: "t2a", taskTypeLayer1: "PM" },
       { type: "set_project_status", from: "in_progress", to: "active" }
     ]);
-    expect(plan.totals).toMatchObject({ tasksClassified: 3, statusesChanged: 1, contractItemsCreated: 0, gatesCreated: 0 });
+    expect(plan.totals).toMatchObject({ tasksClassified: 3, statusesChanged: 1, gatesCreated: 0 });
   });
 
   it("không xác định: reports, plans nothing — until the PM's answer is passed", () => {
@@ -146,7 +139,7 @@ describe("planFrameworkConversion (table 9.1)", () => {
     expect(plan).toMatchObject({ position: "unknown", operations: [], steps: [] });
     expect(plan.notes).toHaveLength(1);
     expect(planFrameworkConversion(snapshot({})).position).toBe("unknown");
-    expect(planFrameworkConversion(unknown, { position: "milestone_3_4" }).totals).toMatchObject({ contractItemsCreated: 1, tasksClassified: 1 });
+    expect(planFrameworkConversion(unknown, { position: "milestone_3_4" }).totals).toMatchObject({ tasksClassified: 0, statusesChanged: 1 });
   });
 
   it("leaves completed projects and the internal worklog alone", () => {
@@ -162,8 +155,7 @@ describe("planFrameworkConversion (table 9.1)", () => {
       milestones: PILOT_PROJECT_MILESTONE_TEMPLATE.map((milestone, index) => ({ id: `m${index + 1}`, name: milestone.name, normalizedKey: milestoneKey(milestone.name), sortOrder: milestone.sortOrder })),
       stages,
       gates: stages.flatMap((item) => { const code = (PILOT_PROJECT_MILESTONE_TEMPLATE.flatMap((milestone) => milestone.stages as readonly any[]).find((row) => row.stageKey === item.stageKey)).gateCode; return code ? [{ stageId: item.id, code }] : []; }),
-      contractItems: [{ id: "root", kind: "ROOT", status: "active", sortOrder: 10 }],
-      tasks: [task("t", "intake", { taskTypeLayer1: "PRE_SALE", contractItemId: "root" })]
+      tasks: [task("t", "intake", { taskTypeLayer1: "PRE_SALE" })]
     }));
     expect(plan).toMatchObject({ position: "before_g1", operations: [], steps: [] });
   });

@@ -73,16 +73,15 @@ describe("issue log codes", () => {
     // Cancelling keeps the row and its code; the next record gets the next number.
     await transitionIssueLogRecord(context(prisma, admin), project, await prisma.projectRisk.findFirst({ where: { id: second.id } }), { action: "cancel", note: "Nhập nhầm" });
     expect((await create("issue", { actualImpact: "Trễ" })).code).toBe("ISS-003");
-    expect(await nextIssueLogCode(prisma, "prj-other", "change_request")).toBe("CR-001");
+    expect(await nextIssueLogCode(prisma, "prj-other", "risk")).toBe("RSK-001");
   });
 
   it("gives a reclassified record a new code of its new type and keeps the old one in its history", async () => {
     const prisma = fakePrisma();
     const record = await createIssueLogRecord(context(prisma), project, { type: "issue", description: "Khách muốn thêm báo cáo", extension: { actualImpact: "Chưa rõ" } } as any);
-    const moved = await transitionIssueLogRecord(context(prisma), project, record, { action: "reclassify", targetType: "change_request", extension: { requesterName: "Chị Lan", intakeChannel: "email", changeReason: "Thêm báo cáo" } });
-    expect(moved).toMatchObject({ code: "CR-001", type: "change_request", status: "assessing", crStep: "CR-02" });
-    expect(moved.stepDueAt).toBeInstanceOf(Date);
-    expect(moved.events.at(-1).note).toContain("ISS-001 → CR-001");
+    const moved = await transitionIssueLogRecord(context(prisma), project, record, { action: "reclassify", targetType: "risk", extension: { likelihood: "High" } });
+    expect(moved).toMatchObject({ code: "RSK-001", type: "risk", status: "pending" });
+    expect(moved.events.at(-1).note).toContain("ISS-001 → RSK-001");
   });
 });
 
@@ -97,16 +96,13 @@ describe("issue log create and edit", () => {
     expect(prisma.events[0]).toMatchObject({ action: "created", toStatus: "pending", actorUserId: "usr-member" });
   });
 
-  it("starts a change request at CR-01 with a one-working-day classification deadline and hides commercial fields from members", async () => {
+  it("no longer takes a change request, and a stored one is read-only and unlisted by the warning refresh", async () => {
     const prisma = fakePrisma();
-    const now = new Date("2026-10-09T03:00:00.000Z");
-    const record = await createIssueLogRecord(context(prisma, pm, { now }), project, { type: "change_request", description: "Thêm báo cáo", extension: { requesterName: "Chị Lan", intakeChannel: "email", changeReason: "Mở rộng", feeOption: "T&M" } } as any);
-    expect(record).toMatchObject({ code: "CR-001", status: "new", crStep: "CR-01" });
-    expect(record.stepDueAt.toISOString()).toBe("2026-10-12T16:59:59.999Z");
-    expect(record.extension.initialReceiver).toBe("PM");
-    expect(openKeys(prisma)).toEqual([]);
-    expect(mapIssueLogRecord(record, pm).extension.feeOption).toBe("T&M");
-    expect(mapIssueLogRecord(record, member)).toMatchObject({ commercialHidden: true, extension: expect.not.objectContaining({ feeOption: expect.anything() }) });
+    await expect(createIssueLogRecord(context(prisma), project, { type: "change_request", description: "Thêm báo cáo", extension: { requesterName: "Chị Lan" } } as any)).rejects.toThrow(/Blocker, Risk hoặc Issue/);
+    expect(prisma.risks).toEqual([]);
+    const legacy = { id: "risk-old", workspaceId: "twk-1", projectId: "prj-1", code: "CR-001", type: "change_request", status: "assessing", severity: "medium", extension: {}, createdAt: new Date(), closedAt: null, events: [] };
+    expect(mapIssueLogRecord(legacy, admin)).toMatchObject({ allowedActions: [], canEdit: false });
+    await expect(transitionIssueLogRecord(context(prisma, admin), project, legacy, { action: "cancel", note: "x" })).rejects.toThrow();
   });
 
   it("refuses a direct status edit and records field edits in the history", async () => {
@@ -151,19 +147,6 @@ describe("issue log warnings", () => {
     expect(resolved.status).toBe("resolved");
     expect(openKeys(prisma)).toEqual([]);
     expect(prisma.warnings.every((warning: any) => warning.closeReason?.includes("Đã xử lý"))).toBe(true);
-  });
-
-  it("raises YC-01 for the overdue step and closes it when the request moves on", async () => {
-    const prisma = fakePrisma();
-    const intake = new Date("2026-10-05T03:00:00.000Z");
-    const record = await createIssueLogRecord(context(prisma, pm, { now: intake }), project, { type: "change_request", description: "x", extension: { requesterName: "A", intakeChannel: "email", changeReason: "B" } } as any);
-    await syncIssueLogWarnings(prisma, record, null, new Date("2026-10-08T03:00:00.000Z"));
-    expect(openKeys(prisma)).toEqual(["YC-01:risk-1:CR-01"]);
-    const assessing = await transitionIssueLogRecord(context(prisma, pm, { now: new Date("2026-10-08T03:00:00.000Z") }), project, record, { action: "advance" });
-    // Still the intake deadline: the overdue warning follows the record to CR-02.
-    expect(openKeys(prisma)).toEqual(["YC-01:risk-1:CR-02"]);
-    await transitionIssueLogRecord(context(prisma, pm, { now: new Date("2026-10-08T04:00:00.000Z") }), project, assessing, { action: "advance", extension: { baselineRef: "B1" } });
-    expect(openKeys(prisma)).toEqual([]);
   });
 
   it("notifies the PM of a new record and the leaders of an escalation (in-app)", async () => {

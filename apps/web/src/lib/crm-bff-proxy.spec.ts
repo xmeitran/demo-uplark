@@ -262,3 +262,32 @@ it("preserves project creation receipts through the BFF", async () => {
   await proxyCrmBffJson({ request: new Request("http://web.local/api/projects", { headers: { "Idempotency-Key": "same-retry-key" } }), path: "/projects", method: "POST", body: { name: "Project" }, fetcher, getSessionToken: () => "session" });
   expect(new Headers(fetcher.mock.calls[0][1]?.headers).get("Idempotency-Key")).toBe("same-retry-key");
 });
+
+describe("API unavailable (asleep, restarting, deploying)", () => {
+  const call = (fetcher: typeof fetch) => proxyCrmBffJson({
+    request: new Request("http://web.local/api/tasks"),
+    apiBaseUrl: "http://api.local",
+    path: "/tasks",
+    method: "POST",
+    body: { title: "New task" },
+    fetcher,
+    getSessionToken: () => "session-token"
+  });
+
+  it("answers 503 with a clear message when the API cannot be reached", async () => {
+    const response = await call(vi.fn<typeof fetch>().mockRejectedValue(new TypeError("fetch failed")));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: "API_UNAVAILABLE", message: expect.stringContaining("Máy chủ đang khởi động lại") });
+  });
+
+  it("replaces a gateway's HTML page (502/503/504) with the same message and keeps the status", async () => {
+    const response = await call(vi.fn<typeof fetch>().mockResolvedValue(new Response("<html>Bad Gateway</html>", { status: 502, headers: { "content-type": "text/html" } })));
+    expect(response.status).toBe(502);
+    expect((await response.json()).message).toContain("Máy chủ đang khởi động lại");
+  });
+
+  it("keeps a JSON answer the API wrote itself", async () => {
+    const response = await call(vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ message: "Đang bảo trì" }), { status: 503, headers: { "content-type": "application/json" } })));
+    expect(await response.json()).toEqual({ message: "Đang bảo trì" });
+  });
+});

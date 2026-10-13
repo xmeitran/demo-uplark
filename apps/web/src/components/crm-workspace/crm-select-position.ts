@@ -11,3 +11,17 @@ export function portalMenuStyle(rect: { top: number; bottom: number; left: numbe
   const base: CSSProperties = { position: "fixed", left: rect.left, width: rect.width, zIndex: 4000 };
   return up ? { ...base, top: "auto", bottom: viewportHeight - rect.top + PORTAL_MENU_GAP } : { ...base, top: rect.bottom + PORTAL_MENU_GAP, bottom: "auto" };
 }
+
+const POPOVER_MARGIN = 8;
+
+/**
+ * Fixed position of a portalled popover of a known size: under its trigger, above it when only
+ * that side fits, and always shifted back inside the viewport.
+ */
+export function portalPopoverStyle(rect: { top: number; bottom: number; left: number }, size: { width: number; height: number }, viewport: { width: number; height: number }): CSSProperties {
+  const fitsBelow = rect.bottom + PORTAL_MENU_GAP + size.height + POPOVER_MARGIN <= viewport.height;
+  const fitsAbove = rect.top - PORTAL_MENU_GAP - size.height >= POPOVER_MARGIN;
+  const top = fitsBelow || !fitsAbove ? rect.bottom + PORTAL_MENU_GAP : rect.top - PORTAL_MENU_GAP - size.height;
+  const clamp = (value: number, max: number) => Math.max(POPOVER_MARGIN, Math.min(value, max - POPOVER_MARGIN));
+  return { position: "fixed", zIndex: 4000, left: clamp(rect.left, viewport.width - size.width), top: clamp(top, viewport.height - size.height) };
+}

@@ -41,5 +41,5 @@ const PROJECT_SETUP_EDIT_ROLES = new Set(["PM", "FOUNDER_GM", "WORKSPACE_ADMIN"]
 export const canEditProjectSetup = (principal: PrincipalContext) => (principal.heldRoleCodes ?? principal.roleCodes).some((role) => PROJECT_SETUP_EDIT_ROLES.has(role));
 
 export function assertProjectSetupEdit(principal: PrincipalContext) {
-  if (!canEditProjectSetup(principal)) throw new ForbiddenException("Thiết lập P&L của dự án do PM sửa (Founder/GM, Workspace Admin cũng sửa được); Admin khác chỉ xem.");
+  if (!canEditProjectSetup(principal)) throw new ForbiddenException("Giá trị dự án và thiết lập P&L của dự án do PM sửa (Founder/GM, Workspace Admin cũng sửa được); Admin khác chỉ xem.");
 }

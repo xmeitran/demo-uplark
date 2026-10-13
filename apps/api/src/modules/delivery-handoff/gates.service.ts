@@ -21,13 +21,14 @@ import {
 } from "@b2b-crm/contracts";
 import { getStoredParameter } from "../../shared/system-parameters";
 import { addWorkspaceWorkingDays, loadDayOffKeys } from "../../shared/working-days";
-import { allowedGateActions, blockingGateForStage, canGrantGateException, g7PendingCheck, gateDefinition, gateHooks, gateDocumentTicks, gatePassedAt, gateRequirements, isGatePassed, planGateAction, runGateHooks, stageBlockedMessage, type GateFacts } from "./gates";
+import { allowedGateActions, blockingGateForStage, canGrantGateException, g7PendingCheck, gateDefinition, gateHooks, gateDocumentTicks, gatePassedAt, gateRequirements, isGatePassed, planGateAction, projectGatePosition, runGateHooks, stageBlockedMessage, type GateFacts } from "./gates";
 import { countsTowardProjectAtRisk } from "./issue-log";
 import { createIssueLogRecord, type IssueLogContext } from "./issue-log.service";
 import { normalizeProjectStatus } from "./project-status";
 import { loadStageExtensions, stageExtensionState } from "./stage-extension";
 import { customerWaitWorkingDays, stageSlaState } from "./stage-sla";
 import { CUSTOMER_BLOCKER_REASON, CUSTOMER_WAIT_REASON, isProgressBlockingCustomerBlocker, canDecideStatusProposal, computeProjectStatus, planStatusSync, statusProposalLabel, type ProjectStatusFacts } from "./status-proposal";
+import { isCustomerProjectType } from "./task-classification";
 import { CLOSED_WORK_STATUSES } from "./task-status";
 
 const DAY_MS = 86_400_000;
@@ -70,8 +71,8 @@ async function orderedStages(client: any, workspaceId: string, projectId: string
     select: { id: true, activity: true, stageKey: true, status: true, milestoneId: true, sortOrder: true, slaDays: true, slaPausedAt: true, customerWaitDays: true, actualStartAt: true, plannedStartAt: true, actualEndAt: true, changeRequestId: true,
       milestone: { select: { id: true, name: true, sortOrder: true } } }
   });
-  // V-40: the stage of a change request is outside the gate sequence — it never blocks a gate, its open tasks are
-  // not counted, and it keeps running (time can be logged in it) after its milestone passed its gate.
+  // Old data: a stage a change request created before 13/10/2026 (changeRequestId set) stays outside the gate
+  // sequence — it never blocks a gate, its open tasks are not counted, and time can still be logged in it.
   return stages.filter((stage: any) => !stage.changeRequestId).sort((left: any, right: any) => (left.milestone?.sortOrder ?? 0) - (right.milestone?.sortOrder ?? 0) || left.sortOrder - right.sortOrder);
 }
 
@@ -94,6 +95,13 @@ export async function assertStageGateOpen(client: any, workspaceId: string, stag
 export async function projectUsesStageGates(client: any, workspaceId: string, projectId: string): Promise<boolean> {
   if (!hasModel(client, "projectGate", "count")) return false;
   return (await client.projectGate.count({ where: { workspaceId, projectId } })) > 0;
+}
+
+/** Where the project stands against G1 and the P&L closing point (projectGatePosition), read from the database. */
+export async function loadProjectGatePosition(client: any, workspaceId: string, projectId: string) {
+  const gates: any[] = hasModel(client, "projectGate") ? await client.projectGate.findMany({ where: { workspaceId, projectId }, select: { code: true, status: true } }) : [];
+  const milestones: any[] = !gates.length && hasModel(client, "projectMilestone") ? await client.projectMilestone.findMany({ where: { workspaceId, projectId }, select: { sortOrder: true, gateStatus: true } }) : [];
+  return projectGatePosition(gates, milestones);
 }
 
 async function displayNames(client: any, userIds: Array<string | null | undefined>): Promise<Map<string, string>> {
@@ -122,13 +130,15 @@ async function loadGateBundle(client: any, workspaceId: string, projectId: strin
   if (!gates.length) return { gates, stages, facts, dayOffKeys: new Set() };
 
   const stageIds = stages.map((stage) => stage.id);
-  const [artifacts, openTasks, rootItems, looseIssues] = await Promise.all([
+  const [artifacts, openTasks, projectRow, pnlRecord, looseIssues] = await Promise.all([
     client.projectArtifact.findMany({
       where: { workspaceId, projectId, milestoneId: { not: null } },
       select: { name: true, artifactType: true, milestoneId: true, versions: { orderBy: { version: "desc" }, take: 1, select: { fileObject: { select: { status: true, scanStatus: true, deletedAt: true, revokedAt: true } } } } }
     }),
     client.projectTask.groupBy({ by: ["stageId"], where: { workspaceId, projectId, archivedAt: null, status: { notIn: OPEN_TASK_STATUSES_EXCLUDED } }, _count: { _all: true } }),
-    hasModel(client, "projectContractItem", "count") ? client.projectContractItem.count({ where: { workspaceId, projectId, kind: "ROOT", archivedAt: null, contractType: { not: null }, valueAmount: { not: null } } }) : 1,
+    // G1 (D-22): Giá trị dự án, and the payment ticks, concern Loại Khách hàng projects only.
+    hasModel(client, "project", "findFirst") ? client.project.findFirst({ where: { id: projectId, workspaceId }, select: { projectType: true } }) : null,
+    hasModel(client, "projectPnlRecord", "findFirst") ? client.projectPnlRecord.findFirst({ where: { workspaceId, projectId }, select: { projectValueAmount: true } }) : null,
     client.projectRisk.count({ where: { workspaceId, projectId, type: { in: ["blocker", "risk", "issue"] }, status: { in: ["pending", "in_progress"] }, OR: [{ ownerUserId: null }, { dueAt: null }] } })
   ]);
   const openTasksByStage = new Map<string, number>(openTasks.map((row: any) => [row.stageId, row._count._all]));
@@ -137,6 +147,7 @@ async function loadGateBundle(client: any, workspaceId: string, projectId: strin
     return { name: artifact.name, artifactType: artifact.artifactType, milestoneId: artifact.milestoneId, usable: Boolean(file && file.status === "active" && file.scanStatus === "clean" && file.deletedAt === null && file.revokedAt === null) };
   });
 
+  const chargeable = !projectRow || isCustomerProjectType(projectRow.projectType);
   const g7 = gates.find((gate) => gate.code === "G7");
   const pnlPending = g7 && !isGatePassed(g7.status) ? await loadG7BlockingHours(pendingHours, workspaceId, projectId) : undefined;
 
@@ -153,7 +164,8 @@ async function loadGateBundle(client: any, workspaceId: string, projectId: strin
       reachable: blockingGateForStage(stageIds, gates, gate.stageId) === null,
       documents: gateDocumentTicks(definition, documents.filter((document: any) => document.milestoneId === gate.milestoneId)),
       openTaskCount,
-      rootContractItemReady: rootItems > 0,
+      chargeable,
+      projectValueReady: !hasModel(client, "projectPnlRecord", "findFirst") || (pnlRecord?.projectValueAmount !== null && pnlRecord?.projectValueAmount !== undefined),
       openIssuesWithoutOwnerOrDue: looseIssues,
       ...(gate.code === "G7" && pnlPending ? { pnlPending } : {})
     });
@@ -183,11 +195,9 @@ export async function listProjectGates(ctx: IssueLogContext, project: { id: stri
   // TD-04 / TD-05: approved extensions of each stage; an extension still ahead of today is not an overrun.
   const extensionRows = bundle.stages.length ? await loadStageExtensions(ctx.prisma, workspaceId, [project.id]) : [];
   const extensionThreshold = extensionRows.length ? await getStoredParameter(ctx.prisma, workspaceId, "stageExtensionAbnormalCount") : 0;
-  const crIds = [...new Set(extensionRows.map((row) => row.changeRequestId).filter((id): id is string => Boolean(id)))];
-  const crCodes = new Map<string, string>(crIds.length ? (await ctx.prisma.projectRisk.findMany({ where: { id: { in: crIds } }, select: { id: true, code: true } })).map((row: { id: string; code: string }) => [row.id, row.code]) : []);
   const mapStageSla = (stage: any, at: Date, dayOffKeys: Set<string>): ProjectStageSlaSummary => {
     const sla = mapStageSlaClock(stage, at, dayOffKeys);
-    const extension = stageExtensionState(extensionRows.filter((row) => row.stageId === stage.id), extensionThreshold, crCodes);
+    const extension = stageExtensionState(extensionRows.filter((row) => row.stageId === stage.id), extensionThreshold);
     const covered = Boolean(extension.extendedDueAt) && at.getTime() <= new Date(extension.extendedDueAt as string).getTime();
     return { ...sla, ...(covered ? { overrun: false, overrunDays: 0 } : {}), ...extension, canExtend: ctx.actor.isPm && !stage.actualEndAt };
   };
@@ -205,6 +215,7 @@ export async function listProjectGates(ctx: IssueLogContext, project: { id: stri
       submittedAt: iso(gate.submittedAt), submittedByUserId: gate.submittedByUserId ?? undefined, submittedByName: names.get(gate.submittedByUserId),
       decision: gate.decision ?? undefined, decidedAt: iso(gate.decidedAt), decidedByUserId: gate.decidedByUserId ?? undefined, decidedByName: names.get(gate.decidedByUserId), decisionReason: gate.decisionReason ?? undefined,
       conditionIssueId: gate.conditionIssueId ?? undefined, conditionIssueCode: issues.find((issue) => issue.id === gate.conditionIssueId)?.code,
+      paymentConfirmationRequired: definition.paymentConfirmation && facts.chargeable,
       paymentConfirmedAt: iso(gate.paymentConfirmedAt), paymentConfirmedByName: names.get(gate.paymentConfirmedByUserId), paymentNote: gate.paymentNote ?? undefined,
       customerRequestedAt: iso(gate.customerRequestedAt), customerDueAt: iso(gate.customerDueAt),
       customerOverdue: gate.status === "awaiting_customer" && Boolean(gate.customerDueAt) && new Date(gate.customerDueAt).getTime() < now.getTime(),
@@ -277,7 +288,7 @@ export async function actOnProjectGate(ctx: GateContext, project: { id: string; 
     const history = [...(Array.isArray(gate.history) ? gate.history : []), plan.history];
     const updated = await tx.projectGate.update({ where: { id: gate.id }, data: { ...patch, history } });
     if (plan.passed) await openWhatComesNext(tx, gate, principal.subjectId, now);
-    // G1: "estimate gốc khóa thành B0 và B1" — in this transaction, so the gate never passes without its baseline (baseline.service.ts).
+    // G1: the plan baseline is locked on approval — in this transaction, so the gate never passes without its baseline (baseline.service.ts).
     if (plan.passed) await gateHooks.captureBaseline?.(Object.assign({ tx, actor: { userId: principal.subjectId, displayName: principal.displayName } }, { gate: updated, project, plan }));
     await tx.auditEvent.create({
       data: { workspaceId, actorUserId: principal.subjectId, action: `project.gate_${input.action}`, resource: "project_gate", resourceId: gate.id,
@@ -326,9 +337,20 @@ async function loadStatusFacts(client: any, workspaceId: string, project: { id: 
     hasTimeLog("G5"),
     hasTimeLog("G6")
   ]);
+  // No G1–G8: the project's own milestones give its position.
+  let milestones: ProjectStatusFacts["milestones"] = null;
+  if (!gates.length && hasModel(client, "projectMilestone")) {
+    const rows: any[] = await client.projectMilestone.findMany({ where: { workspaceId, projectId: project.id }, select: { gateStatus: true } });
+    const started = rows.length > 0 && Boolean(
+      (hasModel(client, "projectStage", "findFirst") && await client.projectStage.findFirst({ where: { workspaceId, projectId: project.id, status: { not: "not_started" } }, select: { id: true } }))
+      || (hasModel(client, "taskTimeEntry", "findFirst") && await client.taskTimeEntry.findFirst({ where: { workspaceId, projectId: project.id }, select: { id: true } }))
+    );
+    milestones = { total: rows.length, approved: rows.filter((row) => row.gateStatus === "approved").length, started };
+  }
   return {
     currentStatus: project.status,
     gates: gates.length ? gates : null,
+    milestones,
     pilotHasTimeLog,
     onboardHasTimeLog,
     openIssueCodes: (issues as any[]).filter(countsTowardProjectAtRisk).map((issue) => issue.code),

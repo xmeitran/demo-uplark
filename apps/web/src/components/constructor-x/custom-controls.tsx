@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 import { CrmSelect } from "../crm-workspace/crm-select";
+import { parsePickerDate } from "@/lib/project-date";
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 
@@ -41,6 +42,10 @@ interface CustomDropdownProps {
 
 interface CustomDatePickerProps {
   value: string; // "MMM DD, YYYY" or ISO Date format
+  /**
+   * Receives the display text ("Oct 13, 2026"). It is not an API value: before sending, a form converts it to an ISO
+   * day (isoDay in features/issue-log/issue-log-view) or an ISO instant (uiProjectDateToIso in @/lib/project-date).
+   */
   onChange: (formattedDate: string) => void;
   placeholder?: string;
   ariaLabel: string;
@@ -75,10 +80,10 @@ export function CustomDatePicker({ value, onChange, placeholder = "Select date",
   const [focusedDay, setFocusedDay] = useState(1);
   const [popoverPosition, setPopoverPosition] = useState({ top: 0, left: 0, width: 288, placement: "bottom" as "top" | "bottom" });
 
-  // Parse initial date
-  const initialDate = value && value !== "TBD" ? new Date(value) : new Date();
-  const [currentYear, setCurrentYear] = useState(isNaN(initialDate.getTime()) ? new Date().getFullYear() : initialDate.getFullYear());
-  const [currentMonth, setCurrentMonth] = useState(isNaN(initialDate.getTime()) ? new Date().getMonth() : initialDate.getMonth());
+  // The value may be this picker's display text, an ISO day or an ISO instant: parsePickerDate reads each as a local day.
+  const initialDate = parsePickerDate(value) ?? new Date();
+  const [currentYear, setCurrentYear] = useState(initialDate.getFullYear());
+  const [currentMonth, setCurrentMonth] = useState(initialDate.getMonth());
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -153,12 +158,10 @@ export function CustomDatePicker({ value, onChange, placeholder = "Select date",
 
   // Sync calendar position if value changes
   useEffect(() => {
-    if (value && value !== "TBD") {
-      const d = new Date(value);
-      if (!isNaN(d.getTime())) {
-        setCurrentYear(d.getFullYear());
-        setCurrentMonth(d.getMonth());
-      }
+    const d = parsePickerDate(value);
+    if (d) {
+      setCurrentYear(d.getFullYear());
+      setCurrentMonth(d.getMonth());
     }
   }, [value]);
 
@@ -216,8 +219,8 @@ export function CustomDatePicker({ value, onChange, placeholder = "Select date",
 
   // Check if a specific grid day matches currently selected value
   const isSelected = (day: number) => {
-    if (!value || value === "TBD") return false;
-    const d = new Date(value);
+    const d = parsePickerDate(value);
+    if (!d) return false;
     return (
       d.getDate() === day &&
       d.getMonth() === currentMonth &&
@@ -236,8 +239,8 @@ export function CustomDatePicker({ value, onChange, placeholder = "Select date",
 
   useEffect(() => {
     if (!open) return;
-    const selectedDate = value && value !== "TBD" ? new Date(value) : null;
-    const selectedDay = selectedDate && !isNaN(selectedDate.getTime()) &&
+    const selectedDate = parsePickerDate(value);
+    const selectedDay = selectedDate &&
       selectedDate.getMonth() === currentMonth && selectedDate.getFullYear() === currentYear
       ? selectedDate.getDate()
       : null;

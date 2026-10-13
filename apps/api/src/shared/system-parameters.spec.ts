@@ -17,7 +17,6 @@ describe("7.6 parameter catalogue", () => {
       statusProposalConfirmWorkingDays: 2,
       stageExtensionAbnormalCount: 2,
       newRequestClassifyWorkingDays: 1,
-      changeRequestStepSlaDays: { "CR-02": 1, "CR-03": 3, "CR-04": 2, "CR-05A": 1, "CR-05B": 1, "CR-06": 1, "CR-07": 1, "CR-08A": 2, "CR-08B": 1 },
       pendingHoursWorkingDays: 10,
       reminderTimes: ["08:30", "14:00", "17:00"],
       pnlCloseGate: "G7",
@@ -44,10 +43,8 @@ describe("7.6 parameter catalogue", () => {
     expect(validateSystemParameter("effectiveDate", "2026-11-01")).toBe("2026-11-01");
     expect(validateSystemParameter("effectiveDate", "")).toBeNull();
     expect(() => validateSystemParameter("effectiveDate", "01/11/2026")).toThrow();
-    const sla = { ...SYSTEM_PARAMETERS.changeRequestStepSlaDays.defaultValue, "CR-03": 5 };
-    expect(validateSystemParameter("changeRequestStepSlaDays", sla)["CR-03"]).toBe(5);
-    expect(() => validateSystemParameter("changeRequestStepSlaDays", { "CR-03": 5 })).toThrow();
-    expect(() => validateSystemParameter("changeRequestStepSlaDays", { ...sla, "CR-99": 1 })).toThrow();
+    // Retired on 13/10 with the change-request flow: no longer a parameter.
+    expect(() => validateSystemParameter("changeRequestStepSlaDays" as never, {})).toThrow();
     expect(() => validateSystemParameter("nope" as never, 1)).toThrow();
   });
 
@@ -69,7 +66,7 @@ describe("7.6 parameter catalogue", () => {
 
 describe("7.5 trigger catalogue", () => {
   it("lists every trigger of the document once, all in the base tier", () => {
-    expect(ALERT_TRIGGERS.map((item) => item.code)).toEqual(["NL-01", "NL-02", "NL-03", "NL-04", "NL-05", "TD-01", "TD-02", "TD-03", "TD-04", "TD-05", "TD-06", "BRI-01", "BRI-02", "BRI-03", "BRI-04", "BRI-05", "YC-01", "DL-01"]);
+    expect(ALERT_TRIGGERS.map((item) => item.code)).toEqual(["NL-01", "NL-02", "NL-03", "NL-04", "NL-05", "TD-01", "TD-02", "TD-03", "TD-04", "TD-05", "TD-06", "BRI-01", "BRI-02", "BRI-03", "BRI-04", "BRI-05", "DL-01"]);
     expect(ALERT_TRIGGERS.every((item) => item.tier === "push_now")).toBe(true);
     // TD-04, TD-05 and BRI-05 have their data source now (stage SLA, stage extensions, the gates' customer step).
     expect(ALERT_TRIGGERS.filter((item) => !item.enabled || item.disabledReason)).toEqual([]);

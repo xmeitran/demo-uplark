@@ -827,7 +827,7 @@ test("route changes and filters stay silent without document reloads", async ({ 
     await expectSilentRefresh(page, marker);
 
     marker = await markWindowForSilentRefresh(page, "detail-back");
-    await page.getByText("Quay lại công việc").first().click();
+    await page.getByRole("link", { name: /^Quay lại / }).first().click();
     await page.waitForURL("**/tasks*");
     await expectSilentRefresh(page, marker);
   }

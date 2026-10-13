@@ -118,10 +118,12 @@ export interface AccountSummary {
   health: "green" | "amber" | "red";
   annualValue?: number;
   commercialNote?: string;
+  createdAt?: string;
 }
 
 export interface CreateAccountInput {
-  code: string;
+  /** Left out or blank: the API generates a code that is unique in the workspace. */
+  code?: string;
   name: string;
   stage?: string;
   ownerTeamId?: string;
@@ -509,55 +511,17 @@ export interface ProjectSummary {
   stageCount?: number;
   activeStageCount?: number;
   plannedStartAt?: string;
+  /** plannedStartAt carries the actual start once the earliest stage has started. */
+  startIsActual?: boolean;
   plannedEndAt?: string;
   hierarchyOrderVersion: number;
   /** PL-02 "Dự án thử nghiệm": left out of every P&L total, fund split and warning. */
   isTestProject?: boolean;
   milestoneMode?: ProjectMilestoneMode;
   milestoneTemplateKey?: string;
-  /** The fixed "DX Internal Worklog" project (D-08): no contract line items, never part of project P&L. Read-only. */
+  /** The fixed "DX Internal Worklog" project (D-08): no Giá trị dự án, never part of project P&L. Read-only. */
   isInternalWorklog?: boolean;
 }
-
-/** Hạng mục hợp đồng (rules 2, D-22). contractType undefined = "Chờ phân loại". */
-export type ProjectContractItemType = "FIXED_PRICE" | "TIME_AND_MATERIAL" | "INTERNAL";
-export type ProjectContractItemKind = "ROOT" | "APPENDIX" | "CHANGE_REQUEST";
-
-export interface ProjectContractItemSummary {
-  id: string;
-  projectId: string;
-  code: string;
-  name: string;
-  kind: ProjectContractItemKind;
-  kindLabel: string;
-  contractType?: ProjectContractItemType;
-  contractTypeLabel: string;
-  valueAmount?: number;
-  currency: string;
-  /** Estimate gốc, in minutes. */
-  estimateMinutes?: number;
-  changeRequestId?: string;
-  status: "active" | "archived";
-  sortOrder: number;
-  taskCount: number;
-  /** D-22: type and base value can no longer be changed (hours logged or invoice issued). */
-  locked: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CreateProjectContractItemInput {
-  code?: string;
-  name: string;
-  kind?: ProjectContractItemKind;
-  contractType?: ProjectContractItemType | null;
-  valueAmount?: number | null;
-  estimateMinutes?: number | null;
-  changeRequestId?: string | null;
-  sortOrder?: number;
-}
-
-export type UpdateProjectContractItemInput = Partial<CreateProjectContractItemInput> & { status?: "active" | "archived" };
 
 /** D-07 / decision 5: Pre-sale minutes of lost deals, a separate company-level cost section. */
 export interface LostDealPreSaleSummary {
@@ -674,7 +638,8 @@ export interface CreateProjectInput {
   status?: string;
   /** Required when a project is created directly in On Hold or At Risk. */
   statusReason?: string;
-  projectType?: string;
+  /** V-01: bắt buộc — a ProjectTypeCode (Khách hàng / Nội bộ / Đào tạo). */
+  projectType: string;
   marginPercent?: number;
   priority?: ProjectPriority;
   tags?: string[];
@@ -865,6 +830,8 @@ export interface ProjectStageSummary {
   /** Layer 1 inherited by the tasks of this stage (D-02). */
   taskTypeLayer1?: "PRE_SALE" | "DELIVERY" | "PM";
   afterPnlClose?: boolean;
+  /** Old data only: the stage a change request created before 13/10/2026. It stays outside the G1–G8 sequence; nothing sets it any more. */
+  changeRequestId?: string;
   status: string;
   ownerUserId?: string;
   ownerDisplayName?: string;
@@ -1039,8 +1006,9 @@ export * from "./gates";
 export * from "./baseline";
 export * from "./access-control";
 export * from "./pnl";
+export * from "./project-type";
 import type { AccountType, AccountViewMode, BusinessRoleCode } from "./access-control";
-import type { ChangeRequestStepCode, IssueLogAllowedAction, IssueLogDueState, IssueLogEscalationLevel, IssueLogExtension, IssueLogHistoryEntry, IssueLogImpactArea, IssueLogSeverity, IssueLogStatus, IssueLogType } from "./issue-log";
+import type { IssueLogAllowedAction, IssueLogDueState, IssueLogEscalationLevel, IssueLogExtension, IssueLogHistoryEntry, IssueLogImpactArea, IssueLogSeverity, IssueLogStatus, IssueLogType } from "./issue-log";
 
 /** Core fields every issue-log record carries (V-24). `category`, `impact` and `switchTrigger` are legacy read-only values. */
 export interface ProjectRiskSummary {
@@ -1068,20 +1036,14 @@ export interface ProjectRiskSummary {
   resolutionProposedAt?: string;
   cancelReason?: string;
   closedAt?: string;
-  /** Change requests only: the 8.2 step in progress and its SLA deadline. */
-  crStep?: ChangeRequestStepCode;
-  stepDueAt?: string;
-  /** Type-specific fields (V-24). Commercial keys are absent when the reader may not see them (V-32). */
+  /** Type-specific fields (V-24). */
   extension: IssueLogExtension;
-  commercialHidden: boolean;
   isOpen: boolean;
   ageDays: number;
   dueState: IssueLogDueState;
   allowedActions: IssueLogAllowedAction[];
   canEdit: boolean;
   history: IssueLogHistoryEntry[];
-  /** Change requests only: the stage, evaluation task and line item the system created (V-39, V-30). */
-  changeRequestLinks?: import("./baseline").ChangeRequestLinks;
   category: ProjectRiskCategory;
   description: string;
   likelihood: ProjectRiskLevel;
@@ -1187,8 +1149,6 @@ export interface TaskTimeEntrySummary {
   selectedTaskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE";
   /** "Lớp 2 không khớp": the choice differs from the task's derived Layer 2 (taskTypeLayer2). */
   layer2Mismatch?: boolean;
-  /** Contract line item copied from the task when the entry was written (D-03); undefined = "Chưa có hạng mục". */
-  contractItemId?: string;
   /** D-16: logged while the project was "Tạm dừng"; the PM reviews it. */
   loggedWhileOnHold?: boolean;
   /** Section 9.2: part of a day above 8 hours dated before the effective date — kept as logged, "trước quy tắc 8 giờ". */
@@ -1302,10 +1262,6 @@ export interface ProjectTaskSummary {
   taskTypeLayer1?: "PRE_SALE" | "DELIVERY" | "PM";
   /** Layer 2 (bối cảnh công việc), derived by the API and read-only; undefined = "Chờ phân loại". */
   taskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE";
-  /** D-01: the contract line item; undefined = "Chưa có hạng mục". Code and name are read-only display fields. */
-  contractItemId?: string;
-  contractItemCode?: string;
-  contractItemName?: string;
   status: string;
   priority: string;
   ownerUserId?: string;
@@ -1455,8 +1411,6 @@ export interface CreateProjectTaskInput {
   /** BRD v2 two-layer task classification used by analytics and governance. */
   taskTypeLayer1?: "PRE_SALE" | "DELIVERY" | "PM";
   taskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE";
-  /** D-06: omitted = the project's only / root line item. Any other item needs PM (Admin) rights. */
-  contractItemId?: string | null;
   status?: string;
   priority?: string;
   ownerUserId?: string;
@@ -1482,9 +1436,6 @@ export interface UpdateProjectTaskInput {
   taskType?: string;
   taskTypeLayer1?: "PRE_SALE" | "DELIVERY" | "PM" | null;
   taskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE" | null;
-  /** D-05: moving a task to another line item is PM (Admin) only and needs contractItemChangeReason. */
-  contractItemId?: string | null;
-  contractItemChangeReason?: string;
   /** D-21: why an Admin changes dates or estimate after baseline B1 is locked; kept on the new B1 version. */
   planChangeReason?: string;
   status?: string;
@@ -3658,7 +3609,8 @@ export interface AdminHistoryEntry {
 
 export interface AdminHistoryResponse {
   data: AdminHistoryEntry[];
-  meta: { total: number };
+  /** `total` counts the filtered rows; `actions` lists every action type the log can show, for the filter. */
+  meta: { total: number; pagination?: ResourceListPaginationMeta; actions?: Array<{ value: string; label: string; category: AdminHistoryEntry["category"] }> };
 }
 
 export type AdminAlertType = "delay_risk" | "over_estimate" | "waiting_task" | "missing_estimate" | "missing_actual" | "missing_deadline" | "missing_mapping";

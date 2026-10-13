@@ -5,14 +5,13 @@ import { useProjectPeople } from "@/hooks/use-project-people";
 import React, { useState, useCallback, useMemo, useRef, useEffect, useLayoutEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowLeft, ArrowRight, Edit3, MoreHorizontal, Plus, Calendar, Users,
+  ArrowRight, Edit3, MoreHorizontal, Plus, Calendar, Users,
   Check, CheckCircle2, Clock, AlertCircle, Flag,
   BarChart2, TrendingUp, Layers, ChevronRight, ChevronLeft,
   ListChecks, FileText, GitBranch, Download, ExternalLink, UserPlus,
   Target, X, ChevronDown, ChevronUp, Activity, Lock,
   Trash2, Pencil, Pin, History, Search, Upload, Paperclip
 } from "lucide-react";
-import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { PROJECT_TAB_NAV_EVENT } from "@/components/constructor-x/sidebar";
 import { AppShell } from "@/components/constructor-x/app-shell";
@@ -60,14 +59,11 @@ import { formatVietnamDate, formatVietnamTime, VIETNAM_TIME_ZONE, VIETNAM_TIME_Z
 import { PARTICIPATION_STATE, currentVietnamMonthRange } from "@/lib/member-participation";
 import { PROJECT_CLOSE_REASONS, PROJECT_STATUS_CATALOGUE, PROJECT_STATUS_LABELS, UNKNOWN_PROJECT_STATUS_LABEL, manualProjectStatusOptions, normalizeProjectStatus, projectStatusStyleMap, type ProjectCloseReasonCode, type ProjectStatusDefinition } from "@/lib/project-status";
 import { PersonLink } from "@/components/person-link";
-import { hasAnyAuthRole } from "@/lib/auth-role";
+import { canViewCostFigures, hasAnyAuthRole, isAdminView } from "@/lib/auth-role";
 import { systemRoleLabel } from "@/lib/people-roles";
 import { formatProjectDateRange } from "@/lib/project-date";
 import { TASK_TYPE_LAYER1_FIELD_LABEL, TASK_TYPE_LAYER1_OPTIONS, TASK_TYPE_LAYER2_FIELD_LABEL, taskTypeLayer2Label } from "@/lib/task-classification";
 import { isCompletedTaskStatus } from "@/components/crm-workspace/task-display-helpers";
-import { CONTRACT_ITEM_FIELD_LABEL, CONTRACT_ITEM_KIND_LABELS, CONTRACT_ITEM_TYPE_OPTIONS, CONTRACT_ITEM_TYPE_PENDING_LABEL, NO_CONTRACT_ITEM_LABEL } from "@/lib/contract-item";
-import { defaultContractItemId, reloadProjectContractItems, useProjectContractItems } from "@/hooks/use-project-contract-items";
-import type { ProjectContractItemSummary } from "@b2b-crm/contracts";
 import {
   alignItemsToOrder,
   buildHierarchyOrderInput,
@@ -78,10 +74,15 @@ import { selectActiveMilestone } from "@/features/project-hierarchy/milestone-ga
 import { IssueLogPanel } from "@/features/issue-log/issue-log-panel";
 import { ApiResponseError, readApiError } from "@/lib/api-error";
 import { fetchAllPages } from "@/lib/api-pages";
+import { HeaderLinkButton, PageBackLink } from "@/components/page-header";
+import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilter, SearchFilter, dayOf, formatRangeLabel, isWithinRange, matchesAny, standardDatePresets, type DateRange, type FilterPerson } from "@/components/filters";
+import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
+import { EMPTY_PROJECT_TASK_FILTERS, activeProjectTaskFilterCount, uiDateToDay, taskMatchesFilters, taskOrSubtaskMatchesFilters, type ProjectTaskFilters } from "@/features/project-hierarchy/task-filters";
 import { ProjectGatesPanel } from "@/features/project-gates/project-gates-panel";
+import { TASK_ESTIMATE_ERROR, TASK_ESTIMATE_HINT, isPlannedHoursInvalid, parsePlannedHours } from "@/features/crm-tasks/task-estimate";
+import { GATE_TAB_LABEL, gateBlockLabel, gateBlockNote, useStageGateBlocks, type StageGateBlocks } from "@/features/project-gates/stage-gate-lock";
 import { ProjectStatusProposalCard } from "@/features/project-gates/status-proposal-card";
 import { ProjectBaselineBlock } from "@/features/project-baseline/baseline-block";
-import { ProjectPnlSetup } from "@/features/project-pnl-setup/project-pnl-setup";
 import { FrameworkConversionButton } from "@/components/crm-workspace/framework-conversion-button";
 import { LarkGroupsControl } from "@/components/crm-workspace/lark-groups-control";
 import { putProjectHierarchyOrder } from "@/features/project-hierarchy/hierarchy-order-client";
@@ -90,7 +91,7 @@ import {
   HierarchySortableList,
   type SortHandleProps
 } from "@/features/project-hierarchy/hierarchy-sortable";
-import type { ProjectHierarchyOrderKind } from "@b2b-crm/contracts";
+import { INTERNAL_WORKLOG_PROJECT_TYPE, type ProjectHierarchyOrderKind } from "@b2b-crm/contracts";
 
 const ACTIVITY_PAGE_SIZE = 10;
 
@@ -291,12 +292,8 @@ async function fetchProjectOperationalRecords(projectId: string, signal?: AbortS
 
 async function fetchProjectResource<T>(projectId: string, resource: "documents" | "activity" | "risks", signal?: AbortSignal) {
   const path = `/api/projects/${encodeURIComponent(projectId)}/${resource}`;
-  // Risks and documents are registers, loaded in full; activity is a "latest 10" preview.
-  if (resource !== "activity") return { data: await fetchAllProjectPages<T>(path, `Could not load project ${resource}`, signal) };
-  const response = await fetch(`${path}?limit=10&offset=0`, { cache: "no-store", credentials: "same-origin", signal });
-  if (response.status === 401) throw new LiveProjectDetailError("Unauthorized", 401);
-  if (!response.ok) throw new LiveProjectDetailError(`Could not load project ${resource}: ${response.status}`, response.status);
-  return (await response.json()) as ResourceListResponse<T>;
+  // Every register is loaded in full (the tabs filter client-side); the activity feed pages by limit/offset like the others.
+  return { data: await fetchAllProjectPages<T>(path, `Could not load project ${resource}`, signal) };
 }
 
 class LiveProjectDetailError extends Error {
@@ -560,10 +557,6 @@ interface TaskItem {
   taskTypeLayer1?: "PRE_SALE" | "DELIVERY" | "PM";
   /** Derived by the API (D-04); shown read-only, never sent back. */
   taskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE";
-  /** D-01: contract line item; undefined lets the API assign the project's only / root item (D-06). */
-  contractItemId?: string;
-  /** D-05: sent only when a PM (Admin) moves the task to another line item. */
-  contractItemChangeReason?: string;
   status: "todo" | "in-progress" | "done";
   priority: "critical" | "high" | "medium" | "low";
   assignee: string; aColor: string; due: string;
@@ -632,6 +625,8 @@ interface ProjectDoc {
   milestoneId?: string;
   milestoneName?: string;
   storageKey?: string;
+  /** Vietnam day of the newest version (the "Last Updated" column), "" when nothing was submitted. */
+  updatedDay?: string;
   versions: DocVersion[];
 }
 
@@ -648,6 +643,7 @@ function mapProjectDocumentToDoc(document: ProjectDocumentSummary): ProjectDoc {
     milestoneId: document.milestoneId,
     milestoneName: document.milestoneName,
     storageKey: document.storageKey,
+    updatedDay: dayOf((document.versions ?? []).at(-1)?.createdAt),
     versions: (document.versions ?? []).map((version) => ({
       version: version.version,
       size: formatFileSize(version.file.byteSize),
@@ -686,6 +682,7 @@ function mapProjectActivityToLogItem(activity: ProjectActivitySummary): Activity
     target: formatProjectActivityText(activity.target ?? activity.createdByDisplayName ?? ""),
     time: formatActivityTimestamp(activity.occurredAt, activity.occurredTime),
     sortAt: activity.occurredAt,
+    day: dayOf(activity.occurredAt),
     source: "project",
     userId: activity.createdByUserId,
     userName: activity.createdByDisplayName,
@@ -719,6 +716,7 @@ function buildWorkLogActivityItems(tasks: TaskItem[]): ActivityLogItem[] {
       target: task.stageName ? `${task.title} · ${task.stageName}` : task.title,
       time: entry.activityTime || entry.date,
       sortAt: entry.occurredAt || entry.date,
+      day: dayOf(entry.occurredAt) || uiDateToDay(entry.date),
       source: "work-log" as const,
       userId: entry.userId,
       userName: entry.userName,
@@ -753,9 +751,8 @@ function mapProjectRiskToRiskItem(risk: ProjectRiskSummary): RiskItem {
   };
 }
 
-/** 5.1: change requests never count as a project risk, so the page summaries leave them out. */
 function toRiskRegistry(records: ProjectRiskSummary[]): RiskItem[] {
-  return records.filter((record) => record.type !== "change_request").map(mapProjectRiskToRiskItem);
+  return records.map(mapProjectRiskToRiskItem);
 }
 
 function categoryFromArtifactType(value: string) {
@@ -950,7 +947,6 @@ function mapProjectTaskToTaskItem(task: ProjectTaskSummary): TaskItem {
     taskType: task.taskType,
     taskTypeLayer1: task.taskTypeLayer1,
     taskTypeLayer2: task.taskTypeLayer2,
-    contractItemId: task.contractItemId,
     status: toTaskStatus(task.status),
     priority: toTaskPriority(task.priority),
     assignee: initialsForDisplayName(assigneeName),
@@ -1042,11 +1038,25 @@ function hoursToMinutes(hours?: number) {
   return Math.round(hours * 60);
 }
 
-const MAX_PLANNED_HOURS = 8;
-const PLANNED_HOURS_ERROR = "Giờ kế hoạch phải nhỏ hơn hoặc bằng 8 giờ.";
+const PLANNED_HOURS_ERROR = TASK_ESTIMATE_ERROR;
 
-function isPlannedHoursInvalid(hours: number) {
-  return !Number.isFinite(hours) || hours < 0 || hours > MAX_PLANNED_HOURS;
+/** Planned hours of a task: decimals allowed, the 8h limit stated under the field (shared rule in features/crm-tasks/task-estimate). */
+function PlannedHoursField({ value, onChange, invalid }: { value: string; onChange: (value: string) => void; invalid: boolean }) {
+  return (
+    <Field label="Planned Hours (Giờ kế hoạch)">
+      <input
+        type="number"
+        min={0}
+        step={0.5}
+        inputMode="decimal"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        aria-invalid={invalid}
+        className={`w-full border rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none ${invalid ? "border-red-400 focus:ring-2 focus:ring-red-500/20" : "border-input"}`}
+      />
+      <p className={`mt-1 text-[11px] ${invalid ? "font-semibold text-red-600" : "text-muted-foreground"}`}>{invalid ? PLANNED_HOURS_ERROR : TASK_ESTIMATE_HINT}</p>
+    </Field>
+  );
 }
 
 function roundHours(hours = 0) {
@@ -1091,9 +1101,10 @@ function ProjectSheetPanel({
   onOpenTasks: () => void;
   onOpenTask: (task: TaskItem) => void;
 }) {
-  const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | TaskItem["status"]>("all");
-  const [memberFilter, setMemberFilter] = useState("all");
+  const [filters, setFilters] = useState(EMPTY_PROJECT_TASK_FILTERS);
+  const setFilter = <K extends keyof ProjectTaskFilters>(key: K) => (value: ProjectTaskFilters[K]) => setFilters((current) => ({ ...current, [key]: value }));
+  const activeFilterCount = activeProjectTaskFilterCount(filters);
+  const filterPeople = useMemo(() => toFilterPeople(teamMembers), [teamMembers]);
 
   const rows = useMemo<ProjectSheetTaskRow[]>(() => milestones.flatMap((milestone) => {
     const group = milestoneGroups.find((item) => item.milestoneId === milestone.id);
@@ -1110,14 +1121,8 @@ function ProjectSheetPanel({
     return Number.isFinite(due) && due < Date.now();
   }).length;
 
-  const normalizedQuery = query.trim().toLocaleLowerCase("vi");
-  const visibleRows = rows.filter(({ task, milestone, stage }) => {
-    if (statusFilter !== "all" && task.status !== statusFilter) return false;
-    if (memberFilter !== "all" && task.assigneeUserId !== memberFilter && task.assignee !== memberFilter) return false;
-    if (!normalizedQuery) return true;
-    return [task.title, milestone.name, stage.name, task.assignee]
-      .some((value) => value.toLocaleLowerCase("vi").includes(normalizedQuery));
-  });
+  const visibleRows = rows.filter(({ task, milestone, stage }) =>
+    taskMatchesFilters(task, filters, milestone.name, stage.name, task.assignee, teamMembers.find((member) => member.id === task.assigneeUserId)?.name));
 
   const milestoneSummaries = milestones.map((milestone) => {
     const group = milestoneGroups.find((item) => item.milestoneId === milestone.id);
@@ -1170,11 +1175,14 @@ function ProjectSheetPanel({
             <h3 className="text-xl font-black tracking-tight text-foreground">Work breakdown &amp; delivery health</h3>
             <p className="mt-1 text-sm text-muted-foreground">Theo dõi từ Milestone → Stage → Task, luôn truy được về người thực hiện và Time Log.</p>
           </div>
-          <div className="grid gap-2 sm:grid-cols-3 xl:w-[620px]">
-            <label className="flex items-center gap-2 rounded-xl border border-input bg-background px-3 py-2.5 sm:col-span-1"><Search className="h-4 w-4 shrink-0 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm task, người thực hiện..." className="min-w-0 flex-1 bg-transparent text-sm outline-none" /></label>
-            <CustomDropdown ariaLabel="Lọc trạng thái" options={[{ value: "all", label: "Tất cả trạng thái" }, { value: "done", label: "Đã hoàn thành" }, { value: "in-progress", label: "Đang làm" }, { value: "todo", label: "Chưa bắt đầu" }]} value={statusFilter} onChange={(value) => setStatusFilter(value as typeof statusFilter)} />
-            <div className="min-w-0" aria-label="Lọc người thực hiện"><TeamMemberSingleSelect members={teamMembers} value={memberFilter === "all" ? undefined : teamMembers.find((member) => member.id === memberFilter)} onChange={(member) => setMemberFilter(member?.id ?? "all")} placeholder="Tất cả người thực hiện" /></div>
-          </div>
+        </div>
+        <div className="border-b border-border px-5 py-3">
+          <FilterBar onReset={activeFilterCount ? () => setFilters(EMPTY_PROJECT_TASK_FILTERS) : undefined} activeCount={activeFilterCount} actions={<span className="text-xs font-semibold text-muted-foreground">{visibleRows.length} / {rows.length} task</span>}>
+            <FilterField label="Tìm kiếm" className="min-w-[200px] flex-1"><SearchFilter className="" value={filters.query} onChange={setFilter("query")} placeholder="Tìm task, người thực hiện..." /></FilterField>
+            <FilterField label="Hạn hoàn tất"><DateRangeFilter value={filters.due} onChange={(range) => setFilter("due")(range)} ariaLabel="Lọc theo hạn hoàn tất" /></FilterField>
+            <PersonFilter label="Người thực hiện" people={filterPeople} values={filters.assigneeIds} onChange={setFilter("assigneeIds")} />
+            <MultiSelectFilter label="Trạng thái" options={TASK_STATUS_FILTER_OPTIONS} values={filters.statuses} onChange={setFilter("statuses")} searchable={false} />
+          </FilterBar>
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-muted/20 px-5 py-3 text-xs text-muted-foreground">
@@ -1215,7 +1223,7 @@ function ProjectSheetPanel({
               })}
             </tbody>
           </table>
-          {visibleRows.length === 0 && rows.length > 0 && <p className="p-8 text-center text-sm text-muted-foreground">Không có task phù hợp với bộ lọc.</p>}
+          {visibleRows.length === 0 && rows.length > 0 && <FilterEmptyState onReset={() => setFilters(EMPTY_PROJECT_TASK_FILTERS)} />}
         </div>
       </section>
 
@@ -1275,7 +1283,7 @@ function toApiDateValue(dateStr?: string) {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
 }
 
-const TASK_DATE_RANGE_ERROR = "Start Date must be on or before Due Date.";
+const TASK_DATE_RANGE_ERROR = "Ngày bắt đầu không được sau hạn hoàn tất. Hãy chọn lại hai ngày.";
 
 function isTaskDateRangeInvalid(startDate?: string, dueDate?: string) {
   const plannedStartAt = toApiDateValue(startDate);
@@ -1336,13 +1344,16 @@ function findAssignableTeamMember(
   return projectMembers.find((member) => normalizeIdentityValue(member.id) === normalizedId);
 }
 
-const PROJECT_MEMBER_ASSIGNMENT_ERROR = "The selected assignee is not a current project member. Add them from the Team tab or choose another project member.";
+/** A person picked as assignee / PIC who is not in the project: named when known, with where to add them. */
+function projectMemberAssignmentError(displayName?: string) {
+  return `${displayName?.trim() || "Người được chọn"} chưa là thành viên dự án. Hãy thêm vào danh sách thành viên của dự án (nút Invite) rồi thử lại, hoặc chọn một thành viên khác.`;
+}
+/** Shown in an edit form whose current assignee / PIC left the project: the other fields can still be saved. */
+const STALE_ASSIGNEE_NOTE = "Người đang được giao không còn là thành viên dự án. Bạn vẫn lưu được các thông tin khác; muốn đổi người, hãy chọn một thành viên hoặc thêm họ vào danh sách thành viên (nút Invite).";
 
+/** The API names people by display name; an id it could not resolve is never shown. */
 function userFacingAssignmentError(message: string) {
-  if (/not project members|unknown or inactive project user/i.test(message)) {
-    return PROJECT_MEMBER_ASSIGNMENT_ERROR;
-  }
-  return message.replace(/usr-[a-z0-9_-]+/gi, "the selected user");
+  return message.replace(/usr-[a-z0-9_-]+/gi, "Người được chọn");
 }
 
 function ModalMutationFeedback({ error }: { error: string | null }) {
@@ -1400,6 +1411,8 @@ interface ActivityLogItem {
   target: string;
   time: string;
   sortAt?: string;
+  /** Vietnam day of the event, for the "Thời điểm" filter. */
+  day?: string;
   source?: "project" | "work-log";
   userId?: string;
   userName?: string;
@@ -1574,6 +1587,7 @@ function ProjectStatusEditModal({ projectId, project, color, onClose, onSaved }:
         <div data-initial-focus="true">
           <CustomDropdown ariaLabel="Trạng thái dự án" options={manualProjectStatusOptions(project.status)} value={status} onChange={(value) => setStatus(value as Project["status"])} />
         </div>
+        <p className="mt-1.5 text-[11px] text-muted-foreground">Đã hoàn thành và Đang bảo trì không chọn tay: hệ thống tự chuyển khi điểm chốt G7 / G8 được duyệt.</p>
       </Field>
       {closing ? (
         <Field label={PROJECT_STATUS_CATALOGUE.closed.reasonLabel} required>
@@ -1884,16 +1898,22 @@ function ProjectDeliveryWireframePanels({
   // Members are matched to tasks by user id only: two people can share the same initials.
   const taskOwner = (task: TaskItem) => teamMembers.find((member) => member.id === task.assigneeUserId);
   // EV-035: participation state per member for the current month; null while loading or on error (never guessed).
-  const [participationPeriod] = useState(() => currentVietnamMonthRange());
+  // Default "Tháng này"; the API needs both ends, so there is no all-time choice here.
+  const participationPresets = useMemo(() => standardDatePresets().filter((preset) => preset.from && preset.to), []);
+  const [participationRange, setParticipationRange] = useState<DateRange>(() => {
+    const month = currentVietnamMonthRange();
+    return { from: month.startDate, to: month.endDate };
+  });
+  const participationLabel = formatRangeLabel(participationRange, participationPresets).toLocaleLowerCase("vi");
   const [participation, setParticipation] = useState<Map<string, ProjectMemberParticipationItem> | null>(null);
   useEffect(() => {
     const controller = new AbortController();
     setParticipation(null);
-    fetchProjectJson<{ data: ProjectMemberParticipationItem[] }>(`/api/projects/${encodeURIComponent(projectId)}/member-participation?startDate=${participationPeriod.startDate}&endDate=${participationPeriod.endDate}`, controller.signal)
+    fetchProjectJson<{ data: ProjectMemberParticipationItem[] }>(`/api/projects/${encodeURIComponent(projectId)}/member-participation?startDate=${participationRange.from}&endDate=${participationRange.to}`, controller.signal)
       .then((body) => setParticipation(new Map((body.data ?? []).map((item) => [item.userId, item]))))
       .catch(() => undefined);
     return () => controller.abort();
-  }, [projectId, participationPeriod]);
+  }, [projectId, participationRange]);
   const [showAllMembers, setShowAllMembers] = useState(false);
   const memberRows = (showAllMembers ? teamMembers : teamMembers.slice(0, MEMBER_PREVIEW_COUNT)).map((member) => {
     const memberTasks = tasks.filter((task) => task.assigneeUserId === member.id);
@@ -1972,8 +1992,8 @@ function ProjectDeliveryWireframePanels({
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-        <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4"><div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">People & capacity</p><h3 className="mt-1 text-base font-black text-foreground">Nguồn lực tham gia</h3><p className="mt-1 text-xs text-muted-foreground">Vai trò, task đang mở, giờ thực tế và lần ghi nhận gần nhất.</p><p className="mt-1 text-xs text-muted-foreground">Trạng thái tham gia và giờ thực tế: tháng {participationPeriod.label}</p></div><button type="button" onClick={onOpenTasks} className="text-xs font-semibold text-primary hover:underline">Xem Project Sheet →</button></div>
-        {memberRows.length === 0 ? <div className="px-5 py-10 text-center text-xs text-muted-foreground">Chưa có nguồn lực được gán cho project.</div> : <div className="overflow-x-auto"><div className="min-w-[860px]"><div className="grid grid-cols-[minmax(0,1.2fr)_160px_90px_140px_130px_120px] gap-3 border-b border-border bg-muted/30 px-5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><span>Nhân sự / Vai trò</span><span>Trạng thái</span><span>Task mở</span><span>Giờ thực tế {participationPeriod.label}</span><span>Thực tế / Kế hoạch</span><span>Log gần nhất</span></div>{memberRows.map(({ member, openTasks, periodMinutes, actualVsPlan, latestLog }) => <div key={member.id} className="grid grid-cols-[minmax(0,1.2fr)_160px_90px_140px_130px_120px] items-center gap-3 border-b border-border px-5 py-3 last:border-b-0"><div className="flex min-w-0 items-center gap-2.5"><TeamMemberAvatar member={member} /><div className="min-w-0"><p className="truncate text-xs font-semibold text-foreground">{member.name}</p><p className="truncate text-[11px] text-muted-foreground">{member.role}</p></div></div>{(() => { const item = participation?.get(member.id); return item ? <span title={item.participationReason} className={`w-fit rounded-full px-2 py-1 text-[10px] font-bold ${PARTICIPATION_STATE[item.participationState].className}`}>{PARTICIPATION_STATE[item.participationState].label}</span> : <span className="text-xs text-muted-foreground">—</span>; })()}<span className="text-xs font-semibold text-foreground">{openTasks}</span><span className="text-xs font-semibold text-foreground">{periodMinutes === undefined ? "—" : `${formatHours(periodMinutes / 60)}h`}</span><span className={`text-xs font-semibold ${(actualVsPlan ?? 0) > 100 ? "text-rose-600" : "text-foreground"}`}>{actualVsPlan === null ? "—" : `${actualVsPlan}%`}</span><span className="text-[11px] text-muted-foreground">{latestLog}</span></div>)}</div></div>}
+        <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4"><div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">People & capacity</p><h3 className="mt-1 text-base font-black text-foreground">Nguồn lực tham gia</h3><p className="mt-1 text-xs text-muted-foreground">Vai trò, task đang mở, giờ thực tế và lần ghi nhận gần nhất.</p><p className="mt-1 text-xs text-muted-foreground">Trạng thái tham gia và giờ thực tế: {participationLabel}</p></div><div className="flex flex-wrap items-end gap-3"><FilterField label="Kỳ ghi nhận giờ" className="w-[230px]"><DateRangeFilter value={participationRange} onChange={(range) => { if (range.from && range.to) setParticipationRange(range); }} presets={participationPresets} clearable={false} ariaLabel="Kỳ ghi nhận giờ của nguồn lực" /></FilterField><button type="button" onClick={onOpenTasks} className="h-10 text-xs font-semibold text-primary hover:underline">Xem Project Sheet →</button></div></div>
+        {memberRows.length === 0 ? <div className="px-5 py-10 text-center text-xs text-muted-foreground">Chưa có nguồn lực được gán cho project.</div> : <div className="overflow-x-auto"><div className="min-w-[860px]"><div className="grid grid-cols-[minmax(0,1.2fr)_160px_90px_140px_130px_120px] gap-3 border-b border-border bg-muted/30 px-5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><span>Nhân sự / Vai trò</span><span>Trạng thái</span><span>Task mở</span><span>Giờ thực tế trong kỳ</span><span>Thực tế / Kế hoạch</span><span>Log gần nhất</span></div>{memberRows.map(({ member, openTasks, periodMinutes, actualVsPlan, latestLog }) => <div key={member.id} className="grid grid-cols-[minmax(0,1.2fr)_160px_90px_140px_130px_120px] items-center gap-3 border-b border-border px-5 py-3 last:border-b-0"><div className="flex min-w-0 items-center gap-2.5"><TeamMemberAvatar member={member} /><div className="min-w-0"><p className="truncate text-xs font-semibold text-foreground">{member.name}</p><p className="truncate text-[11px] text-muted-foreground">{member.role}</p></div></div>{(() => { const item = participation?.get(member.id); return item ? <span title={item.participationReason} className={`w-fit rounded-full px-2 py-1 text-[10px] font-bold ${PARTICIPATION_STATE[item.participationState].className}`}>{PARTICIPATION_STATE[item.participationState].label}</span> : <span className="text-xs text-muted-foreground">—</span>; })()}<span className="text-xs font-semibold text-foreground">{openTasks}</span><span className="text-xs font-semibold text-foreground">{periodMinutes === undefined ? "—" : `${formatHours(periodMinutes / 60)}h`}</span><span className={`text-xs font-semibold ${(actualVsPlan ?? 0) > 100 ? "text-rose-600" : "text-foreground"}`}>{actualVsPlan === null ? "—" : `${actualVsPlan}%`}</span><span className="text-[11px] text-muted-foreground">{latestLog}</span></div>)}</div></div>}
         {teamMembers.length > MEMBER_PREVIEW_COUNT ? <div className="border-t border-border px-5 py-3"><button type="button" aria-expanded={showAllMembers} onClick={() => setShowAllMembers((value) => !value)} className="text-xs font-semibold text-primary hover:underline">{showAllMembers ? "Thu gọn" : `Xem tất cả (${teamMembers.length})`}</button></div> : null}
       </div>
     </section>
@@ -2005,6 +2025,28 @@ const TASK_STATUS = {
   todo:          { color:C.slate,   bg:"#f1f5f9", label:"Chưa bắt đầu" },
 };
 const MANUAL_TASK_STATUS: Array<TaskItem["status"]> = ["todo", "done"];
+const TASK_STATUS_FILTER_OPTIONS = (["todo", "in-progress", "done"] as const).map((value) => ({ value, label: TASK_STATUS[value].label }));
+const TASK_PRIORITY_FILTER_OPTIONS = [
+  { value: "critical", label: "Rất khẩn cấp" },
+  { value: "high", label: "Khẩn cấp" },
+  { value: "medium", label: "Trung bình" },
+  { value: "low", label: "Thấp" }
+];
+const EMPTY_DATE_RANGE: DateRange = { from: "", to: "" };
+
+function toFilterPeople(members: ProjectTeamMember[]): FilterPerson[] {
+  return members.map((member) => ({ id: member.id, name: member.name, email: member.email || undefined, avatarUrl: member.avatarUrl, subtitle: member.role || undefined }));
+}
+
+/** "Không có kết quả phù hợp bộ lọc" with its reset button, shared by the tabs' filtered lists. */
+function FilterEmptyState({ onReset, className = "p-8" }: { onReset: () => void; className?: string }) {
+  return (
+    <div className={`text-center ${className}`}>
+      <p className="text-sm font-semibold text-foreground">Không có kết quả phù hợp bộ lọc</p>
+      <button type="button" onClick={onReset} className="mt-2 text-xs font-semibold text-primary hover:underline">Đặt lại bộ lọc</button>
+    </div>
+  );
+}
 
 const MILESTONE_STATUS = {
   done:          { color:C.success, bg:"#dcfce7", label:"Hoàn tất",   icon:CheckCircle2 },
@@ -2012,135 +2054,6 @@ const MILESTONE_STATUS = {
   upcoming:      { color:C.slate,   bg:"#f1f5f9", label:"Sắp tới",    icon:Clock },
   "at-risk":     { color:C.danger,  bg:"#fee2e2", label:"Có rủi ro",     icon:AlertCircle },
 };
-
-// ─── Hạng mục hợp đồng (rules 2, D-06, D-22) ──────────────────────────────────
-const CONTRACT_ITEM_INPUT_CLASS = "w-full border border-input rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none";
-
-function ContractItemModal({ projectId, item, hasRoot, color, onClose }: {
-  projectId: string; item: ProjectContractItemSummary | null; hasRoot: boolean; color: string; onClose: () => void;
-}) {
-  const [name, setName] = useState(item?.name ?? "");
-  const [code, setCode] = useState(item?.code ?? "");
-  const [kind, setKind] = useState<string>(item?.kind ?? (hasRoot ? "APPENDIX" : "ROOT"));
-  const [contractType, setContractType] = useState<string>(item?.contractType ?? "");
-  const [valueAmount, setValueAmount] = useState(item?.valueAmount != null ? String(item.valueAmount) : "");
-  const [estimateHours, setEstimateHours] = useState(item?.estimateMinutes != null ? String(item.estimateMinutes / 60) : "");
-  const { submit, submitting, submitError } = useModalMutation(onClose);
-  // A change-request item is created from its approved request (D-23), not picked here.
-  const kindOptions = (Object.keys(CONTRACT_ITEM_KIND_LABELS) as Array<keyof typeof CONTRACT_ITEM_KIND_LABELS>)
-    .filter((value) => value === item?.kind || (value === "ROOT" ? !hasRoot : value === "APPENDIX"))
-    .map((value) => ({ value, label: CONTRACT_ITEM_KIND_LABELS[value] }));
-  const canSave = Boolean(name.trim()) && !submitting;
-  const save = () => {
-    if (!canSave) return;
-    void submit(async () => {
-      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/contract-items${item ? `/${encodeURIComponent(item.id)}` : ""}`, {
-        method: item ? "PATCH" : "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim(), code: code.trim() || undefined, kind,
-          contractType: contractType || null,
-          valueAmount: valueAmount.trim() === "" ? null : Number(valueAmount),
-          estimateMinutes: estimateHours.trim() === "" ? null : Math.round(Number(estimateHours) * 60)
-        })
-      });
-      if (!response.ok) throw new Error(await mutationErrorMessage(response, "Không thể lưu hạng mục hợp đồng"));
-      await reloadProjectContractItems(projectId);
-    });
-  };
-  return (
-    <ModalShell title={item ? "Sửa hạng mục hợp đồng" : "Thêm hạng mục hợp đồng"} icon={FileText} iconColor={color} onClose={onClose} initialFocusSelector="input"
-      footer={
-        <>
-          <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted transition-colors">Hủy</button>
-          <button type="button" onClick={save} disabled={!canSave} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm disabled:opacity-40" style={{ backgroundColor: color }}>
-            {submitting ? "Đang lưu…" : "Lưu hạng mục"}
-          </button>
-        </>
-      }>
-      <Field label="Tên hạng mục" required>
-        <input value={name} onChange={(event) => setName(event.target.value)} aria-label="Tên hạng mục" aria-required className={CONTRACT_ITEM_INPUT_CLASS} />
-      </Field>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Mã">
-          <input value={code} onChange={(event) => setCode(event.target.value)} aria-label="Mã hạng mục" placeholder="Tự sinh (HM-01…)" className={CONTRACT_ITEM_INPUT_CLASS} />
-        </Field>
-        <Field label="Nguồn">
-          <CustomDropdown ariaLabel="Nguồn hạng mục" options={kindOptions} value={kind} onChange={setKind} />
-        </Field>
-      </div>
-      <Field label="Loại hợp đồng">
-        <CustomDropdown ariaLabel="Loại hợp đồng" placeholder={CONTRACT_ITEM_TYPE_PENDING_LABEL} options={CONTRACT_ITEM_TYPE_OPTIONS} value={contractType} onChange={setContractType} />
-      </Field>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Giá trị (VND)">
-          <input type="number" min={0} value={valueAmount} onChange={(event) => setValueAmount(event.target.value)} aria-label="Giá trị hạng mục" className={CONTRACT_ITEM_INPUT_CLASS} />
-        </Field>
-        <Field label="Estimate gốc (giờ)">
-          <input type="number" min={0} value={estimateHours} onChange={(event) => setEstimateHours(event.target.value)} aria-label="Estimate gốc" className={CONTRACT_ITEM_INPUT_CLASS} />
-        </Field>
-      </div>
-      {item?.locked ? <p className="text-[11px] text-muted-foreground">Hạng mục đã có giờ log hoặc hóa đơn: loại hợp đồng và giá trị gốc đã khóa, muốn đổi phải qua yêu cầu thay đổi.</p> : null}
-      <ModalMutationFeedback error={submitError} />
-    </ModalShell>
-  );
-}
-
-function ProjectContractItemsBlock({ projectId, projectColor, onOpenChangeRequests }: { projectId: string; projectColor: string; onOpenChangeRequests: () => void }) {
-  const { items, canManage, isInternalWorklog, loaded, error } = useProjectContractItems(projectId);
-  const [editing, setEditing] = useState<ProjectContractItemSummary | "new" | null>(null);
-  // The DX Internal Worklog project has no contract line items.
-  if (!loaded || isInternalWorklog) return null;
-  return (
-    <>
-      {error ? <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">{error}</p> : null}
-      {/* Mục 6.1 "Thiết lập P&L của dự án": the block reads /api/pnl/projects/:id/setup; this page keeps the item modal. */}
-      <ProjectPnlSetup projectId={projectId} canManage={canManage} fallbackItems={items}
-        refreshKey={items.map((item) => `${item.id}:${item.updatedAt}:${item.status}`).join("|")}
-        onAddItem={() => setEditing("new")} onEditItem={(itemId) => setEditing(items.find((item) => item.id === itemId) ?? null)}
-        onOpenChangeRequests={onOpenChangeRequests} />
-      {editing ? (
-        <ContractItemModal projectId={projectId} item={editing === "new" ? null : editing} color={projectColor} onClose={() => setEditing(null)}
-          hasRoot={items.some((item) => item.kind === "ROOT" && item.status === "active")} />
-      ) : null}
-    </>
-  );
-}
-
-/**
- * Line-item select of the task forms. Hidden while the project has at most one line item (the system assigns it, D-06);
- * only a PM (Admin) may pick another one, a sub-task repeats its parent, and moving an existing task needs a reason (D-05).
- */
-function TaskContractItemField({ value, onChange, originalValue, reason, onReasonChange, readOnly = false }: {
-  value?: string; onChange: (value: string) => void; originalValue?: string; reason?: string; onReasonChange?: (value: string) => void; readOnly?: boolean;
-}) {
-  const params = useParams<{ projectId: string }>();
-  const { items, canManage } = useProjectContractItems(String(params?.projectId ?? ""));
-  const choices = items.filter((item) => item.status === "active" || item.id === value);
-  if (choices.length <= 1) return null;
-  const selected = value ?? defaultContractItemId(items) ?? "";
-  const labelOf = (item: ProjectContractItemSummary) => `${item.code} · ${item.name} (${item.contractTypeLabel})`;
-  const current = choices.find((item) => item.id === selected);
-  return (
-    <>
-      <Field label={CONTRACT_ITEM_FIELD_LABEL}>
-        {canManage && !readOnly ? (
-          <CustomDropdown ariaLabel={CONTRACT_ITEM_FIELD_LABEL} options={choices.map((item) => ({ value: item.id, label: labelOf(item) }))} value={selected} onChange={onChange} />
-        ) : (
-          <div className="px-3 py-2.5 rounded-xl border border-border bg-muted/30 text-sm text-muted-foreground" title={readOnly ? "Sub-task dùng hạng mục của task cha." : "Chỉ PM (Admin) được đổi hạng mục hợp đồng."}>
-            {current ? labelOf(current) : NO_CONTRACT_ITEM_LABEL}
-          </div>
-        )}
-      </Field>
-      {onReasonChange && originalValue && selected !== originalValue ? (
-        <Field label="Lý do đổi hạng mục" required>
-          <input value={reason ?? ""} onChange={(event) => onReasonChange(event.target.value)} aria-label="Lý do đổi hạng mục" aria-required className={CONTRACT_ITEM_INPUT_CLASS} />
-        </Field>
-      ) : null}
-    </>
-  );
-}
 
 // Keep the project detail navigation focused on delivery decisions. Dashboard
 // and Team were redundant views; their useful content now lives in Overview,
@@ -2153,7 +2066,7 @@ const PROJECT_TAB_ITEMS: WorkspaceTabItem<Tab>[] = [
   { id: "Overview", label: "Overview", description: "Tổng quan dự án" },
   { id: "Project Sheet", label: "Project Sheet", description: "Milestone & ngân sách" },
   { id: "Tasks", label: "Tasks", description: "Công việc & tiến độ" },
-  { id: "Issues", label: "Sổ vấn đề", description: "Vấn đề & yêu cầu thay đổi" },
+  { id: "Issues", label: "Sổ vấn đề", description: "Blocker, Risk, Issue" },
   { id: "Documents", label: "Điểm chốt & Tài liệu", description: "Hồ sơ chuyển tiếp" },
   { id: "Timeline", label: "Timeline", description: "Lịch thực hiện" },
   { id: "Activity", label: "Activity", description: "Lịch sử thay đổi" }
@@ -2177,6 +2090,13 @@ function projectTabDomId(value: Tab) {
 // ─── Modals ───────────────────────────────────────────────────────────────────
 
 const ProjectPickerFeedback = React.createContext<{ ready: boolean; feedback: React.ReactNode }>({ ready: false, feedback: null });
+/** Stages waiting for a G1–G8 gate (V-11) and the way to the tab where the gate is approved. */
+const StageGateLocks = React.createContext<{ blocks: StageGateBlocks; openGates: () => void }>({ blocks: {}, openGates: () => undefined });
+
+function OpenGatesTabLink() {
+  const { openGates } = React.useContext(StageGateLocks);
+  return <button type="button" onClick={openGates} className="shrink-0 font-bold underline underline-offset-2">Mở tab {GATE_TAB_LABEL}</button>;
+}
 
 function ModalShell({ title, icon: Icon, iconColor, onClose, children, footer, initialFocusSelector }: {
   title: string; icon: React.ElementType; iconColor: string;
@@ -2532,8 +2452,6 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
   const [taskType, setTaskType] = useState("implementation");
   // undefined = take the stage's Layer 1 (D-02). Layer 2 is derived by the API and never chosen (D-04).
   const [taskTypeLayer1, setTaskTypeLayer1] = useState<TaskItem["taskTypeLayer1"]>(undefined);
-  const [contractItemId, setContractItemId] = useState<string | undefined>(undefined);
-  const contractItemFieldProps = {};
   const taskTypeLayer2Text = "Hệ thống tự gán khi lưu";
   const [priority, setPriority] = useState<TaskItem["priority"]>("medium");
   const [status,   setStatus]   = useState<TaskItem["status"]>("todo");
@@ -2545,8 +2463,10 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
     return defaultMember ? [defaultMember.id] : [];
   });
   const pic = members.find((member) => member.id === selectedAssigneeIds[0]);
-  const [plannedHours, setPlannedHours] = useState<number>(8);
-  const [actualHours, setActualHours]   = useState<number>(0);
+  const [plannedHoursText, setPlannedHoursText] = useState("8");
+  const plannedHours = parsePlannedHours(plannedHoursText);
+  const plannedHoursInvalid = isPlannedHoursInvalid(plannedHours);
+  const actualHours = 0;
   const { submit, submitting, submitError } = useModalMutation(onClose);
 
   useEffect(() => {
@@ -2568,7 +2488,7 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
               onClick={() => {
                 if (!title.trim() || !pic || selectedAssigneeIds.length === 0) return;
                 void submit(async () => {
-                  if (isPlannedHoursInvalid(plannedHours)) {
+                  if (plannedHoursInvalid) {
                     throw new Error(PLANNED_HOURS_ERROR);
                   }
                   if (isTaskDateRangeInvalid(startDate, due)) {
@@ -2579,7 +2499,6 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
                     title:title.trim(),
                     taskType,
                     taskTypeLayer1,
-                    contractItemId,
                     status,
                     priority,
                     assignee:pic.initials,
@@ -2594,7 +2513,7 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
                   });
                 });
               }}
-              disabled={!title.trim() || !pic || selectedAssigneeIds.length === 0 || isPlannedHoursInvalid(plannedHours) || submitting}
+              disabled={!title.trim() || !pic || selectedAssigneeIds.length === 0 || plannedHoursInvalid || submitting}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm disabled:opacity-40"
               style={{ backgroundColor:color }}>
               <ListChecks className="w-4 h-4" /> {submitting ? "Adding..." : "Add Task"}
@@ -2622,7 +2541,6 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
             <div className="px-3 py-2.5 rounded-xl border border-border bg-muted/30 text-sm text-muted-foreground" title="Hệ thống suy ra từ dự án và stage; không chọn tay.">{taskTypeLayer2Text}</div>
           </Field>
         </div>
-        <TaskContractItemField value={contractItemId} onChange={setContractItemId} {...contractItemFieldProps} />
         <Field label="Loại công việc">
           <CustomDropdown
             ariaLabel="Loại công việc"
@@ -2692,29 +2610,9 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
             placeholder="Describe the scope or deliverables of this task..."
             className="w-full border border-input rounded-xl p-3 text-sm text-foreground bg-background focus:outline-none resize-none" />
         </Field>
-        {/* Hours */}
-        <div className="grid grid-cols-2 gap-3 mt-2">
-          <Field label="Planned Hours (Giờ kế hoạch)">
-            <input
-              type="number"
-              min={0}
-              max={MAX_PLANNED_HOURS}
-              value={plannedHours}
-              onChange={e => setPlannedHours(Math.max(0, parseInt(e.target.value) || 0))}
-              aria-invalid={isPlannedHoursInvalid(plannedHours)}
-              className={`w-full border rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none ${isPlannedHoursInvalid(plannedHours) ? "border-red-400 focus:ring-2 focus:ring-red-500/20" : "border-input"}`}
-            />
-            {isPlannedHoursInvalid(plannedHours) && <p className="mt-1 text-[11px] font-semibold text-red-600">{PLANNED_HOURS_ERROR}</p>}
-          </Field>
-          <Field label="Actual Hours (Giờ thực tế)">
-            <input
-              type="number"
-              min={0}
-              value={actualHours}
-              onChange={e => setActualHours(Math.max(0, parseInt(e.target.value) || 0))}
-              className="w-full border border-input rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none"
-            />
-          </Field>
+        {/* Hours: actual hours come from time logs only, so there is no input for them here. */}
+        <div className="mt-2">
+          <PlannedHoursField value={plannedHoursText} onChange={setPlannedHoursText} invalid={plannedHoursInvalid} />
         </div>
         <ModalMutationFeedback error={submitError} />
       </ModalShell>
@@ -3762,16 +3660,21 @@ function EditStageModal({ stage, color, onClose, onSave, members = EMPTY_TEAM_ME
   const [name, setName] = useState(stage.name);
   const [description, setDescription] = useState(stage.description ?? "");
   const [status, setStatus] = useState<StageItem["status"]>(stage.status ?? "in-progress");
+  // V-11: a stage behind a gate that is not approved cannot be started; the API refuses it, so the choice is not offered.
+  const gateBlock = React.useContext(StageGateLocks).blocks[stage.id];
+  const startBlocked = Boolean(gateBlock) && (stage.status ?? "upcoming") === "upcoming";
+  const [picTouched, setPicTouched] = useState(false);
 
   const initPic = getSelectedTeamMember(members, stage.picUserId);
   const [pic, setPic] = useState<ProjectTeamMember | undefined>(initPic);
   const directoryReady = React.useContext(ProjectPickerFeedback).ready;
   const staleAssigneeError = directoryReady && !initPic && (stage.picUserId || (stage.picName && stage.picName !== "Unassigned"))
-    ? PROJECT_MEMBER_ASSIGNMENT_ERROR
+    ? STALE_ASSIGNEE_NOTE
     : null;
 
   const [startDate, setStartDate] = useState(stage.startDate ?? "");
   const [dueDate, setDueDate] = useState(stage.dueDate ?? "");
+  const picMissing = picTouched && !pic;
   const { submit, submitting, submitError } = useModalMutation(onClose);
 
   useEffect(() => {
@@ -3797,21 +3700,19 @@ function EditStageModal({ stage, color, onClose, onSave, members = EMPTY_TEAM_ME
             <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted transition-colors">Cancel</button>
             <motion.button whileHover={{ scale:1.02 }} whileTap={{ scale:0.97 }}
               onClick={() => {
-                if(!name.trim() || !pic) return;
+                if(!name.trim() || picMissing) return;
                 void submit(() => onSave({
                   ...stage,
                   name: name.trim(),
                   description: description.trim(),
                   status,
-                  pic: pic.initials,
-                  picName: pic.name,
-                  picColor: pic.color,
-                  picUserId: pic.id,
+                  // The PIC is required (and sent) only when changed, so a stage whose PIC left the project can still be edited.
+                  ...(picTouched && pic ? { pic: pic.initials, picName: pic.name, picColor: pic.color, picUserId: pic.id } : {}),
                   startDate,
                   dueDate
                 }));
               }}
-              disabled={!name.trim() || !pic || submitting}
+              disabled={!name.trim() || picMissing || submitting}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm disabled:opacity-40"
               style={{ backgroundColor:color }}>
               <Pencil className="w-4 h-4" /> {submitting ? "Saving..." : "Save Changes"}
@@ -3827,12 +3728,20 @@ function EditStageModal({ stage, color, onClose, onSave, members = EMPTY_TEAM_ME
           <div className="flex gap-2 flex-wrap">
             {Object.entries(STAGE_STATUS_CFG).map(([k, cfg]) => (
               <motion.button key={k} whileTap={{ scale:0.95 }} onClick={() => setStatus(k as StageItem["status"])}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all"
+                disabled={startBlocked && k !== "upcoming"}
+                title={startBlocked && k !== "upcoming" && gateBlock ? gateBlockNote(gateBlock, "bắt đầu stage") : undefined}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all disabled:cursor-not-allowed disabled:opacity-40"
                 style={{ borderColor:status===k?cfg.color:"var(--color-border)", backgroundColor:status===k?cfg.bg:"transparent", color:status===k?cfg.color:"var(--color-muted-foreground)" }}>
                 {cfg.label}
               </motion.button>
             ))}
           </div>
+          {startBlocked && gateBlock && (
+            <p className="mt-1.5 flex flex-wrap items-center gap-x-2 text-[11px] font-semibold text-amber-800">
+              <span>{gateBlockNote(gateBlock, "bắt đầu stage này")}</span>
+              <OpenGatesTabLink />
+            </p>
+          )}
         </Field>
 
         <div className="grid grid-cols-2 gap-3">
@@ -3840,7 +3749,7 @@ function EditStageModal({ stage, color, onClose, onSave, members = EMPTY_TEAM_ME
             <TeamMemberSingleSelect
               members={members}
               value={pic}
-              onChange={setPic}
+              onChange={(member) => { setPicTouched(true); setPic(member); }}
               placeholder="Select stage PIC"
             />
             {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected PIC: {pic.name}</p>}
@@ -3861,7 +3770,7 @@ function EditStageModal({ stage, color, onClose, onSave, members = EMPTY_TEAM_ME
             placeholder="Describe the scope or deliverables of this stage..."
             className="w-full border border-input rounded-xl p-3 text-sm text-foreground bg-background focus:outline-none resize-none" />
         </Field>
-        <ModalMutationFeedback error={submitError ?? staleAssigneeError} />
+        <ModalMutationFeedback error={submitError ?? (picTouched ? null : staleAssigneeError)} />
       </ModalShell>
     </AnimatePresence>
   );
@@ -3883,7 +3792,7 @@ function EditMilestoneModal({ milestone, color, onClose, onSave, members = EMPTY
   const pic = selectedAssignees[0];
   const directoryReady = React.useContext(ProjectPickerFeedback).ready;
   const staleAssigneeError = directoryReady && (milestone.picUserId || milestone.assigneeIds?.length) && !pic
-    ? "The current PIC is no longer an active project member. You can keep it while renaming, or select an active member to transfer ownership."
+    ? STALE_ASSIGNEE_NOTE
     : null;
 
   const [startDate, setStartDate] = useState(milestone.startDate);
@@ -3976,18 +3885,18 @@ function EditMilestoneModal({ milestone, color, onClose, onSave, members = EMPTY
 
 // ─── Edit Task Modal ──────────────────────────────────────────────────────────
 
+/** Fields of the edit form that are validated and sent only when the user changed them. */
+interface TaskEditChanges { assigneeChanged: boolean; estimateChanged: boolean }
+
 function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMBERS }: {
   task: TaskItem; color: string;
-  onClose: () => void; onSave: (t: TaskItem) => Promise<void>;
+  onClose: () => void; onSave: (t: TaskItem, changed: TaskEditChanges) => Promise<void>;
   members?: ProjectTeamMember[];
 }) {
   const [title,    setTitle]    = useState(task.title);
   const [taskType, setTaskType] = useState(task.taskType || "implementation");
   // An empty Layer 1 stays empty ("Chờ phân loại") unless changed; Layer 2 is derived by the API and read-only (D-04).
   const [taskTypeLayer1, setTaskTypeLayer1] = useState<TaskItem["taskTypeLayer1"]>(task.taskTypeLayer1);
-  const [contractItemId, setContractItemId] = useState<string | undefined>(task.contractItemId);
-  const [contractItemChangeReason, setContractItemChangeReason] = useState("");
-  const contractItemFieldProps = { originalValue: task.contractItemId, reason: contractItemChangeReason, onReasonChange: setContractItemChangeReason, readOnly: Boolean(task.parentTaskId) };
   const taskTypeLayer2Text = taskTypeLayer2Label(task.taskTypeLayer2);
   const [priority, setPriority] = useState<TaskItem["priority"]>(task.priority);
   const [status,   setStatus]   = useState<TaskItem["status"]>(task.status);
@@ -3999,11 +3908,19 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
   const pic = getSelectedTeamMember(members, selectedAssigneeIds[0]);
   const directoryReady = React.useContext(ProjectPickerFeedback).ready;
   const staleAssigneeError = directoryReady && !initPic && (task.assigneeUserId || (task.assignee && task.assignee !== "Unassigned"))
-    ? PROJECT_MEMBER_ASSIGNMENT_ERROR
+    ? STALE_ASSIGNEE_NOTE
     : null;
-  const [plannedHours, setPlannedHours] = useState<number>(Math.min(MAX_PLANNED_HOURS, task.plannedHours ?? 8));
-  const [actualHours, setActualHours]   = useState<number>(task.actualHours ?? 0);
+  // The stored estimate is shown as is (an older one may exceed 8h); it is validated and sent only when the user changes it.
+  const originalPlannedHours = task.plannedHours ?? 0;
+  const [plannedHoursText, setPlannedHoursText] = useState(String(originalPlannedHours));
+  const plannedHours = parsePlannedHours(plannedHoursText);
+  const estimateChanged = plannedHours !== originalPlannedHours;
+  const plannedHoursInvalid = isPlannedHoursInvalid(plannedHours, originalPlannedHours);
+  const actualHours = task.actualHours ?? 0;
+  // #10: the assignee is required (and sent) only when the user changes it, so a task whose assignee left the project can still be edited.
+  const [assigneeTouched, setAssigneeTouched] = useState(false);
   const [description, setDescription]   = useState<string>(task.description ?? "");
+  const assigneeMissing = assigneeTouched && (!pic || selectedAssigneeIds.length === 0);
   const { submit, submitting, submitError } = useModalMutation(onClose);
 
   useEffect(() => {
@@ -4023,9 +3940,9 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
             <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted transition-colors">Cancel</button>
             <motion.button whileHover={{ scale:1.02 }} whileTap={{ scale:0.97 }}
               onClick={() => {
-                if (!title.trim() || !pic || selectedAssigneeIds.length === 0) return;
+                if (!title.trim() || assigneeMissing) return;
                 void submit(async () => {
-                  if (isPlannedHoursInvalid(plannedHours)) {
+                  if (plannedHoursInvalid) {
                     throw new Error(PLANNED_HOURS_ERROR);
                   }
                   if (isTaskDateRangeInvalid(startDate, due)) {
@@ -4036,23 +3953,18 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
                     title:title.trim(),
                     taskType,
                     taskTypeLayer1,
-                    contractItemId,
-                    contractItemChangeReason: contractItemChangeReason.trim() || undefined,
                     status,
                     priority,
-                    assignee:pic.initials,
-                    aColor:pic.color,
-                    assigneeUserId: pic.id,
-                    assigneeUserIds: selectedAssigneeIds,
+                    ...(assigneeTouched && pic ? { assignee:pic.initials, aColor:pic.color, assigneeUserId: pic.id, assigneeUserIds: selectedAssigneeIds } : {}),
                     startDate: startDate || undefined,
                     due:due||"TBD",
-                    plannedHours,
+                    plannedHours: estimateChanged ? plannedHours : task.plannedHours,
                     actualHours,
                     description: description.trim()
-                  });
+                  }, { assigneeChanged: assigneeTouched, estimateChanged });
                 });
               }}
-              disabled={!title.trim() || !pic || selectedAssigneeIds.length === 0 || isPlannedHoursInvalid(plannedHours) || submitting}
+              disabled={!title.trim() || assigneeMissing || plannedHoursInvalid || submitting}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm disabled:opacity-40"
               style={{ backgroundColor:color }}>
               <Pencil className="w-4 h-4" /> {submitting ? "Saving..." : "Save Changes"}
@@ -4076,7 +3988,6 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
             <div className="px-3 py-2.5 rounded-xl border border-border bg-muted/30 text-sm text-muted-foreground" title="Hệ thống suy ra từ dự án và stage; không chọn tay.">{taskTypeLayer2Text}</div>
           </Field>
         </div>
-        <TaskContractItemField value={contractItemId} onChange={setContractItemId} {...contractItemFieldProps} />
         <Field label="Loại công việc">
           <CustomDropdown
             ariaLabel="Loại công việc"
@@ -4127,7 +4038,7 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
           <TeamMemberMultiSelect
             members={members}
             selectedIds={selectedAssigneeIds}
-            onChange={setSelectedAssigneeIds}
+            onChange={(ids) => { setAssigneeTouched(true); setSelectedAssigneeIds(ids); }}
             placeholder="Select task assignees"
           />
           {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected assignees: {selectedAssigneeIds.length} · {pic.name}</p>}
@@ -4140,28 +4051,12 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
             <CustomDatePicker ariaLabel="Task Due Date" value={due} onChange={val => setDue(val)} />
           </Field>
         </div>
-        {/* Hours */}
+        {/* Hours: actual hours come from time logs only, so they are shown, not typed. */}
         <div className="grid grid-cols-2 gap-3 mt-2">
-          <Field label="Planned Hours (Giờ kế hoạch)">
-            <input
-              type="number"
-              min={0}
-              max={MAX_PLANNED_HOURS}
-              value={plannedHours}
-              onChange={e => setPlannedHours(Math.max(0, parseInt(e.target.value) || 0))}
-              aria-invalid={isPlannedHoursInvalid(plannedHours)}
-              className={`w-full border rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none ${isPlannedHoursInvalid(plannedHours) ? "border-red-400 focus:ring-2 focus:ring-red-500/20" : "border-input"}`}
-            />
-            {isPlannedHoursInvalid(plannedHours) && <p className="mt-1 text-[11px] font-semibold text-red-600">{PLANNED_HOURS_ERROR}</p>}
-          </Field>
-          <Field label="Actual Hours (Giờ thực tế)">
-            <input
-              type="number"
-              min={0}
-              value={actualHours}
-              onChange={e => setActualHours(Math.max(0, parseInt(e.target.value) || 0))}
-              className="w-full border border-input rounded-xl px-3.5 py-2.5 text-sm text-foreground bg-background focus:outline-none"
-            />
+          <PlannedHoursField value={plannedHoursText} onChange={setPlannedHoursText} invalid={plannedHoursInvalid} />
+          <Field label="Giờ thực tế đã ghi">
+            <div className="px-3.5 py-2.5 rounded-xl border border-border bg-muted/30 text-sm text-muted-foreground">{formatHours(task.actualHours ?? 0)} giờ</div>
+            <p className="mt-1 text-[11px] text-muted-foreground">Tự tính từ giờ log. Ghi giờ ở trang chi tiết task.</p>
           </Field>
         </div>
 
@@ -4170,7 +4065,7 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
             placeholder="Describe the scope or deliverables of this task..."
             className="w-full border border-input rounded-xl p-3 text-sm text-foreground bg-background focus:outline-none resize-none" />
         </Field>
-        <ModalMutationFeedback error={submitError ?? staleAssigneeError} />
+        <ModalMutationFeedback error={submitError ?? (assigneeTouched ? null : staleAssigneeError)} />
       </ModalShell>
     </AnimatePresence>
   );
@@ -4299,6 +4194,8 @@ function StageSection({ stage, projectColor, onAddTask, onAddSubtask, onEditTask
   const [open, setOpen] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const gateBlock = React.useContext(StageGateLocks).blocks[stage.id];
+  const lockedReason = locked ? (gateBlock ? gateBlockNote(gateBlock, "tạo task") : `Milestone đang khóa: duyệt điểm chốt trước đó ở tab ${GATE_TAB_LABEL} để tạo task.`) : undefined;
 
   const done  = stage.tasks.filter(t => t.status === "done").length;
   const total = stage.tasks.length;
@@ -4356,7 +4253,8 @@ function StageSection({ stage, projectColor, onAddTask, onAddSubtask, onEditTask
             whileHover={{ scale:1.05 }} whileTap={{ scale:0.95 }}
             onClick={() => onAddTask(stage.id, stage.name)}
             disabled={locked || hierarchyBusy}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white"
+            title={lockedReason}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
             style={{ backgroundColor:projectColor }}>
             <Plus className="w-3 h-3" /> Task
           </motion.button>
@@ -4375,6 +4273,15 @@ function StageSection({ stage, projectColor, onAddTask, onAddSubtask, onEditTask
           </button>
         </div>
       </div>
+
+      {/* A stage behind a gate in an open milestone: tasks can be planned, but the stage cannot start and takes no hours yet. */}
+      {gateBlock && !locked && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-amber-200 bg-amber-50/70 px-3 py-1.5 text-[11px] font-semibold text-amber-800">
+          <Lock className="h-3 w-3 shrink-0" />
+          <span>{gateBlockLabel(gateBlock)} chưa được duyệt: chưa bắt đầu stage hoặc ghi giờ được.</span>
+          <OpenGatesTabLink />
+        </div>
+      )}
 
       {/* Tasks */}
       <AnimatePresence>
@@ -4438,7 +4345,7 @@ function StageSection({ stage, projectColor, onAddTask, onAddSubtask, onEditTask
               <div className="px-4 py-6 text-center">
                 <ListChecks className="w-6 h-6 text-muted-foreground/30 mx-auto mb-1.5" />
                 <p className="text-xs text-muted-foreground">No tasks yet</p>
-                <button disabled={locked || hierarchyBusy} onClick={() => onAddTask(stage.id, stage.name)}
+                <button disabled={locked || hierarchyBusy} title={lockedReason} onClick={() => onAddTask(stage.id, stage.name)}
                   className="text-[11px] font-medium mt-1 hover:underline" style={{ color:projectColor }}>
                   {locked ? "Stage đang khóa" : "Add first task"}
                 </button>
@@ -4479,6 +4386,8 @@ function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onA
   const cfg = MILESTONE_STATUS[milestone.status];
   const visibleStages = visibleStagesForMilestone(group, milestone);
   const locked = lockedProp ?? (milestone.gateStatus === "locked" || milestone.status === "upcoming");
+  const gateBlocks = React.useContext(StageGateLocks).blocks;
+  const milestoneGateBlock = visibleStages.map((stage) => gateBlocks[stage.id]).find(Boolean);
 
   const totalTasks = group.stages.reduce((s, st) => s + st.tasks.length, 0);
   const doneTasks  = group.stages.reduce((s, st) => s + st.tasks.filter(t => t.status === "done").length, 0);
@@ -4554,7 +4463,8 @@ function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onA
                 whileHover={{ scale:1.05 }} whileTap={{ scale:0.95 }}
                 onClick={e => { e.stopPropagation(); onAddStage(milestone.id, milestone.name); }}
                 disabled={locked}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold border"
+                title={locked ? (milestoneGateBlock ? gateBlockNote(milestoneGateBlock, "thêm stage") : `Milestone đang khóa: duyệt điểm chốt trước đó ở tab ${GATE_TAB_LABEL}.`) : undefined}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold border disabled:cursor-not-allowed disabled:opacity-50"
                 style={{ borderColor:cfg.color, color:cfg.color, backgroundColor:`${cfg.color}10` }}>
                 <Plus className="w-3 h-3" /> Add Stage
               </motion.button>
@@ -4577,9 +4487,12 @@ function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onA
       </div>
 
       {locked && (
-        <div className="mx-1 mt-2 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-[11px] font-semibold text-amber-800">
+        <div className="mx-1 mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-[11px] font-semibold text-amber-800">
           <Lock className="h-3.5 w-3.5 shrink-0" />
-          Milestone đang khóa: hoàn tất điểm chốt trước đó để mở Stage và Task.
+          <span>{milestoneGateBlock
+            ? `Milestone đang khóa: ${gateBlockLabel(milestoneGateBlock)} chưa được duyệt nên chưa thêm stage, tạo task hoặc ghi giờ ở đây được.`
+            : "Milestone đang khóa: milestone trước chưa được duyệt nên chưa thêm stage, tạo task hoặc ghi giờ ở đây được."}</span>
+          <OpenGatesTabLink />
         </div>
       )}
 
@@ -4890,9 +4803,9 @@ export default function ProjectDetailPage() {
   const [isHoveredEdit, setIsHoveredEdit] = useState(false);
   const [isHoveredMore, setIsHoveredMore] = useState(false);
 
-  const [priorityFilter, setPriorityFilter]   = useState<string>("All");
-  const [memberFilter, setMemberFilter]       = useState<string>("All");
-  const [milestoneFilter, setMilestoneFilter] = useState<string>("All");
+  // Overview and Tasks each keep their own task filters (same shape, see task-filters.ts).
+  const [overviewFilters, setOverviewFilters] = useState(EMPTY_PROJECT_TASK_FILTERS);
+  const [taskTabFilters, setTaskTabFilters] = useState(EMPTY_PROJECT_TASK_FILTERS);
   const [hoursMilestoneFilter, setHoursMilestoneFilter] = useState<string>("All");
   const [hoursStageFilter, setHoursStageFilter]         = useState<string>("All");
   const [weeklyWorkloadType, setWeeklyWorkloadType]     = useState<"tasks" | "hours">("tasks");
@@ -5047,6 +4960,10 @@ export default function ProjectDetailPage() {
   const [milestones, setMilestones] = useState<Milestone[]>(EMPTY_MILESTONES);
   const [showMilestoneModal, setShowMilestoneModal] = useState(false);
   const [milestoneGroups, setMilestoneGroups] = useState<MilestoneGroup[]>(EMPTY_MILESTONE_GROUPS);
+  // Re-read after anything that can open or close a gate: a milestone's gate status or a stage's status changing.
+  const stageGateRefreshKey = `${milestones.map((milestone) => `${milestone.id}:${milestone.gateStatus ?? ""}:${milestone.status}`).join("|")}#${milestoneGroups.map((group) => group.stages.map((stage) => `${stage.id}:${stage.status ?? ""}`).join(",")).join("|")}`;
+  const stageGateBlockMap = useStageGateBlocks(projectResolved ? projectId : null, stageGateRefreshKey);
+  const stageGateLocks = useMemo(() => ({ blocks: stageGateBlockMap, openGates: () => handleTabChange("Documents") }), [stageGateBlockMap, handleTabChange]);
   const [hierarchyOrderVersion, setHierarchyOrderVersion] = useState(initialProjectSnapshot?.project?.hierarchyOrderVersion ?? 0);
   const [hierarchyBusy, setHierarchyBusy] = useState(false);
   const [hierarchyAnnouncement, setHierarchyAnnouncement] = useState("");
@@ -5115,31 +5032,41 @@ export default function ProjectDetailPage() {
   }, []);
 
   const reloadCanonicalHierarchy = useCallback(async () => {
+    // A mutation can be committed while the project-summary endpoint is briefly
+    // unavailable (for example Render returning 520). Keep the hierarchy refresh
+    // usable in that case instead of reporting a successful mutation as failed.
     const [projectResponse, workItems] = await Promise.all([
       fetch(`/api/projects/${encodeURIComponent(projectId)}`, {
         cache: "no-store",
         credentials: "same-origin"
-      }),
+      }).catch(() => null),
       fetchLiveProjectWorkItems(projectId)
     ]);
-    if (projectResponse.status === 401) {
+    if (projectResponse?.status === 401) {
       window.location.assign(`/login?returnTo=${encodeURIComponent(`/projects/${projectId}?tab=Tasks`)}`);
       return null;
     }
-    if (!projectResponse.ok) throw new Error(`Could not reload hierarchy (${projectResponse.status}).`);
-    const canonicalProject = mapProjectSummaryToUiProject(await projectResponse.json() as ProjectSummary);
+    // 4xx responses still indicate a real authorization/data problem. A 5xx or
+    // network failure only affects the project metadata; the hierarchy payload
+    // below is the source of truth for the task/milestone screen.
+    if (projectResponse && !projectResponse.ok && projectResponse.status < 500) {
+      throw new Error(`Could not reload hierarchy (${projectResponse.status}).`);
+    }
+    const canonicalProject = projectResponse?.ok
+      ? mapProjectSummaryToUiProject(await projectResponse.json() as ProjectSummary)
+      : null;
     const canonical: HierarchyUiState = {
       milestones: workItems.milestones,
       groups: workItems.groups,
-      version: canonicalProject.hierarchyOrderVersion ?? 0
+      version: canonicalProject?.hierarchyOrderVersion ?? hierarchyOrderVersion
     };
-    setProject(canonicalProject);
+    if (canonicalProject) setProject(canonicalProject);
     setMilestones(canonical.milestones);
     setMilestoneGroups(canonical.groups);
     setHierarchyOrderVersion(canonical.version);
     hierarchyCoordinator.current.replaceConfirmed(canonical);
     return canonical;
-  }, [projectId]);
+  }, [hierarchyOrderVersion, projectId]);
 
   const handleAdvanceMilestone = useCallback(async () => {
     if (handoffBusy) return;
@@ -5291,6 +5218,12 @@ export default function ProjectDetailPage() {
   const [deleteStageFor,setDeleteStageFor]= useState<{ milestoneId:string; stageId:string; stageName:string } | null>(null);
   // viewTaskDetails removed — task detail navigates to /tasks/[taskId] full page
   const taskDetailRouter = useRouter();
+  // Opening a task remembers this project URL with the active tab, so the task's "Quay lại" returns here.
+  const openTaskDetail = (task: TaskItem) => {
+    const query = new URLSearchParams(window.location.search);
+    query.set("tab", tab);
+    taskDetailRouter.push(`/tasks/${encodeURIComponent(task.id)}?returnTo=${encodeURIComponent(`${window.location.pathname}?${query.toString()}`)}`);
+  };
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [mutatingDelete, setMutatingDelete] = useState(false);
 
@@ -5312,8 +5245,9 @@ export default function ProjectDetailPage() {
   const [documents, setDocuments] = useState<ProjectDoc[]>(EMPTY_PROJECT_DOCS);
   const [activityLog, setActivityLog] = useState<ActivityLogItem[]>(EMPTY_ACTIVITY_LOG);
   const [activityPage, setActivityPage] = useState(0);
-  const [activitySourceFilter, setActivitySourceFilter] = useState<"all" | "project" | "work-log">("all");
-  const [activityUserFilter, setActivityUserFilter] = useState("all");
+  const [activitySourceFilter, setActivitySourceFilter] = useState<string[]>([]);
+  const [activityUserFilter, setActivityUserFilter] = useState<string[]>([]);
+  const [activityDateRange, setActivityDateRange] = useState<DateRange>(EMPTY_DATE_RANGE);
   const [riskRegistry, setRiskRegistry] = useState<RiskItem[]>(EMPTY_RISK_REGISTRY);
   const [showAddDocModal, setShowAddDocModal] = useState(false);
   const [showAddLinkModal, setShowAddLinkModal] = useState(false);
@@ -5323,9 +5257,10 @@ export default function ProjectDetailPage() {
   // Document types the project's G1–G8 gates ask for (empty for projects that keep milestone gates).
   const [gateDocumentTypes, setGateDocumentTypes] = useState<string[]>([]);
   const [docSearchQuery, setDocSearchQuery] = useState("");
-  const [docCategoryFilter, setDocCategoryFilter] = useState("All");
-  const [docMilestoneFilter, setDocMilestoneFilter] = useState("All");
-  const [docStatusFilter, setDocStatusFilter] = useState<"all" | "submitted" | "missing">("all");
+  const [docCategoryFilter, setDocCategoryFilter] = useState<string[]>([]);
+  const [docMilestoneFilter, setDocMilestoneFilter] = useState<string[]>([]);
+  const [docStatusFilter, setDocStatusFilter] = useState<string[]>([]);
+  const [docDateRange, setDocDateRange] = useState<DateRange>(EMPTY_DATE_RANGE);
   const [requiredDocsOnly, setRequiredDocsOnly] = useState(false);
   const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
   const [documentMutationError, setDocumentMutationError] = useState<string | null>(null);
@@ -5668,7 +5603,7 @@ export default function ProjectDetailPage() {
 
   const handleAddMilestone = useCallback(async (m: Milestone) => {
     const owner = findAssignableTeamMember(teamMembers, m.picUserId);
-    if (!owner) throw new Error(PROJECT_MEMBER_ASSIGNMENT_ERROR);
+    if (!owner) throw new Error(projectMemberAssignmentError(workspaceTeamMembers.find(member => member.id === m.picUserId)?.name));
     const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/stages`, {
       method: "POST",
       credentials: "same-origin",
@@ -5708,7 +5643,7 @@ export default function ProjectDetailPage() {
     const original = milestones.find(item => item.id === milestoneId);
     const ownerChanged = updated.picUserId !== original?.picUserId;
     const owner = findAssignableTeamMember(assignmentTeamMembers, updated.picUserId);
-    if (ownerChanged && updated.picUserId && !owner) throw new Error(PROJECT_MEMBER_ASSIGNMENT_ERROR);
+    if (ownerChanged && updated.picUserId && !owner) throw new Error(projectMemberAssignmentError(workspaceTeamMembers.find(member => member.id === updated.picUserId)?.name));
     const representativeStageId = resolveMilestoneStageId(milestoneId);
     const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(representativeStageId)}?scope=milestone`, {
       method: "PATCH",
@@ -5804,7 +5739,7 @@ export default function ProjectDetailPage() {
     }
 
     const owner = findAssignableTeamMember(teamMembers, newStage.picUserId);
-    if (!owner) throw new Error(PROJECT_MEMBER_ASSIGNMENT_ERROR);
+    if (!owner) throw new Error(projectMemberAssignmentError(workspaceTeamMembers.find(member => member.id === newStage.picUserId)?.name));
     const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/stages`, {
       method: "POST",
       credentials: "same-origin",
@@ -5844,7 +5779,7 @@ export default function ProjectDetailPage() {
 
   const handleAddTask = useCallback(async (milestoneId: string, stageId: string, task: TaskItem) => {
     const assignee = findAssignableTeamMember(teamMembers, task.assigneeUserId);
-    if (!assignee) throw new Error(PROJECT_MEMBER_ASSIGNMENT_ERROR);
+    if (!assignee) throw new Error(projectMemberAssignmentError(workspaceTeamMembers.find(member => member.id === task.assigneeUserId)?.name));
     const mutationStageId = stageIdForTaskMutation(stageId);
     const response = await fetch("/api/tasks", {
       method: "POST",
@@ -5856,7 +5791,6 @@ export default function ProjectDetailPage() {
         title: task.title,
         taskType: task.taskType,
         taskTypeLayer1: task.taskTypeLayer1,
-        contractItemId: task.contractItemId,
         status: toApiTaskStatus(task.status),
         priority: task.priority,
         assigneeUserId: assignee?.id,
@@ -5889,9 +5823,9 @@ export default function ProjectDetailPage() {
     setMutationError(null);
   }, [projectId, reloadCanonicalHierarchy, teamMembers, workspaceTeamMembers]);
 
-  const handleEditTask = useCallback(async (milestoneId: string, stageId: string, updated: TaskItem) => {
-    const assignee = findAssignableTeamMember(teamMembers, updated.assigneeUserId);
-    if (!assignee) throw new Error(PROJECT_MEMBER_ASSIGNMENT_ERROR);
+  const handleEditTask = useCallback(async (milestoneId: string, stageId: string, updated: TaskItem, changed: TaskEditChanges = { assigneeChanged: true, estimateChanged: true }) => {
+    const assignee = changed.assigneeChanged ? findAssignableTeamMember(teamMembers, updated.assigneeUserId) : undefined;
+    if (changed.assigneeChanged && !assignee) throw new Error(projectMemberAssignmentError(workspaceTeamMembers.find(member => member.id === updated.assigneeUserId)?.name));
     const mutationStageId = stageIdForTaskMutation(stageId);
     const response = await fetch(`/api/tasks/${encodeURIComponent(updated.id)}`, {
       method: "PATCH",
@@ -5904,16 +5838,13 @@ export default function ProjectDetailPage() {
         description: updated.description ?? null,
         taskType: updated.taskType,
         taskTypeLayer1: updated.taskTypeLayer1,
-        contractItemId: updated.contractItemId,
-        contractItemChangeReason: updated.contractItemChangeReason,
         status: toApiTaskStatus(updated.status),
         priority: updated.priority,
-        assigneeUserId: assignee?.id ?? null,
-        assigneeUserIds: updated.assigneeUserIds ?? (assignee?.id ? [assignee.id] : []),
-        ownerUserId: assignee?.id ?? null,
+        // Unchanged assignee and estimate are left out, so a stale assignee or an older estimate above 8h never blocks other edits.
+        ...(assignee ? { assigneeUserId: assignee.id, assigneeUserIds: updated.assigneeUserIds ?? [assignee.id], ownerUserId: assignee.id } : {}),
         plannedStartAt: toApiDateValue(updated.startDate) ?? null,
         dueAt: toApiDateValue(updated.due) ?? null,
-        estimateMinutes: hoursToMinutes(updated.plannedHours)
+        ...(changed.estimateChanged ? { estimateMinutes: hoursToMinutes(updated.plannedHours) } : {})
       })
     });
 
@@ -5972,22 +5903,25 @@ export default function ProjectDetailPage() {
   }, [projectId, reloadCanonicalHierarchy]);
 
   const handleEditStage = useCallback(async (milestoneId: string, stageId: string, updated: StageItem) => {
-    const owner = findAssignableTeamMember(teamMembers, updated.picUserId);
-    if (!owner) throw new Error(PROJECT_MEMBER_ASSIGNMENT_ERROR);
+    const original = milestoneGroups.find(group => group.milestoneId === milestoneId)?.stages.find(stage => stage.id === stageId);
+    const ownerChanged = updated.picUserId !== original?.picUserId;
+    const owner = ownerChanged ? findAssignableTeamMember(teamMembers, updated.picUserId) : undefined;
+    if (ownerChanged && !owner) throw new Error(projectMemberAssignmentError(workspaceTeamMembers.find(member => member.id === updated.picUserId)?.name));
     const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageId)}`, {
       method: "PATCH",
       credentials: "same-origin",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         activity: updated.name,
-        status: toApiStageStatus(updated.status),
-        ownerUserId: owner?.id ?? null,
+        // An unchanged status is left out: re-sending it must not run the start-stage gate check on a title or date edit.
+        status: updated.status !== original?.status ? toApiStageStatus(updated.status) : undefined,
+        ownerUserId: owner?.id,
         plannedStartAt: toApiDateValue(updated.startDate),
         plannedEndAt: toApiDateValue(updated.dueDate),
         criteria: updated.description || "Stage completion criteria",
         description: updated.description,
         scopeSummary: updated.description,
-        progressPercent: updated.status === "done" ? 100 : undefined
+        progressPercent: updated.status !== original?.status && updated.status === "done" ? 100 : undefined
       })
     });
 
@@ -6059,15 +5993,23 @@ export default function ProjectDetailPage() {
     )
   );
   const workLogActivity = buildWorkLogActivityItems(allTasks);
-  const allProjectActivityFeed = [...activityLog, ...workLogActivity].sort(compareActivityDesc);
-  const projectActivityFeed = allProjectActivityFeed.filter((item) => {
-    if (activitySourceFilter !== "all" && (item.source ?? "project") !== activitySourceFilter) return false;
-    if (activityUserFilter !== "all") {
-      const key = normalizeIdentityValue(item.userId) ?? normalizeIdentityValue(item.userName);
-      if (key !== activityUserFilter) return false;
-    }
-    return true;
-  });
+  // The API feed is now loaded in full and also lists time logs ("task-time:<entry id>"); the work-log rows
+  // built from the tasks carry the hours, so the API copy of the same entry is dropped.
+  const workLogEntryKeys = new Set(allTasks.flatMap((task) => (task.timeEntries ?? []).map((entry) => `task-time:${entry.id}`)));
+  const allProjectActivityFeed = [...activityLog.filter((item) => !workLogEntryKeys.has(item.id)), ...workLogActivity].sort(compareActivityDesc);
+  const activityUserKey = (item: ActivityLogItem) => normalizeIdentityValue(item.userId) ?? normalizeIdentityValue(item.userName);
+  const projectActivityFeed = allProjectActivityFeed.filter((item) =>
+    matchesAny(activitySourceFilter, item.source ?? "project")
+    && matchesAny(activityUserFilter, activityUserKey(item))
+    && isWithinRange(item.day, activityDateRange));
+  const activityFilterCount = [activitySourceFilter.length, activityUserFilter.length, activityDateRange.from || activityDateRange.to].filter(Boolean).length;
+  const resetActivityFilters = () => { setActivitySourceFilter([]); setActivityUserFilter([]); setActivityDateRange(EMPTY_DATE_RANGE); setActivityPage(0); };
+  const activityPeople: FilterPerson[] = Array.from(new Map(allProjectActivityFeed.flatMap((item) => {
+    const key = activityUserKey(item);
+    if (!key) return [];
+    const member = findTeamMember(teamMembers, item.userInitials, item.userName, item.userId);
+    return [[key, { id: key, name: item.userName || member?.name || key, email: member?.email || undefined, avatarUrl: item.userAvatarUrl || member?.avatarUrl }] as const];
+  })).values());
   const activityTotalPages = Math.max(1, Math.ceil(projectActivityFeed.length / ACTIVITY_PAGE_SIZE));
   const safeActivityPage = Math.min(activityPage, activityTotalPages - 1);
   const pagedProjectActivityFeed = projectActivityFeed.slice(
@@ -6076,7 +6018,7 @@ export default function ProjectDetailPage() {
   );
   const activityUserKeys = new Set(
     allProjectActivityFeed
-      .map(item => normalizeIdentityValue(item.userId) ?? normalizeIdentityValue(item.userName))
+      .map(activityUserKey)
       .filter((key): key is string => Boolean(key))
   );
   const actualWorkActivityHours = workLogActivity.reduce((sum, item) => sum + (item.hours ?? 0), 0);
@@ -6084,26 +6026,28 @@ export default function ProjectDetailPage() {
   const doneTasks = allTasks.filter(t => t.status === "done").length;
 
   // Filtered tasks for performance calculations
-  const filteredTasks = allTasks.filter(task => {
-    // 1. Priority filter
-    if (priorityFilter !== "All") {
-      if (priorityFilter === "High" && task.priority !== "high" && task.priority !== "critical") return false;
-      if (priorityFilter === "Medium" && task.priority !== "medium") return false;
-      if (priorityFilter === "Low" && task.priority !== "low") return false;
-    }
-    // 2. Member filter
-    if (memberFilter !== "All" && task.assignee !== memberFilter) {
-      return false;
-    }
-    // 3. Milestone filter
-    if (milestoneFilter !== "All") {
-      const group = milestoneGroups.find(mg => mg.milestoneId === milestoneFilter);
-      if (!group) return false;
-      const belongs = group.stages.some(s => s.tasks.some(t => t.id === task.id));
-      if (!belongs) return false;
-    }
-    return true;
-  });
+  const filteredTasks = allTasks.filter((task) => taskMatchesFilters(task, overviewFilters) && matchesAny(overviewFilters.milestoneIds, task.milestoneId));
+  const overviewFilterCount = activeProjectTaskFilterCount(overviewFilters);
+  const setOverviewFilter = <K extends keyof ProjectTaskFilters>(key: K) => (value: ProjectTaskFilters[K]) => setOverviewFilters((current) => ({ ...current, [key]: value }));
+  const teamFilterPeople = toFilterPeople(teamMembers);
+  const milestoneFilterOptions = milestones.map((milestone) => ({ value: milestone.id, label: milestone.name }));
+
+  // Tasks tab: while a filter is on, the board shows only matching tasks (and the stages / milestones that hold
+  // them) and drag-to-reorder is off, because a reorder must send the complete sibling list.
+  const taskTabFilterCount = activeProjectTaskFilterCount(taskTabFilters);
+  const setTaskTabFilter = <K extends keyof ProjectTaskFilters>(key: K) => (value: ProjectTaskFilters[K]) => setTaskTabFilters((current) => ({ ...current, [key]: value }));
+  const taskTabGroups = taskTabFilterCount === 0 ? milestoneGroups : milestoneGroups
+    .filter((group) => matchesAny(taskTabFilters.milestoneIds, group.milestoneId))
+    .map((group) => ({
+      ...group,
+      stages: group.stages
+        .map((stage) => ({ ...stage, tasks: stage.tasks.filter((task) => taskOrSubtaskMatchesFilters(task, taskTabFilters, stage.name)) }))
+        .filter((stage) => stage.tasks.length > 0)
+    }))
+    .filter((group) => group.stages.length > 0);
+  const taskTabMilestones = taskTabFilterCount === 0 ? milestones : milestones.filter((milestone) => taskTabGroups.some((group) => group.milestoneId === milestone.id));
+  const taskTabVisibleCount = taskTabGroups.reduce((total, group) => total + group.stages.reduce((sum, stage) => sum + stage.tasks.length, 0), 0);
+  const taskTabCanReorder = canReorderHierarchy && taskTabFilterCount === 0;
 
   const doneFiltered = filteredTasks.filter(t => t.status === "done").length;
   const filteredProgress = filteredTasks.length > 0 ? Math.round((doneFiltered / filteredTasks.length) * 100) : 0;
@@ -6145,13 +6089,7 @@ export default function ProjectDetailPage() {
                 <p className="mt-3 text-sm leading-6 text-muted-foreground">
                   This project ID does not exist in the production CRM workspace.
                 </p>
-                <Link
-                  href={projectsReturnHref}
-                  className="mt-6 inline-flex items-center gap-2 rounded-lg bg-foreground px-4 py-2 text-sm font-semibold text-background transition-opacity hover:opacity-90"
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                  Back to projects
-                </Link>
+                <PageBackLink href={projectsReturnHref} label="Dự án" className="mt-6" />
               </div>
             )}
           </main>
@@ -6161,6 +6099,7 @@ export default function ProjectDetailPage() {
 
   return (
     <ProjectPickerFeedback.Provider value={{ ready: !projectPeople.loading && !projectPeople.error, feedback: <>{projectPeople.loading && <p role="status">Loading project members…</p>}{projectPeople.error && <div role="alert" className="text-sm text-destructive">{projectPeople.error} <button className="underline" onClick={projectPeople.refresh}>Retry loading project members</button></div>}</> }}>
+    <StageGateLocks.Provider value={stageGateLocks}>
       {/* Modals */}
       {showAddDocModal && (
         <AddDocModal
@@ -6250,7 +6189,7 @@ export default function ProjectDetailPage() {
           task={editTaskFor.task}
           color={project.color}
           onClose={() => setEditTaskFor(null)}
-          onSave={updated => handleEditTask(editTaskFor.milestoneId, editTaskFor.stageId, updated)}
+          onSave={(updated, changed) => handleEditTask(editTaskFor.milestoneId, editTaskFor.stageId, updated, changed)}
           members={assignmentTeamMembers}
         />
       )}
@@ -6317,13 +6256,14 @@ export default function ProjectDetailPage() {
         <main ref={projectMainRef} className="flex-1 overflow-auto [overflow-anchor:none]">
           {projectPeople.loading && <p role="status" className="px-6 pt-4 text-sm">Loading project members…</p>}
           {projectPeople.error && <div role="alert" className="mx-6 mt-4 rounded-xl border border-destructive/30 p-3 text-sm text-destructive">{projectPeople.error} <button className="underline" onClick={projectPeople.refresh}>Retry loading project members</button></div>}
-          {/* Breadcrumb */}
-          <div className="flex items-center gap-1.5 px-4 pt-4 text-xs text-muted-foreground sm:px-6">
-            <Link href={projectsReturnHref} className="hover:text-foreground transition-colors flex items-center gap-1.5">
-              <ArrowLeft className="w-3.5 h-3.5" /> Projects
-            </Link>
-            <ChevronRight className="w-3 h-3" />
-            <span className="text-foreground font-medium truncate max-w-[200px]">{project.name}</span>
+          {/* Back: the same link the shared PageHeader renders; the cover card below carries the project name. */}
+          <div className="flex items-center justify-between gap-3 px-4 pt-4 sm:px-6">
+            <PageBackLink href={projectsReturnHref} label="Dự án" />
+            {/* Mục 9 (chốt 13/10): the project page shows no P&L figure, only the way to the P&L screen — for an Admin
+                account in the cost permission group (both, as the API asks), never on the DX internal worklog. */}
+            {isAdminView(user) && canViewCostFigures(user) && project.projectType !== INTERNAL_WORKLOG_PROJECT_TYPE ? (
+              <HeaderLinkButton href={`/pnl/${encodeURIComponent(projectId)}?returnTo=${encodeURIComponent(`/projects/${projectId}`)}`}>Xem P&L ↗</HeaderLinkButton>
+            ) : null}
           </div>
 
           {/* Cover */}
@@ -6426,7 +6366,7 @@ export default function ProjectDetailPage() {
             <p className="max-w-3xl text-xs leading-relaxed text-muted-foreground">{project.description}</p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {[
-                { key:"dates", icon:Calendar, label:<>{project.startDate} <ArrowRight aria-hidden="true" className="inline h-3 w-3 align-middle" /> {project.dueDate}</> },
+                { key:"dates", icon:Calendar, label:<>{project.startIsActual ? <span title="Stage đầu tiên đã bắt đầu: đây là ngày bắt đầu thực tế, không phải ngày kế hoạch.">Bắt đầu thực tế {project.startDate}</span> : project.startDate} <ArrowRight aria-hidden="true" className="inline h-3 w-3 align-middle" /> {project.dueDate}</> },
                 { key:"team", icon:Users, label:`${teamMembers.length} members` },
                 { key:"category", icon:Layers, label:project.category },
                 { key:"client", icon:BarChart2,label:project.client },
@@ -6464,7 +6404,7 @@ export default function ProjectDetailPage() {
                   teamMembers={teamMembers}
                   currentUserId={user?.id}
                   onOpenTasks={() => handleTabChange("Tasks")}
-                  onOpenTask={(task) => taskDetailRouter.push(`/tasks/${encodeURIComponent(task.id)}`)}
+                  onOpenTask={openTaskDetail}
                 />
               )}
 
@@ -6485,7 +6425,6 @@ export default function ProjectDetailPage() {
                 <div className="space-y-5">
                   <ProjectWarningsBlock projectId={projectId} projectColor={project.color} teamMembers={teamMembers} onChanged={clearLiveProjectSnapshotCache} />
                   <ProjectStatusSlaBar projectId={projectId} project={project} milestones={milestones} tasks={allTasks} projectColor={project.color} onStatusChanged={refreshProject} />
-                  <ProjectContractItemsBlock projectId={projectId} projectColor={project.color} onOpenChangeRequests={() => handleTabChange("Issues")} />
                   <MilestoneOverviewBar
                     milestones={milestones}
                     milestoneGroups={milestoneGroups}
@@ -6602,68 +6541,14 @@ export default function ProjectDetailPage() {
 
                 return (
                   <div className="space-y-6">
-                    {/* Filter Toolbar */}
-                    <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl border border-border bg-card shadow-sm">
-                      <div className="flex flex-wrap items-center gap-3.5">
-                        <div className="flex flex-col">
-                          <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Mức độ ưu tiên</span>
-                          <CustomDropdown
-                            options={[
-                              { value: "All", label: "Tất cả mức độ" },
-                              { value: "High", label: "Khẩn cấp & Rất khẩn cấp" },
-                              { value: "Medium", label: "Trung bình" },
-                              { value: "Low", label: "Thấp" }
-                            ]}
-                            value={priorityFilter}
-                            onChange={setPriorityFilter}
-                          />
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Nhân sự thực hiện</span>
-                          <CustomDropdown
-                            options={[
-                              { value: "All", label: "Tất cả thành viên" },
-                              ...Array.from(new Set(allTasks.map(t => t.assignee))).map(assignee => {
-                                const m = teamMembers.find(tm => tm.initials === assignee);
-                                return {
-                                  value: assignee,
-                                  label: m ? m.name : assignee
-                                };
-                              })
-                            ]}
-                            value={memberFilter}
-                            onChange={setMemberFilter}
-                          />
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Giai đoạn dự án</span>
-                          <CustomDropdown
-                            options={[
-                              { value: "All", label: "Tất cả giai đoạn" },
-                              ...milestones.map(m => ({
-                                value: m.id,
-                                label: m.name
-                              }))
-                            ]}
-                            value={milestoneFilter}
-                            onChange={setMilestoneFilter}
-                          />
-                        </div>
-                      </div>
-                      {/* Clear Filters CTA */}
-                      {(priorityFilter !== "All" || memberFilter !== "All" || milestoneFilter !== "All") && (
-                        <button
-                          onClick={() => {
-                            setPriorityFilter("All");
-                            setMemberFilter("All");
-                            setMilestoneFilter("All");
-                          }}
-                          className="text-xs font-semibold hover:underline flex items-center gap-1"
-                          style={{ color: project.color }}
-                        >
-                          <X className="w-3.5 h-3.5" /> Xóa bộ lọc
-                        </button>
-                      )}
+                    {/* Filters: every figure and chart below follows them */}
+                    <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+                      <FilterBar onReset={overviewFilterCount ? () => setOverviewFilters(EMPTY_PROJECT_TASK_FILTERS) : undefined} activeCount={overviewFilterCount} actions={<span className="text-xs font-semibold text-muted-foreground">{filteredTasks.length} / {allTasks.length} task</span>}>
+                        <FilterField label="Hạn hoàn tất"><DateRangeFilter value={overviewFilters.due} onChange={(range) => setOverviewFilter("due")(range)} ariaLabel="Lọc theo hạn hoàn tất" /></FilterField>
+                        <PersonFilter label="Nhân sự thực hiện" people={teamFilterPeople} values={overviewFilters.assigneeIds} onChange={setOverviewFilter("assigneeIds")} />
+                        <MultiSelectFilter label="Mức độ ưu tiên" options={TASK_PRIORITY_FILTER_OPTIONS} values={overviewFilters.priorities} onChange={setOverviewFilter("priorities")} searchable={false} />
+                        <MultiSelectFilter label="Giai đoạn dự án" options={milestoneFilterOptions} values={overviewFilters.milestoneIds} onChange={setOverviewFilter("milestoneIds")} />
+                      </FilterBar>
                     </div>
 
                     {/* Top Stats Cards */}
@@ -6994,10 +6879,7 @@ export default function ProjectDetailPage() {
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-border text-xs text-foreground">
-                                {riskRegistry.filter(r => {
-                                  if (memberFilter !== "All" && r.owner !== memberFilter && r.owner !== "PMO") return false;
-                                  return true;
-                                }).map(risk => (
+                                {riskRegistry.filter((risk) => matchesAny(overviewFilters.assigneeIds, risk.ownerUserId)).map(risk => (
                                   <tr key={risk.id} className="hover:bg-muted/30 transition-colors">
                                     <td className="px-4 py-2.5 font-semibold">
                                       <span className="px-2 py-0.5 rounded text-[9px] font-bold"
@@ -7152,7 +7034,7 @@ export default function ProjectDetailPage() {
                     <div>
                       <h2 className="text-sm font-bold text-foreground">Task Board</h2>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Grouped by Milestone <ArrowRight aria-hidden="true" className="inline h-3 w-3 align-middle" /> Stage · {allTasks.length} tasks total
+                        Grouped by Milestone <ArrowRight aria-hidden="true" className="inline h-3 w-3 align-middle" /> Stage · {taskTabFilterCount ? `${taskTabVisibleCount} / ` : ""}{allTasks.length} tasks total
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -7164,13 +7046,29 @@ export default function ProjectDetailPage() {
                     </div>
                   </div>
 
-                  {/* Milestone groups */}
                   {milestones.length > 0 ? (
+                    <div className="mb-5 rounded-xl border border-border bg-card p-4 shadow-sm">
+                      <FilterBar onReset={taskTabFilterCount ? () => setTaskTabFilters(EMPTY_PROJECT_TASK_FILTERS) : undefined} activeCount={taskTabFilterCount}>
+                        <FilterField label="Tìm kiếm" className="min-w-[200px] flex-1"><SearchFilter className="" value={taskTabFilters.query} onChange={setTaskTabFilter("query")} placeholder="Tìm task, stage..." /></FilterField>
+                        <FilterField label="Hạn hoàn tất"><DateRangeFilter value={taskTabFilters.due} onChange={(range) => setTaskTabFilter("due")(range)} ariaLabel="Lọc theo hạn hoàn tất" /></FilterField>
+                        <PersonFilter label="Người thực hiện" people={teamFilterPeople} values={taskTabFilters.assigneeIds} onChange={setTaskTabFilter("assigneeIds")} />
+                        <MultiSelectFilter label="Trạng thái" options={TASK_STATUS_FILTER_OPTIONS} values={taskTabFilters.statuses} onChange={setTaskTabFilter("statuses")} searchable={false} />
+                        <MultiSelectFilter label="Ưu tiên" options={TASK_PRIORITY_FILTER_OPTIONS} values={taskTabFilters.priorities} onChange={setTaskTabFilter("priorities")} searchable={false} />
+                        <MultiSelectFilter label="Giai đoạn" options={milestoneFilterOptions} values={taskTabFilters.milestoneIds} onChange={setTaskTabFilter("milestoneIds")} />
+                      </FilterBar>
+                      {taskTabFilterCount > 0 && canReorderHierarchy ? <p className="mt-2 text-[11px] text-muted-foreground">Đang lọc: tạm tắt kéo-thả sắp xếp. Đặt lại bộ lọc để sắp xếp lại thứ tự.</p> : null}
+                    </div>
+                  ) : null}
+
+                  {/* Milestone groups */}
+                  {milestones.length > 0 && taskTabMilestones.length === 0 ? (
+                    <FilterEmptyState onReset={() => setTaskTabFilters(EMPTY_PROJECT_TASK_FILTERS)} className="rounded-xl border border-dashed border-border bg-card p-10" />
+                  ) : milestones.length > 0 ? (
                     <div className="flex flex-col gap-5">
-                      {milestones.some(item => !isUnassignedTasksMilestoneId(item.id)) ? (
-                        canReorderHierarchy ? (
+                      {taskTabMilestones.some(item => !isUnassignedTasksMilestoneId(item.id)) ? (
+                        taskTabCanReorder ? (
                         <HierarchySortableList
-                          ids={milestones.filter(item => !isUnassignedTasksMilestoneId(item.id)).map(item => item.id)}
+                          ids={taskTabMilestones.filter(item => !isUnassignedTasksMilestoneId(item.id)).map(item => item.id)}
                           hierarchyKind="milestone"
                           disabled={hierarchyBusy}
                           label="Milestones của dự án"
@@ -7180,7 +7078,7 @@ export default function ProjectDetailPage() {
                           renderItem={(milestoneId, milestoneHandle) => {
                             const milestone = milestones.find(item => item.id === milestoneId);
                             if (!milestone) return null;
-                            const group = milestoneGroups.find(g => g.milestoneId === milestone.id) ?? { milestoneId:milestone.id, stages:[] };
+                            const group = taskTabGroups.find(g => g.milestoneId === milestone.id) ?? { milestoneId:milestone.id, stages:[] };
                             return (
                               <MilestoneSectionTasks
                                 milestone={milestone}
@@ -7205,7 +7103,7 @@ export default function ProjectDetailPage() {
                                   setMutationError(null);
                                   setDeleteStageFor({ milestoneId:id, stageId, stageName });
                                 }}
-                                onViewTaskDetails={(task) => taskDetailRouter.push(`/tasks/${encodeURIComponent(task.id)}`)}
+                                onViewTaskDetails={openTaskDetail}
                                 onEditMilestone={setEditMilestoneFor}
                                 onDeleteMilestone={(id) => {
                                   const target = milestones.find(item => item.id === id);
@@ -7222,14 +7120,14 @@ export default function ProjectDetailPage() {
                         />
                       ) : (
                         <HierarchyStaticList
-                          ids={milestones.filter(item => !isUnassignedTasksMilestoneId(item.id)).map(item => item.id)}
+                          ids={taskTabMilestones.filter(item => !isUnassignedTasksMilestoneId(item.id)).map(item => item.id)}
                           hierarchyKind="milestone"
                           label="Milestones của dự án"
                           listClassName="flex flex-col gap-5"
                           renderItem={(milestoneId) => {
                             const milestone = milestones.find(item => item.id === milestoneId);
                             if (!milestone) return null;
-                            const group = milestoneGroups.find(g => g.milestoneId === milestone.id) ?? { milestoneId: milestone.id, stages: [] };
+                            const group = taskTabGroups.find(g => g.milestoneId === milestone.id) ?? { milestoneId: milestone.id, stages: [] };
                             return (
                               <MilestoneSectionTasks
                                 milestone={milestone}
@@ -7246,7 +7144,7 @@ export default function ProjectDetailPage() {
                                 onDeleteTask={(id, stageId, taskId) => setDeleteTaskFor({ milestoneId:id, stageId, taskId, title:"" })}
                                 onEditStage={(stage) => setEditStageFor({ milestoneId: milestone.id, stage })}
                                 onDeleteStage={(id, stageId, stageName) => setDeleteStageFor({ milestoneId:id, stageId, stageName })}
-                                onViewTaskDetails={(task) => taskDetailRouter.push(`/tasks/${encodeURIComponent(task.id)}`)}
+                                onViewTaskDetails={openTaskDetail}
                                 onEditMilestone={setEditMilestoneFor}
                                 onDeleteMilestone={(id) => {
                                   const target = milestones.find(item => item.id === id);
@@ -7261,16 +7159,16 @@ export default function ProjectDetailPage() {
                         />
                         )
                       ) : null}
-                      {milestones.some(item => isUnassignedTasksMilestoneId(item.id)) ? (
+                      {taskTabMilestones.some(item => isUnassignedTasksMilestoneId(item.id)) ? (
                         <HierarchyStaticList
-                          ids={milestones.filter(item => isUnassignedTasksMilestoneId(item.id)).map(item => item.id)}
+                          ids={taskTabMilestones.filter(item => isUnassignedTasksMilestoneId(item.id)).map(item => item.id)}
                           hierarchyKind="milestone"
                           label="Milestones chưa được phân loại của dự án"
                           listClassName="flex flex-col gap-5"
                           renderItem={(milestoneId) => {
                             const milestone = milestones.find(item => item.id === milestoneId);
                             if (!milestone) return null;
-                            const group = milestoneGroups.find(g => g.milestoneId === milestone.id) ?? { milestoneId:milestone.id, stages:[] };
+                            const group = taskTabGroups.find(g => g.milestoneId === milestone.id) ?? { milestoneId:milestone.id, stages:[] };
                             return (
                               <MilestoneSectionTasks
                                 milestone={milestone}
@@ -7297,7 +7195,7 @@ export default function ProjectDetailPage() {
                                   setMutationError(null);
                                   setDeleteStageFor({ milestoneId:id, stageId, stageName });
                                 }}
-                                onViewTaskDetails={(task) => taskDetailRouter.push(`/tasks/${encodeURIComponent(task.id)}`)}
+                                onViewTaskDetails={openTaskDetail}
                                 onEditMilestone={setEditMilestoneFor}
                                 onDeleteMilestone={(id) => {
                                   const target = milestones.find(item => item.id === id);
@@ -7772,7 +7670,7 @@ export default function ProjectDetailPage() {
               {/* ─── ACTIVITY ─── */}
               {tab === "Activity" && (
                 <div className="min-h-[calc(100vh-430px)] w-full">
-                  {projectActivityFeed.length > 0 ? (
+                  {allProjectActivityFeed.length > 0 ? (
                     <div className="grid w-full gap-5 xl:grid-cols-[minmax(0,1fr)_320px]" data-testid="project-activity-feed">
                       <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
                         <div className="flex flex-col gap-4 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -7794,13 +7692,15 @@ export default function ProjectDetailPage() {
                           </div>
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/10 px-5 py-3">
-                          <span className="mr-1 text-[10px] font-black uppercase tracking-wider text-muted-foreground">Bộ lọc</span>
-                          <CustomDropdown ariaLabel="Lọc loại hoạt động" options={[{ value: "all", label: "Tất cả sự kiện" }, { value: "project", label: "Dự án" }, { value: "work-log", label: "Ghi giờ" }]} value={activitySourceFilter} onChange={(value) => { setActivitySourceFilter(value as typeof activitySourceFilter); setActivityPage(0); }} />
-                          <CustomDropdown ariaLabel="Lọc người thực hiện" options={[{ value: "all", label: "Tất cả người thực hiện" }, ...Array.from(new Map(allProjectActivityFeed.map((item) => { const key = normalizeIdentityValue(item.userId) ?? normalizeIdentityValue(item.userName); return key ? [key, item.userName || key] as const : null; }).filter((entry): entry is readonly [string, string] => Boolean(entry))).entries()).map(([value, label]) => ({ value, label }))]} value={activityUserFilter} onChange={(value) => { setActivityUserFilter(value); setActivityPage(0); }} />
-                          <span className="ml-auto text-xs font-semibold text-muted-foreground">{projectActivityFeed.length}/{allProjectActivityFeed.length} sự kiện</span>
+                        <div className="border-b border-border bg-muted/10 px-5 py-3">
+                          <FilterBar onReset={activityFilterCount ? resetActivityFilters : undefined} activeCount={activityFilterCount} actions={<span className="text-xs font-semibold text-muted-foreground">{projectActivityFeed.length}/{allProjectActivityFeed.length} sự kiện</span>}>
+                            <FilterField label="Thời điểm"><DateRangeFilter value={activityDateRange} onChange={(range) => { setActivityDateRange(range); setActivityPage(0); }} ariaLabel="Lọc theo thời điểm hoạt động" /></FilterField>
+                            <PersonFilter label="Người thực hiện" people={activityPeople} values={activityUserFilter} onChange={(values) => { setActivityUserFilter(values); setActivityPage(0); }} />
+                            <MultiSelectFilter label="Loại hoạt động" options={[{ value: "project", label: "Dự án" }, { value: "work-log", label: "Ghi giờ" }]} values={activitySourceFilter} onChange={(values) => { setActivitySourceFilter(values); setActivityPage(0); }} searchable={false} />
+                          </FilterBar>
                         </div>
 
+                        {projectActivityFeed.length === 0 ? <FilterEmptyState onReset={resetActivityFilters} className="p-10" /> : null}
                         <div className="divide-y divide-border">
                           {pagedProjectActivityFeed.map((item, i) => {
                             const member = findTeamMember(teamMembers, item.userInitials, item.userName, item.userId);
@@ -7940,12 +7840,11 @@ export default function ProjectDetailPage() {
               {/* ─── CHECKPOINTS & DOCUMENTS ─── */}
               {tab === "Documents" && (() => {
                 const filteredDocs = documents.filter(doc => {
-                  const matchSearch = doc.name.toLowerCase().includes(docSearchQuery.toLowerCase());
-                  const matchCategory = docCategoryFilter === "All" || doc.category === docCategoryFilter;
+                  const matchSearch = matchesSearch(docSearchQuery, doc.name, doc.artifactType, doc.milestoneName);
+                  const matchCategory = matchesAny(docCategoryFilter, doc.category);
                   const milestoneId = getDocumentMilestoneId(doc);
-                  const matchMilestone = docMilestoneFilter === "All" || milestoneId === docMilestoneFilter;
-                  const isSubmitted = doc.versions.length > 0;
-                  const matchStatus = docStatusFilter === "all" || (docStatusFilter === "submitted" ? isSubmitted : !isSubmitted);
+                  const matchMilestone = matchesAny(docMilestoneFilter, milestoneId);
+                  const matchStatus = matchesAny(docStatusFilter, doc.versions.length > 0 ? "submitted" : "missing") && isWithinRange(doc.updatedDay, docDateRange);
                   const matchRequired = !requiredDocsOnly || documentLooksRequired(doc, milestones);
                   return matchSearch && matchCategory && matchMilestone && matchStatus && matchRequired;
                 }).sort((left, right) => {
@@ -7956,7 +7855,9 @@ export default function ProjectDetailPage() {
                   return leftOrder - rightOrder || left.name.localeCompare(right.name, "vi");
                 });
 
-                const categories = ["All", "Requirements", "Technical", "Design", "Operations", "Legal", "Other"];
+                const categories = ["Requirements", "Technical", "Design", "Operations", "Legal", "Other"];
+                const docFilterCount = [docSearchQuery.trim(), docDateRange.from || docDateRange.to, docCategoryFilter.length, docMilestoneFilter.length, docStatusFilter.length, requiredDocsOnly].filter(Boolean).length;
+                const resetDocFilters = () => { setDocSearchQuery(""); setDocDateRange(EMPTY_DATE_RANGE); setDocCategoryFilter([]); setDocMilestoneFilter([]); setDocStatusFilter([]); setRequiredDocsOnly(false); };
                 const unassignedDocumentCount = documents.filter((doc) => getDocumentMilestoneId(doc) === "unassigned").length;
 
                 return (
@@ -7978,46 +7879,12 @@ export default function ProjectDetailPage() {
                     {unassignedDocumentCount > 0 ? (
                       <div className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex items-start gap-2.5"><Target className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" /><p><span className="font-bold">{unassignedDocumentCount} tài liệu chưa gán milestone.</span> Gán để hồ sơ được tính vào điều kiện mở điểm chốt.</p></div>
-                        <button type="button" onClick={() => setDocMilestoneFilter("unassigned")} className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-bold text-amber-800 hover:bg-amber-100">Xem tài liệu cần gán</button>
+                        <button type="button" onClick={() => setDocMilestoneFilter(["unassigned"])} className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-bold text-amber-800 hover:bg-amber-100">Xem tài liệu cần gán</button>
                       </div>
                     ) : null}
                     {/* Control Bar */}
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-4 bg-card border border-border rounded-2xl shadow-sm">
-                      <div className="flex flex-1 flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
-                        {/* Search */}
-                        <div className="relative flex-1 max-w-md">
-                          <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-3" />
-                          <input
-                            type="text"
-                            placeholder="Tìm tài liệu..."
-                            value={docSearchQuery}
-                            onChange={e => setDocSearchQuery(e.target.value)}
-                            className="w-full bg-background border border-input rounded-xl pl-9 pr-4 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring"
-                          />
-                        </div>
-                        {/* Category filter */}
-                        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
-                          {categories.map(cat => (
-                            <button
-                              key={cat}
-                              onClick={() => setDocCategoryFilter(cat)}
-                              className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all border ${
-                                docCategoryFilter === cat
-                                  ? "bg-foreground text-background border-foreground"
-                                  : "bg-muted/30 text-muted-foreground hover:bg-muted/70 border-border"
-                              }`}
-                            >
-                              {cat}
-                            </button>
-                          ))}
-                        </div>
-                        <CustomDropdown ariaLabel="Lọc theo milestone" options={[{ value: "All", label: "Tất cả Milestone" }, ...milestones.map((milestone) => ({ value: milestone.id, label: milestone.name })), { value: "unassigned", label: "Chưa gắn Milestone" }]} value={docMilestoneFilter} onChange={setDocMilestoneFilter} />
-                        <CustomDropdown ariaLabel="Lọc tình trạng tài liệu" options={[{ value: "all", label: "Tất cả tình trạng" }, { value: "submitted", label: "Đã nộp" }, { value: "missing", label: "Đang thiếu" }]} value={docStatusFilter} onChange={(value) => setDocStatusFilter(value as typeof docStatusFilter)} />
-                        <label className="inline-flex items-center gap-2 whitespace-nowrap rounded-xl border border-border bg-background px-3 py-2 text-xs font-semibold text-foreground">
-                          <input type="checkbox" checked={requiredDocsOnly} onChange={(event) => setRequiredDocsOnly(event.target.checked)} className="accent-primary" />
-                          Chỉ bắt buộc
-                        </label>
-                      </div>
+                    <div className="p-4 bg-card border border-border rounded-2xl shadow-sm">
+                      <FilterBar onReset={docFilterCount ? resetDocFilters : undefined} activeCount={docFilterCount} actions={<>
                       <motion.button
                         whileHover={{ scale:1.02 }}
                         whileTap={{ scale:0.97 }}
@@ -8027,6 +7894,17 @@ export default function ProjectDetailPage() {
                       >
                         <Plus className="w-4 h-4" /> Tải tài liệu
                       </motion.button>
+                      </>}>
+                        <FilterField label="Tìm kiếm" className="min-w-[200px] flex-1"><SearchFilter className="" value={docSearchQuery} onChange={setDocSearchQuery} placeholder="Tìm tài liệu..." /></FilterField>
+                        <FilterField label="Cập nhật gần nhất"><DateRangeFilter value={docDateRange} onChange={(range) => setDocDateRange(range)} ariaLabel="Lọc theo ngày cập nhật gần nhất" /></FilterField>
+                        <MultiSelectFilter label="Loại tài liệu" options={categories.map((category) => ({ value: category, label: category }))} values={docCategoryFilter} onChange={setDocCategoryFilter} searchable={false} />
+                        <MultiSelectFilter label="Milestone" options={[...milestoneFilterOptions, { value: "unassigned", label: "Chưa gắn Milestone" }]} values={docMilestoneFilter} onChange={setDocMilestoneFilter} />
+                        <MultiSelectFilter label="Tình trạng" options={[{ value: "submitted", label: "Đã nộp" }, { value: "missing", label: "Đang thiếu" }]} values={docStatusFilter} onChange={setDocStatusFilter} searchable={false} />
+                        <label className="inline-flex h-10 items-center gap-2 whitespace-nowrap rounded-xl border border-border bg-background px-3 text-xs font-semibold text-foreground">
+                          <input type="checkbox" checked={requiredDocsOnly} onChange={(event) => setRequiredDocsOnly(event.target.checked)} className="accent-primary" />
+                          Chỉ bắt buộc
+                        </label>
+                      </FilterBar>
                     </div>
                     {documentMutationError ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700" role="alert">{documentMutationError}</div> : null}
 
@@ -8240,8 +8118,8 @@ export default function ProjectDetailPage() {
                               })
                             ) : (
                               <tr>
-                                <td colSpan={7} className="py-8 text-center text-muted-foreground">
-                                  No documents match the current filters.
+                                <td colSpan={7}>
+                                  <FilterEmptyState onReset={resetDocFilters} />
                                 </td>
                               </tr>
                             )}
@@ -8270,6 +8148,7 @@ export default function ProjectDetailPage() {
           <span className="text-[11px] text-muted-foreground">Legal pages are not published yet.</span>
         </footer>
       </AppShell>
+    </StageGateLocks.Provider>
     </ProjectPickerFeedback.Provider>
   );
 }

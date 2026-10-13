@@ -80,7 +80,7 @@ export class BrdGovernanceService {
 
   async requestTimelineChange(taskId: string, input: TimelineChangeRequestInput, principal: PrincipalContext) {
     const task = await this.taskForWorkspace(taskId, principal);
-    // D-21: the plan is locked by the task's own approval, or — for a top-level task — by the project's baseline B1.
+    // D-21: the plan is locked by the task's own approval, or — for a top-level task — by the project's baseline.
     if (task.planApprovalStatus !== "APPROVED" && !(!task.parentTaskId && await isBaselineLocked(this.prisma, task.projectId))) throw new ConflictException("Timeline change requests are only needed after PM approval");
     if (typeof input.reason !== "string" || input.reason.trim().length < 3) throw new BadRequestException("reason is required");
     const proposedStartAt = input.proposedStartAt ? isoDate(input.proposedStartAt, "proposedStartAt") : null;
@@ -112,9 +112,9 @@ export class BrdGovernanceService {
       const approved = await tx.taskTimelineChangeRequest.update({ where: { id: requestId }, data: { status: "APPROVED", reviewedByUserId: principal.subjectId, reviewedAt: now, reviewNote: input.reviewNote?.trim() } });
       const previousHistory = await tx.taskPlanHistory.findFirst({ where: { taskId: task.id }, orderBy: { version: "desc" }, select: { version: true } });
       await tx.taskPlanHistory.create({ data: { workspaceId: principal.workspaceId, projectId: task.projectId, taskId: task.id, version: (previousHistory?.version ?? 0) + 1, action: "TIMELINE_CHANGE_APPROVED", reason: request.reason, before: { plannedStartAt: task.plannedStartAt, dueAt: task.dueAt, estimateMinutes: task.estimateMinutes }, after: { plannedStartAt: request.proposedStartAt, dueAt: request.proposedEndAt, estimateMinutes: request.proposedEstimateMinutes ?? task.estimateMinutes }, changedByUserId: request.requestedByUserId, approvedByUserId: principal.subjectId } });
-      // D-20 / D-21: on a project whose baseline B1 is locked, the approved change is the next B1 version, linked to this request.
+      // D-20 / D-21: on a project whose baseline is locked, the approved change is the next baseline version, linked to this request.
       if (task.projectId && !task.parentTaskId) {
-        await recordBaselineChange(tx, { workspaceId: principal.workspaceId, projectId: task.projectId, layers: ["B1"], cause: { type: "timeline_change", id: request.id, reason: request.reason }, actor: { userId: principal.subjectId, displayName: principal.displayName } });
+        await recordBaselineChange(tx, { workspaceId: principal.workspaceId, projectId: task.projectId, cause: { type: "timeline_change", id: request.id, reason: request.reason }, actor: { userId: principal.subjectId, displayName: principal.displayName } });
       }
       return { data: approved, task: next, meta: { timelineLocked: true } };
     });

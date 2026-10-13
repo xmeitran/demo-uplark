@@ -2,7 +2,6 @@
  * "Nguyên tắc nền tảng hệ thống PM" 7.6 (configuration parameters) and 7.5 (trigger catalogue, V-33…V-38).
  * Pure data + validation shared by API, worker and web. Storage and the scan live in the API.
  */
-import { CHANGE_REQUEST_STEPS } from "./issue-log";
 
 // ---------------------------------------------------------------------------
 // 7.6 — parameters
@@ -33,8 +32,6 @@ export interface SystemParameterDef<V = unknown> {
   hint?: string;
 }
 
-const CR_SLA_STEPS = CHANGE_REQUEST_STEPS.filter((step) => step.slaDays !== null);
-
 function def<V>(value: SystemParameterDef<V>) {
   return value;
 }
@@ -57,13 +54,6 @@ export const SYSTEM_PARAMETERS = {
   statusProposalConfirmWorkingDays: def<number>({ key: "statusProposalConfirmWorkingDays", label: "Hạn xác nhận đề xuất trạng thái", unit: "ngày làm việc", kind: "number", defaultValue: 2, usedBy: "V-20", decidedBy: "PM", templateOverridable: true, min: 0, max: 60, integer: true }),
   stageExtensionAbnormalCount: def<number>({ key: "stageExtensionAbnormalCount", label: "Số lần gia hạn stage bị coi là bất thường", unit: "lần", kind: "number", defaultValue: 2, usedBy: "TD-05", decidedBy: "PM", templateOverridable: true, min: 1, max: 20, integer: true }),
   newRequestClassifyWorkingDays: def<number>({ key: "newRequestClassifyWorkingDays", label: "Hạn phân loại yêu cầu mới", unit: "ngày làm việc", kind: "number", defaultValue: 1, usedBy: "V-26", decidedBy: "PM", templateOverridable: false, min: 0, max: 60, integer: true }),
-  changeRequestStepSlaDays: def<Record<string, number>>({
-    key: "changeRequestStepSlaDays", label: "SLA các bước yêu cầu thay đổi", unit: "ngày làm việc", kind: "number_map",
-    defaultValue: Object.fromEntries(CR_SLA_STEPS.map((step) => [step.code, step.slaDays as number])),
-    usedBy: "V-27, YC-01", decidedBy: "PM", templateOverridable: false, min: 0, max: 60, integer: true,
-    entries: CR_SLA_STEPS.map((step) => ({ key: step.code, label: `${step.code} ${step.label}` })),
-    hint: "Theo bảng 8.2."
-  }),
   pendingHoursWorkingDays: def<number>({ key: "pendingHoursWorkingDays", label: "Hạn xử lý giờ log Chờ xử lý", unit: "ngày làm việc", kind: "number", defaultValue: 10, usedBy: "DL-01, mục 9", decidedBy: "PM", templateOverridable: false, min: 0, max: 120, integer: true }),
   reminderTimes: def<string[]>({ key: "reminderTimes", label: "Mốc nhắc trong ngày", unit: "giờ:phút", kind: "times", defaultValue: ["08:30", "14:00", "17:00"], usedBy: "V-05", decidedBy: "PM", templateOverridable: false, count: 3, hint: "Ba mốc theo thứ tự: kế hoạch đầu ngày, nhắc lại cho PM, giờ thực tế cuối ngày. Dùng chung với mục Nhắc Lark." }),
   pnlCloseGate: def<string>({
@@ -166,8 +156,8 @@ export const ALERT_SEVERITIES = ["low", "medium", "high", "critical"] as const;
 export type AlertSeverity = (typeof ALERT_SEVERITIES)[number];
 export const ALERT_SEVERITY_LABELS: Record<AlertSeverity, string> = { low: "Thấp", medium: "Trung bình", high: "Cao", critical: "Nghiêm trọng" };
 
-export type AlertGroup = "NL" | "TD" | "BRI" | "YC" | "DL";
-export const ALERT_GROUP_LABELS: Record<AlertGroup, string> = { NL: "Nhân lực", TD: "Tiến độ", BRI: "Blocker / Risk / Issue", YC: "Yêu cầu thay đổi", DL: "Dữ liệu" };
+export type AlertGroup = "NL" | "TD" | "BRI" | "DL";
+export const ALERT_GROUP_LABELS: Record<AlertGroup, string> = { NL: "Nhân lực", TD: "Tiến độ", BRI: "Blocker / Risk / Issue", DL: "Dữ liệu" };
 
 /** In-app recipients. "owner" = the person the warning record names; "pm" = the project's PM; "admins" = Dx Director / BD Lead (workspace admin roles). */
 export type AlertRecipient = "owner" | "pm" | "admins";
@@ -213,8 +203,7 @@ export const ALERT_TRIGGERS: readonly AlertTriggerDef[] = [
   trigger({ code: "BRI-03", name: "Vấn đề mức cao nhất", condition: "Mức ảnh hưởng nâng lên cao nhất, hoặc ảnh hưởng cam kết với khách", readsFrom: "Trạng thái", closesWhen: "Đã xử lý hoặc Chấp nhận", mode: "event", severity: "critical" }),
   trigger({ code: "BRI-04", name: "Hồ sơ chuyển tiếp chờ duyệt quá hạn", condition: "Hồ sơ chuyển tiếp quá hạn duyệt chưa có kết quả", readsFrom: "Trạng thái", closesWhen: "Có kết quả duyệt", mode: "scan", severity: "high" }),
   trigger({ code: "BRI-05", name: "Khách quá hạn phản hồi", condition: "Khách quá hạn phản hồi tại G1, G2, G4 hoặc G7", readsFrom: "Trạng thái", closesWhen: "Khách xác nhận", mode: "scan", severity: "high" }),
-  trigger({ code: "YC-01", name: "Yêu cầu thay đổi quá SLA", condition: "Yêu cầu thay đổi quá SLA của bước hiện tại", readsFrom: "Trạng thái", closesWhen: "Sang bước tiếp theo", mode: "event+scan", severity: "high" }),
-  trigger({ code: "DL-01", name: "Giờ Chờ xử lý quá hạn", condition: "Giờ log ở Chờ xử lý quá hạn xử lý", readsFrom: "Thực tế", closesWhen: "Giờ được xử lý", mode: "scan", severity: "medium" })
+  trigger({ code: "DL-01", name: "Giờ Chờ xử lý quá hạn", condition: "Giờ log ở Chờ xử lý quá hạn xử lý, tính cả giờ Pre-sale", readsFrom: "Thực tế", closesWhen: "Giờ được xử lý", mode: "scan", severity: "medium" })
 ];
 
 export type AlertTriggerCode = string;

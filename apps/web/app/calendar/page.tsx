@@ -5,12 +5,14 @@ import { CalendarDays, ChevronLeft, ChevronRight, Clock, UserRound, Plus, Trash2
 import Link from "next/link";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { useAuth } from "@/lib/auth";
+import { apiErrorMessage, readApiError } from "@/lib/api-error";
 import { isAdminView } from "@/lib/auth-role";
 import type { ResourceListResponse, TaskPlanningBlockSummary, TaskTimeEntrySummary, WorkspaceDayOffSummary } from "@b2b-crm/contracts";
 import { fetchWorkspaceUserOptions, type WorkspaceUserOption } from "@/lib/workspace-users";
 import { CustomDatePicker } from "@/components/constructor-x/custom-controls";
 import { CustomDropdown, type TaskSelectOption } from "@/components/crm-workspace/tasks-workbench";
-import { CalendarFilterMultiSelect } from "@/components/crm-workspace/calendar-filter-multi-select";
+import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilter, formatDay, standardDatePresets, type DateRange } from "@/components/filters";
+import { HeaderButton, PageHeader } from "@/components/page-header";
 import { ModalLayer } from "@/components/modal-layer";
 import {
   formatVietnamDate,
@@ -28,6 +30,7 @@ import {
 import {
   buildCalendarMemberOptions,
   buildCalendarProjectOptions,
+  buildCalendarStatusOptions,
   filterCalendarEvents,
   pruneCalendarFilterIds
 } from "@/lib/calendar-filters";
@@ -122,6 +125,26 @@ function addYears(date: Date, years: number) {
   const copy = new Date(date);
   copy.setFullYear(copy.getFullYear() + years);
   return copy;
+}
+
+const KIND_OPTIONS = [
+  { value: "planned", label: "Kế hoạch" },
+  { value: "actual", label: "Giờ thực tế" }
+];
+// One request covers at most 90 days; a custom range stays within that.
+const CUSTOM_RANGE_MAX_DAYS = 90;
+const NO_RANGE: DateRange = { from: "", to: "" };
+
+/** A YYYY-MM-DD key as a local Date, the way the view state (`weekStart`) keeps days. */
+function dateFromKey(key: string) {
+  const [year, month, day] = key.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function shiftDateKey(key: string, days: number) {
+  const date = new Date(`${key}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 function formatDateKey(date: Date) {
@@ -379,6 +402,11 @@ export default function CalendarPage() {
   const [dayOffError, setDayOffError] = useState<string | null>(null);
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const [selectedKinds, setSelectedKinds] = useState<string[]>([]);
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
+  // "Khoảng ngày": a custom span of days shown as an agenda instead of the Day/Week/Month/Year grid.
+  const [customRange, setCustomRange] = useState<DateRange>(NO_RANGE);
+  const hasCustomRange = Boolean(customRange.from && customRange.to);
 
   // Custom visual state
   const [activeTab, setActiveTab] = useState<"Day" | "Week" | "Month" | "Year">("Week");
@@ -453,6 +481,12 @@ export default function CalendarPage() {
   }, [weekStart]);
 
   const activeRange = useMemo(() => {
+    if (customRange.from && customRange.to) {
+      return {
+        startAt: vietnamDateTimeToIso(customRange.from, "00:00"),
+        endAt: vietnamDateTimeToIso(shiftDateKey(customRange.to, 1), "00:00")
+      };
+    }
     let startDate: Date;
     let endDate: Date;
     if (activeTab === "Day") {
@@ -472,7 +506,7 @@ export default function CalendarPage() {
       startAt: vietnamDateTimeToIso(toVietnamDateKey(startDate), "00:00"),
       endAt: vietnamDateTimeToIso(toVietnamDateKey(endDate), "00:00")
     };
-  }, [activeTab, monthGridDays, weekStart]);
+  }, [activeTab, customRange.from, customRange.to, monthGridDays, weekStart]);
 
   const triggerToast = (message: string, type: "success" | "danger" | "info" = "success") => {
     setToast({ message, type });
@@ -489,21 +523,55 @@ export default function CalendarPage() {
     [allUsers, blocks]
   );
 
+  const statusFilterOptions = useMemo(() => buildCalendarStatusOptions(blocks, getStatusLabel), [blocks]);
+
   const filteredBlocks = useMemo(() => filterCalendarEvents(blocks, {
     projectIds: selectedProjectIds,
-    memberIds: selectedMemberIds
-  }), [blocks, selectedMemberIds, selectedProjectIds]);
+    memberIds: selectedMemberIds,
+    kinds: selectedKinds,
+    statuses: selectedStatuses
+  }), [blocks, selectedKinds, selectedMemberIds, selectedProjectIds, selectedStatuses]);
+
+  const rangePresets = useMemo(() => {
+    const today = toVietnamDateKey(new Date());
+    return [
+      { id: "all", label: "Theo chế độ xem lịch", ...NO_RANGE },
+      ...standardDatePresets(today).filter((preset) => ["today", "last-7-days", "last-30-days", "this-month", "last-month", "this-quarter"].includes(preset.id)),
+      { id: "next-7-days", label: "7 ngày tới", from: today, to: shiftDateKey(today, 6) },
+      { id: "next-30-days", label: "30 ngày tới", from: today, to: shiftDateKey(today, 29) }
+    ];
+  }, []);
+
+  /** Leaves the custom range for a grid view that starts where the range did. */
+  const selectTab = (tab: typeof activeTab) => {
+    if (customRange.from) {
+      const start = dateFromKey(customRange.from);
+      setWeekStart(tab === "Week" ? startOfWeek(start) : start);
+      setCustomRange(NO_RANGE);
+    }
+    setActiveTab(tab);
+  };
+
+  const shiftCustomRange = (direction: 1 | -1) => setCustomRange((current) => {
+    const days = Math.round((Date.parse(current.to) - Date.parse(current.from)) / 86_400_000) + 1;
+    return { from: shiftDateKey(current.from, direction * days), to: shiftDateKey(current.to, direction * days) };
+  });
 
   const dayOffByDate = useMemo(
     () => new Map(dayOffs.filter((dayOff) => dayOff.isActive).map((dayOff) => [dayOff.date, dayOff])),
     [dayOffs]
   );
 
-  const hasActiveFilters = selectedProjectIds.length > 0 || selectedMemberIds.length > 0;
+  // The day range picks which days are shown; only the option filters can hide events inside them.
+  const hasActiveFilters = selectedProjectIds.length + selectedMemberIds.length + selectedKinds.length + selectedStatuses.length > 0;
+  const activeFilterCount = [selectedProjectIds, selectedMemberIds, selectedKinds, selectedStatuses].filter((values) => values.length > 0).length + (hasCustomRange ? 1 : 0);
 
   const resetFilters = () => {
     setSelectedProjectIds([]);
     setSelectedMemberIds([]);
+    setSelectedKinds([]);
+    setSelectedStatuses([]);
+    setCustomRange(NO_RANGE);
   };
 
   useEffect(() => {
@@ -516,7 +584,11 @@ export default function CalendarPage() {
       const next = pruneCalendarFilterIds(current, memberFilterOptions);
       return next.length === current.length && next.every((id, index) => id === current[index]) ? current : next;
     });
-  }, [error, loading, memberFilterOptions, projectFilterOptions]);
+    setSelectedStatuses((current) => {
+      const next = pruneCalendarFilterIds(current, statusFilterOptions);
+      return next.length === current.length ? current : next;
+    });
+  }, [error, loading, memberFilterOptions, projectFilterOptions, statusFilterOptions]);
 
   const blocksByDay = useMemo(() => {
     const grouped = new Map<string, CalendarWorkEvent[]>();
@@ -693,6 +765,14 @@ export default function CalendarPage() {
       });
   }, [showAddModal]);
 
+  // The dropdowns show their first option while nothing is chosen, so the form takes that as the choice too (the
+  // signed-in user for the PIC when listed); otherwise Save refused a form that looked complete.
+  useEffect(() => {
+    if (!showAddModal) return;
+    if (!selectedTaskId && taskOptions.length) setSelectedTaskId(taskOptions[0].value);
+    if (!selectedUserId && userOptions.length) setSelectedUserId((userOptions.find((option) => option.value === user?.id) ?? userOptions[0]).value);
+  }, [showAddModal, selectedTaskId, selectedUserId, taskOptions, userOptions, user?.id]);
+
   // Auto-fill title when task selection changes
   useEffect(() => {
     if (selectedTaskId) {
@@ -801,8 +881,9 @@ export default function CalendarPage() {
       triggerToast(usersError, "danger");
       return;
     }
-    if (!selectedTaskId || !selectedUserId || !eventTitle || !eventDate || !startTime || !endTime) {
-      triggerToast("Vui lòng nhập đầy đủ thông tin bắt buộc.", "danger");
+    const missing = [!selectedTaskId && "công việc", !eventTitle && "tiêu đề", !selectedUserId && "thành viên phụ trách", !eventDate && "ngày thực hiện", (!startTime || !endTime) && "giờ bắt đầu / kết thúc"].filter(Boolean);
+    if (missing.length) {
+      triggerToast(`Vui lòng nhập đầy đủ thông tin bắt buộc: ${missing.join(", ")}.`, "danger");
       return;
     }
 
@@ -838,9 +919,8 @@ export default function CalendarPage() {
         window.location.assign(`/login?returnTo=${encodeURIComponent("/calendar")}`);
         return;
       }
-      if (!response.ok) {
-        throw new Error(`Failed to create block: ${response.status}`);
-      }
+      // The API says why (not a project member, day off, over the day's hours, …): show its reason, not a generic failure.
+      if (!response.ok) throw await readApiError(response);
 
       const payload: unknown = await response.json();
       if (!isTaskPlanningBlockSummary(payload) || payload.taskId !== selectedTaskId) {
@@ -869,7 +949,7 @@ export default function CalendarPage() {
       await loadPlanningBlocks();
     } catch (err) {
       console.error(err);
-      triggerToast("Không thể lưu kế hoạch. Vui lòng kiểm tra và thử lại.", "danger");
+      triggerToast(apiErrorMessage(err, "Không thể lưu kế hoạch. Vui lòng kiểm tra và thử lại."), "danger");
     } finally {
       setIsSubmittingEvent(false);
     }
@@ -893,7 +973,9 @@ export default function CalendarPage() {
   const displayDays = activeTab === "Day" ? [weekStart] : weekDays;
 
   const formattedMonthTitle = useMemo(() => {
-    if (activeTab === "Day") {
+    if (customRange.from && customRange.to) {
+      return customRange.from === customRange.to ? formatDay(customRange.from) : `${formatDay(customRange.from)} – ${formatDay(customRange.to)}`;
+    } else if (activeTab === "Day") {
       const dayStr = formatVietnamDate(weekStart, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
       return dayStr.charAt(0).toUpperCase() + dayStr.slice(1);
     } else if (activeTab === "Week") {
@@ -905,7 +987,17 @@ export default function CalendarPage() {
     } else {
       return `Năm ${weekStart.getFullYear()}`;
     }
-  }, [weekStart, activeTab]);
+  }, [weekStart, activeTab, customRange.from, customRange.to]);
+
+  // Agenda of the custom range: only days that have something to show.
+  const agendaDays = useMemo(() => {
+    if (!customRange.from || !customRange.to) return [];
+    const days: string[] = [];
+    for (let key = customRange.from; key <= customRange.to; key = shiftDateKey(key, 1)) {
+      if (blocksByDay.has(key) || dayOffByDate.has(key)) days.push(key);
+    }
+    return days;
+  }, [blocksByDay, customRange.from, customRange.to, dayOffByDate]);
 
   return (
     <AppShell
@@ -913,9 +1005,15 @@ export default function CalendarPage() {
       desktopSidebarTestId="calendar-desktop-sidebar"
       mobileHeaderTestId="calendar-mobile-shell"
       shellTestId="calendar-shell"
-      title="Calendar"
+      title="Lịch"
     >
-        <main data-testid="calendar-main" className="flex-1 overflow-auto p-4 sm:p-6">
+        <main data-testid="calendar-main" className="flex-1 overflow-auto p-3 sm:p-4 xl:p-6">
+          <PageHeader
+            className="mb-4"
+            title="Lịch"
+            subtitle="Kế hoạch và giờ thực tế của cả nhóm theo ngày, tuần, tháng, năm hoặc một khoảng ngày."
+            actions={<HeaderButton variant="primary" icon={<Plus className="h-4 w-4" aria-hidden />} onClick={() => setShowAddModal(true)}>Thêm kế hoạch</HeaderButton>}
+          />
           {/* Header section with Month title and Add Event button */}
           <div className="mb-4 flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between border-b border-slate-100 pb-5">
             {/* Left title and info */}
@@ -924,11 +1022,12 @@ export default function CalendarPage() {
                 <CalendarDays className="w-3.5 h-3.5 text-indigo-500" />
                 Lịch trình kế hoạch
               </div>
-              <h1 className="mt-3 mb-1.5 text-3xl font-black leading-tight tracking-normal text-slate-800">
+              {/* The page's h1 is "Lịch"; `!` keeps the size this title had as an h1 against the global h2 rule. */}
+              <h2 className="!text-[clamp(32px,3.2vw,46px)] !font-[660] !leading-[1.04] tracking-normal">
                 {formattedMonthTitle}
-              </h1>
+              </h2>
               <p className="text-xs font-medium text-slate-400">
-                {formatVietnamDate(weekStart)} - {formatVietnamDate(addDays(weekStart, 6))} · {activeBlocks.length} mốc · {formatHours(totalPlannedMinutes)} KH · {formatHours(totalActualMinutes)} TT · {picCount} PIC · {VIETNAM_TIME_ZONE_LABEL}
+                {hasCustomRange ? `${formatDay(customRange.from)} - ${formatDay(customRange.to)}` : `${formatVietnamDate(weekStart)} - ${formatVietnamDate(addDays(weekStart, 6))}`} · {activeBlocks.length} mốc · {formatHours(totalPlannedMinutes)} KH · {formatHours(totalActualMinutes)} TT · {picCount} PIC · {VIETNAM_TIME_ZONE_LABEL}
               </p>
             </div>
 
@@ -936,12 +1035,13 @@ export default function CalendarPage() {
             <div className="flex justify-center items-center">
               <div className="bg-slate-100 p-1 rounded-xl flex items-center gap-0.5 shadow-inner">
                 {(["Day", "Week", "Month", "Year"] as const).map((tab) => {
-                  const isActive = tab === activeTab;
+                  const isActive = !hasCustomRange && tab === activeTab;
                   const labelMap = { Day: "Ngày", Week: "Tuần", Month: "Tháng", Year: "Năm" };
                   return (
                     <button
                       key={tab}
-                      onClick={() => setActiveTab(tab)}
+                      onClick={() => selectTab(tab)}
+                      aria-pressed={isActive}
                       className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                         isActive
                           ? "bg-white text-slate-800 shadow-sm"
@@ -962,6 +1062,7 @@ export default function CalendarPage() {
                   type="button"
                   onClick={() => {
                     const today = new Date();
+                    setCustomRange(NO_RANGE);
                     if (activeTab === "Day") {
                       setWeekStart(today);
                     } else if (activeTab === "Week") {
@@ -981,7 +1082,8 @@ export default function CalendarPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    if (activeTab === "Day") setWeekStart((current) => addDays(current, -1));
+                    if (hasCustomRange) shiftCustomRange(-1);
+                    else if (activeTab === "Day") setWeekStart((current) => addDays(current, -1));
                     else if (activeTab === "Week") setWeekStart((current) => addDays(current, -7));
                     else if (activeTab === "Month") setWeekStart((current) => addMonths(current, -1));
                     else if (activeTab === "Year") setWeekStart((current) => addYears(current, -1));
@@ -994,7 +1096,8 @@ export default function CalendarPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    if (activeTab === "Day") setWeekStart((current) => addDays(current, 1));
+                    if (hasCustomRange) shiftCustomRange(1);
+                    else if (activeTab === "Day") setWeekStart((current) => addDays(current, 1));
                     else if (activeTab === "Week") setWeekStart((current) => addDays(current, 7));
                     else if (activeTab === "Month") setWeekStart((current) => addMonths(current, 1));
                     else if (activeTab === "Year") setWeekStart((current) => addYears(current, 1));
@@ -1006,63 +1109,39 @@ export default function CalendarPage() {
                 </button>
               </div>
 
-              <button
-                onClick={() => setShowAddModal(true)}
-                className="h-10 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs px-4 flex items-center gap-1.5 transition active:scale-[0.98] shadow-md cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                Thêm kế hoạch
-              </button>
             </div>
           </div>
 
-          <section
-            aria-label="Bộ lọc Calendar"
-            className="mb-4 flex flex-col gap-3 rounded-2xl border border-border bg-card p-3 shadow-sm sm:flex-row sm:flex-wrap sm:items-end"
-            data-testid="calendar-filter-toolbar"
-          >
-            <div className="w-full min-w-0 sm:w-56">
-              <CalendarFilterMultiSelect
-                id="calendar-project-filter"
-                label="Dự án"
-                allLabel="Tất cả dự án"
-                countLabel={(count) => `${count} dự án đã chọn`}
-                icon="project"
-                options={projectFilterOptions}
-                selectedIds={selectedProjectIds}
-                onChange={setSelectedProjectIds}
-              />
-            </div>
-            <div className="w-full min-w-0 sm:w-56">
-              <CalendarFilterMultiSelect
-                id="calendar-member-filter"
+          <section aria-label="Bộ lọc lịch" className="mb-4 rounded-xl border border-border bg-card p-3" data-testid="calendar-filter-toolbar">
+            <FilterBar
+              onReset={activeFilterCount > 0 ? resetFilters : undefined}
+              activeCount={activeFilterCount}
+              actions={(
+                <p aria-live="polite" className="text-xs font-medium text-muted-foreground" data-testid="calendar-filter-summary">
+                  {hasActiveFilters ? `${activeBlocks.length}/${blocks.length} mốc phù hợp` : `${blocks.length} mốc trong phạm vi`}
+                </p>
+              )}
+            >
+              <FilterField label="Khoảng ngày" className="min-w-[15rem] flex-[1.2]">
+                <DateRangeFilter
+                  ariaLabel="Khoảng ngày"
+                  value={customRange}
+                  presets={rangePresets}
+                  maxDays={CUSTOM_RANGE_MAX_DAYS}
+                  onChange={(range) => setCustomRange(range.from && range.to ? range : NO_RANGE)}
+                />
+              </FilterField>
+              <PersonFilter
                 label="Thành viên"
                 allLabel="Tất cả thành viên"
-                countLabel={(count) => `${count} thành viên đã chọn`}
-                icon="member"
-                options={memberFilterOptions}
-                selectedIds={selectedMemberIds}
+                people={memberFilterOptions.map((option) => ({ id: option.value, name: option.label, subtitle: option.subtext, avatarUrl: option.avatarUrl }))}
+                values={selectedMemberIds}
                 onChange={setSelectedMemberIds}
               />
-            </div>
-            {hasActiveFilters ? (
-              <button
-                type="button"
-                onClick={resetFilters}
-                className="min-h-11 w-full rounded-xl border border-border bg-background px-4 py-2 text-xs font-bold text-foreground shadow-sm transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 sm:w-auto"
-              >
-                Xóa bộ lọc
-              </button>
-            ) : null}
-            <p
-              aria-live="polite"
-              className="text-xs font-medium text-muted-foreground sm:ml-auto sm:pb-3"
-              data-testid="calendar-filter-summary"
-            >
-              {hasActiveFilters
-                ? `${activeBlocks.length}/${blocks.length} mốc phù hợp`
-                : `${blocks.length} mốc trong phạm vi`}
-            </p>
+              <MultiSelectFilter label="Dự án" allLabel="Tất cả dự án" options={projectFilterOptions} values={selectedProjectIds} onChange={setSelectedProjectIds} />
+              <MultiSelectFilter label="Loại" allLabel="Kế hoạch và giờ thực tế" options={KIND_OPTIONS} values={selectedKinds} onChange={setSelectedKinds} searchable={false} />
+              <MultiSelectFilter label="Trạng thái" allLabel="Tất cả trạng thái" options={statusFilterOptions} values={selectedStatuses} onChange={setSelectedStatuses} searchable={false} />
+            </FilterBar>
           </section>
 
           {error ? (
@@ -1084,19 +1163,64 @@ export default function CalendarPage() {
               className="mb-4 flex flex-col gap-3 rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm text-foreground sm:flex-row sm:items-center sm:justify-between"
               data-testid="calendar-filter-empty"
             >
-              <span>Không có mốc Calendar phù hợp với bộ lọc hiện tại.</span>
+              <span>Không có kết quả phù hợp bộ lọc.</span>
               <button
                 type="button"
                 onClick={resetFilters}
                 className="min-h-11 rounded-xl border border-border bg-background px-4 py-2 text-xs font-bold text-foreground transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
               >
-                Xóa bộ lọc
+                Đặt lại bộ lọc
               </button>
             </div>
           ) : null}
 
           {/* Interactive Schedule View Grid */}
-          {activeTab === "Year" ? (
+          {hasCustomRange ? (
+            <section data-testid="calendar-range-agenda" aria-label={`Lịch từ ${formatDay(customRange.from)} đến ${formatDay(customRange.to)}`} className="rounded-2xl border border-slate-100 bg-white shadow-md">
+              {agendaDays.length === 0 ? (
+                <p className="px-4 py-10 text-center text-sm text-muted-foreground">{loading ? "Đang tải lịch..." : "Không có kế hoạch hoặc giờ thực tế trong khoảng ngày này."}</p>
+              ) : (
+                <ul className="divide-y divide-slate-100">
+                  {agendaDays.map((key) => {
+                    const dayBlocks = blocksByDay.get(key) ?? [];
+                    const dayOff = dayOffByDate.get(key);
+                    const weekday = formatVietnamDate(vietnamDateTimeToIso(key, "12:00"), { weekday: "long" });
+                    return (
+                      <li key={key} className={`flex flex-col gap-2 px-4 py-3 sm:flex-row sm:gap-4 ${key === formatDateKey(new Date()) ? "bg-blue-50/30" : ""}`}>
+                        <div className="w-36 shrink-0">
+                          <p className="text-sm font-bold text-slate-800">{formatDay(key)}</p>
+                          <p className="text-[11px] font-medium capitalize text-slate-400">{weekday}</p>
+                          {dayOff ? <p title={dayOff.name} className="mt-1 inline-block max-w-full truncate rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">Off · {dayOff.name}</p> : null}
+                        </div>
+                        <div className="min-w-0 flex-1 space-y-1.5">
+                          {dayBlocks.map((block) => {
+                            const colorSchema = getBlockColorSchema(block.status);
+                            return (
+                              <button
+                                type="button"
+                                key={block.id}
+                                onClick={(e) => handleOpenDetail(block, e)}
+                                data-testid="calendar-event-card"
+                                data-event-id={block.id}
+                                data-planning-block-id={block.kind === "planned" ? block.recordId : undefined}
+                                data-time-entry-id={block.kind === "actual" ? block.recordId : undefined}
+                                aria-label={`${block.kind === "planned" ? "KH" : "TT"}: ${block.title}, ${formatTimeRange(block)}, ${getStatusLabel(block.status)}${block.billingExemptReason ? ", ngày nghỉ, không tính phí" : ""}`}
+                                className={`flex w-full flex-wrap items-center gap-x-3 gap-y-0.5 rounded-lg px-3 py-2 text-left ${colorSchema.border} ${colorSchema.bg} cursor-pointer`}
+                              >
+                                <span className={`!text-[11px] !font-semibold tabular-nums ${colorSchema.text}`}>{formatTimeRange(block)}</span>
+                                <span className="min-w-0 flex-1 truncate !text-[12.5px] !font-semibold text-slate-800">{block.title}</span>
+                                <span className="!text-[11px] text-slate-500">{[block.projectName, block.userDisplayName, getStatusLabel(block.status), formatHours(block.minutes)].filter(Boolean).join(" · ")}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
+          ) : activeTab === "Year" ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 md:grid-rows-4 lg:grid-rows-3 gap-6 p-6 bg-slate-50/10 rounded-2xl border border-slate-100 shadow-sm h-[calc(100vh-280px)] overflow-y-auto min-h-0">
               {Array.from({ length: 12 }).map((_, monthIdx) => {
                 const monthDate = new Date(weekStart.getFullYear(), monthIdx, 1);

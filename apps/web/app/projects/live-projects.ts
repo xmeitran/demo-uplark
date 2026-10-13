@@ -1,4 +1,4 @@
-import type { AccountSummary, AccountsResponse, ProjectSummary, ResourceListPaginationMeta, ResourceListResponse } from "@b2b-crm/contracts";
+import { PROJECT_TYPE_LABELS, projectTypeLabel, type AccountSummary, type AccountsResponse, type ProjectSummary, type ResourceListPaginationMeta, type ResourceListResponse } from "@b2b-crm/contracts";
 import type { Project } from "./data";
 import { normalizeProjectStatus, projectStatusLabel, resolveProjectStatus, type ProjectStatusCode } from "@/lib/project-status";
 
@@ -37,10 +37,14 @@ export interface FetchLiveProjectsOptions {
   limit?: number;
   offset?: number;
   q?: string;
-  status?: Project["status"] | "all";
-  category?: string;
-  accountId?: string;
-  ownerUserId?: string;
+  /** Each filter takes one value or several; "all" / empty means no filter. Several are sent comma-joined. */
+  status?: Project["status"] | "all" | Project["status"][];
+  category?: string | string[];
+  accountId?: string | string[];
+  ownerUserId?: string | string[];
+  /** Project period, inclusive Vietnam days "YYYY-MM-DD"; a project matches when its start–due span overlaps it. */
+  from?: string;
+  to?: string;
   signal?: AbortSignal;
   cacheScope?: string;
 }
@@ -73,25 +77,18 @@ export async function fetchLiveProjects(options: FetchLiveProjectsOptions = {}):
     offset: String(offset)
   });
   const q = options.q?.trim();
-  const category = options.category?.trim();
-  const accountId = options.accountId?.trim();
-  const ownerUserId = options.ownerUserId?.trim();
   if (q) {
     params.set("q", q);
   }
-  const backendStatus = options.status && options.status !== "all" ? toBackendProjectStatus(options.status) : undefined;
-  if (backendStatus) {
-    params.set("status", backendStatus);
-  }
-  if (category && category !== "all") {
-    params.set("category", category);
-  }
-  if (accountId && accountId !== "all") {
-    params.set("accountId", accountId);
-  }
-  if (ownerUserId && ownerUserId !== "all") {
-    params.set("ownerUserId", ownerUserId);
-  }
+  const setList = (key: string, values: string[]) => {
+    if (values.length) params.set(key, values.join(","));
+  };
+  setList("status", filterValues(options.status).flatMap((status) => toBackendProjectStatus(status as Project["status"]) ?? []));
+  setList("category", filterValues(options.category));
+  setList("accountId", filterValues(options.accountId));
+  setList("ownerUserId", filterValues(options.ownerUserId));
+  if (options.from) params.set("from", options.from);
+  if (options.to) params.set("to", options.to);
   const response = await fetchWithTransientRetry(`/api/projects?${params.toString()}`, {
     cache: "no-store",
     credentials: "same-origin",
@@ -112,6 +109,10 @@ export async function fetchLiveProjects(options: FetchLiveProjectsOptions = {}):
     total: pagination.total,
     pagination
   };
+}
+
+function filterValues(value: string | string[] | undefined) {
+  return [...new Set((Array.isArray(value) ? value : [value ?? ""]).map((item) => item.trim()).filter((item) => item && item !== "all"))];
 }
 
 export async function fetchAccountOptions(signal?: AbortSignal): Promise<LiveProjectAccountOption[]> {
@@ -357,6 +358,7 @@ export function mapProjectSummaryToUiProject(project: ProjectSummary): Project {
     budget: project.budgetAmount ?? 0,
     spent: project.spentAmount ?? 0,
     startDate: formatUiDate(project.plannedStartAt),
+    startIsActual: project.startIsActual === true,
     dueDate: formatUiDate(project.plannedEndAt),
     dueAt: project.plannedEndAt,
     members,
@@ -374,7 +376,7 @@ export function mapProjectSummaryToUiProject(project: ProjectSummary): Project {
     client: project.accountName || "Unassigned Account",
     color,
     tags: project.tags?.length ? project.tags : [project.code, status].filter(Boolean),
-    category: formatProjectCategory(projectType) || "Delivery"
+    category: projectTypeLabel(projectType) || PROJECT_TYPE_LABELS.delivery
   };
 }
 
@@ -481,15 +483,6 @@ function toUiPriority(status: ProjectStatusCode | null, progress?: number): Proj
 /** Label of a Project Status in the standard catalogue; accepts a code, a legacy alias or a catalogue label. */
 export function formatProjectStatusLabel(status?: string) {
   return projectStatusLabel(normalizeProjectStatus(status));
-}
-
-function formatProjectCategory(value?: string) {
-  if (!value) return "";
-  return value
-    .split(/[_\s-]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-    .join(" ");
 }
 
 function colorForId(id: string) {

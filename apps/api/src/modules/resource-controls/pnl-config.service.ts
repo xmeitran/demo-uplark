@@ -7,16 +7,11 @@ import { BadRequestException, ConflictException, ForbiddenException, Inject, Inj
 import { randomUUID } from "node:crypto";
 import {
   isAdminAccount,
-  type PnlContractStatusInput,
   type PnlCostItem,
   type PnlCostItemInput,
   type PnlCostItemMethod,
   type PnlCostItemsResponse,
   type PnlFormulaToken,
-  type PnlInstallment,
-  type PnlInstallmentStatus,
-  type PnlInstallmentsInput,
-  type PnlItemSettingsInput,
   type PnlManualCostInput,
   type PnlMeta,
   type PnlParameterKey,
@@ -25,8 +20,7 @@ import {
   type PnlParameterValue,
   type PnlParameterValueInput,
   type PnlParametersResponse,
-  type PnlProjectSetupResponse,
-  type PnlSetupItem,
+  type PnlProjectValueInput,
   type PnlStaffCostApproveInput,
   type PnlStaffCostComponents,
   type PnlStaffCostImportInput,
@@ -43,11 +37,9 @@ import {
   type StaffMonthlyCostsResponse
 } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
-import { CONTRACT_ITEM_KIND_LABELS, contractItemTypeLabel } from "../delivery-handoff/contract-item";
 import { assertCostApprove, assertCostEdit, assertCostView, assertProjectSetupEdit, canApproveCost, canEditCost, canEditProjectSetup, canViewCost } from "./cost-permissions";
 import { monthKeysBetween, reportDayStart, reportMonthKey } from "./pnl-calc";
 import { PNL_CLOSE_GATES, PNL_PARAMETER_CATALOGUE, PNL_PARAMETER_KEYS, dayKeyOf, num, type ParameterRow, type PnlContext, type ProjectCtx } from "./pnl-context";
-import { contractValue, entryCosts, percentOf, recognizedRevenue } from "./pnl-engine";
 import { ROLE_GROUPS, ROLE_GROUP_LABELS, STAFF_COST_STATUS_LABELS, isRoleGroup, periodStateOf, workingDaysOfMonth } from "./pnl-rules";
 import { PnlService, pnlMeta, requirePeriodKey, shiftMonth } from "./pnl.service";
 import { COST_ITEM_METHOD_LABELS, DEFAULT_COST_TREE, SYSTEM_ITEM_CODES, accountingGroupOf, checkCostTree, effectiveDisabledCodes, type CostItemDef } from "./pnl-tree";
@@ -58,10 +50,6 @@ const monthLabel = (periodKey: string) => `${periodKey.slice(5)}/${periodKey.sli
 const METHODS: PnlCostItemMethod[] = ["MANUAL", "SYSTEM", "FORMULA", "FUND", "GROUP"];
 const SYSTEM_CODES = new Set<string>(Object.values(SYSTEM_ITEM_CODES));
 const ITEM_STATUS_LABELS = { active: "Đang dùng", draft: "Bản nháp", retired: "Ngừng dùng" } as const;
-const INSTALLMENT_STATUS_LABELS: Record<PnlInstallmentStatus, string> = { not_due: "Chưa đến", accepted: "Đã nghiệm thu", invoiced: "Đã xuất hóa đơn", paid: "Đã thu tiền" };
-const INSTALLMENT_ORDER: PnlInstallmentStatus[] = ["not_due", "accepted", "invoiced", "paid"];
-/** Mặc định 70% khi ký, 30% khi nghiệm thu (mục 6.1 khối C). */
-const DEFAULT_INSTALLMENTS = [{ label: "Khi ký (G1)", gateCode: "G1", percent: 70 }, { label: "Nghiệm thu (G7)", gateCode: "G7", percent: 30 }];
 
 /** Component columns of ResourceMonthlyCost, named after the payroll system's output (mục 6.7 khối 3). */
 const COMPONENT_COLUMNS: Record<keyof PnlStaffCostComponents, { column: string; label: string }> = {
@@ -220,7 +208,7 @@ export class PnlConfigService {
         items, hasDraft, openPeriodKeys: this.openPeriodKeys(ctx),
         formulaOperands: [
           ...defs.filter((row) => row.unit !== "NONE").map((row) => ({ token: { item: row.code } as PnlFormulaToken, label: row.name })),
-          ...PNL_PARAMETER_KEYS.filter((key) => PNL_PARAMETER_CATALOGUE[key].kind === "number" && key !== "sellRate").map((key) => ({ token: { param: key } as PnlFormulaToken, label: PNL_PARAMETER_CATALOGUE[key].label }))
+          ...PNL_PARAMETER_KEYS.filter((key) => PNL_PARAMETER_CATALOGUE[key].kind === "number").map((key) => ({ token: { param: key } as PnlFormulaToken, label: PNL_PARAMETER_CATALOGUE[key].label }))
         ],
         usingDefaultTree: !stored
       },
@@ -439,8 +427,8 @@ export class PnlConfigService {
     const all = ctx.params.all();
     const rowOf = (key: PnlParameterKey, subKey: string | null): PnlParameterRow => {
       const definition = PNL_PARAMETER_CATALOGUE[key];
-      // PL-26: "đơn giá chỉ hiện với nhóm quyền chi phí" — an Admin outside it sees that a price exists, not the price.
-      const hidden = key === "sellRate" && !meta.moneyVisible;
+      // No parameter of the tab is a money figure any more (the selling rate per role is gone, chốt 13/10).
+      const hidden = false;
       const rows = all.filter((row) => row.key === key && (row.subKey ?? null) === subKey).sort((left, right) => right.effectiveFrom.localeCompare(left.effectiveFrom) || right.createdAt.getTime() - left.createdAt.getTime());
       const scopes = [...new Set(rows.map((row) => `${row.scopeType}|${row.scopeId ?? ""}`))];
       const currentIds = new Set(scopes.map((scope) => rows.find((row) => `${row.scopeType}|${row.scopeId ?? ""}` === scope && row.effectiveFrom <= period)?.id).filter(Boolean));
@@ -466,7 +454,7 @@ export class PnlConfigService {
     };
     return {
       data: {
-        rows: [rowOf("standardDayHours", null), rowOf("usdRate", null), rowOf("pnlCloseGate", null), rowOf("commissionPercent", null), ...ROLE_GROUPS.map((role) => rowOf("sellRate", role))],
+        rows: [rowOf("standardDayHours", null), rowOf("usdRate", null), rowOf("pnlCloseGate", null), rowOf("commissionPercent", null)],
         moved: [
           { label: "Lương tháng tiêu chuẩn", movedTo: "Hồ sơ nhân sự" },
           { label: "Tiền giao thông", movedTo: "bỏ khỏi Tham số" },
@@ -477,8 +465,7 @@ export class PnlConfigService {
         scopeOptions: {
           customers: accounts.sort((left, right) => left.name.localeCompare(right.name, "vi")),
           projectTypes: [...ctx.templates.values()].map((template) => ({ value: template.key, label: template.name })),
-          projects: projects.map((project) => ({ id: project.id, name: project.name })).sort((left, right) => left.name.localeCompare(right.name, "vi")),
-          roleGroups: ROLE_GROUPS.map((role) => ({ value: role, label: ROLE_GROUP_LABELS[role] }))
+          projects: projects.map((project) => ({ id: project.id, name: project.name })).sort((left, right) => left.name.localeCompare(right.name, "vi"))
         }
       },
       meta
@@ -490,11 +477,10 @@ export class PnlConfigService {
     assertAdmin(principal);
     const key = input?.key;
     const definition = PNL_PARAMETER_CATALOGUE[key];
-    if (!definition) throw new BadRequestException("Tham số không có trong tab Tham số của P&L (chỉ tỷ lệ, tỷ giá, giờ chuẩn, đơn giá bán và mốc đóng P&L).");
+    if (!definition) throw new BadRequestException("Tham số không có trong tab Tham số của P&L (chỉ tỷ lệ, tỷ giá, giờ chuẩn và mốc đóng P&L).");
     const scopeType = input.scopeType ?? "company";
     if (!definition.allowedScopes.includes(scopeType)) throw new BadRequestException(`${definition.label} không có giá trị riêng theo phạm vi này.`);
-    const subKey = key === "sellRate" ? input.subKey ?? null : null;
-    if (key === "sellRate" && !isRoleGroup(subKey)) throw new BadRequestException("Đơn giá bán cần chọn vai trò.");
+    const subKey = null;
     const reason = text(input.reason);
     if (!reason) throw new BadRequestException("Thêm giá trị tham số bắt buộc phải nhập lý do.");
     const effectiveFrom = requirePeriodKey(input.effectiveFrom, "effectiveFrom");
@@ -786,186 +772,35 @@ export class PnlConfigService {
   }
 
   // -------------------------------------------------------------------------
-  // Mục 6.1 — Thiết lập P&L của dự án
+  // PL-13 / D-22 — Giá trị dự án, entered on the Doanh thu figure of the P&L dự án screen
   // -------------------------------------------------------------------------
 
-  private async setupContext(projectId: string, principal: PrincipalContext) {
-    const ctx = await this.pnl.context(principal.workspaceId, { projectIds: [projectId] });
-    const project = ctx.projects.get(projectId);
+  /**
+   * One amount (VND) per Loại Khách hàng project, entered by the PM (Admin) from BD's figures. Required before G1.
+   * After G1 a change needs a reason — except the first entry of a project that never had a value: there is nothing to
+   * justify changing. Locked once the closing gate (G7) is approved. Every change is kept, before and after, in the history.
+   */
+  async setProjectValue(projectId: string, input: PnlProjectValueInput, principal: PrincipalContext) {
+    assertProjectSetupEdit(principal);
+    if (!canViewCost(principal)) throw new ForbiddenException("Giá trị dự án chỉ dành cho nhóm quyền chi phí.");
+    const project = (await this.pnl.context(principal.workspaceId, { projectIds: [projectId] })).projects.get(projectId);
     if (!project) throw new NotFoundException("Dự án không thuộc workspace hiện tại.");
-    const installments: any[] = await this.prisma.projectContractInstallment.findMany({ where: { workspaceId: principal.workspaceId, projectId }, orderBy: { sequence: "asc" } });
-    return { ctx, project, installments };
-  }
-
-  private installmentsOf(item: ProjectCtx["items"][number], stored: any[]): PnlInstallment[] {
-    const rows = stored.filter((row) => row.contractItemId === item.id);
-    const source = rows.length ? rows : item.contractType === "FIXED_PRICE" ? DEFAULT_INSTALLMENTS.map((row, index) => ({ id: `default:${item.id}:${index + 1}`, sequence: index + 1, ...row, expectedOn: null, status: "not_due" })) : [];
-    return source.map((row) => ({
-      id: row.id, sequence: row.sequence, label: row.label, gateCode: row.gateCode ?? null, percent: num(row.percent),
-      amount: item.valueAmount === null ? null : Math.round((item.valueAmount * num(row.percent)) / 100),
-      expectedOn: row.expectedOn ? new Date(row.expectedOn).toISOString().slice(0, 10) : null, status: row.status, statusLabel: INSTALLMENT_STATUS_LABELS[row.status as PnlInstallmentStatus]
-    }));
-  }
-
-  async projectSetup(projectId: string, principal: PrincipalContext): Promise<PnlProjectSetupResponse> {
-    // Mục 6.1 "Quyền": every Admin sees the contract values of this screen, a User never does; the PM edits.
-    // What is derived from cost rates (cost to date of a Nội bộ item) stays with the cost permission group (PL-26).
-    assertAdmin(principal);
-    const meta: PnlMeta = { ...pnlMeta(principal), moneyVisible: true, canEdit: canEditProjectSetup(principal) };
-    const costVisible = canViewCost(principal);
-    const { ctx, project, installments } = await this.setupContext(projectId, principal);
-    const entries = ctx.entriesOf(projectId);
-    const signed = project.record?.contractStatus === "signed";
-    const scope = { projectId, accountId: project.accountId, projectType: project.projectType };
-    const period = ctx.currentPeriodKey;
-    const revenue = recognizedRevenue(project.items, entries, (role, periodKey) => ctx.paramsOf(periodKey).number("sellRate", role, periodKey, scope));
-    const costOf = entryCosts(entries);
-    const g1: any = await this.prisma.projectGate.findFirst({ where: { projectId, code: "G1" } });
-    const items: PnlSetupItem[] = project.items.map((item) => {
-      const mine = entries.filter((entry) => entry.contractItemId === item.id);
-      const loggedMinutes = sum(mine.map((entry) => entry.minutes));
-      const rows = this.installmentsOf(item, installments);
-      const invoiced = rows.find((row) => row.status === "invoiced" || row.status === "paid");
-      const lockReasons: PnlSetupItem["lockReasons"] = [
-        ...(loggedMinutes > 0 ? [{ kind: "logged_hours" as const, label: `đã có ${(loggedMinutes / 60).toLocaleString("vi-VN", { maximumFractionDigits: 2 })} giờ log`, minutes: loggedMinutes }] : []),
-        ...(invoiced ? [{ kind: "invoiced" as const, label: `đã xuất hóa đơn đợt ${invoiced.sequence}`, installmentSequence: invoiced.sequence }] : []),
-        ...(signed ? [{ kind: "contract_signed" as const, label: "hợp đồng Đã ký" }] : [])
-      ];
-      const type = item.contractType;
-      const tm = revenue.byItem.find((row) => row.itemId === item.id);
-      const internalCost = sum(mine.filter((entry) => entry.reasons[0] === "internal").map((entry) => costOf.get(entry.id) ?? 0));
-      return {
-        id: item.id, code: item.code, name: item.name, kind: item.kind, kindLabel: CONTRACT_ITEM_KIND_LABELS[item.kind as keyof typeof CONTRACT_ITEM_KIND_LABELS] ?? item.kind,
-        contractType: type, contractTypeLabel: contractItemTypeLabel(type), valueAmount: item.valueAmount,
-        valueKind: item.valueAmount === null ? "none" : type === "TIME_AND_MATERIAL" ? "ceiling" : type === "INTERNAL" ? "cost_cap" : "value",
-        estimateMinutes: item.estimateMinutes,
-        revenueRecognition: type === "FIXED_PRICE" ? "Một lần tại G7" : type === "TIME_AND_MATERIAL" ? "Giờ × giá bán" : type === "INTERNAL" ? "Không có doanh thu" : "Chờ phân loại",
-        locked: lockReasons.length > 0, lockReasons, changeRequestId: item.changeRequestId,
-        loggedMinutes, includedMinutes: sum(mine.filter((entry) => entry.status === "included").map((entry) => entry.minutes)),
-        installments: rows, installmentPercentTotal: sum(rows.map((row) => row.percent)),
-        hourly: type === "TIME_AND_MATERIAL" ? {
-          ceilingAmount: item.valueAmount,
-          sellRates: ROLE_GROUPS.map((role) => { const row = ctx.params.resolveRow("sellRate", role, period, scope); return { roleGroup: role, roleGroupLabel: ROLE_GROUP_LABELS[role], amount: row ? Number(row.value) : null, scope: (row?.scopeType as any) ?? null, effectiveFrom: row?.effectiveFrom ?? null }; }),
-          revenueToDateAmount: tm?.uncappedAmount ?? null,
-          usedPercent: tm?.uncappedAmount !== undefined && item.valueAmount ? percentOf(tm.uncappedAmount, item.valueAmount) ?? null : null,
-          warnThresholdPercent: item.warnThresholdPercent,
-          overThreshold: tm?.uncappedAmount !== undefined && Boolean(item.valueAmount) && tm.uncappedAmount >= ((item.valueAmount as number) * item.warnThresholdPercent) / 100
-        } : null,
-        internal: type === "INTERNAL" ? {
-          costCapAmount: item.valueAmount, costToDateAmount: costVisible ? internalCost : null, usedPercent: costVisible && item.valueAmount ? percentOf(internalCost, item.valueAmount) ?? null : null,
-          warnThresholdPercent: item.warnThresholdPercent, overThreshold: costVisible && Boolean(item.valueAmount) && internalCost >= ((item.valueAmount as number) * item.warnThresholdPercent) / 100
-        } : null
-      };
-    });
-    const contract = contractValue(project.items);
-    const allInstallments = items.flatMap((item) => item.installments);
-    const root = project.items.find((item) => item.kind === "ROOT") ?? project.items[0];
-    const firstPaid = Boolean(g1?.paymentConfirmedAt) || items.find((item) => item.id === root?.id)?.installments[0]?.status === "paid";
-    const rootReady = Boolean(root?.contractType) && (root?.contractType === "INTERNAL" || root?.valueAmount !== null);
-    const body: PnlProjectSetupResponse["data"] = {
-      projectId, projectName: project.name, accountName: project.accountName,
-      contract: {
-        totalAmount: contract.amount ?? null, fixedPriceAmount: contract.fixedPriceAmount, hourlyCeilingAmount: contract.hourlyCeilingAmount,
-        status: signed ? "signed" : "draft", statusLabel: signed ? "Đã ký" : "Nháp", signedOn: project.record?.contractSignedAt ? dayKeyOf(new Date(project.record.contractSignedAt)) : null, baseValuesReadOnly: signed,
-        collectedAmount: sum(allInstallments.filter((row) => row.status === "paid").map((row) => row.amount ?? 0)), collectedInstallments: allInstallments.filter((row) => row.status === "paid").length, installmentCount: allInstallments.length
-      },
-      items,
-      baseline: {
-        g1Approved: project.g1Passed, g1ApprovedOn: project.g1At ? dayKeyOf(project.g1At) : null, firstInstallmentPaid: firstPaid, rootItemReady: rootReady,
-        blockers: [...(rootReady ? [] : ["Hạng mục gốc chưa có loại và giá trị"]), ...(firstPaid ? [] : ["PM chưa xác nhận đã thu đợt 1"])]
-      },
-      template: {
-        key: project.templateKey, name: project.template.name, disabledCodes: [...project.disabledCodes],
-        override: project.record?.overrideAt ? { disabledCodes: project.record.overrideDisabledCodes ?? [], enabledCodes: project.record.overrideEnabledCodes ?? [], reason: project.record.overrideReason ?? "", byName: project.record.overrideByName ?? null, at: new Date(project.record.overrideAt).toISOString() } : null
-      }
-    };
-    return { data: body, meta };
-  }
-
-  private async fixedItem(projectId: string, itemId: string, principal: PrincipalContext) {
-    const setup = await this.setupContext(projectId, principal);
-    const item = setup.project.items.find((row) => row.id === itemId);
-    if (!item) throw new NotFoundException("Hạng mục không thuộc dự án này.");
-    return { ...setup, item };
-  }
-
-  /** Khối C: đợt thanh toán. Tổng tỷ lệ phải đúng 100% — lệch thì không lưu và báo thiếu hay thừa bao nhiêu. */
-  async setInstallments(projectId: string, itemId: string, input: PnlInstallmentsInput, principal: PrincipalContext) {
-    assertProjectSetupEdit(principal);
-    const { item, installments } = await this.fixedItem(projectId, itemId, principal);
-    if (item.contractType !== "FIXED_PRICE") throw new BadRequestException("Chỉ hạng mục Trọn gói có đợt thanh toán.");
-    if (!Array.isArray(input?.installments) || !input.installments.length || input.installments.length > 24) throw new BadRequestException("Cần từ 1 đến 24 đợt thanh toán.");
-    const rows = input.installments.map((row, index) => {
-      const percent = Number(row?.percent);
-      const label = text(row?.label);
-      if (!label) throw new BadRequestException(`Đợt ${index + 1}: thiếu mốc.`);
-      if (!Number.isFinite(percent) || percent <= 0 || percent > 100) throw new BadRequestException(`Đợt ${index + 1}: tỷ lệ phải lớn hơn 0 và không quá 100%.`);
-      if (row.expectedOn && !/^\d{4}-\d{2}-\d{2}$/.test(row.expectedOn)) throw new BadRequestException(`Đợt ${index + 1}: ngày dự kiến theo dạng YYYY-MM-DD.`);
-      return { sequence: index + 1, label, gateCode: text(row.gateCode ?? undefined) ?? null, percent, expectedOn: row.expectedOn ? new Date(`${row.expectedOn}T00:00:00.000Z`) : null };
-    });
-    const total = Math.round(sum(rows.map((row) => row.percent)) * 10000) / 10000;
-    if (total !== 100) throw new BadRequestException(`Tổng tỷ lệ các đợt phải đúng 100%: đang ${total < 100 ? `thiếu ${Math.round((100 - total) * 10000) / 10000}%` : `thừa ${Math.round((total - 100) * 10000) / 10000}%`}.`);
-    const current = installments.filter((row) => row.contractItemId === itemId);
-    const progressed = current.find((row) => row.status !== "not_due");
-    if (progressed) throw new ConflictException(`Đợt ${progressed.sequence} đã ${INSTALLMENT_STATUS_LABELS[progressed.status as PnlInstallmentStatus].toLowerCase()}: không lập lại các đợt, hãy tạo yêu cầu thay đổi.`);
+    if (project.consumable) throw new BadRequestException("Dự án Loại Nội bộ, Đào tạo không có Giá trị dự án.");
+    if (project.closePassed) throw new ConflictException(`Giá trị dự án đã khóa khi ${project.closeGate} được duyệt.`);
+    const amount = input?.amount === null || input?.amount === undefined || (input.amount as unknown) === "" ? null : Number(input.amount);
+    if (amount !== null && (!Number.isSafeInteger(amount) || amount <= 0)) throw new BadRequestException("Giá trị dự án là số tiền VND nguyên, lớn hơn 0.");
+    const current = project.projectValueAmount ?? null;
+    if (amount === current) return { data: { projectId, amount: current } };
+    if (amount === null && project.g1Passed) throw new ConflictException("Dự án đã qua G1: Giá trị dự án không được để trống, chỉ sửa thành số khác kèm lý do.");
+    const reason = text(input.reason);
+    if (project.g1Passed && current !== null && !reason) throw new BadRequestException("Sửa Giá trị dự án sau G1 bắt buộc phải ghi lý do.");
     await this.prisma.$transaction(async (tx: any) => {
-      await tx.projectContractInstallment.deleteMany({ where: { contractItemId: itemId } });
-      await tx.projectContractInstallment.createMany({ data: rows.map((row) => ({ workspaceId: principal.workspaceId, projectId, contractItemId: itemId, ...row, status: "not_due" })) });
-      await this.audit(principal, "pnl.installments_changed", "pnl_project", projectId, { itemId, installments: current.map((row) => ({ label: row.label, percent: num(row.percent) })) }, { itemId, installments: rows.map((row) => ({ label: row.label, percent: row.percent })) }, tx);
+      // PL-28: one record per project (database trigger); a project older than the records gets its record here.
+      if (project.record) await tx.projectPnlRecord.update({ where: { projectId }, data: { projectValueAmount: amount } });
+      else await tx.projectPnlRecord.create({ data: { id: `ppr_${projectId}`, workspaceId: principal.workspaceId, projectId, projectValueAmount: amount } });
+      await this.audit(principal, "pnl.project_value_changed", "pnl_project", projectId, { amount: current }, { amount, reason: reason ?? null }, tx);
     });
-    return { data: { itemId, installments: rows } };
-  }
-
-  /** Chưa đến → Đã nghiệm thu → Đã xuất hóa đơn → Đã thu tiền. Cash tracking only: nothing here touches EBIT (PL-16). */
-  async setInstallmentStatus(projectId: string, installmentId: string, input: { status?: string }, principal: PrincipalContext) {
-    assertProjectSetupEdit(principal);
-    const status = input?.status as PnlInstallmentStatus;
-    if (!INSTALLMENT_ORDER.includes(status)) throw new BadRequestException("Trạng thái đợt: Chưa đến, Đã nghiệm thu, Đã xuất hóa đơn hoặc Đã thu tiền.");
-    const { project, installments } = await this.setupContext(projectId, principal);
-    let row = installments.find((item) => item.id === installmentId);
-    const virtual = /^default:(.+):(\d+)$/.exec(installmentId);
-    if (!row && virtual) {
-      // The default 70/30 plan is stored the first time one of its instalments moves.
-      const item = project.items.find((candidate) => candidate.id === virtual[1] && candidate.contractType === "FIXED_PRICE");
-      if (!item || installments.some((candidate) => candidate.contractItemId === item.id)) throw new NotFoundException("Không tìm thấy đợt thanh toán.");
-      await this.prisma.projectContractInstallment.createMany({ data: DEFAULT_INSTALLMENTS.map((plan, index) => ({ workspaceId: principal.workspaceId, projectId, contractItemId: item.id, sequence: index + 1, ...plan, status: "not_due" })) });
-      row = await this.prisma.projectContractInstallment.findFirst({ where: { contractItemId: item.id, sequence: Number(virtual[2]) } });
-    }
-    if (!row) throw new NotFoundException("Không tìm thấy đợt thanh toán.");
-    if (INSTALLMENT_ORDER.indexOf(status) < INSTALLMENT_ORDER.indexOf(row.status)) throw new ConflictException(`Đợt ${row.sequence} đã ${INSTALLMENT_STATUS_LABELS[row.status as PnlInstallmentStatus].toLowerCase()}: trạng thái đợt thanh toán không lùi về "${INSTALLMENT_STATUS_LABELS[status]}".`);
-    const updated = await this.prisma.projectContractInstallment.update({ where: { id: row.id }, data: { status, statusChangedAt: this.pnl.now(), statusChangedByUserId: principal.subjectId } });
-    await this.audit(principal, "pnl.installment_status_changed", "pnl_project", projectId, { installmentId: row.id, sequence: row.sequence, status: row.status }, { installmentId: row.id, sequence: row.sequence, status });
-    return { data: updated };
-  }
-
-  /** Khối A: Nháp → Đã ký makes every base value read-only. Going back to Nháp needs a reason. */
-  async setContractStatus(projectId: string, input: PnlContractStatusInput, principal: PrincipalContext) {
-    assertProjectSetupEdit(principal);
-    if (input?.status !== "draft" && input?.status !== "signed") throw new BadRequestException("Trạng thái hợp đồng: Nháp hoặc Đã ký.");
-    const { project } = await this.setupContext(projectId, principal);
-    const current = project.record?.contractStatus ?? "draft";
-    if (current === input.status) return { data: project.record };
-    if (input.status === "signed") {
-      const missing = project.items.filter((item) => item.contractType === null || (item.contractType !== "INTERNAL" && item.valueAmount === null));
-      if (!project.items.length || missing.length) throw new ConflictException(`Chưa chuyển Đã ký được: ${!project.items.length ? "dự án chưa có hạng mục" : `hạng mục ${missing.map((item) => item.code).join(", ")} chưa có loại và giá trị`}.`);
-    } else if (!text(input.reason)) throw new BadRequestException("Chuyển hợp đồng về Nháp bắt buộc phải nhập lý do.");
-    const data = { contractStatus: input.status, contractSignedAt: input.status === "signed" ? this.pnl.now() : null, contractSignedByUserId: input.status === "signed" ? principal.subjectId : null };
-    const row = project.record
-      ? await this.prisma.projectPnlRecord.update({ where: { projectId }, data })
-      : await this.prisma.projectPnlRecord.create({ data: { id: `ppr_${projectId}`, workspaceId: principal.workspaceId, projectId, ...data } });
-    await this.audit(principal, "pnl.contract_status_changed", "pnl_project", projectId, { status: current }, { status: input.status, reason: text(input.reason) });
-    return { data: row };
-  }
-
-  /** Khối D / E: ngưỡng cảnh báo (mặc định 80%), PM sửa được. */
-  async setItemSettings(projectId: string, itemId: string, input: PnlItemSettingsInput, principal: PrincipalContext) {
-    assertProjectSetupEdit(principal);
-    const { item } = await this.fixedItem(projectId, itemId, principal);
-    const threshold = Number(input?.warnThresholdPercent);
-    if (!Number.isInteger(threshold) || threshold < 1 || threshold > 100) throw new BadRequestException("Ngưỡng cảnh báo là số nguyên từ 1 đến 100 (%).");
-    const row = await this.prisma.projectContractItem.update({ where: { id: itemId }, data: { warnThresholdPercent: threshold } });
-    await this.audit(principal, "pnl.item_threshold_changed", "pnl_project", projectId, { itemId, warnThresholdPercent: item.warnThresholdPercent }, { itemId, warnThresholdPercent: threshold });
-    return { data: { id: row.id, warnThresholdPercent: threshold } };
+    return { data: { projectId, amount } };
   }
 
   // -------------------------------------------------------------------------

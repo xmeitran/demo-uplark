@@ -11,12 +11,14 @@ import {
   buildProjectSummaries,
   sum,
   type ProjectBreakdownNode,
-  type TimesheetFilters
+  type TimesheetFilters,
+  filterPeriod,
+  selectedProjectIds
 } from "./timesheet-selectors";
 import {
   formatDate,
   formatHours,
-  formatMonth,
+  formatFilterPeriod,
   formatPercent,
   formatSignedHours,
   formatSignedPercent,
@@ -91,8 +93,11 @@ export function ProjectTimesheet({
   const today = dataset.generatedAt;
   const allSummaries = useMemo(() => buildProjectSummaries(dataset, logs, today), [dataset, logs, today]);
   const summaries = useMemo(
-    () => (filters.projectId === "all" ? allSummaries : allSummaries.filter((row) => row.project.id === filters.projectId)),
-    [allSummaries, filters.projectId]
+    () => {
+      const projectIds = selectedProjectIds(filters);
+      return projectIds.length === 0 ? allSummaries : allSummaries.filter((row) => projectIds.includes(row.project.id));
+    },
+    [allSummaries, filters]
   );
   const readinessByProject = useMemo(
     () => new Map(buildProjectReadiness(dataset, logs, today).map((row) => [row.project.id, row])),
@@ -101,8 +106,8 @@ export function ProjectTimesheet({
 
   const selectedProjectId = selected === undefined ? summaries[0]?.project.id ?? null : selected;
 
-  const monthLabel = formatMonth(filters.month);
-  const periodShort = `T${Number(filters.month.slice(5))}/${filters.month.slice(0, 4)}`;
+  const monthLabel = formatFilterPeriod(filters);
+  const periodShort = filterPeriod(filters).wholeMonth ? `T${Number(filters.month.slice(5))}/${filters.month.slice(0, 4)}` : "kỳ lọc";
 
   // Usage and risk compare ALL-TIME hours with the all-time estimate; the period's hours are a separate figure.
   const totals = useMemo(() => {

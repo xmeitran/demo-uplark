@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Pencil } from "lucide-react";
 import type { PnlStaffCostApproveInput, PnlStaffCostComponents, PnlStaffCostImportInput, PnlStaffCostImportResult, PnlStaffCostInput, PnlStaffCostRow, PnlStaffCostsResponse, PnlStaffCostTemplateResponse, StaffMonthlyCostRow, StaffMonthlyCostsResponse } from "@b2b-crm/contracts";
 import { AppShell } from "@/components/constructor-x/app-shell";
-import { CrmSelect } from "@/components/crm-workspace/crm-select";
-import { MonthFilter } from "@/components/filters/filter-controls";
+import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
+import { FilterBar, FilterField, MonthFilter, MultiSelectFilter, SearchFilter, matchesAny } from "@/components/filters";
+import { PageHeader, pageMainClassName } from "@/components/page-header";
 import { currentPeriodKey, formatMoneyInput, importResultText, inputClass, mapStaffCostSheet, parseMoneyInput, periodLabel, type StaffCostImportRow } from "./pnl-cost-shared";
 import { formatDay, formatDong, formatHoursValue, formatMillions, formatMonth } from "./pnl-format";
 import { Field, linkClass, LoadingBlock, ModalActions, numberCellClass, PnlModal, ReadOnlyNote, SaveFeedback, smallButton, Strip, tableCellClass, tableHeadClass, toneClass, useSave } from "./pnl-setup-ui";
@@ -82,9 +83,19 @@ export function StaffCostsPage() {
   const save = useSave(api.reload);
   const [editing, setEditing] = useState<EditTarget | null>(null);
   const [showErrors, setShowErrors] = useState(false);
+  const [search, setSearch] = useState("");
+  const [statuses, setStatuses] = useState<string[]>([]);
+  const [departments, setDepartments] = useState<string[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
   const data = api.data?.data;
   const meta = api.data?.meta;
+  const allRows = data?.rows;
+  // Filters work on the month already loaded; the counts and "Duyệt bản nháp" stay those of the whole month.
+  const rows = useMemo(() => (allRows ?? []).filter((row) => matchesSearch(search, row.displayName, row.employeeCode ?? undefined) && matchesAny(statuses, row.status) && matchesAny(departments, row.department)), [allRows, search, statuses, departments]);
+  const statusOptions = useMemo(() => [...new Map((allRows ?? []).map((row) => [row.status, row.statusLabel])).entries()].map(([value, label]) => ({ value, label })), [allRows]);
+  const departmentOptions = useMemo(() => [...new Set((allRows ?? []).map((row) => row.department).filter((name): name is string => Boolean(name)))].sort((a, b) => a.localeCompare(b, "vi")).map((name) => ({ value: name, label: name })), [allRows]);
+  const activeCount = [Boolean(search.trim()), statuses.length > 0, departments.length > 0].filter(Boolean).length;
+  const resetFilters = () => { setSearch(""); setStatuses([]); setDepartments([]); };
 
   let body: ReactNode;
   if (!data || !meta) {
@@ -94,7 +105,7 @@ export function StaffCostsPage() {
     const locked = data.periodState === "locked";
     const canEdit = meta.canEdit && !locked;
     const canApprove = meta.canApprove && !locked;
-    const options = [...new Set([period, ...data.periodOptions])].sort((a, b) => b.localeCompare(a)).map((key) => ({ value: key, label: periodLabel(key) }));
+    const months = [...new Set([period, ...data.periodOptions])];
     const approve = (userIds?: string[]) => {
       const input: PnlStaffCostApproveInput = { periodKey: period, ...(userIds ? { userIds } : {}) };
       void save.run(() => pnlRequest("/api/pnl/staff-costs/approve", { method: "POST", body: input }), userIds ? "Đã duyệt bản nháp." : `Đã duyệt các bản nháp của ${periodLabel(period).toLowerCase()}.`);
@@ -113,15 +124,27 @@ export function StaffCostsPage() {
 
         {/* ① Thanh kỳ và tiến độ */}
         <section aria-label="Thanh kỳ và tiến độ" className="space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="w-[10.5rem]"><CrmSelect ariaLabel="Tháng" value={period} onChange={(next) => router.replace(`/users/costs?periodKey=${next}`, { scroll: false })} options={options} /></div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" className={smallButton} disabled={save.busy} onClick={() => void save.run(() => downloadTemplate(period))}>Tải file mẫu</button>
-              <button type="button" className={smallButton} disabled={save.busy || !canEdit} onClick={() => fileInput.current?.click()}>Import Excel</button>
-              <input ref={fileInput} type="file" accept=".xlsx" className="sr-only" tabIndex={-1} aria-label="Chọn file Excel chi phí tháng" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) importFile(file); }} />
-              <button type="button" className={smallButton} disabled={save.busy || !canApprove || !data.counts.draft} onClick={() => { if (window.confirm(`Duyệt ${data.counts.draft} bản nháp của ${periodLabel(period).toLowerCase()}? Bản Đã duyệt được dùng để tính cost rate cho P&L.`)) approve(); }}>Duyệt bản nháp</button>
-            </div>
-          </div>
+          <FilterBar
+            onReset={activeCount ? resetFilters : undefined}
+            activeCount={activeCount}
+            actions={
+              <>
+                <button type="button" className={smallButton} disabled={save.busy} onClick={() => void save.run(() => downloadTemplate(period))}>Tải file mẫu</button>
+                <button type="button" className={smallButton} disabled={save.busy || !canEdit} onClick={() => fileInput.current?.click()}>Import Excel</button>
+                <input ref={fileInput} type="file" accept=".xlsx" className="sr-only" tabIndex={-1} aria-label="Chọn file Excel chi phí tháng" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) importFile(file); }} />
+                <button type="button" className={smallButton} disabled={save.busy || !canApprove || !data.counts.draft} onClick={() => { if (window.confirm(`Duyệt ${data.counts.draft} bản nháp của ${periodLabel(period).toLowerCase()}? Bản Đã duyệt được dùng để tính đơn giá giờ (cost rate) cho P&L.`)) approve(); }}>Duyệt bản nháp</button>
+              </>
+            }
+          >
+            <FilterField label="Tìm kiếm" className="min-w-[200px] max-w-sm flex-1">
+              <SearchFilter value={search} onChange={setSearch} placeholder="Tên hoặc mã nhân sự..." ariaLabel="Tìm nhân sự" className="" />
+            </FilterField>
+            <FilterField label="Tháng" className="shrink-0">
+              <MonthFilter ariaLabel="Tháng" value={period} months={months} onChange={(next) => router.replace(`/users/costs?periodKey=${next}`, { scroll: false })} />
+            </FilterField>
+            <MultiSelectFilter label="Trạng thái" options={statusOptions} values={statuses} onChange={setStatuses} allLabel="Tất cả trạng thái" searchable={false} className="min-w-[170px] max-w-[16rem] flex-1" />
+            <MultiSelectFilter label="Phòng ban" options={departmentOptions} values={departments} onChange={setDepartments} allLabel="Tất cả phòng ban" hideWhenSingle className="min-w-[170px] max-w-[16rem] flex-1" />
+          </FilterBar>
           <p className="text-sm text-muted-foreground">Giờ chuẩn tháng {formatHoursValue(data.standardMinutes)} giờ ({data.workingDays} ngày × {data.standardDayHours}) · Đã duyệt {data.counts.approved} · Nháp {data.counts.draft} · Chưa có {data.counts.missing}</p>
         </section>
 
@@ -135,11 +158,11 @@ export function StaffCostsPage() {
             <thead><tr>
               <th scope="col" className={head}>Mã NS</th><th scope="col" className={head}>Nhân sự</th>
               {COMPONENTS.map((component) => <th key={component.key} scope="col" title={component.label} className={`${head} !text-right`}>{component.head}</th>)}
-              <th scope="col" className={`${head} !text-right`}>Tổng</th><th scope="col" className={`${head} !text-right`}>Cost rate</th><th scope="col" className={head}>Nguồn</th><th scope="col" className={head}>Trạng thái</th>
+              <th scope="col" title="Tổng sáu cấu phần (triệu đồng)" className={`${head} !text-right`}>Tổng</th><th scope="col" title="Đơn giá giờ (cost rate) = Tổng ÷ giờ chuẩn của tháng, đồng mỗi giờ" className={`${head} !text-right`}>Đơn giá giờ</th><th scope="col" className={head}>Nguồn</th><th scope="col" className={head}>Trạng thái</th>
               <th scope="col" className={head}><span className="sr-only">Thao tác</span></th>
             </tr></thead>
             <tbody>
-              {data.rows.map((row) => {
+              {rows.map((row) => {
                 const waiting = row.waitingMinutes > 0;
                 const waitingText = `${formatHoursValue(row.waitingMinutes)} giờ log trong tháng đang chờ chi phí tháng này`;
                 return (
@@ -164,7 +187,7 @@ export function StaffCostsPage() {
               })}
             </tbody>
           </table>
-          {!data.rows.length ? <p className="px-4 py-8 text-center text-sm text-muted-foreground">Chưa có nhân sự nào trong tháng. Bấm “Tải file mẫu”, điền chi phí rồi “Import Excel”.</p> : null}
+          {!rows.length ? <p className="px-4 py-8 text-center text-sm text-muted-foreground">{data.rows.length ? <>Không có kết quả phù hợp bộ lọc. <button type="button" onClick={resetFilters} className="font-semibold text-primary hover:underline">Đặt lại bộ lọc</button></> : "Chưa có nhân sự nào trong tháng. Bấm “Tải file mẫu”, điền chi phí rồi “Import Excel”."}</p> : null}
         </section>
 
         {/* ④ Kết quả import */}
@@ -188,12 +211,14 @@ export function StaffCostsPage() {
   }
 
   return (
-    <AppShell activeRoute="/users" title="Chi phí theo tháng">
-      <main className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
-        <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-          <h1 className="!text-xl font-bold text-foreground"><Link href="/users" className="hover:text-primary">Hồ sơ nhân sự</Link> › Chi phí theo tháng</h1>
-          <p className="text-sm text-muted-foreground">Chỉ nhóm quyền chi phí · đơn vị triệu đồng</p>
-        </header>
+    <AppShell activeRoute="/users" title="Chi phí nhân sự theo tháng">
+      <main className={pageMainClassName}>
+        <PageHeader
+          back={{ href: "/users", label: "Nhân sự" }}
+          title="Chi phí nhân sự theo tháng"
+          subtitle="Nhập và duyệt chi phí của từng người mỗi tháng; từ đó hệ thống tính đơn giá giờ dùng cho P&L."
+          meta="Chỉ nhóm quyền chi phí · đơn vị: triệu đồng"
+        />
         {body}
       </main>
     </AppShell>
@@ -234,7 +259,7 @@ function StaffCostModal({ target, locked, reload, onClose }: Readonly<{ target: 
         ))}
       </div>
       {codeEditable ? <Field label="Mã nhân sự (đúng mã của hệ thống lương)" htmlFor="staff-cost-code"><input id="staff-cost-code" value={employeeCode} maxLength={40} onChange={(event) => setEmployeeCode(event.target.value)} className={inputClass} placeholder="Ví dụ: NS-012" /></Field> : null}
-      <p className="text-xs text-muted-foreground">Lưu ở trạng thái Nháp, chưa dùng cho P&amp;L cho tới khi được duyệt{target.status === "APPROVED" ? "; bản Đã duyệt hiện tại quay về Nháp và cần duyệt lại" : ""}. Tổng chi phí và cost rate do hệ thống tính (Tổng ÷ giờ chuẩn của tháng). Người sửa, thời điểm, giá trị trước và sau được ghi lại.</p>
+      <p className="text-xs text-muted-foreground">Lưu ở trạng thái Nháp, chưa dùng cho P&amp;L cho tới khi được duyệt{target.status === "APPROVED" ? "; bản Đã duyệt hiện tại quay về Nháp và cần duyệt lại" : ""}. Tổng chi phí và đơn giá giờ (cost rate) do hệ thống tính (Tổng ÷ giờ chuẩn của tháng). Người sửa, thời điểm, giá trị trước và sau được ghi lại.</p>
       <SaveFeedback error={save.error} message={null} />
     </PnlModal>
   );
@@ -259,7 +284,7 @@ export function StaffMonthlyCosts({ userId }: Readonly<{ userId: string; default
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-5">
         <div className="min-w-0">
           <h2 id="staff-cost-title" className="!text-sm font-bold text-foreground">Chi phí theo tháng</h2>
-          <p className="mt-1 text-xs text-muted-foreground">Chỉ nhóm quyền chi phí xem và sửa · đơn vị triệu đồng. Cùng bảng với <Link href="/users/costs" className={linkClass}>Hồ sơ nhân sự › Chi phí theo tháng</Link>. Cost rate = Tổng ÷ giờ chuẩn của tháng; chỉ bản Đã duyệt được dùng cho P&amp;L.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Chỉ nhóm quyền chi phí xem và sửa · đơn vị triệu đồng. Cùng bảng với <Link href="/users/costs" className={linkClass}>Chi phí nhân sự theo tháng</Link>. Đơn giá giờ (cost rate) = Tổng ÷ giờ chuẩn của tháng; chỉ bản Đã duyệt được dùng cho P&amp;L.</p>
         </div>
         {canEdit ? (
           <div className="flex flex-wrap items-center gap-2">
@@ -274,7 +299,7 @@ export function StaffMonthlyCosts({ userId }: Readonly<{ userId: string; default
           <thead><tr>
             <th scope="col" className={head}>Tháng</th>
             {COMPONENTS.map((component) => <th key={component.key} scope="col" title={component.label} className={`${head} !text-right`}>{component.head}</th>)}
-            <th scope="col" className={`${head} !text-right`}>Tổng</th><th scope="col" className={`${head} !text-right`}>Cost rate</th><th scope="col" className={head}>Nguồn</th><th scope="col" className={head}>Trạng thái</th>
+            <th scope="col" className={`${head} !text-right`}>Tổng</th><th scope="col" title="Đơn giá giờ (cost rate) = Tổng ÷ giờ chuẩn của tháng, đồng mỗi giờ" className={`${head} !text-right`}>Đơn giá giờ</th><th scope="col" className={head}>Nguồn</th><th scope="col" className={head}>Trạng thái</th>
             <th scope="col" className={head}><span className="sr-only">Thao tác</span></th>
           </tr></thead>
           <tbody>{rows.map((row) => {

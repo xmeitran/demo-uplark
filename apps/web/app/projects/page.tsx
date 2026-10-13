@@ -6,18 +6,23 @@ import { useDialogAccessibility } from "@/hooks/use-dialog-accessibility";
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Search, Plus, Download, Sparkles, FileUp, MessageSquare,
+  Plus, Download, Sparkles, FileUp, MessageSquare,
   Briefcase, Calendar, AlertCircle,
-  CheckCircle2, Clock, ArrowRight, BarChart2, Layers, X, Pin, Pencil, Trash2, Check, Archive
+  CheckCircle2, Clock, ArrowRight, BarChart2, Layers, X, Pin, Pencil, Trash2, Check, Archive,
+  Wallet, TrendingUp, LayoutGrid, List, Bell
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { CustomDropdown, CustomDatePicker } from "@/components/constructor-x/custom-controls";
 import { ModalLayer } from "@/components/modal-layer";
+import { HeaderButton, PageHeader } from "@/components/page-header";
+import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilter, SearchFilter, dayOf, matchesAny, rangesOverlap, type DateRange } from "@/components/filters";
+import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
 import { CrmMultiSelect, CrmSelect } from "@/components/crm-workspace/crm-select";
 import { useAuth } from "@/lib/auth";
-import { isAdminView } from "@/lib/auth-role";
+import { canViewCostFigures, isAdminView } from "@/lib/auth-role";
+import { MoneyAmount } from "@/components/money-amount";
 import {
   getPushedProjectsOwnerKey,
   readPushedProjectIds,
@@ -43,7 +48,6 @@ import { downloadCsv } from "@/lib/csv-export";
 import { projectDueSortValue, uiProjectDateToIso } from "@/lib/project-date";
 import { systemRoleLabel } from "@/lib/people-roles";
 import { loadExcelWorkbook } from "@/lib/excel-import";
-import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-tab-bar";
 import {
   ProjectSheet,
   type ProjectSheetSortDir,
@@ -62,15 +66,17 @@ type SortKey = ProjectSheetSortKey;
 type SortDir = ProjectSheetSortDir;
 
 type ProjectListView = UrlProjectListView;
-const PROJECT_LIST_VIEW_TABS: WorkspaceTabItem<ProjectListView>[] = [
-  { id: "grid", label: "Tổng quan", description: "Cards dự án & trạng thái" },
-  { id: "sheet", label: "Project Sheet", ariaLabel: "Project Sheet View", description: "Bảng dữ liệu & giờ" },
-  { id: "timeline", label: "Timeline", description: "Lịch thực hiện dự án" }
+const PROJECT_LIST_VIEWS: { id: ProjectListView; label: string; icon: typeof LayoutGrid }[] = [
+  { id: "grid", label: "Grid View", icon: LayoutGrid },
+  { id: "sheet", label: "Project Sheet View", icon: List },
+  { id: "timeline", label: "Timeline View", icon: Calendar }
 ];
+const MONEY_HIDDEN_TITLE = "Chỉ nhóm quyền chi phí xem được số tiền";
 
 import { Project, PROJECTS, type Member } from "./data";
-import { PROJECT_STATUS_LABELS, PROJECT_STATUS_OPTIONS, projectStatusOrder, projectStatusStyleMap, quickProjectStatusOptions } from "@/lib/project-status";
-import type { ProjectMilestoneTemplateSummary, ProjectTaskTemplateInput, ResourceListPaginationMeta } from "@b2b-crm/contracts";
+import { PROJECT_CLOSE_REASONS, PROJECT_STATUS_LABELS, PROJECT_STATUS_OPTIONS, projectStatusOrder, projectStatusStyleMap, quickProjectStatusOptions, type ProjectCloseReasonCode } from "@/lib/project-status";
+import { readApiError } from "@/lib/api-error";
+import { INTERNAL_WORKLOG_PROJECT_TYPE, PROJECT_TYPE_OPTIONS, projectKindOf, type ProjectMilestoneTemplateSummary, type ProjectTaskTemplateInput, type ResourceListPaginationMeta } from "@b2b-crm/contracts";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -285,6 +291,7 @@ function ProjectMemberAvatarStack({ members, limit = 4 }: { members: Member[]; l
 function ProjectCard({
   project,
   returnTo,
+  showMoney,
   isPushed,
   onTogglePush,
   onEdit,
@@ -292,6 +299,7 @@ function ProjectCard({
 }: {
   project: Project;
   returnTo: string;
+  showMoney: boolean;
   isPushed: boolean;
   onTogglePush: () => void;
   onEdit: () => void;
@@ -299,11 +307,12 @@ function ProjectCard({
 }) {
   const sc = STATUS_CFG[project.status];
   const pc = PRIORITY_CFG[project.priority];
+  const budgetPct = project.budget > 0 ? Math.round((project.spent / project.budget) * 100) : 0;
 
   return (
     <Link href={`/projects/${encodeURIComponent(project.id)}?returnTo=${encodeURIComponent(returnTo)}`} className="block h-full group">
       <motion.div layout initial={{ opacity:0, scale:0.96 }} animate={{ opacity:1, scale:1 }} whileHover={{ y:-3 }}
-        className={`min-w-0 ${(project.openWarningCount ?? 0) > 0 ? "bg-red-50/50" : "bg-card"} border border-border rounded-xl p-5 shadow-sm hover:shadow-md transition-all cursor-pointer flex h-full flex-col gap-4`}>
+        className={`min-w-0 bg-card border border-border rounded-xl p-5 shadow-sm hover:shadow-md transition-all cursor-pointer flex h-full flex-col gap-4`}>
         {/* Top */}
         <div className="flex min-w-0 items-start justify-between gap-3">
           <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -342,12 +351,12 @@ function ProjectCard({
             <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Tasks</p>
           </div>
           <div className="text-center border-x border-border">
-            <p className="text-sm font-bold font-mono text-foreground">{project.plannedHours ?? 0}h</p>
-            <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Plan</p>
+            <p className="text-sm font-bold font-mono text-foreground" title={showMoney ? undefined : MONEY_HIDDEN_TITLE}>{showMoney ? <MoneyAmount value={project.budget} /> : "—"}</p>
+            <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Budget</p>
           </div>
           <div className="text-center">
-            <p className="text-sm font-bold font-mono text-foreground">{project.loggedHours ?? 0}h</p>
-            <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Logged</p>
+            <p className="text-sm font-bold font-mono" title={showMoney ? undefined : MONEY_HIDDEN_TITLE} style={{ color: showMoney && budgetPct > 90 ? "#dc2626" : "var(--color-foreground)" }}>{showMoney ? `${budgetPct}%` : "—"}</p>
+            <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Spent</p>
           </div>
         </div>
 
@@ -358,7 +367,7 @@ function ProjectCard({
             <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md" style={{ backgroundColor:sc.bg, color:sc.color }}>
               <sc.icon className="w-3 h-3" />{formatProjectStatusLabel(project.status)}
             </span>
-            {(project.openWarningCount ?? 0) > 0 ? <span title={`${project.openWarningCount} cảnh báo đang mở`} aria-label={`${project.openWarningCount} cảnh báo đang mở`} className="shrink-0 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{project.openWarningCount}</span> : null}
+            
             {project.hasPendingStatusProposal ? <span title="Có đề xuất trạng thái chờ xác nhận" className="shrink-0 rounded-full bg-sky-50 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">Có đề xuất trạng thái</span> : null}
             <button
               onClick={(e) => {
@@ -418,21 +427,22 @@ const PRIORITY_OPTIONS = [
   { value: "Low", label: "Low", color: "#16a34a" },
 ];
 
-const CATEGORY_OPTIONS = [
-  { value: "Delivery", label: "Delivery" },
-  { value: "Implementation", label: "Implementation" },
-  { value: "Proposal", label: "Proposal" },
-  { value: "Qualified", label: "Qualified" },
-  { value: "Won", label: "Won" }
-];
+/** Loại dự án of a list row as one of the three filter values; the fixed worklog project counts as Nội bộ. */
+function projectTypeCodeOf(project: Project) {
+  const kind = projectKindOf(project.projectType) ?? "delivery";
+  return kind === INTERNAL_WORKLOG_PROJECT_TYPE ? "internal" : kind;
+}
 
-const PROJECT_CATEGORY_FILTER_OPTIONS = [
-  { value: "Delivery", label: "Delivery" },
-  { value: "Implementation", label: "Implementation" },
-  { value: "Proposal", label: "Proposal" },
-  { value: "Qualified", label: "Qualified" },
-  { value: "Won", label: "Won" }
-];
+/** The filters of the list applied to already-loaded projects (local fallback data, the "warning only" list). */
+function matchesProjectFilters(project: Project, filters: Pick<ProjectListUrlState, "query" | "statusFilter" | "categoryFilter" | "clientFilter" | "ownerFilter" | "from" | "to">) {
+  return matchesSearch(filters.query, project.name, project.client, getProjectCode(project))
+    && matchesAny(filters.statusFilter, project.status)
+    && matchesAny(filters.categoryFilter, projectTypeCodeOf(project))
+    && matchesAny(filters.clientFilter, project.accountId)
+    && matchesAny(filters.ownerFilter, project.ownerUserId)
+    && rangesOverlap(dayOf(uiProjectDateToIso(project.startDate)), dayOf(project.dueAt ?? uiProjectDateToIso(project.dueDate)), filters);
+}
+
 
 function UserAvatar({ user, size = "md" }: { user: WorkspaceUserOption; size?: "sm" | "md" }) {
   const [failed, setFailed] = useState(false);
@@ -556,7 +566,10 @@ function ProjectEditModal({
   const [code, setCode] = useState(getProjectCode(project));
   const [client, setClient] = useState(project.client);
   const [status, setStatus] = useState<Project["status"]>(project.status);
-  const [projectType, setProjectType] = useState(project.category || "Delivery");
+  // Loại dự án (V-01). The fixed worklog project keeps its own kind; the API refuses a change once G1 is approved.
+  const initialProjectType = projectKindOf(project.projectType) ?? "delivery";
+  const [projectType, setProjectType] = useState<string>(initialProjectType);
+  const projectTypeOptions = initialProjectType === INTERNAL_WORKLOG_PROJECT_TYPE ? [...PROJECT_TYPE_OPTIONS, { value: INTERNAL_WORKLOG_PROJECT_TYPE, label: "Nội bộ (DX Internal Worklog)" }] : PROJECT_TYPE_OPTIONS;
   const [scopeSummary, setScopeSummary] = useState(project.scopeSummary ?? "");
   const initialMemberIds = project.memberUserIds ?? project.members.map((member) => member.id).filter((id): id is string => Boolean(id));
   const [ownerUserId, setOwnerUserId] = useState(project.ownerUserId ?? initialMemberIds[0] ?? "none");
@@ -659,7 +672,7 @@ function ProjectEditModal({
               <label className="text-xs font-semibold text-muted-foreground">Loại dự án</label>
               <CustomDropdown
                 ariaLabel="Loại dự án"
-                options={CATEGORY_OPTIONS}
+                options={projectTypeOptions}
                 value={projectType}
                 onChange={setProjectType}
               />
@@ -766,16 +779,24 @@ function ProjectDeleteConfirmModal({
   project,
   isDeleting,
   error,
+  closeInstead,
   onCancel,
-  onConfirm
+  onConfirm,
+  onCloseProject
 }: {
   project: Project;
   isDeleting: boolean;
   error: string | null;
+  /** The API refused the delete because the project has records: the dialog then offers to close it. */
+  closeInstead: boolean;
   onCancel: () => void;
   onConfirm: () => void;
+  onCloseProject: (closeReasonCode: ProjectCloseReasonCode, note: string) => void;
 }) {
   const deleteDialogRef = useDialogAccessibility(true, () => { if (!isDeleting) onCancel(); });
+  const [closeReasonCode, setCloseReasonCode] = useState<ProjectCloseReasonCode | "">("");
+  const [closeNote, setCloseNote] = useState("");
+  const alreadyClosed = project.status === PROJECT_STATUS_LABELS.closed;
   return (
     <ModalLayer closeOnEscape={!isDeleting} onClose={onCancel}>
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -804,8 +825,33 @@ function ProjectDeleteConfirmModal({
             Delete <span className="font-semibold text-foreground">{project.name}</span>? Projects with tasks are protected and the API will block deletion.
           </p>
           {error && (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+            <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
               {error}
+            </div>
+          )}
+          {closeInstead && alreadyClosed && (
+            <p className="text-xs text-muted-foreground">Dự án này đã ở trạng thái Đã đóng nên không cần thao tác thêm.</p>
+          )}
+          {closeInstead && !alreadyClosed && (
+            <div className="space-y-2 rounded-xl border border-border bg-muted/30 p-3">
+              <label className="block text-xs font-semibold text-foreground" htmlFor="close-project-reason">Đóng dự án thay vì xóa: chọn lý do đóng</label>
+              <select
+                id="close-project-reason"
+                value={closeReasonCode}
+                onChange={(event) => setCloseReasonCode(event.target.value as ProjectCloseReasonCode | "")}
+                className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none"
+              >
+                <option value="">Chọn lý do đóng</option>
+                {Object.entries(PROJECT_CLOSE_REASONS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+              <input
+                type="text"
+                value={closeNote}
+                onChange={(event) => setCloseNote(event.target.value)}
+                placeholder="Ghi chú (không bắt buộc)"
+                aria-label="Ghi chú đóng dự án"
+                className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none"
+              />
             </div>
           )}
           <div className="flex items-center justify-end gap-2 pt-2">
@@ -816,14 +862,27 @@ function ProjectDeleteConfirmModal({
             >
               Cancel
             </button>
-            <button
-              type="button"
-              disabled={isDeleting}
-              onClick={onConfirm}
-              className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-red-600 shadow-md hover:bg-red-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              {isDeleting ? "Deleting..." : "Delete Project"}
-            </button>
+            {closeInstead ? (
+              !alreadyClosed && (
+                <button
+                  type="button"
+                  disabled={isDeleting || !closeReasonCode}
+                  onClick={() => { if (closeReasonCode) onCloseProject(closeReasonCode, closeNote.trim()); }}
+                  className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-slate-800 shadow-md hover:bg-slate-900 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {isDeleting ? "Đang đóng…" : "Đóng dự án"}
+                </button>
+              )
+            ) : (
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={onConfirm}
+                className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-red-600 shadow-md hover:bg-red-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isDeleting ? "Deleting..." : "Delete Project"}
+              </button>
+            )}
           </div>
         </div>
       </motion.div>
@@ -910,6 +969,7 @@ export default function ProjectsPage() {
   const [categoryFilter, setCategoryFilter] = useState(urlState.categoryFilter);
   const [clientFilter, setClientFilter] = useState(urlState.clientFilter);
   const [ownerFilter, setOwnerFilter] = useState(urlState.ownerFilter);
+  const [periodFilter, setPeriodFilter] = useState<DateRange>({ from: urlState.from, to: urlState.to });
   const [sortKey, setSortKey]   = useState<SortKey>(urlState.sortKey);
   const [sortDir, setSortDir]   = useState<SortDir>(urlState.sortDir);
   const resultsScrollRef = useRef<HTMLDivElement>(null);
@@ -922,6 +982,7 @@ export default function ProjectsPage() {
     setCategoryFilter(urlState.categoryFilter);
     setClientFilter(urlState.clientFilter);
     setOwnerFilter(urlState.ownerFilter);
+    setPeriodFilter({ from: urlState.from, to: urlState.to });
     setSortKey(urlState.sortKey);
     setSortDir(urlState.sortDir);
   }, [projectListSearch, urlState]);
@@ -937,13 +998,21 @@ export default function ProjectsPage() {
       categoryFilter,
       clientFilter,
       ownerFilter,
+      from: periodFilter.from,
+      to: periodFilter.to,
       page: projectPage,
       view,
       sortKey,
       sortDir
     }),
-    [query, statusFilter, categoryFilter, clientFilter, ownerFilter, projectPage, view, sortKey, sortDir]
+    [query, statusFilter, categoryFilter, clientFilter, ownerFilter, periodFilter, projectPage, view, sortKey, sortDir]
   );
+  const activeFilters = useMemo(
+    () => ({ query, statusFilter, categoryFilter, clientFilter, ownerFilter, from: periodFilter.from, to: periodFilter.to }),
+    [query, statusFilter, categoryFilter, clientFilter, ownerFilter, periodFilter]
+  );
+  // The arrays get a new identity whenever the URL is re-read; the list reloads only when their content changes.
+  const filterKey = JSON.stringify(activeFilters);
 
   const resetProjectsFrameScroll = () => {
     if (typeof window === "undefined") return;
@@ -965,10 +1034,12 @@ export default function ProjectsPage() {
           limit: PROJECT_PAGE_SIZE,
           offset: (projectPage - 1) * PROJECT_PAGE_SIZE,
           q: query,
-          status: statusFilter as Project["status"] | "all",
+          status: statusFilter as Project["status"][],
           category: categoryFilter,
           accountId: clientFilter,
           ownerUserId: ownerFilter,
+          from: periodFilter.from,
+          to: periodFilter.to,
           signal: controller.signal
         });
         setProjectsList(live.projects);
@@ -981,15 +1052,7 @@ export default function ProjectsPage() {
           return;
         }
         const localDevelopment = process.env.NODE_ENV !== "production";
-        const normalizedQuery = query.trim().toLowerCase();
-        const fallbackProjects = PROJECTS.filter((project) => {
-          const matchesQuery = !normalizedQuery || `${project.name} ${project.client} ${project.description}`.toLowerCase().includes(normalizedQuery);
-          const matchesStatus = statusFilter === "all" || project.status === statusFilter;
-          const matchesCategory = categoryFilter === "all" || project.category === categoryFilter;
-          const matchesClient = clientFilter === "all" || project.accountId === clientFilter;
-          const matchesOwner = ownerFilter === "all" || project.ownerUserId === ownerFilter;
-          return matchesQuery && matchesStatus && matchesCategory && matchesClient && matchesOwner;
-        });
+        const fallbackProjects = PROJECTS.filter((project) => matchesProjectFilters(project, activeFilters));
         setUsingLocalProjectFallback(localDevelopment);
         setProjectsError(localDevelopment ? null : error instanceof Error ? error.message : "Could not load live projects");
         setProjectsList(localDevelopment ? fallbackProjects : []);
@@ -1014,7 +1077,8 @@ export default function ProjectsPage() {
     }
 
     return () => controller.abort();
-  }, [projectPage, query, statusFilter, categoryFilter, clientFilter, ownerFilter, pushedProjectOwnerKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- filterKey stands for every filter value
+  }, [projectPage, filterKey, pushedProjectOwnerKey]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1085,12 +1149,14 @@ export default function ProjectsPage() {
   const [deletingProject, setDeletingProject] = useState<Project | null>(null);
   const [savingProjectEdit, setSavingProjectEdit] = useState(false);
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
+  const [deleteNeedsClose, setDeleteNeedsClose] = useState(false);
   const [projectMutationError, setProjectMutationError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [client, setClient] = useState("");
   const [priority, setPriority] = useState<Project["priority"]>("Medium");
   const [isTestProject, setIsTestProject] = useState(false);
+  const [createProjectType, setCreateProjectType] = useState("");
   const [startDate, setStartDate] = useState(defaultProjectStartDate);
   const [dueDate, setDueDate] = useState(defaultProjectDueDate);
   const [color, setColor] = useState("#2563eb");
@@ -1115,39 +1181,21 @@ export default function ProjectsPage() {
     updateProjectListUrl({ sortKey: k, sortDir: nextDir });
   };
 
-  const handleQueryChange = (value: string) => {
-    setQuery(value);
+  // Every filter change goes back to page 1 and into the URL, so the list can be restored from a detail page.
+  const applyFilters = (changes: Partial<ProjectListUrlState>) => {
+    if (changes.query !== undefined) setQuery(changes.query);
+    if (changes.statusFilter) setStatusFilter(changes.statusFilter);
+    if (changes.categoryFilter) setCategoryFilter(changes.categoryFilter);
+    if (changes.clientFilter) setClientFilter(changes.clientFilter);
+    if (changes.ownerFilter) setOwnerFilter(changes.ownerFilter);
+    if (changes.from !== undefined || changes.to !== undefined) setPeriodFilter({ from: changes.from ?? "", to: changes.to ?? "" });
     setProjectPage(1);
-    updateProjectListUrl({ query: value, page: 1 });
+    updateProjectListUrl({ ...changes, page: 1 });
     resetProjectsFrameScroll();
   };
-
-  const handleStatusFilterChange = (value: string) => {
-    setStatusFilter(value);
-    setProjectPage(1);
-    updateProjectListUrl({ statusFilter: value, page: 1 });
-    resetProjectsFrameScroll();
-  };
-
-  const handleCategoryFilterChange = (value: string) => {
-    setCategoryFilter(value);
-    setProjectPage(1);
-    updateProjectListUrl({ categoryFilter: value, page: 1 });
-    resetProjectsFrameScroll();
-  };
-
-  const handleClientFilterChange = (value: string) => {
-    setClientFilter(value);
-    setProjectPage(1);
-    updateProjectListUrl({ clientFilter: value, page: 1 });
-    resetProjectsFrameScroll();
-  };
-
-  const handleOwnerFilterChange = (value: string) => {
-    setOwnerFilter(value);
-    setProjectPage(1);
-    updateProjectListUrl({ ownerFilter: value, page: 1 });
-    resetProjectsFrameScroll();
+  const resetFilters = () => {
+    setWarningOnly(false);
+    applyFilters({ query: "", statusFilter: [], categoryFilter: [], clientFilter: [], ownerFilter: [], from: "", to: "" });
   };
 
   const handleProjectPageChange = (page: number) => {
@@ -1156,25 +1204,9 @@ export default function ProjectsPage() {
     resetProjectsFrameScroll();
   };
 
-  const filterStatusOptions = useMemo(() => [
-    { value: "all", label: "Tất cả trạng thái" },
-    ...STATUS_OPTIONS
-  ], []);
-
-  const filterCategoryOptions = useMemo(() => [
-    { value: "all", label: "All Categories" },
-    ...PROJECT_CATEGORY_FILTER_OPTIONS
-  ], []);
-
-  const filterClientOptions = useMemo(() => [
-    { value: "all", label: "Tất cả Client" },
-    ...accountOptions.map((account) => ({ value: account.accountId, label: account.label })),
-  ], [accountOptions]);
-
-  const filterOwnerOptions = useMemo(() => [
-    { value: "all", label: "Tất cả PIC" },
-    ...workspaceUsers.map((member) => ({ value: member.id, label: member.name, avatarUrl: member.avatarUrl, initials: member.initials, color: member.color })),
-  ], [workspaceUsers]);
+  // Client and PIC choices come from the whole account list and the workspace directory, never from the loaded page.
+  const filterClientOptions = useMemo(() => accountOptions.map((account) => ({ value: account.accountId, label: account.label })), [accountOptions]);
+  const filterPeople = useMemo(() => workspaceUsers.map((member) => ({ id: member.id, name: member.name, email: member.email, avatarUrl: member.avatarUrl })), [workspaceUsers]);
 
   // EV-065: the warning line and filter are workspace-wide. Counts come from /api/project-warnings/counts
   // ({ projectId: openCount }); only if that call fails do they fall back to the loaded page (and say so).
@@ -1197,7 +1229,8 @@ export default function ProjectsPage() {
     return () => controller.abort();
   }, [warningOnlyActive, warningCounts, warnedProjectIds]);
   const filtered = useMemo(() => {
-    let list = warningOnlyActive ? warnedProjects ?? projectsList.filter(p => (p.openWarningCount ?? 0) > 0) : projectsList;
+    // The warned projects are loaded by id, outside the filtered API list, so the filters are applied to them here.
+    let list = warningOnlyActive ? (warnedProjects ?? projectsList.filter(p => (p.openWarningCount ?? 0) > 0)).filter(p => matchesProjectFilters(p, activeFilters)) : projectsList;
     list = [...list].sort((a, b) => {
       const map: Record<SortKey, number | string> = { name:a.name, status:projectStatusOrder(a.status), progress:a.progress, dueDate:projectDueSortValue(a), priority: ["Critical","High","Medium","Low"].indexOf(a.priority) };
       const mapB: Record<SortKey, number | string> = { name:b.name, status:projectStatusOrder(b.status), progress:b.progress, dueDate:projectDueSortValue(b), priority: ["Critical","High","Medium","Low"].indexOf(b.priority) };
@@ -1206,11 +1239,30 @@ export default function ProjectsPage() {
       return sortDir === "asc" ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
     });
     return list;
-  }, [projectsList, sortKey, sortDir, warningOnlyActive, warnedProjects]);
+  }, [projectsList, sortKey, sortDir, warningOnlyActive, warnedProjects, activeFilters]);
+  const activeFilterCount = [query.trim(), periodFilter.from || periodFilter.to, ownerFilter.length, statusFilter.length, categoryFilter.length, clientFilter.length, warningOnlyActive].filter(Boolean).length;
+  const emptyState = activeFilterCount > 0 ? (
+    <div className="flex h-full flex-col items-center justify-center py-16 text-center">
+      <Briefcase className="w-10 h-10 text-muted-foreground/30 mb-3" />
+      <p className="text-sm font-medium text-foreground">Không có kết quả phù hợp bộ lọc</p>
+      <button type="button" onClick={resetFilters} className="mt-2 !text-xs !font-semibold text-primary hover:underline">Đặt lại bộ lọc</button>
+    </div>
+  ) : (
+    <div className="flex h-full flex-col items-center justify-center py-16 text-center">
+      <Briefcase className="w-10 h-10 text-muted-foreground/30 mb-3" />
+      <p className="text-sm font-medium text-foreground">No projects found</p>
+      <p className="text-xs text-muted-foreground mt-1">Chưa có dự án nào để hiển thị</p>
+    </div>
+  );
 
   // KPI stats
   const active      = useMemo(() => projectsList.filter(p => p.status === PROJECT_STATUS_LABELS.active).length, [projectsList]);
   const atRisk      = useMemo(() => projectsList.filter(p => p.status === PROJECT_STATUS_LABELS.at_risk).length, [projectsList]);
+  // Budget/spent are for the cost permission group; the API strips the figures for everyone else.
+  const showMoney   = canViewCostFigures(user);
+  const totalBudget = useMemo(() => projectsList.reduce((sum, p) => sum + p.budget, 0), [projectsList]);
+  const totalSpent  = useMemo(() => projectsList.reduce((sum, p) => sum + p.spent, 0), [projectsList]);
+  const moneyTile = (value: number) => showMoney ? <MoneyAmount value={value} /> : <span title={MONEY_HIDDEN_TITLE}>—</span>;
 
   const clientOptions: ProjectClientOption[] = accountOptions;
 
@@ -1331,6 +1383,10 @@ export default function ProjectsPage() {
       setProjectsError("Select an existing CRM account before creating a production project.");
       return;
     }
+    if (!createProjectType) {
+      setProjectsError("Chọn Loại dự án: Khách hàng, Nội bộ hoặc Đào tạo.");
+      return;
+    }
 
     createSubmittingRef.current = true;
     setSavingProject(true);
@@ -1349,6 +1405,7 @@ export default function ProjectsPage() {
           name: name.trim(),
           ownerUserId: ownerUserId || undefined,
           memberUserIds: selectedMembers,
+          projectType: createProjectType,
           isTestProject,
           scopeSummary: description.trim() || undefined,
           plannedStartAt: uiProjectDateToIso(startDate),
@@ -1393,6 +1450,7 @@ export default function ProjectsPage() {
 
       // Reset Form
       setName("");
+      setCreateProjectType("");
       setDescription("");
       setClient(accountOptions[0]?.value ?? "");
       setPriority("Medium");
@@ -1474,6 +1532,32 @@ export default function ProjectsPage() {
     }
   };
 
+  const handleCloseProjectInstead = async (project: Project, closeReasonCode: ProjectCloseReasonCode, note: string) => {
+    if (deletingProjectId) return;
+    setDeletingProjectId(project.id);
+    setProjectMutationError(null);
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(project.id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "closed", closeReasonCode, statusReason: note || undefined })
+      });
+      if (response.status === 401) {
+        redirectToLogin("/projects");
+        return;
+      }
+      if (!response.ok) throw await readApiError(response, "Không đóng được dự án");
+      const updated = mapProjectSummaryToUiProject(await response.json());
+      setProjectsList(current => current.map(item => item.id === project.id ? updated : item));
+      setDeleteNeedsClose(false);
+      setDeletingProject(null);
+    } catch (error) {
+      setProjectMutationError(error instanceof Error ? error.message : "Không đóng được dự án");
+    } finally {
+      setDeletingProjectId(null);
+    }
+  };
+
   const handleDeleteProject = async (project: Project) => {
     if (deletingProjectId) return;
 
@@ -1493,6 +1577,8 @@ export default function ProjectsPage() {
 
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
+        // A project with records is closed, never deleted: the dialog switches to "Đóng dự án".
+        if (body.code === "PROJECT_HAS_RECORDS") setDeleteNeedsClose(true);
         throw new Error(typeof body.message === "string" ? body.message : `Could not delete project: ${response.status}`);
       }
 
@@ -1523,30 +1609,22 @@ export default function ProjectsPage() {
   return (
     <AppShell activeRoute="/projects" onCreateProjectClick={() => setIsCreateOpen(true)} title="Projects">
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 sm:p-4 xl:p-6">
-          {/* Page Header */}
-          <div className="mb-4 flex shrink-0 flex-col items-start justify-between gap-3 sm:mb-6 sm:flex-row sm:items-center">
-            <div>
-              <h1 className="text-xl font-bold text-foreground">All Projects</h1>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                {projectPagination.total} projects · {projectsList.length} loaded · {active} active loaded
-              </p>
-            </div>
-            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-              <motion.button whileHover={{ scale:1.02 }} whileTap={{ scale:0.97 }}
+          <PageHeader
+            className="mb-4 sm:mb-6"
+            title="All Projects"
+            subtitle={<>{projectPagination.total} projects · {projectsList.length} loaded · {active} active loaded</>}
+            actions={<>
+              <HeaderButton
+                icon={<Download className="w-4 h-4" />}
                 onClick={() => downloadCsv("uplark-projects-loaded.csv", ["Name", "Status", "Priority", "Client", "Due date"], filtered.map((project) => [project.name, project.status, project.priority, project.client, project.dueDate]))}
                 aria-label={`Export ${filtered.length} loaded projects as CSV`}
                 title="Export the currently loaded project result set"
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-border text-sm font-medium text-muted-foreground hover:bg-muted transition-colors">
-                <Download className="w-4 h-4" /> Export loaded CSV
-              </motion.button>
-              <motion.button whileHover={{ scale:1.02 }} whileTap={{ scale:0.97 }}
-                onClick={() => setIsCreateOpen(true)}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-sm"
-                style={{ backgroundColor:"var(--color-primary)" }}>
-                <Plus className="w-4 h-4" /> New Project
-              </motion.button>
-            </div>
-          </div>
+              >
+                Export loaded CSV
+              </HeaderButton>
+              <HeaderButton variant="primary" icon={<Plus className="w-4 h-4" />} onClick={() => setIsCreateOpen(true)}>New Project</HeaderButton>
+            </>}
+          />
 
           {usingLocalProjectFallback && (
             <div className="mb-4 shrink-0 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
@@ -1561,12 +1639,14 @@ export default function ProjectsPage() {
           )}
 
           {/* KPI row */}
-          <div className="mb-4 grid shrink-0 grid-cols-2 gap-3 sm:mb-6 sm:gap-4">
+          <div className="mb-4 grid shrink-0 grid-cols-2 gap-3 sm:mb-6 sm:gap-4 xl:grid-cols-4" data-testid="projects-kpi-row">
             {[
-              { label:`${PROJECT_STATUS_LABELS.active} · trang này`, value:active, icon:CheckCircle2,color:"#16a34a" },
-              { label:`${PROJECT_STATUS_LABELS.at_risk} · trang này`, value:atRisk, icon:AlertCircle, color:"#dc2626" },
+              { label:"Total Budget",  value:moneyTile(totalBudget), icon:Wallet,      color:"#2563eb" },
+              { label:"Total Spent",   value:moneyTile(totalSpent),  icon:TrendingUp,  color:"#7c3aed" },
+              { label:"Active Loaded", value:active,                 icon:CheckCircle2,color:"#16a34a" },
+              { label:"At Risk Loaded",value:atRisk,                 icon:AlertCircle, color:"#dc2626" },
             ].map(s => (
-              <motion.div key={s.label} whileHover={{ y:-2 }} className="bg-card border border-border rounded-xl p-4 shadow-sm">
+              <motion.div key={s.label} whileHover={{ y:-2 }} className="min-w-0 bg-card border border-border rounded-xl p-4 shadow-sm">
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{s.label}</p>
                   <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ backgroundColor:`${s.color}15` }}>
@@ -1578,71 +1658,43 @@ export default function ProjectsPage() {
             ))}
           </div>
 
-          <div className="mb-4 shrink-0 sm:mb-5">
-            <WorkspaceTabBar
-              items={PROJECT_LIST_VIEW_TABS}
-              value={view}
-              onChange={(nextView) => {
-                setView(nextView);
-                updateProjectListUrl({ view: nextView });
-              }}
-              ariaLabel="Chế độ xem danh sách Project"
-              idPrefix="projects-view"
-              className="w-full"
-            />
-          </div>
-
-          {warningProjectCount > 0 && (
-            <button type="button" aria-pressed={warningOnlyActive} onClick={() => setWarningOnly(value => !value)}
-              className="mb-4 shrink-0 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-left text-sm font-medium text-red-700">
-              Hiện đang có {warningProjectCount} Project có cảnh báo{warningCounts ? " trong toàn workspace" : " trên trang này"}{warningOnlyActive ? " · đang lọc, bấm để xem tất cả" : ""}
-            </button>
-          )}
-
           {/* Filters */}
           <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm" data-testid="projects-stable-shell">
-            <div className="flex min-h-[4.25rem] shrink-0 flex-col items-stretch gap-3 border-b border-border px-3 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:px-4 xl:flex-nowrap" data-testid="projects-control-bar">
-              <div className="flex min-w-0 items-center gap-2.5 flex-1 bg-background border border-input rounded-xl px-3.5 py-2">
-                <Search className="w-4 h-4 text-muted-foreground shrink-0" />
-                <input value={query} onChange={e => handleQueryChange(e.target.value)} placeholder="Search by name, client, description..."
-                  className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none" />
-              </div>
-
-              <CustomDropdown
-                options={filterStatusOptions}
-                value={statusFilter}
-                onChange={handleStatusFilterChange}
-                ariaLabel="All Status"
-                className="w-full shrink-0 sm:w-40"
-              />
-
-              <CustomDropdown
-                options={filterCategoryOptions}
-                value={categoryFilter}
-                onChange={handleCategoryFilterChange}
-                className="w-full shrink-0 sm:w-44"
-              />
-
-              <CrmSelect
-                ariaLabel="Lọc theo Client"
-                options={filterClientOptions}
-                value={clientFilter}
-                onChange={handleClientFilterChange}
-                searchable
-                className="w-full shrink-0 sm:w-48"
-              />
-
-              <CrmSelect
-                ariaLabel="Lọc theo PIC"
-                options={filterOwnerOptions}
-                value={ownerFilter}
-                onChange={handleOwnerFilterChange}
-                searchable
-                className="w-full shrink-0 sm:w-48"
-              />
-
+            <div className="shrink-0 border-b border-border px-3 py-3 sm:px-4" data-testid="projects-control-bar">
+              <FilterBar onReset={activeFilterCount > 0 ? resetFilters : undefined} activeCount={activeFilterCount} actions={
+                <div role="group" aria-label="Chế độ xem danh sách Project" className="flex items-center rounded-xl bg-muted p-0.5" data-testid="projects-view-switch">
+                  {PROJECT_LIST_VIEWS.map(item => (
+                    <button key={item.id} type="button" id={`projects-view-${item.id}`} aria-label={item.label} title={item.label} aria-pressed={view === item.id}
+                      onClick={() => { setView(item.id); updateProjectListUrl({ view: item.id }); }}
+                      className={`inline-flex items-center rounded-lg px-2.5 py-2 transition-all ${view === item.id ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
+                      <item.icon className="h-4 w-4" />
+                    </button>
+                  ))}
+                </div>
+              }>
+                <FilterField label="Tìm kiếm" className="min-w-[120px] flex-[3_1_120px]">
+                  <SearchFilter value={query} onChange={(value) => applyFilters({ query: value })} placeholder="Tìm theo tên, mã dự án, khách hàng..." ariaLabel="Tìm dự án" className="" />
+                </FilterField>
+                <FilterField label="Thời gian dự án" className="w-full sm:w-[11.5rem] sm:flex-none">
+                  <DateRangeFilter value={periodFilter} onChange={(range) => applyFilters({ from: range.from, to: range.to })} ariaLabel="Thời gian dự án" />
+                </FilterField>
+                <PersonFilter label="PIC" people={filterPeople} values={ownerFilter} onChange={(values) => applyFilters({ ownerFilter: values })} allLabel="Tất cả PIC" className="min-w-[120px] flex-[1_1_120px]" />
+                <MultiSelectFilter label="Trạng thái" options={STATUS_OPTIONS} values={statusFilter} onChange={(values) => applyFilters({ statusFilter: values })} allLabel="Tất cả trạng thái" searchable={false} className="min-w-[138px] flex-[2_1_138px]" />
+                <MultiSelectFilter label="Loại dự án" options={PROJECT_TYPE_OPTIONS} values={categoryFilter} onChange={(values) => applyFilters({ categoryFilter: values })} allLabel="Tất cả loại" searchable={false} className="min-w-[120px] flex-[1_1_120px]" />
+                <MultiSelectFilter label="Khách hàng" options={filterClientOptions} values={clientFilter} onChange={(values) => applyFilters({ clientFilter: values })} allLabel="Tất cả khách hàng" searchPlaceholder="Tìm khách hàng..." className="min-w-[138px] flex-[2_1_138px]" />
+                {warningProjectCount > 0 && (
+                  <button type="button" aria-pressed={warningOnlyActive} onClick={() => setWarningOnly(value => !value)} data-testid="projects-warning-chip"
+                    title={`${warningProjectCount} dự án có cảnh báo`}
+                    className={`relative inline-flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 !text-[12px] font-semibold transition-colors ${warningOnlyActive ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-foreground hover:bg-muted/50"}`}>
+                    <Bell className="h-3.5 w-3.5" />Cảnh báo
+                    <span data-testid="projects-warning-badge" className="absolute -right-1.5 -top-1.5 min-w-4 rounded-full bg-red-600 px-1 text-center text-[10px] font-bold leading-4 text-white">{warningProjectCount}</span>
+                  </button>
+                )}
+              </FilterBar>
             </div>
 
+            {/* The loading pill sits just under the filter bar, whatever height the bar wraps to. */}
+            <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
             <AnimatePresence>
               {loadingProjects && (
                 <motion.div
@@ -1652,7 +1704,7 @@ export default function ProjectsPage() {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -4 }}
                   transition={{ duration: 0.15 }}
-                  className="pointer-events-none absolute right-3 top-[4.75rem] z-30 rounded-lg border border-border bg-card/95 px-3 py-1.5 text-xs font-semibold text-muted-foreground shadow-sm backdrop-blur"
+                  className="pointer-events-none absolute right-3 top-2 z-30 rounded-lg border border-border bg-card/95 px-3 py-1.5 text-xs font-semibold text-muted-foreground shadow-sm backdrop-blur"
                 >
                   Updating projects...
                 </motion.div>
@@ -1669,6 +1721,7 @@ export default function ProjectsPage() {
                         key={p.id}
                         project={p}
                         returnTo={currentProjectListUrl}
+                        showMoney={showMoney}
                         isPushed={pushedIds.includes(p.id)}
                         onTogglePush={() => handleTogglePush(p.id)}
                         onEdit={() => {
@@ -1683,13 +1736,7 @@ export default function ProjectsPage() {
                     ))}
                   </AnimatePresence>
                 </div>
-                {filtered.length === 0 && (
-                  <div className="flex h-full flex-col items-center justify-center py-16 text-center">
-                    <Briefcase className="w-10 h-10 text-muted-foreground/30 mb-3" />
-                    <p className="text-sm font-medium text-foreground">No projects found</p>
-                    <p className="text-xs text-muted-foreground mt-1">Adjust your filters to see more</p>
-                  </div>
-                )}
+                {filtered.length === 0 && !loadingProjects && emptyState}
               </div>
             )}
 
@@ -1763,7 +1810,7 @@ export default function ProjectsPage() {
                       const sc = STATUS_CFG[p.status];
 
                       return (
-                        <div key={p.id} className={`flex items-center group${(p.openWarningCount ?? 0) > 0 ? " rounded-lg bg-red-50/50" : ""}`}>
+                        <div key={p.id} className="flex items-center group">
                           {/* Left Column: Project Summary info */}
                           <div className="w-72 shrink-0 pr-4 flex items-center gap-3">
                             <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${p.color}15` }}>
@@ -1774,7 +1821,7 @@ export default function ProjectsPage() {
                               <span className="text-[10px] text-muted-foreground block truncate">{p.client} · {p.category}</span>
                             </div>
                             <span className="text-[9px] font-bold px-2 py-0.5 rounded-lg shrink-0" style={{ backgroundColor: sc.bg, color: sc.color }}>{formatProjectStatusLabel(p.status)}</span>
-                            {(p.openWarningCount ?? 0) > 0 ? <span title={`${p.openWarningCount} cảnh báo đang mở`} aria-label={`${p.openWarningCount} cảnh báo đang mở`} className="shrink-0 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{p.openWarningCount}</span> : null}
+                            
                             {p.hasPendingStatusProposal ? <span title="Có đề xuất trạng thái chờ xác nhận" className="shrink-0 rounded-full bg-sky-50 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">Có đề xuất trạng thái</span> : null}
                           </div>
 
@@ -1809,23 +1856,19 @@ export default function ProjectsPage() {
                       );
                     })}
 
-                    {filtered.length === 0 && (
-                      <div className="flex flex-col items-center justify-center py-16 text-center">
-                        <Briefcase className="w-10 h-10 text-muted-foreground/30 mb-3" />
-                        <p className="text-sm font-medium text-foreground">No projects found</p>
-                      </div>
-                    )}
+                    {filtered.length === 0 && !loadingProjects && emptyState}
                   </div>
                 </div>
                   );
                 })()}
               </div>
             )}
+            </div>
 
             {/* Footer */}
             <div className="flex min-h-[3.75rem] shrink-0 items-center justify-between border-t border-border bg-muted/20 px-4 py-3" data-testid="projects-pagination-footer">
               <p className="text-xs text-muted-foreground">
-                Showing <span className="font-semibold text-foreground">{warningOnlyActive && warnedProjects ? `${warnedProjects.length} Project có cảnh báo (toàn workspace)` : projectPageRangeLabel(projectPagination)}</span>
+                Showing <span className="font-semibold text-foreground">{warningOnlyActive && warnedProjects ? `${filtered.length} Project có cảnh báo (toàn workspace)` : projectPageRangeLabel(projectPagination)}</span>
               </p>
               {warningOnlyActive && warnedProjects ? null : <ProjectPaginationControls pagination={projectPagination} onPageChange={handleProjectPageChange} />}
             </div>
@@ -1901,6 +1944,18 @@ export default function ProjectsPage() {
                         options={clientOptions}
                         value={client}
                         onChange={setClient}
+                      />
+                    </div>
+
+                    {/* V-01: Loại dự án is required — it decides Lớp 2 of every task and the project's P&L template. */}
+                    <div className="space-y-1.5">
+                      <span className="text-xs font-semibold text-muted-foreground">Loại dự án <span className="text-destructive">*</span></span>
+                      <CustomDropdown
+                        ariaLabel="Loại dự án"
+                        options={PROJECT_TYPE_OPTIONS}
+                        value={createProjectType}
+                        onChange={setCreateProjectType}
+                        placeholder="Chọn loại dự án"
                       />
                     </div>
 
@@ -2163,11 +2218,14 @@ export default function ProjectsPage() {
               project={deletingProject}
               isDeleting={deletingProjectId === deletingProject.id}
               error={projectMutationError}
+              closeInstead={deleteNeedsClose}
               onCancel={() => {
                 setProjectMutationError(null);
+                setDeleteNeedsClose(false);
                 setDeletingProject(null);
               }}
               onConfirm={() => handleDeleteProject(deletingProject)}
+              onCloseProject={(closeReasonCode, note) => handleCloseProjectInstead(deletingProject, closeReasonCode, note)}
             />
           )}
         </AnimatePresence>

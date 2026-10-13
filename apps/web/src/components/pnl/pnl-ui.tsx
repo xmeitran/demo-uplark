@@ -1,9 +1,10 @@
 "use client";
 
-import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { AlertTriangle, Lock } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { AlertTriangle, Check, CircleHelp, Lock, type LucideIcon } from "lucide-react";
 import type { PnlResult, PnlResultLabelCode } from "@b2b-crm/contracts";
+import { NO_VALUE } from "./pnl-format";
+import { RESULT_NAME, resultExplanation } from "./pnl-plain";
 
 /*
  * Shared look and plumbing of every P&L screen: the Projects page's cards and buttons, the one API client and the one
@@ -79,6 +80,25 @@ export function usePnlLoad<T>(url: string | null, fallback?: string): PnlLoad<T>
   return { ...state, reload };
 }
 
+/**
+ * A search box whose text lives in the URL: typing is local, `commit` runs once the viewer pauses, and a value that
+ * changes from elsewhere (Đặt lại, back/forward) replaces what is shown — but never text still being typed.
+ */
+export function useDebouncedText(value: string, commit: (text: string) => void, delayMs = 350): [string, (text: string) => void] {
+  const [text, setText] = useState(value);
+  const sent = useRef(value);
+  const latestCommit = useRef(commit);
+  latestCommit.current = commit;
+  useEffect(() => { if (value !== sent.current) { sent.current = value; setText(value); } }, [value]);
+  useEffect(() => {
+    const next = text.trim();
+    if (next === sent.current) return;
+    const timer = window.setTimeout(() => { sent.current = next; latestCommit.current(next); }, delayMs);
+    return () => window.clearTimeout(timer);
+  }, [text, delayMs]);
+  return [text, setText];
+}
+
 const RESULT_CLASS: Record<PnlResultLabelCode, string> = {
   official: "border-emerald-300 bg-emerald-50 text-emerald-700",
   provisional: "border-amber-300 bg-amber-50 text-amber-800",
@@ -91,41 +111,100 @@ export const RESULT_TEXT_CLASS: Record<PnlResultLabelCode, string> = {
   not_computable: "text-muted-foreground"
 };
 
-const RESULT_NAME: Record<PnlResultLabelCode, string> = { official: "Chính thức", provisional: "Tạm tính", not_computable: "Không tính được" };
-
-/** Chính thức / Tạm tính / Không tính được. Hovering (or focusing) lists the reasons. */
+/** Chính thức / Tạm tính / Không tính được. Hovering (or focusing) says what the label means and lists this row's reasons. */
 export function ResultBadge({ result, large = false }: Readonly<{ result: PnlResult; large?: boolean }>) {
-  const reasons = result.reasons.map((reason) => reason.label).join(" · ");
+  const explanation = resultExplanation(result);
   return (
     <span
-      title={reasons || undefined}
-      tabIndex={reasons ? 0 : undefined}
-      aria-label={reasons ? `${RESULT_NAME[result.label]}: ${reasons}` : undefined}
-      className={`inline-flex items-center justify-center whitespace-nowrap rounded-full border font-semibold ${large ? "min-w-[7.5rem] px-4 py-1.5 text-xs" : "min-w-[6.5rem] px-3 py-1 text-[11px]"} ${RESULT_CLASS[result.label]}`}
+      title={explanation}
+      tabIndex={0}
+      aria-label={`${RESULT_NAME[result.label]}. ${explanation}`}
+      className={`inline-flex cursor-help items-center justify-center whitespace-nowrap rounded-full border font-semibold ${large ? "min-w-[7.5rem] px-4 py-1.5 text-xs" : "min-w-[6.5rem] px-3 py-1 text-[11px]"} ${RESULT_CLASS[result.label]}`}
     >
       {RESULT_NAME[result.label]}
     </span>
   );
 }
 
-/** KPI tile as on the Projects page: 11px uppercase label, mono value, one sub-note. */
-export function Tile({ label, value, unit, note, noteClass = "text-muted-foreground", title }: Readonly<{
+/**
+ * KPI tile as on the Projects page: 11px uppercase label, one line saying what the figure is (`hint`), mono value,
+ * one sub-note. A tile without a figure shows "—" and says why (`whyEmpty`) instead of a bare dash.
+ */
+export function Tile({ label, hint, value, unit, note, noteClass = "text-muted-foreground", title, whyEmpty, icon: Icon, color = "#2563eb", action }: Readonly<{
+  /** A small control next to the label (the "Sửa" of the Doanh thu tile); it takes the icon's place. */
+  action?: ReactNode;
+  /** Icon chip on the right of the label, tinted with `color` (the Projects-page tile). */
+  icon?: LucideIcon;
+  color?: string;
   label: string;
+  hint?: string;
   value: ReactNode;
   /** Shown small after the value ("giờ"), so five tiles still fit a 1024px screen. */
   unit?: string;
   note?: ReactNode;
   noteClass?: string;
   title?: string;
+  whyEmpty?: string;
 }>) {
+  const empty = value === NO_VALUE;
   return (
     <div className={`${cardClass} min-w-0 p-4`}>
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
-      <p title={title} className="mt-2 break-words font-mono text-xl font-bold tabular-nums text-foreground xl:text-2xl">
+      <div className="flex items-start justify-between gap-2">
+        <p title={hint} className="min-w-0 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
+        {action ?? null}
+        {Icon && !action ? <div aria-hidden className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg" style={{ backgroundColor: `${color}15` }}><Icon className="h-3.5 w-3.5" style={{ color }} /></div> : null}
+      </div>
+      <p title={empty ? whyEmpty : title} className="!mt-2 break-words font-mono text-2xl font-bold tabular-nums text-foreground">
         {value}
         {unit ? <span className="ml-1 font-sans text-sm font-semibold">{unit}</span> : null}
       </p>
-      {note ? <p className={`mt-1 text-xs ${noteClass}`}>{note}</p> : null}
+      {/* One caption line: why the value is missing, else the note, else what the figure is; the rest is in tooltips. */}
+      {empty && whyEmpty
+        ? <p title={whyEmpty} className="!mt-1 truncate text-xs font-medium text-amber-700">{whyEmpty}</p>
+        : note ? <p title={typeof note === "string" ? note : undefined} className={`!mt-1 truncate text-xs ${noteClass}`}>{note}</p>
+        : hint ? <p title={hint} className="!mt-1 truncate text-xs text-muted-foreground">{hint}</p> : null}
+    </div>
+  );
+}
+
+const CHIP_TONE = { ok: "bg-emerald-50 text-emerald-700", warn: "bg-amber-50 text-amber-700", muted: "bg-muted text-muted-foreground" };
+
+/** Small status pill ("Đủ", "Thiếu 2", "Chờ khóa"). The full sentence goes in `title`, never in the cell. */
+export function Chip({ tone, title, children }: Readonly<{ tone: keyof typeof CHIP_TONE; title?: string; children: ReactNode }>) {
+  return (
+    <span title={title} aria-label={title ? `${typeof children === "string" ? children : ""}: ${title}` : undefined} tabIndex={title ? 0 : undefined} className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-bold ${title ? "cursor-help" : ""} ${CHIP_TONE[tone]}`}>
+      {tone === "ok" ? <Check className="h-3 w-3" aria-hidden /> : tone === "warn" ? <AlertTriangle className="h-3 w-3" aria-hidden /> : null}
+      {children}
+    </span>
+  );
+}
+
+/** "—" that says why there is no figure (hover or focus). */
+export function NoValue({ why }: Readonly<{ why: string }>) {
+  return <span title={why} aria-label={`Chưa có số: ${why}`} tabIndex={0} className="cursor-help text-muted-foreground">{NO_VALUE}</span>;
+}
+
+/**
+ * "Cách đọc …" toggle with a short bullet list. Closed by default; the viewer's choice is remembered in this
+ * browser under `storageKey` (the page works the same when storage is unavailable).
+ */
+export function HelpToggle({ label, storageKey, children }: Readonly<{ label: string; storageKey: string; children: ReactNode }>) {
+  const [open, setOpen] = useState(false);
+  const panelId = useId();
+  useEffect(() => {
+    try { setOpen(window.localStorage.getItem(storageKey) === "1"); } catch { /* private window or blocked storage: stay closed */ }
+  }, [storageKey]);
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    try { window.localStorage.setItem(storageKey, next ? "1" : "0"); } catch { /* nothing to remember with */ }
+  };
+  return (
+    <div className="min-w-0">
+      <button type="button" aria-expanded={open} aria-controls={panelId} onClick={toggle} className="inline-flex items-center gap-1.5 rounded-lg px-1.5 py-1 !text-xs !font-semibold text-primary hover:underline">
+        <CircleHelp className="h-3.5 w-3.5" aria-hidden />{label}
+      </button>
+      {open ? <ul id={panelId} className="mt-2 list-disc space-y-1 rounded-xl border border-border bg-muted/40 py-3 pl-8 pr-4 text-xs leading-relaxed text-muted-foreground">{children}</ul> : null}
     </div>
   );
 }
@@ -224,18 +303,6 @@ export function Tabs<T extends string>({ value, tabs, onChange, ariaLabel, idPre
   );
 }
 
-/** Amber strip with a "… ›" action on the right (khối 3 of Tổng quan). */
-export function WarningStrip({ children, action }: Readonly<{ children: ReactNode; action?: ReactNode }>) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-      <p className="min-w-0">{children}</p>
-      {action}
-    </div>
-  );
-}
-
-export const warningActionClass = "inline-flex shrink-0 items-center rounded-lg border border-amber-400 bg-card px-3 py-1.5 text-xs font-semibold !text-amber-800 transition-colors hover:bg-amber-100";
-
 export function PnlSkeleton({ rows = 3 }: Readonly<{ rows?: number }>) {
   return (
     <div role="status" aria-label="Đang tải số liệu P&L" className="space-y-4">
@@ -257,7 +324,7 @@ export function PnlLoadError({ error, onRetry, forbiddenText }: Readonly<{ error
       <div role="status" className={`${cardClass} flex flex-col items-center gap-2 px-6 py-12 text-center`}>
         <Lock className="h-6 w-6 text-muted-foreground" aria-hidden />
         <p className="text-sm font-bold text-foreground">{forbiddenText ?? "Bạn chưa có quyền xem tab P&L"}</p>
-        {forbiddenText ? null : <p className="max-w-xl text-sm text-muted-foreground">Tab P&amp;L chỉ mở cho tài khoản Admin; doanh thu, chi phí, cost rate chỉ hiện với nhóm quyền chi phí. Liên hệ Admin nếu bạn cần quyền này.</p>}
+        {forbiddenText ? null : <p className="max-w-xl text-sm text-muted-foreground">Tab P&amp;L chỉ mở cho tài khoản Admin; doanh thu, chi phí và đơn giá giờ của nhân sự chỉ hiện với nhóm quyền chi phí. Liên hệ Admin nếu bạn cần quyền này.</p>}
         <p className="text-xs text-muted-foreground">{error.message}</p>
       </div>
     );
@@ -275,7 +342,7 @@ export function MoneyHiddenNote() {
   return (
     <p role="note" className="flex items-center gap-2 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
       <Lock className="h-4 w-4 shrink-0" aria-hidden />
-      Bạn không thuộc nhóm quyền chi phí: doanh thu, chi phí, cost rate và biên không hiển thị (ghi “—”). Giờ và trạng thái dữ liệu vẫn xem được.
+      Bạn không thuộc nhóm quyền chi phí: doanh thu, chi phí, đơn giá giờ của nhân sự và biên lợi nhuận không hiển thị (ghi “—”). Giờ và trạng thái dữ liệu vẫn xem được.
     </p>
   );
 }
@@ -285,22 +352,5 @@ export function EmptyRow({ colSpan, children }: Readonly<{ colSpan: number; chil
     <tr>
       <td colSpan={colSpan} className="px-4 py-10 text-center text-sm text-muted-foreground">{children}</td>
     </tr>
-  );
-}
-
-/** "P&L › …" bar of both wireframes: title on the left, the unit note on the right. */
-export function PnlPageHeader({ crumb, unitNote, action }: Readonly<{ crumb?: string; unitNote: string; action?: ReactNode }>) {
-  return (
-    <header className="flex flex-wrap items-center justify-between gap-3">
-      <h1 className="!text-xl font-bold text-foreground">
-        {crumb ? <Link href="/pnl" className="!text-foreground hover:!text-primary">P&amp;L</Link> : "P&L"}
-        <span className="mx-1.5 text-muted-foreground">›</span>
-        {crumb ?? "Tổng quan"}
-      </h1>
-      <div className="flex items-center gap-3">
-        <span className="text-xs text-muted-foreground">{unitNote}</span>
-        {action}
-      </div>
-    </header>
   );
 }

@@ -35,13 +35,11 @@ export class AlertsController {
     return this.alerts.updateTrigger(code, input, await this.principals.resolveFromAuthorization(authorization, principalFallback));
   }
 
+  /** Multi-value filters arrive comma-joined (`status`, `typeCode`, `projectId`, `severity`, `ownerUserId`); `from`/`to` are Vietnam days on openedAt. */
   @Get("admin/warnings")
-  async warnings(
-    @Headers("authorization") authorization?: string, @Query("principal") principalFallback?: string,
-    @Query("status") status?: string, @Query("typeCode") typeCode?: string, @Query("projectId") projectId?: string, @Query("severity") severity?: string
-  ) {
-    const first = (value?: string | string[]) => (Array.isArray(value) ? value[0] : value) || undefined;
-    return this.alerts.listWarnings({ status: first(status), typeCode: first(typeCode), projectId: first(projectId), severity: first(severity) }, await this.principals.resolveFromAuthorization(authorization, principalFallback));
+  async warnings(@Headers("authorization") authorization?: string, @Query() query: Record<string, string | string[] | undefined> = {}) {
+    const principalFallback = Array.isArray(query.principal) ? query.principal[0] : query.principal;
+    return this.alerts.listWarnings(query, await this.principals.resolveFromAuthorization(authorization, principalFallback));
   }
 
   @Post("admin/alert-scan")

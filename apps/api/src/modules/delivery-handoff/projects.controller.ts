@@ -115,30 +115,6 @@ export class ProjectsController {
     return this.projects.lostDealPreSaleSummary(principal);
   }
 
-  @Get("projects/:projectId/contract-items")
-  async listProjectContractItems(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("projectId") projectId: string) {
-    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
-    return this.projects.listProjectContractItems(projectId, principal);
-  }
-
-  @Post("projects/:projectId/contract-items")
-  async createProjectContractItem(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("projectId") projectId: string, @Body() body: any) {
-    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
-    return this.projects.createProjectContractItem(projectId, body, principal);
-  }
-
-  @Patch("projects/:projectId/contract-items/:itemId")
-  async updateProjectContractItem(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("projectId") projectId: string, @Param("itemId") itemId: string, @Body() body: any) {
-    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
-    return this.projects.updateProjectContractItem(projectId, itemId, body, principal);
-  }
-
-  @Delete("projects/:projectId/contract-items/:itemId")
-  async deleteProjectContractItem(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("projectId") projectId: string, @Param("itemId") itemId: string) {
-    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
-    return this.projects.deleteProjectContractItem(projectId, itemId, principal);
-  }
-
   @Get("projects/:projectId")
   async getProject(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("projectId") projectId: string) {
     const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);

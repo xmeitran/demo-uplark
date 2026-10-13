@@ -17,7 +17,7 @@ import {
 } from "./pnl-rules";
 
 /** An hour that passes all four conditions of PL-04. */
-const counted: PnlGateInput = { projectId: "p-1", taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT", selectedTaskTypeLayer2: "CUSTOMER_PROJECT", contractItemId: "hm-01", afterPnlClose: false, hasCostRate: true };
+const counted: PnlGateInput = { projectId: "p-1", taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT", selectedTaskTypeLayer2: "CUSTOMER_PROJECT", afterPnlClose: false, hasCostRate: true };
 const gate = (patch: Partial<PnlGateInput>) => classifyPnlEntry({ ...counted, ...patch });
 
 describe("bước 1 — giờ chuẩn của tháng (PL-09, PNL-28)", () => {
@@ -89,12 +89,12 @@ describe("bước 3 — cổng lọc giờ (PL-04, PL-05, PL-06)", () => {
     expect(gate({ afterPnlClose: null })).toMatchObject({ status: "pending", reason: "unknown_close_position" });
   });
 
-  it("(3) thiếu phân loại hoặc hạng mục → Chờ xử lý, kèm lý do (gồm giờ còn ở “Chưa có hạng mục”)", () => {
-    expect(gate({ contractItemId: null })).toMatchObject({ status: "pending", reason: "missing_contract_item" });
+  it("(3) thiếu phân loại → Chờ xử lý, kèm lý do; “đủ phân loại” no longer asks for a contract line item (chốt 13/10)", () => {
+    expect(gate({ taskTypeLayer1: "PRE_SALE" })).toEqual({ status: "included", reasons: [] }); // Pre-sale counts from the start (Phụ lục B ca 4)
     expect(gate({ taskTypeLayer1: null })).toMatchObject({ status: "pending", reason: "missing_layer1" });
     expect(gate({ taskTypeLayer2: null, selectedTaskTypeLayer2: "CUSTOMER_PROJECT" })).toMatchObject({ status: "pending", reason: "missing_layer2" });
     expect(gate({ projectId: null })).toMatchObject({ status: "pending", reason: "missing_project" });
-    expect(gate({ contractItemId: null, hasCostRate: false }).reasons).toEqual(["missing_contract_item", "missing_staff_cost"]);
+    expect(gate({ taskTypeLayer1: null, hasCostRate: false }).reasons).toEqual(["missing_layer1", "missing_staff_cost"]);
   });
 
   it("(4) thiếu cost rate của tháng → Chờ xử lý, never costed at 0", () => {
@@ -102,11 +102,11 @@ describe("bước 3 — cổng lọc giờ (PL-04, PL-05, PL-06)", () => {
   });
 
   it("Nội bộ: Lớp 2 là Nội bộ thì Bị loại, lý do Nội bộ — with or without a cost rate", () => {
-    expect(gate({ taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: "INTERNAL_PROJECT", contractItemId: null, afterPnlClose: null, hasCostRate: false })).toEqual({ status: "excluded", reason: "internal", reasons: ["internal"] });
+    expect(gate({ taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: "INTERNAL_PROJECT", afterPnlClose: null, hasCostRate: false })).toEqual({ status: "excluded", reason: "internal", reasons: ["internal"] });
   });
 
   it("giờ Pre-sale của deal thua bị loại khỏi P&L dự án (PL-12), whatever else is missing", () => {
-    expect(gate({ lostDeal: true, taskTypeLayer1: "PRE_SALE", contractItemId: null, hasCostRate: false })).toEqual({ status: "excluded", reason: "lost_deal_pre_sale", reasons: ["lost_deal_pre_sale"] });
+    expect(gate({ lostDeal: true, taskTypeLayer1: "PRE_SALE", hasCostRate: false })).toEqual({ status: "excluded", reason: "lost_deal_pre_sale", reasons: ["lost_deal_pre_sale"] });
     expect(gate({ lostDeal: true, taskTypeLayer1: "DELIVERY" }).status).toBe("included");
   });
 
@@ -120,19 +120,19 @@ describe("bước 3 — cổng lọc giờ (PL-04, PL-05, PL-06)", () => {
     expect(gate({ legacyPendingReason: "legacy_no_stage", taskTypeLayer1: null }).reasons[0]).toBe("legacy_no_stage");
   });
 
-  it("G7 chỉ bị chặn bởi giờ chờ vì thiếu hoặc sai phân loại, hạng mục; giờ chờ cost rate không chặn (mục 7 điểm 6)", () => {
+  it("G7 chỉ bị chặn bởi giờ chờ vì thiếu hoặc sai phân loại; giờ chờ cost rate không chặn (mục 7 điểm 6)", () => {
     expect(blocksG7(gate({ hasCostRate: false }))).toBe(false);
     expect(blocksG7(gate({ loggedAfterLock: true }))).toBe(false);
     expect(blocksG7(gate({ selectedTaskTypeLayer2: "INTERNAL_PROJECT" }))).toBe(true);
-    expect(blocksG7(gate({ contractItemId: null }))).toBe(true);
-    expect(blocksG7(gate({ contractItemId: null, hasCostRate: false }))).toBe(true);
+    expect(blocksG7(gate({ taskTypeLayer1: null }))).toBe(true);
+    expect(blocksG7(gate({ taskTypeLayer1: null, hasCostRate: false }))).toBe(true);
     expect(blocksG7(gate({}))).toBe(false);
     expect(blocksG7(gate({ taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: null }))).toBe(false); // excluded, not pending
   });
 
   it("each pending hour falls in exactly one group of the “Dữ liệu chờ xử lý” strip", () => {
     expect(pendingGroupOf(["missing_staff_cost"])).toBe("cost_rate");
-    expect(pendingGroupOf(["missing_contract_item", "missing_staff_cost"])).toBe("classification");
+    expect(pendingGroupOf(["missing_layer1", "missing_staff_cost"])).toBe("classification");
     expect(pendingGroupOf(["layer2_mismatch", "missing_staff_cost"])).toBe("layer2_mismatch");
     expect(pendingGroupOf(["locked_period"])).toBe("locked_period");
   });
@@ -179,8 +179,7 @@ describe("nhóm vai trò, kỳ và hồ sơ P&L", () => {
     // Đóng, thua deal: chỉ trước G1
     expect(recordStateOf({ ...base, lostDeal: true })).toBe("lost_deal");
     expect(recordStateOf({ ...base, lostDeal: true, g1Passed: true })).toBe("recognizing");
-    // Dự án nội bộ: Đang ghi nhận khi PM tạo hạng mục Nội bộ
-    expect(recordStateOf({ ...base, internalTemplate: true })).toBe("awaiting_contract");
-    expect(recordStateOf({ ...base, internalTemplate: true, hasInternalItem: true })).toBe("recognizing");
+    // Dự án Loại Nội bộ, Đào tạo: Đang ghi nhận ngay khi tạo dự án (PL-28)
+    expect(recordStateOf({ ...base, internalTemplate: true })).toBe("recognizing");
   });
 });

@@ -15,7 +15,8 @@ export function mapAccountSummary(account: any, canViewMoney: boolean): AccountS
     picAvatarUrl: account.picUser?.avatarUrl ?? undefined,
     health: inferAccountHealth(account.stage),
     ...(canViewMoney ? { annualValue: toMoneyNumber(account.annualValue) } : {}),
-    commercialNote: account.commercialNote ?? undefined
+    commercialNote: account.commercialNote ?? undefined,
+    createdAt: toIso(account.createdAt) ?? undefined
   };
 }
 

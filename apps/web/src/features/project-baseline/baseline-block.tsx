@@ -1,13 +1,14 @@
 "use client";
 
 /**
- * "Baseline" on the project detail page (rules 6.3, D-20, D-21): the current version of B0 (phạm vi và giá đã ký) and
- * B1 (milestone, timeline, giờ dự kiến), whether the plan is locked, and the version history with what changed and why.
+ * "Baseline" on the project detail page (rules 6.3, D-20, D-21; chốt 13/10): ONE baseline of the plan (milestone,
+ * timeline, giờ dự kiến) — no money, no commercial layer — whether it is locked, and the version history with what
+ * changed and why.
  * Renders what GET /projects/:id/baseline returns; an Admin can lock or re-lock with a reason.
  */
 import React, { useEffect, useState } from "react";
 import { ChevronDown, ChevronUp, Lock, LockOpen } from "lucide-react";
-import { BASELINE_LAYERS, BASELINE_LAYER_LABELS, type ProjectBaselineResponse } from "@b2b-crm/contracts";
+import type { ProjectBaselineResponse } from "@b2b-crm/contracts";
 import { apiErrorMessage, readApiError } from "@/lib/api-error";
 import { formatVietnamDate } from "@/lib/vietnam-time";
 import { baselineCauseLabel, baselineDiffLine } from "./baseline-view";
@@ -62,13 +63,10 @@ export function ProjectBaselineBlock({ projectId, refreshKey, className = "" }: 
     <div role="group" aria-label="Baseline" className={`rounded-lg border border-border bg-background px-3 py-2.5 ${className}`}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Baseline</span>
-        {BASELINE_LAYERS.map((layer) => {
-          const current = baseline.current[layer];
-          return <span key={layer} title={BASELINE_LAYER_LABELS[layer]} className={`rounded-full px-2.5 py-1 text-xs font-bold ${current ? "bg-muted text-foreground" : "bg-muted/40 text-muted-foreground"}`}>{layer} {current ? `v${current.version}` : "chưa có"}</span>;
-        })}
+        <span title="Milestone, timeline và giờ dự kiến" className={`rounded-full px-2.5 py-1 text-xs font-bold ${baseline.current ? "bg-muted text-foreground" : "bg-muted/40 text-muted-foreground"}`}>{baseline.current ? `Phiên bản ${baseline.current.version}` : "Chưa có"}</span>
         <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold ${baseline.locked ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
           {baseline.locked ? <Lock aria-hidden="true" className="h-3 w-3" /> : <LockOpen aria-hidden="true" className="h-3 w-3" />}
-          {baseline.locked ? "B1 đã khóa" : "Chưa khóa"}
+          {baseline.locked ? "Baseline đã khóa" : "Chưa khóa"}
         </span>
         <span className="text-xs text-muted-foreground">{baseline.locked ? "Đổi timeline hoặc giờ dự kiến phải được Admin duyệt, có lý do." : "Khóa khi G1 được duyệt."}</span>
         <span className="ml-auto flex items-center gap-3">
@@ -100,12 +98,12 @@ export function ProjectBaselineBlock({ projectId, refreshKey, className = "" }: 
           {baseline.history.map((version) => (
             <li key={version.id} className="text-xs text-muted-foreground">
               <p>
-                <span className="font-semibold text-foreground">{version.layer} v{version.version}</span> · {baselineCauseLabel(version)} · {version.createdByName ?? "Hệ thống"} · {formatVietnamDate(version.createdAt)}
+                <span className="font-semibold text-foreground">Phiên bản {version.version}</span> · {baselineCauseLabel(version)} · {version.createdByName ?? "Hệ thống"} · {formatVietnamDate(version.createdAt)}
               </p>
               <p className="text-foreground">{version.reason}</p>
               {version.diff.length ? (
                 <ul className="mt-0.5 list-disc pl-4">{version.diff.slice(0, 8).map((entry) => <li key={`${entry.entity}-${entry.id}`}>{baselineDiffLine(entry)}</li>)}{version.diff.length > 8 ? <li>… và {version.diff.length - 8} thay đổi khác</li> : null}</ul>
-              ) : version.version === 1 ? <p>Phiên bản đầu: {version.layer === "B0" ? `${version.totals.lineItems ?? 0} hạng mục` : `${version.totals.tasks ?? 0} task`}, {Math.round((version.totals.estimateMinutes / 60) * 10) / 10} giờ dự kiến.</p> : null}
+              ) : version.version === 1 ? <p>Phiên bản đầu: {version.totals.tasks} task, {Math.round((version.totals.estimateMinutes / 60) * 10) / 10} giờ dự kiến.</p> : null}
             </li>
           ))}
         </ul>

@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { planFoundationRoleGrants } from "../apps/api/src/modules/identity-access/foundation-role-grants";
 
 const prisma = new PrismaClient();
 
@@ -232,61 +233,27 @@ async function main() {
       create: { userId: admin.id, roleId: founderRole.id, tenantKey, workspaceId: workspace.id }
     });
 
-    // The staging workspace is a controlled copy of production. Keep its
-    // workspace access policy deterministic after every restore/boot: one
-    // configured Founder/GM, an explicit allow-list of Workspace Admins, and
-    // Workspace User for every other active internal member. Historical role
-    // bindings are retained for audit; only active bindings are replaced.
+    // This seed runs on every API start. It only adds what is missing: role bindings set in the Users screen are
+    // never ended or replaced here, and a configured Workspace Admin gets the role once (see planFoundationRoleGrants).
     const workspaceAdminRole = roles.get("WORKSPACE_ADMIN");
-    const workspaceUserRole = roles.get("WORKSPACE_USER");
-    if (!workspaceAdminRole || !workspaceUserRole) {
+    if (!workspaceAdminRole) {
       throw new Error("Workspace access roles were not seeded.");
     }
-    workspaceAdminUserIds.delete(admin.id);
-    const now = new Date();
-    const activeWorkspaceBinding = {
-      tenantKey,
-      workspaceId: workspace.id,
-      startsAt: { lte: now },
-      OR: [{ endsAt: null }, { endsAt: { gt: now } }]
-    };
-    const governedUsers = await tx.user.findMany({
-      where: {
-        subjectType: "INTERNAL_USER" as any,
-        roleBindings: { some: activeWorkspaceBinding }
-      },
-      select: {
-        id: true,
-        roleBindings: {
-          where: activeWorkspaceBinding,
-          select: { role: { select: { code: true } } }
-        }
-      }
+    const [candidateUsers, workspaceBindings] = await Promise.all([
+      tx.user.findMany({ where: { id: { in: [...workspaceAdminUserIds] } }, select: { id: true } }),
+      tx.roleBinding.findMany({
+        where: { tenantKey, workspaceId: workspace.id, userId: { in: [...workspaceAdminUserIds] } },
+        select: { userId: true, role: { select: { code: true } } }
+      })
+    ]);
+    const grants = planFoundationRoleGrants({
+      founderUserId: admin.id,
+      workspaceAdminUserIds,
+      existingUserIds: new Set(candidateUsers.map((user) => user.id)),
+      existingBindingKeys: new Set(workspaceBindings.map((binding) => `${binding.userId}:${binding.role.code}`))
     });
-
-    for (const user of governedUsers) {
-      const desiredRole = user.id === admin.id
-        ? founderRole
-        : workspaceAdminUserIds.has(user.id)
-          ? workspaceAdminRole
-          : workspaceUserRole;
-      const currentRoleCodes = new Set(user.roleBindings.map((binding) => binding.role.code));
-      if (currentRoleCodes.size === 1 && currentRoleCodes.has(desiredRole.code)) continue;
-
-      await tx.roleBinding.updateMany({
-        where: {
-          userId: user.id,
-          tenantKey,
-          workspaceId: workspace.id,
-          OR: [{ endsAt: null }, { endsAt: { gt: now } }]
-        },
-        data: { endsAt: now }
-      });
-      await tx.roleBinding.upsert({
-        where: { userId_roleId_tenantKey_workspaceId: { userId: user.id, roleId: desiredRole.id, tenantKey, workspaceId: workspace.id } },
-        update: { startsAt: now, endsAt: null },
-        create: { userId: user.id, roleId: desiredRole.id, tenantKey, workspaceId: workspace.id }
-      });
+    for (const grant of grants) {
+      await tx.roleBinding.create({ data: { userId: grant.userId, roleId: workspaceAdminRole.id, tenantKey, workspaceId: workspace.id } });
     }
 
     for (const larkOpenId of foundationAdminLarkOpenIds) {

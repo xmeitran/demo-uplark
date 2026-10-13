@@ -1,3 +1,4 @@
+import { projectKindOf } from "@b2b-crm/contracts";
 import type {
   Department,
   MemberState,
@@ -74,9 +75,6 @@ type ApiTask = {
   completedAt?: string;
   estimateMinutes?: number;
   taskTypeLayer2?: string;
-  contractItemId?: string;
-  contractItemCode?: string;
-  contractItemName?: string;
 };
 
 type ApiTimeEntry = {
@@ -102,7 +100,6 @@ type ApiTimeEntry = {
   /** Layer 2 chosen by the person logging; undefined on legacy rows. */
   selectedTaskTypeLayer2?: string;
   layer2Mismatch?: boolean;
-  contractItemId?: string;
   loggedWhileOnHold?: boolean;
   beforeEightHourRule?: boolean;
 };
@@ -125,13 +122,13 @@ export function dateOnly(value?: string) {
 }
 
 /**
- * Project rows carry the project-level context of table 4.2: the fixed internal-worklog project is "Nội bộ", an internal
- * project waits for its contract line item, anything else is a "Dự án tính phí". Never guessed from names.
+ * Project rows carry the project-level context of table 4.2 (Loại dự án): Nội bộ, Đào tạo and the fixed internal-worklog
+ * project are "Nội bộ", Khách hàng is a "Dự án tính phí". Never guessed from names.
  */
 export function projectWorkGroup(projectType?: string): WorkGroup {
-  const type = String(projectType ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
-  if (type === "internal_worklog") return "internal_project";
-  return !type || type === "internal" ? "unclassified" : "customer_project";
+  const kind = projectKindOf(projectType);
+  if (!kind) return "unclassified";
+  return kind === "delivery" ? "customer_project" : "internal_project";
 }
 
 export function projectMemberState(value?: string): MemberState {
@@ -448,7 +445,6 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
   const taskToMilestone = new Map<string, { milestoneId: string; stageId: string }>();
   for (const project of projectNodes) for (const milestone of project.milestones) for (const stage of milestone.stages) for (const task of stage.tasks) taskToMilestone.set(task.id, { milestoneId: milestone.id, stageId: stage.id });
   const taskLayer2ById = new Map(tasks.map((task) => [task.id, task.taskTypeLayer2]));
-  const contractItemById = new Map(tasks.filter((task) => task.contractItemId).map((task) => [task.contractItemId!, [task.contractItemCode, task.contractItemName].filter(Boolean).join(" · ")]));
   const logs: TimeLog[] = entries.map((entry) => {
     const relation = taskToMilestone.get(entry.taskId);
     return {
@@ -467,8 +463,7 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
       layer2Mismatch: entry.layer2Mismatch === true,
       note: entry.note || "",
       loggedWhileOnHold: entry.loggedWhileOnHold === true,
-      beforeEightHourRule: entry.beforeEightHourRule === true,
-      contractItem: entry.contractItemId ? contractItemById.get(entry.contractItemId) : undefined
+      beforeEightHourRule: entry.beforeEightHourRule === true
     };
   });
 

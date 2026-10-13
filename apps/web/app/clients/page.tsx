@@ -19,16 +19,18 @@ import {
   Mail,
   Pencil,
   Plus,
-  Search,
   Trash2
 } from "lucide-react";
 import Link from "next/link";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { CustomDropdown } from "@/components/constructor-x/custom-controls";
-import { CrmSelect } from "@/components/crm-workspace/crm-select";
-import { FilterBar, FilterField } from "@/components/filters/filter-controls";
+import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
+import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilter, SearchFilter, dayOf, isWithinRange, matchesAny, type DateRange, type FilterPerson } from "@/components/filters";
+import { HeaderButton, PageHeader, pageMainClassName } from "@/components/page-header";
 import { ModalLayer } from "@/components/modal-layer";
-import type { AccountSummary, AccountsResponse } from "@b2b-crm/contracts";
+import type { AccountSummary } from "@b2b-crm/contracts";
+import { ApiResponseError } from "@/lib/api-error";
+import { fetchAllPages } from "@/lib/api-pages";
 import { downloadCsv } from "@/lib/csv-export";
 import { useAuth } from "@/lib/auth";
 import { canViewCostFigures } from "@/lib/auth-role";
@@ -52,6 +54,9 @@ type ClientRow = {
   owner: string;
   ownerId?: string;
   ownerEmail?: string;
+  ownerAvatarUrl?: string;
+  /** Vietnam calendar day the account was created, "" when the API did not send it. */
+  createdDay: string;
   avatarColor: string;
   initials: string;
 };
@@ -141,30 +146,30 @@ function mapAccountToClient(account: AccountSummary): ClientRow {
     owner: account.picName ?? "Unassigned",
     ownerId: account.picUserId,
     ownerEmail: account.picEmail,
+    ownerAvatarUrl: account.picAvatarUrl,
+    createdDay: dayOf(account.createdAt),
     avatarColor: account.picAvatarUrl ? "#2563eb" : colorFor(account.name),
     initials: initialsFor(account.name)
   };
 }
 
+// Every page: the API caps a page at 100 rows, so one request would silently drop the rest.
 async function loadAccounts(signal?: AbortSignal) {
-  const response = await fetch("/api/accounts?limit=100", {
-    cache: "no-store",
-    credentials: "same-origin",
-    signal
-  });
-
-  if (response.status === 401) {
-    window.location.assign(`/login?returnTo=${encodeURIComponent("/clients")}`);
-    return [];
+  try {
+    return (await fetchAllPages<AccountSummary>("/api/accounts", { signal, errorLabel: "Không tải được danh sách khách hàng" })).map(mapAccountToClient);
+  } catch (error) {
+    if (error instanceof ApiResponseError && error.status === 401) {
+      window.location.assign(`/login?returnTo=${encodeURIComponent("/clients")}`);
+      return [];
+    }
+    throw error;
   }
-
-  if (!response.ok) {
-    throw new Error(`Could not load accounts: ${response.status}`);
-  }
-
-  const payload = (await response.json()) as AccountsResponse;
-  return payload.data.map(mapAccountToClient);
 }
+
+const ALL_TIME: DateRange = { from: "", to: "" };
+const NO_OWNER = "__none__";
+// The list keeps no filter state in the URL, so returning lands on the plain list.
+const DETAIL_QUERY = `?returnTo=${encodeURIComponent("/clients")}`;
 
 async function readClientError(response: Response, fallback: string) {
   try {
@@ -192,7 +197,7 @@ function ClientCard({ client, showMoney, onEdit, onDelete }: { client: ClientRow
       className="flex cursor-pointer flex-col gap-4 rounded-xl border border-border bg-card p-5 shadow-sm transition-all hover:shadow-md"
     >
       <div className="flex items-start justify-between gap-3">
-        <Link href={`/clients/${client.id}`} className="flex min-w-0 items-center gap-3">
+        <Link href={`/clients/${client.id}${DETAIL_QUERY}`} className="flex min-w-0 items-center gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white shadow-sm" style={{ backgroundColor: client.avatarColor }}>
             {client.initials}
           </div>
@@ -234,7 +239,7 @@ function ClientCard({ client, showMoney, onEdit, onDelete }: { client: ClientRow
           <button onClick={() => onDelete(client)} className="rounded-lg bg-muted p-1.5 text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600" title="Delete client">
             <Trash2 className="h-3.5 w-3.5" />
           </button>
-          <Link href={`/clients/${client.id}`} className="rounded-lg bg-muted p-1.5 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary" title="Open client">
+          <Link href={`/clients/${client.id}${DETAIL_QUERY}`} className="rounded-lg bg-muted p-1.5 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary" title="Open client">
             <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </div>
@@ -249,8 +254,10 @@ export default function ClientsPage() {
   const [clientsList, setClientsList] = useState<ClientRow[]>([]);
   const [view, setView] = useState<ViewMode>("list");
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [tierFilter, setTierFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  const [tierFilter, setTierFilter] = useState<string[]>([]);
+  const [ownerFilter, setOwnerFilter] = useState<string[]>([]);
+  const [createdRange, setCreatedRange] = useState<DateRange>(ALL_TIME);
   const [sortKey, setSortKey] = useState<SortKey>("mrr");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -279,7 +286,7 @@ export default function ClientsPage() {
       })
       .catch((err) => {
         if (controller.signal.aborted) return;
-        setError(err instanceof Error ? err.message : "Could not load accounts");
+        setError(err instanceof Error ? err.message : "Không tải được danh sách khách hàng");
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -298,14 +305,13 @@ export default function ClientsPage() {
   };
 
   const filtered = useMemo(() => {
-    const normalizedQuery = query.toLowerCase().trim();
     return clientsList
-      .filter((client) => {
-        if (normalizedQuery && !`${client.name} ${client.code} ${client.owner}`.toLowerCase().includes(normalizedQuery)) return false;
-        if (statusFilter !== "all" && client.status !== statusFilter) return false;
-        if (tierFilter !== "all" && client.tier !== tierFilter) return false;
-        return true;
-      })
+      .filter((client) => matchesSearch(query, client.name, client.code, client.owner)
+        && isWithinRange(client.createdDay, createdRange)
+        && matchesAny(ownerFilter, client.ownerId ?? NO_OWNER)
+        && matchesAny(statusFilter, client.status)
+        // The tier comes from the annual value: never filter on it for a viewer who cannot see money.
+        && (!showMoney || matchesAny(tierFilter, client.tier)))
       .sort((a, b) => {
         const left = a[sortKey];
         const right = b[sortKey];
@@ -316,13 +322,25 @@ export default function ClientsPage() {
           ? String(left).localeCompare(String(right))
           : String(right).localeCompare(String(left));
       });
-  }, [clientsList, query, sortDir, sortKey, statusFilter, tierFilter]);
+  }, [clientsList, createdRange, ownerFilter, query, showMoney, sortDir, sortKey, statusFilter, tierFilter]);
+
+  const ownerPeople = useMemo(() => {
+    const people = new Map<string, FilterPerson>();
+    for (const client of clientsList) {
+      if (client.ownerId) people.set(client.ownerId, { id: client.ownerId, name: client.owner, email: client.ownerEmail, avatarUrl: client.ownerAvatarUrl });
+    }
+    const sorted = [...people.values()].sort((a, b) => a.name.localeCompare(b.name, "vi"));
+    return clientsList.some((client) => !client.ownerId) ? [...sorted, { id: NO_OWNER, name: "Chưa có PIC" }] : sorted;
+  }, [clientsList]);
+  const hasCreatedDay = clientsList.some((client) => client.createdDay);
+  const activeFilterCount = [Boolean(query.trim()), Boolean(createdRange.from || createdRange.to), ownerFilter.length > 0, statusFilter.length > 0, showMoney && tierFilter.length > 0].filter(Boolean).length;
+  const resetFilters = () => { setQuery(""); setCreatedRange(ALL_TIME); setOwnerFilter([]); setStatusFilter([]); setTierFilter([]); };
+  const atRiskOnly = statusFilter.length === 1 && statusFilter[0] === "At Risk";
 
   const totalMRR = clientsList.filter((client) => client.status === "Active").reduce((sum, client) => sum + client.mrr, 0);
   const atRisk = clientsList.filter((client) => client.status === "At Risk").length;
 
   const filterStatusOptions = [
-    { value: "all", label: "All Status" },
     { value: "Active", label: "Active", color: "#16a34a" },
     { value: "At Risk", label: "At Risk", color: "#d97706" },
     { value: "Prospect", label: "Prospect", color: "#0891b2" },
@@ -330,7 +348,6 @@ export default function ClientsPage() {
   ];
 
   const filterTierOptions = [
-    { value: "all", label: "All Tiers" },
     { value: "Enterprise", label: "Enterprise" },
     { value: "Growth", label: "Growth" },
     { value: "Starter", label: "Starter" }
@@ -372,8 +389,9 @@ export default function ClientsPage() {
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     const name = companyName.trim();
-    const code = accountCode.trim() || initialsFor(name);
-    if (!name || !code) return;
+    // A blank code is generated by the API (unique in the workspace); two-letter initials made here collided.
+    const code = accountCode.trim() || undefined;
+    if (!name) return;
 
     setSaving(true);
     try {
@@ -440,25 +458,16 @@ export default function ClientsPage() {
   };
 
   return (
-    <AppShell activeRoute="/clients" title="Clients">
-        <main className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:p-5">
-          <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
-            <div>
-              <h1 className="!text-xl font-bold text-foreground">Client Accounts</h1>
-              <p className="mt-0.5 text-sm text-muted-foreground">{clientsList.filter((client) => client.status === "Active").length} active</p>
-            </div>
-            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-              <button onClick={() => downloadCsv("uplark-clients-filtered.csv", showMoney ? ["Name", "Code", "Stage", "Tier", "Status", "MRR", "Owner"] : ["Name", "Code", "Stage", "Status", "Owner"], filtered.map((client) => showMoney ? [client.name, client.code, client.stage, client.tier, client.status, client.mrr, client.owner] : [client.name, client.code, client.stage, client.status, client.owner]))} title="Export the currently loaded and filtered clients" aria-label={`Export ${filtered.length} filtered clients as CSV`} className="flex items-center gap-1.5 rounded-xl border border-border px-3.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted">
-                <Download className="h-4 w-4" /> Export filtered CSV
-              </button>
-              <button
-                onClick={openCreateClient}
-                className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm"
-              >
-                <Plus className="h-4 w-4" /> Add Client
-              </button>
-            </div>
-          </div>
+    <AppShell activeRoute="/clients" title="Khách hàng">
+        <main className={pageMainClassName}>
+          <PageHeader
+            title="Khách hàng"
+            subtitle={`${clientsList.filter((client) => client.status === "Active").length} khách hàng đang hoạt động`}
+            actions={<>
+              <HeaderButton icon={<Download className="h-4 w-4" />} onClick={() => downloadCsv("uplark-clients-filtered.csv", showMoney ? ["Name", "Code", "Stage", "Tier", "Status", "MRR", "Owner"] : ["Name", "Code", "Stage", "Status", "Owner"], filtered.map((client) => showMoney ? [client.name, client.code, client.stage, client.tier, client.status, client.mrr, client.owner] : [client.name, client.code, client.stage, client.status, client.owner]))} title="Xuất các khách hàng đang hiển thị theo bộ lọc" aria-label={`Xuất ${filtered.length} khách hàng đang lọc ra CSV`}>Xuất CSV</HeaderButton>
+              <HeaderButton variant="primary" icon={<Plus className="h-4 w-4" />} onClick={openCreateClient}>Thêm khách hàng</HeaderButton>
+            </>}
+          />
 
           <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
             {showMoney && <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
@@ -467,9 +476,9 @@ export default function ClientsPage() {
             </div>}
             <button
               type="button"
-              aria-pressed={statusFilter === "At Risk"}
-              onClick={() => setStatusFilter((current) => (current === "At Risk" ? "all" : "At Risk"))}
-              className={`rounded-xl border bg-card p-4 text-left shadow-sm transition-colors hover:bg-muted/30 ${statusFilter === "At Risk" ? "border-primary ring-1 ring-primary" : "border-border"}`}
+              aria-pressed={atRiskOnly}
+              onClick={() => setStatusFilter(atRiskOnly ? [] : ["At Risk"])}
+              className={`rounded-xl border bg-card p-4 text-left shadow-sm transition-colors hover:bg-muted/30 ${atRiskOnly ? "border-primary ring-1 ring-primary" : "border-border"}`}
             >
               <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">At Risk</p>
               <p className="font-mono text-2xl font-bold tabular-nums text-foreground">{atRisk}</p>
@@ -477,20 +486,13 @@ export default function ClientsPage() {
           </div>
 
           <div className="rounded-xl border border-border bg-card shadow-sm">
-            <div className="flex flex-col items-stretch gap-3 border-b border-border px-3 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:px-4 xl:flex-nowrap">
-              <FilterBar className="min-w-0 flex-1" onReset={query || statusFilter !== "all" || tierFilter !== "all" ? () => { setQuery(""); setStatusFilter("all"); setTierFilter("all"); } : undefined}>
-              <div className="flex h-10 min-w-[220px] flex-1 items-center gap-2.5 rounded-[10px] border border-input bg-background px-3.5">
-                <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search by name, code, owner..."
-                  className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
-                />
-              </div>
-
-              <FilterField className="w-full sm:w-40"><CrmSelect ariaLabel="Lọc trạng thái" options={filterStatusOptions} value={statusFilter} onChange={setStatusFilter} /></FilterField>
-              {showMoney && <FilterField className="w-full sm:w-40"><CrmSelect ariaLabel="Lọc phân hạng" options={filterTierOptions} value={tierFilter} onChange={setTierFilter} /></FilterField>}
+            <div className="flex flex-col items-stretch gap-3 border-b border-border px-3 py-3 sm:flex-row sm:flex-wrap sm:items-end sm:px-4">
+              <FilterBar className="min-w-0 flex-1" onReset={activeFilterCount ? resetFilters : undefined} activeCount={activeFilterCount}>
+                <FilterField label="Tìm kiếm" className="min-w-[220px] flex-1"><SearchFilter className="" value={query} onChange={setQuery} placeholder="Tên, mã khách hàng, PIC..." ariaLabel="Tìm khách hàng" /></FilterField>
+                {hasCreatedDay && <FilterField label="Ngày tạo"><DateRangeFilter value={createdRange} onChange={(range) => setCreatedRange(range)} ariaLabel="Lọc theo ngày tạo khách hàng" /></FilterField>}
+                <PersonFilter label="PIC" people={ownerPeople} values={ownerFilter} onChange={setOwnerFilter} allLabel="Tất cả PIC" />
+                <MultiSelectFilter label="Trạng thái" options={filterStatusOptions} values={statusFilter} onChange={setStatusFilter} allLabel="Tất cả trạng thái" searchable={false} />
+                {showMoney && <MultiSelectFilter label="Phân hạng" options={filterTierOptions} values={tierFilter} onChange={setTierFilter} allLabel="Tất cả phân hạng" searchable={false} />}
               </FilterBar>
 
               <div className="flex items-center self-end rounded-xl bg-muted p-0.5 sm:ml-auto sm:self-auto">
@@ -506,7 +508,13 @@ export default function ClientsPage() {
             {error && <div className="border-b border-border bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</div>}
 
             {loading ? (
-              <div className="py-16 text-center text-sm text-muted-foreground">Loading accounts...</div>
+              <div className="py-16 text-center text-sm text-muted-foreground">Đang tải khách hàng…</div>
+            ) : filtered.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <Building2 className="mb-3 h-10 w-10 text-muted-foreground/30" />
+                <p className="text-sm font-medium text-foreground">{clientsList.length ? "Không có kết quả phù hợp bộ lọc" : "Chưa có khách hàng nào"}</p>
+                {activeFilterCount ? <button type="button" onClick={resetFilters} className="mt-3 rounded-lg border border-border px-3 py-1.5 !text-xs !font-semibold text-primary hover:bg-muted">Đặt lại bộ lọc</button> : null}
+              </div>
             ) : view === "grid" ? (
               <div className="grid grid-cols-1 gap-4 p-4 xl:grid-cols-3">
                 <AnimatePresence mode="popLayout">
@@ -548,7 +556,7 @@ export default function ClientsPage() {
                             className="group cursor-pointer border-b border-border/50 transition-colors hover:bg-muted/30"
                           >
                             <td className="px-4 py-3.5">
-                              <Link href={`/clients/${client.id}`} className="flex items-center gap-3">
+                              <Link href={`/clients/${client.id}${DETAIL_QUERY}`} className="flex items-center gap-3">
                                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-bold text-white shadow-sm" style={{ backgroundColor: client.avatarColor }}>
                                   {client.initials}
                                 </div>
@@ -588,7 +596,7 @@ export default function ClientsPage() {
                             </td>
                             <td className="px-4 py-3.5">
                               <div className="flex items-center gap-1">
-                                <Link aria-label={`Open ${client.name}`} href={`/clients/${client.id}`} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-primary">
+                                <Link aria-label={`Open ${client.name}`} href={`/clients/${client.id}${DETAIL_QUERY}`} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-primary">
                                   <ArrowRight className="h-4 w-4" />
                                 </Link>
                                 {client.ownerEmail ? <a aria-label={`Email ${client.owner}`} href={`mailto:${client.ownerEmail}`} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted"><Mail className="h-4 w-4" /></a> : null}
@@ -606,20 +614,12 @@ export default function ClientsPage() {
                     </AnimatePresence>
                   </tbody>
                 </table>
-
-                {filtered.length === 0 && (
-                  <div className="flex flex-col items-center justify-center py-16 text-center">
-                    <Building2 className="mb-3 h-10 w-10 text-muted-foreground/30" />
-                    <p className="text-sm font-medium text-foreground">No clients found</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Accounts API returned no matching records.</p>
-                  </div>
-                )}
               </div>
             )}
 
             <div className="flex items-center justify-between rounded-b-xl border-t border-border bg-muted/20 px-4 py-3">
               <p className="text-xs text-muted-foreground">
-                Showing <span className="font-semibold text-foreground">{filtered.length}</span> of <span className="font-semibold text-foreground">{clientsList.length}</span> clients
+                Hiển thị <span className="font-semibold text-foreground">{filtered.length}</span> / <span className="font-semibold text-foreground">{clientsList.length}</span> khách hàng
               </p>
             </div>
           </div>
@@ -693,7 +693,7 @@ export default function ClientsPage() {
                     <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Account Code</span>
                     <input
                       type="text"
-                      placeholder="AUTO or customer code"
+                      placeholder="Để trống: hệ thống tự tạo mã"
                       value={accountCode}
                       onChange={(event) => setAccountCode(event.target.value)}
                       className="w-full rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/20"

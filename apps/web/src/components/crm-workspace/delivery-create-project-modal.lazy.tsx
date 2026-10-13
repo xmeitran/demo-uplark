@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { CreateProjectInput, ProjectPlanPreviewResponse, ProjectStageSummary, ProjectSummary, UpdateProjectInput } from "@b2b-crm/contracts";
+import { PROJECT_TYPE_OPTIONS, projectKindOf, type CreateProjectInput, type ProjectPlanPreviewResponse, type ProjectStageSummary, type ProjectSummary, type UpdateProjectInput } from "@b2b-crm/contracts";
 import { CustomDropdown, DatePickerField, FormField, FormTextArea, Modal, type TaskSelectOption } from "./tasks-workbench";
 
 type DeliveryCreateProjectAccountOption = {
@@ -62,6 +62,8 @@ export default function DeliveryCreateProjectModal({
 }>) {
   const [accountId, setAccountId] = useState(initialProject?.accountId || accounts[0]?.id || "");
   const [code, setCode] = useState("");
+  // V-01: Loại dự án is required when a project is created.
+  const [projectType, setProjectType] = useState("");
   const [name, setName] = useState("");
   const [ownerUserId, setOwnerUserId] = useState(resourceOptions[0]?.value || "none");
   const [status, setStatus] = useState("active");
@@ -85,6 +87,7 @@ export default function DeliveryCreateProjectModal({
 
     setAccountId(initialProject?.accountId || accounts[0]?.id || "");
     setCode(initialProject?.code || "");
+    setProjectType(initialProject ? projectKindOf(initialProject.projectType) ?? "delivery" : "");
     setName(initialProject?.name || "");
     setOwnerUserId(initialStage?.ownerUserId || resourceOptions[0]?.value || "none");
     setStatus(initialProject?.status || "active");
@@ -180,7 +183,7 @@ export default function DeliveryCreateProjectModal({
   const selectedAccount = accounts.find((account) => account.id === accountId);
   const selectedOwner = resourceOptions.find((option) => option.value === ownerUserId);
   const dateRangeInvalid = Boolean(plannedStartAt && plannedEndAt && plannedEndAt < plannedStartAt);
-  const canSubmit = Boolean(accountId && name.trim() && !dateRangeInvalid);
+  const canSubmit = Boolean(accountId && name.trim() && projectType && !dateRangeInvalid);
   const timelineSummary =
     plannedStartAt && plannedEndAt
       ? `${plannedStartAt} -> ${plannedEndAt}`
@@ -208,6 +211,7 @@ export default function DeliveryCreateProjectModal({
             accountId,
             accountName: selectedAccount?.name,
             code: code.trim() || undefined,
+            projectType,
             createStageTemplate: isEditMode ? undefined : createStageTemplate,
             milestoneMode: isEditMode ? undefined : usingGeneratedTemplate ? "manual" : milestoneMode,
             milestoneTemplateKey: isEditMode || usingGeneratedTemplate ? undefined : milestoneMode === "auto" ? "pilot-v1" : undefined,
@@ -264,6 +268,13 @@ export default function DeliveryCreateProjectModal({
               onChange={setOwnerUserId}
             />
           </div>
+
+          <CustomDropdown
+            label="Loại dự án"
+            value={projectType}
+            options={PROJECT_TYPE_OPTIONS}
+            onChange={setProjectType}
+          />
 
           <FormField
             label="Tên dự án"

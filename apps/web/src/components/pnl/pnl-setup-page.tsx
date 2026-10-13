@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/constructor-x/app-shell";
+import { PageHeader, pageMainClassName } from "@/components/page-header";
 import { WorkspaceTabBar } from "@/components/workspace-tab-bar";
 import { PnlSetupItems } from "./pnl-setup-items";
 import { PnlSetupParameters } from "./pnl-setup-parameters";
@@ -14,7 +15,7 @@ import { SETUP_TABS as TABS, setupTabOf } from "./pnl-cost-shared";
 const PERIOD_KEY = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 /**
- * "Admin › Thiết lập P&L" (mục 6.2–6.6): five tabs, each read from and saved to /api/pnl/*.
+ * "Thiết lập P&L", opened from Admin (mục 6.2–6.6): five tabs, each read from and saved to /api/pnl/*.
  * Tab and month live in the URL so the checklist links ("Quỹ chi phí chung ›") open the right view.
  */
 export function PnlSetupPage() {
@@ -41,10 +42,8 @@ export function PnlSetupPage() {
 
   return (
     <AppShell activeRoute="/admin" title="Thiết lập P&L">
-      <main className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
-        <header>
-          <h1 className="!text-xl font-bold text-foreground">Admin › Thiết lập P&amp;L</h1>
-        </header>
+      <main className={pageMainClassName}>
+        <PageHeader back={{ href: "/admin", label: "Admin" }} title="Thiết lập P&L" subtitle="Khoản mục, tham số, quỹ chi phí chung, khóa kỳ và mẫu khoản mục dùng để tính P&L." />
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0 max-w-full overflow-x-auto">
             <WorkspaceTabBar items={TABS} value={tab} onChange={(next) => update({ tab: next })} ariaLabel="Thiết lập P&L" idPrefix="pnl-setup" className="[&>button]:!min-w-0 [&>button]:!flex-none [&_.truncate]:!overflow-visible" />

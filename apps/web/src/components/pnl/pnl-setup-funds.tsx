@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import type { PnlFundAmountInput, PnlFundInput, PnlFundsResponse, PnlFundSummary } from "@b2b-crm/contracts";
 import { CrmSelect } from "@/components/crm-workspace/crm-select";
+import { MonthFilter } from "@/components/filters";
 import { inputClass, parseDecimalInput } from "./pnl-cost-shared";
 import { formatDay, formatHoursValue, formatMillions, formatMonth, formatPercent } from "./pnl-format";
 import { fixTargetHref } from "./pnl-query";
@@ -33,7 +34,7 @@ export function PnlSetupFunds({ periodKey, onPeriodChange }: Readonly<{ periodKe
   const period = data.periodKey;
   const fund = data.funds.find((entry) => entry.fundId === selectedId) ?? data.funds[0] ?? null;
   const locked = data.periodState === "locked" || Boolean(fund?.period?.locked);
-  const periodOptions = [...new Set([period, ...data.periodOptions])].sort((a, b) => b.localeCompare(a)).map((key) => ({ value: key, label: `Kỳ ${formatMonth(key)}` }));
+  const periodOptions = [...new Set([period, ...data.periodOptions])];
   const fundUrl = (suffix: string) => `/api/pnl/funds/${encodeURIComponent(fund?.fundId ?? "")}/periods/${period}${suffix}`;
   const unequal = Boolean(fund?.period && fund.period.status === "allocated" && fund.period.allocatedAmount !== fund.period.amount);
 
@@ -47,7 +48,7 @@ export function PnlSetupFunds({ periodKey, onPeriodChange }: Readonly<{ periodKe
         {/* ① Danh sách quỹ */}
         <section aria-label="Danh sách quỹ" className={`${cardClass} min-h-[16rem] p-3`}>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="w-[8.75rem]"><CrmSelect ariaLabel="Kỳ" value={period} onChange={(next) => { setAmountForm(false); onPeriodChange(next); }} options={periodOptions} /></div>
+            <MonthFilter ariaLabel="Kỳ" value={period} months={periodOptions} onChange={(next) => { setAmountForm(false); onPeriodChange(next); }} />
             {meta.canEdit ? <button type="button" className={`${linkClass} rounded px-1 py-1 text-sm`} onClick={() => setFundForm("new")}>+ Thêm quỹ</button> : null}
           </div>
           <ul className="mt-3 space-y-2">

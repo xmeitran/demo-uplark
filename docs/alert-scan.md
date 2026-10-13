@@ -5,7 +5,8 @@
 `POST /api/internal/alert-scan` (header `x-alert-scan-token`) chạy cho mọi workspace đang hoạt động:
 
 1. Đọc tham số 7.6 của workspace (`SystemParameter`, mặc định theo tài liệu) và danh mục điểm kích hoạt (bật/tắt, tầng thông báo).
-2. Với mọi dự án chưa đóng, tính các điểm kích hoạt theo thời gian: NL-03, NL-04, NL-05, TD-01, TD-02, TD-03, TD-06, BRI-04, DL-01; gọi lại quy tắc sổ vấn đề cho BRI-02 và YC-01.
+2. Với mọi dự án chưa đóng, tính các điểm kích hoạt theo thời gian: NL-03, NL-04, NL-05, TD-01, TD-02, TD-03, TD-06, BRI-04, DL-01; gọi lại quy tắc sổ vấn đề cho BRI-02. DL-01 tính cả giờ Pre-sale đang Chờ xử lý (chốt 13/10/2026).
+   Nhóm YC và điểm kích hoạt YC-01 đã bỏ cùng luồng Yêu cầu thay đổi: lượt quét tự đóng mọi cảnh báo YC-01 còn mở (lý do "Loại cảnh báo đã bỏ khỏi danh mục"). Tham số "SLA các bước yêu cầu thay đổi" không còn ở mục 7.6; giá trị đã lưu không được đọc.
 3. Đối chiếu với bản ghi `ProjectWarning`: mở mới hoặc làm mới theo `dedupeKey`, đóng khi điều kiện kết thúc của danh mục đã thỏa. Chạy lại bao nhiêu lần cũng không sinh bản ghi trùng.
 4. Gửi thông báo (V-37): mỗi cảnh báo gửi một lần; gửi lại khi mức tăng hoặc quá hạn; báo đóng một lần. Các cảnh báo cùng nhóm trong một lượt gộp thành một tin cho mỗi người nhận.
 

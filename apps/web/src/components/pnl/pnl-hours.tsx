@@ -1,15 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft } from "lucide-react";
 import type { PnlGateStatusCode, PnlSourceEntriesResponse, PnlSourceEntryRow } from "@b2b-crm/contracts";
 import { AppShell } from "@/components/constructor-x/app-shell";
+import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
+import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilter, SearchFilter, matchesAny } from "@/components/filters";
+import { PageHeader, pageMainClassName } from "@/components/page-header";
 import { PersonLink } from "@/components/person-link";
-import { formatDay, formatHoursValue, formatMonth, formatDong } from "./pnl-format";
-import { FIX_TARGET_LABELS, entriesApiQuery, fixTargetHref } from "./pnl-query";
-import { EmptyRow, PnlLoadError, cardClass, mutedNoteClass, tdClass, tdNumberClass, thClass, thNumberClass, usePnlLoad, warnTextClass } from "./pnl-ui";
+import { formatDay, formatDong, formatHoursValue, formatMonth } from "./pnl-format";
+import { ENTRY_GROUP_NAME, ENTRY_GROUP_TODO, ENTRY_STATUS_MEANING, ENTRY_STATUS_NAME, FIX_ACTION_LABELS, STAFF_COST_PHRASE, plainGateReason } from "./pnl-plain";
+import { PNL_ENTRY_STATUSES, entriesApiQuery, fixTargetHref, hoursFilterCount, hoursSearch, parseHoursState, type PnlHoursState } from "./pnl-query";
+import { EmptyRow, HelpToggle, NoValue, PnlLoadError, cardClass, mutedNoteClass, tdClass, tdNumberClass, thClass, thNumberClass, useDebouncedText, usePnlLoad, warnTextClass } from "./pnl-ui";
 
 const PAGE_SIZE = 100;
 
@@ -19,14 +22,7 @@ const STATUS_CLASS: Record<PnlGateStatusCode, string> = {
   pending: "bg-amber-50 text-amber-800"
 };
 
-const TITLES: Record<PnlGateStatusCode, { title: string; hint: string }> = {
-  pending: {
-    title: "Giờ log Chờ xử lý",
-    hint: "Giờ còn thiếu điều kiện để vào P&L dự án: cost rate của tháng, phân loại, hạng mục, Lớp 2 không khớp hoặc ghi bù vào tháng đã khóa. Bổ sung xong, giờ tự chuyển sang Được tính."
-  },
-  included: { title: "Giờ log Được tính", hint: "Giờ đã vào chi phí của P&L dự án." },
-  excluded: { title: "Giờ log Bị loại", hint: "Giờ không thuộc P&L dự án: nội bộ, sau mốc đóng P&L hoặc Pre-sale của deal thua. Vẫn được quy ra tiền ở dòng cấp công ty." }
-};
+const TITLES: Record<PnlGateStatusCode, string> = { pending: "Giờ chờ xử lý", included: "Giờ đã tính vào P&L", excluded: "Giờ không tính vào P&L dự án" };
 
 /** Theo dự án và người, rồi theo ngày. */
 function byProjectAndPerson(left: PnlSourceEntryRow, right: PnlSourceEntryRow) {
@@ -35,77 +31,86 @@ function byProjectAndPerson(left: PnlSourceEntryRow, right: PnlSourceEntryRow) {
     || left.workDate.localeCompare(right.workDate);
 }
 
-/** Link to the one screen where this hour gets fixed. */
+/** The one action that fixes this hour, as a link to the screen where it is done. */
 function FixLink({ entry }: Readonly<{ entry: PnlSourceEntryRow }>) {
-  if (!entry.target) return <span className="text-muted-foreground">—</span>;
+  if (!entry.target) return <NoValue why="Không cần xử lý gì cho giờ này" />;
   const href = entry.target === "pending_hours" && entry.taskId
     ? `/tasks/${encodeURIComponent(entry.taskId)}`
     : fixTargetHref(entry.target, { projectId: entry.projectId, periodKey: entry.periodKey });
-  return <Link href={href} className="whitespace-nowrap text-xs font-semibold !text-primary hover:underline">{FIX_TARGET_LABELS[entry.target]} ›</Link>;
+  return <Link href={href} className="text-xs font-semibold !text-primary hover:underline">{FIX_ACTION_LABELS[entry.target]} ›</Link>;
 }
 
-function EntryTable({ entries, moneyVisible, showDeadline }: Readonly<{ entries: PnlSourceEntryRow[]; moneyVisible: boolean; showDeadline: boolean }>) {
+function EntryTable({ entries, moneyVisible, showDeadline, onReset }: Readonly<{ entries: PnlSourceEntryRow[]; moneyVisible: boolean; showDeadline: boolean; onReset?: () => void }>) {
   const [limit, setLimit] = useState(PAGE_SIZE);
   useEffect(() => setLimit(PAGE_SIZE), [entries]);
-  const columnCount = 7 + (moneyVisible ? 1 : 0) + (showDeadline ? 2 : 0);
+  const columnCount = 5 + (showDeadline ? 1 : 0);
   return (
     <>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[1040px] border-separate border-spacing-0 text-left">
+        {/* Six columns at most, so the table fits its card at 1280px: related facts share a cell on two lines. */}
+        <table className="w-full min-w-[760px] table-fixed border-separate border-spacing-0 text-left">
+          <colgroup>
+            <col className="w-[30%]" /><col className="w-[16%]" /><col className="w-[9%]" /><col className="w-[21%]" />
+            {showDeadline ? <col className="w-[12%]" /> : null}<col className="w-[12%]" />
+          </colgroup>
           <thead>
             <tr className="bg-muted/30">
-              <th scope="col" className={thClass}>Dự án</th>
-              <th scope="col" className={thClass}>Nhân sự</th>
-              <th scope="col" className={thClass}>Ngày</th>
-              <th scope="col" className={thClass}>Task · Hạng mục</th>
-              <th scope="col" className={thNumberClass}>Giờ</th>
-              <th scope="col" className={thClass}>Kết quả cổng lọc</th>
-              {moneyVisible ? <th scope="col" className={thNumberClass}>Cost rate</th> : null}
-              {showDeadline ? <th scope="col" className={thClass}>Hạn xử lý</th> : null}
-              {showDeadline ? <th scope="col" className={thClass}>Người xử lý</th> : null}
-              <th scope="col" className={thClass}>Nơi sửa</th>
+              <th scope="col" title="Dự án và task của dòng giờ" className={thClass}>Dự án · Task</th>
+              <th scope="col" className={thClass}>Nhân sự · Ngày ghi</th>
+              <th scope="col" title={moneyVisible ? "Số giờ; dòng dưới là đơn giá giờ = chi phí nhân sự tháng được duyệt ÷ giờ chuẩn của tháng" : "Số giờ đã ghi"} className={thNumberClass}>Giờ</th>
+              <th scope="col" title="Giờ đã tính vào P&L, đang chờ xử lý hay không tính — kèm lý do" className={thClass}>Trạng thái · Lý do</th>
+              {showDeadline ? <th scope="col" title="Ngày cuối cùng nên xử lý xong giờ này và PIC chịu trách nhiệm xử lý" className={thClass}>Hạn · Người xử lý</th> : null}
+              <th scope="col" title="Việc cần làm để giờ này được tính, và nơi làm" className={thClass}>Việc cần làm</th>
             </tr>
           </thead>
           <tbody>
-            {entries.length === 0 ? <EmptyRow colSpan={columnCount}>Không có giờ log nào trong phạm vi này.</EmptyRow> : null}
+            {entries.length === 0 ? (
+              <EmptyRow colSpan={columnCount}>
+                {onReset ? <>Không có kết quả phù hợp bộ lọc. <button type="button" onClick={onReset} className="font-semibold text-primary hover:underline">Đặt lại bộ lọc</button></> : showDeadline ? "Không có giờ nào đang chờ xử lý trong phạm vi này." : "Không có giờ nào trong phạm vi này."}
+              </EmptyRow>
+            ) : null}
             {entries.slice(0, limit).map((entry) => (
               <tr key={entry.id} className="align-top transition-colors hover:bg-muted/25">
-                <td className={tdClass}>
+                <td className={`${tdClass} break-words`}>
                   {entry.projectId
-                    ? <Link href={`/pnl/${encodeURIComponent(entry.projectId)}`} className="font-semibold !text-foreground hover:!text-primary">{entry.projectName ?? entry.projectCode ?? entry.projectId}</Link>
-                    : "—"}
+                    ? <Link href={`/pnl/${encodeURIComponent(entry.projectId)}`} title="Mở P&L của dự án" className="font-semibold !text-foreground hover:!text-primary">{entry.projectName ?? entry.projectCode ?? entry.projectId}</Link>
+                    : <NoValue why="Giờ này chưa gắn với dự án nào" />}
+                  <span className="mt-0.5 block text-xs">
+                    {entry.taskId
+                      ? <Link href={`/tasks/${encodeURIComponent(entry.taskId)}`} className="!text-foreground hover:!text-primary">{entry.taskTitle ?? entry.taskId}</Link>
+                      : <NoValue why="Giờ này không gắn với task nào" />}
+                  </span>
                 </td>
-                <td className={tdClass}>
+                <td className={`${tdClass} break-words`}>
                   <PersonLink userId={entry.userId} className="!text-foreground hover:!text-primary">{entry.userDisplayName}</PersonLink>
+                  <span className="mt-0.5 block whitespace-nowrap font-mono text-xs tabular-nums text-muted-foreground">{formatDay(entry.workDate)}</span>
                 </td>
-                <td className={`${tdClass} whitespace-nowrap font-mono tabular-nums`}>{formatDay(entry.workDate)}</td>
-                <td className={tdClass}>
-                  {entry.taskId
-                    ? <Link href={`/tasks/${encodeURIComponent(entry.taskId)}`} className="!text-foreground hover:!text-primary">{entry.taskTitle ?? entry.taskId}</Link>
-                    : "—"}
-                  <span className="mt-0.5 block text-[11px] text-muted-foreground">{entry.contractItemName ?? "Chưa có hạng mục"}</span>
+                <td className={tdNumberClass}>
+                  {formatHoursValue(entry.minutes)}
+                  {moneyVisible ? (
+                    <span title="Đơn giá giờ (đồng mỗi giờ)" className="mt-0.5 block text-[11px] font-normal text-muted-foreground">
+                      {entry.hourlyCostRate === null ? <NoValue why={`Chưa có ${STAFF_COST_PHRASE} của tháng ${formatMonth(entry.periodKey)}`} /> : `${formatDong(entry.hourlyCostRate)}/giờ`}
+                    </span>
+                  ) : null}
                 </td>
-                <td className={tdNumberClass}>{formatHoursValue(entry.minutes)}</td>
-                <td className={tdClass}>
-                  <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-bold ${STATUS_CLASS[entry.status]}`}>{entry.statusLabel}</span>
-                  {entry.reasonLabels.length ? <span className="mt-1 block text-[11px] text-muted-foreground">{entry.reasonLabels.join(" · ")}</span> : null}
-                  {entry.blocksG7 ? <span className={`mt-1 block text-[11px] ${warnTextClass}`}>Chặn duyệt G7</span> : null}
-                  {entry.awaitingContract ? <span className="mt-1 block text-[11px] text-muted-foreground">Pre-sale chờ ký hợp đồng</span> : null}
+                <td className={`${tdClass} break-words`}>
+                  <span title={ENTRY_STATUS_MEANING[entry.status]} className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-bold ${STATUS_CLASS[entry.status]}`}>{ENTRY_STATUS_NAME[entry.status]}</span>
+                  {entry.reasons.length ? <span className="mt-1 block text-[11px] text-muted-foreground">{entry.reasons.map((code, index) => plainGateReason(code, entry.reasonLabels[index])).join(" · ")}</span> : null}
+                  {entry.blocksG7 ? <span className={`mt-1 block text-[11px] ${warnTextClass}`}>Chặn duyệt nghiệm thu G7</span> : null}
                 </td>
-                {moneyVisible ? <td title="đồng mỗi giờ" className={tdNumberClass}>{formatDong(entry.hourlyCostRate)}</td> : null}
                 {showDeadline ? (
-                  <td className={`${tdClass} whitespace-nowrap text-xs ${entry.overdue ? "font-bold text-rose-700" : ""}`}>
-                    {entry.deadline ? `${formatDay(entry.deadline)}${entry.overdue ? " · quá hạn" : ""}` : "—"}
+                  <td className={`${tdClass} break-words text-xs`}>
+                    <span className={`block whitespace-nowrap ${entry.overdue ? "font-bold text-rose-700" : ""}`}>
+                      {entry.deadline ? `${formatDay(entry.deadline)}${entry.overdue ? " · quá hạn" : ""}` : <NoValue why="Giờ này không có hạn xử lý (dự án thử nghiệm hoặc pre-sale chờ ký hợp đồng)" />}
+                    </span>
+                    <span className="mt-0.5 block">
+                      {entry.ownerUserId
+                        ? <PersonLink userId={entry.ownerUserId} className="!text-foreground hover:!text-primary">{entry.ownerDisplayName}</PersonLink>
+                        : <span className={warnTextClass}>Dự án chưa có PIC</span>}
+                    </span>
                   </td>
                 ) : null}
-                {showDeadline ? (
-                  <td className={`${tdClass} text-xs`}>
-                    {entry.ownerUserId
-                      ? <PersonLink userId={entry.ownerUserId} className="!text-foreground hover:!text-primary">{entry.ownerDisplayName}</PersonLink>
-                      : <span className={warnTextClass}>Chưa có PIC</span>}
-                  </td>
-                ) : null}
-                <td className={tdClass}><FixLink entry={entry} /></td>
+                <td className={`${tdClass} break-words`}><FixLink entry={entry} /></td>
               </tr>
             ))}
           </tbody>
@@ -122,54 +127,96 @@ function EntryTable({ entries, moneyVisible, showDeadline }: Readonly<{ entries:
   );
 }
 
+/** One option per distinct value of the loaded rows, sorted by label. */
+function optionsOf(rows: readonly PnlSourceEntryRow[], pick: (row: PnlSourceEntryRow) => Array<[string, string]>) {
+  const found = new Map(rows.flatMap(pick));
+  return [...found].map(([value, label]) => ({ value, label })).sort((left, right) => left.label.localeCompare(right.label, "vi"));
+}
+
 /**
- * Danh sách giờ log nguồn (GET /pnl/entries) — mặc định là danh sách "Chờ xử lý" mà dải cam ở Tổng quan và các
- * liên kết "Thiếu … ›" ở P&L dự án mở tới. Phạm vi lấy từ URL: `projectId`, `periodKey` hoặc `from`+`to`, `group`, `status`…
+ * Danh sách giờ đã ghi (GET /pnl/entries) — mặc định là các giờ "Chờ xử lý" mà Tổng quan và P&L dự án dẫn tới.
+ * Bộ lọc nằm trên URL (`fromDay`, `toDay`, `userId`, `projectId`, `status`, `reason`, `group`, `q`; liên kết cũ dùng
+ * `periodKey` hoặc `from`+`to` theo tháng vẫn mở đúng). API lọc theo trạng thái, ngày và nhóm; phần còn lại lọc tại chỗ.
  */
 export function PnlHoursPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const params = useMemo(() => new URLSearchParams(searchParams.toString()), [searchParams]);
-  const { data: payload, error, reload } = usePnlLoad<PnlSourceEntriesResponse>(`/api/pnl/entries?${entriesApiQuery(params)}`);
-  const status = (["included", "excluded"] as const).find((value) => value === params.get("status")) ?? "pending";
-  const projectId = params.get("projectId");
-  const entries = useMemo(() => [...(payload?.data ?? [])].sort(byProjectAndPerson), [payload]);
-  const projectName = projectId ? entries.find((entry) => entry.projectId === projectId)?.projectName : undefined;
-  const range = params.get("periodKey")
-    ? `tháng ${formatMonth(params.get("periodKey"))}`
-    : params.get("from") && params.get("to") ? `từ ${formatMonth(params.get("from"))} đến ${formatMonth(params.get("to"))}` : null;
-  const scopeText = [projectId ? `dự án ${projectName ?? projectId}` : null, range].filter(Boolean).join(" · ");
+  const state = useMemo(() => parseHoursState(params), [params]);
+  const { data: payload, error, loading, reload } = usePnlLoad<PnlSourceEntriesResponse>(`/api/pnl/entries?${entriesApiQuery(params)}`);
+
+  const go = (next: PnlHoursState) => {
+    const query = hoursSearch(next, params);
+    const returnTo = params.get("returnTo");
+    const search = [query, returnTo ? `returnTo=${encodeURIComponent(returnTo)}` : ""].filter(Boolean).join("&");
+    router.replace(search ? `/pnl/hours?${search}` : "/pnl/hours", { scroll: false });
+  };
+  const change = (patch: Partial<PnlHoursState>) => go({ ...state, ...patch });
+  const reset = () => go({ q: "", from: "", to: "", userIds: [], projectIds: [], statuses: ["pending"], reasons: [], groups: [] });
+  const [search, setSearch] = useDebouncedText(state.q, (q) => change({ q }));
+
+  const loaded = useMemo(() => [...(payload?.data ?? [])].sort(byProjectAndPerson), [payload]);
+  const entries = useMemo(() => loaded.filter((entry) =>
+    matchesAny(state.projectIds, entry.projectId)
+    && matchesAny(state.userIds, entry.userId)
+    && matchesAny(state.reasons, entry.reasons)
+    && matchesSearch(state.q, entry.projectName, entry.projectCode, entry.userDisplayName, entry.taskTitle)
+  ), [loaded, state]);
+  const projects = useMemo(() => optionsOf(loaded, (row) => (row.projectId ? [[row.projectId, row.projectName ?? row.projectCode ?? row.projectId]] : [])), [loaded]);
+  const people = useMemo(() => optionsOf(loaded, (row) => [[row.userId, row.userDisplayName]]).map((option) => ({ id: option.value, name: option.label })), [loaded]);
+  const reasons = useMemo(() => optionsOf(loaded, (row) => row.reasons.map((code, index): [string, string] => [code, plainGateReason(code, row.reasonLabels[index])])), [loaded]);
+
+  const status = state.statuses.length === 1 ? state.statuses[0] : null;
+  const onlyPending = status === "pending";
+  const title = status ? TITLES[status] : "Giờ đã ghi theo trạng thái P&L";
+  const projectId = state.projectIds.length === 1 ? state.projectIds[0] : null;
+  const projectName = projectId ? projects.find((project) => project.value === projectId)?.label : undefined;
+  const activeCount = hoursFilterCount(state);
+  const minutes = entries.reduce((total, entry) => total + entry.minutes, 0);
+  const overdue = entries.filter((entry) => entry.overdue).length;
 
   return (
-    <AppShell activeRoute="/pnl" title={TITLES[status].title}>
-      <main className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3 sm:p-4 xl:p-6">
-        <header>
-          <Link
-            href={projectId ? `/pnl/${encodeURIComponent(projectId)}` : "/pnl"}
-            className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border bg-card px-3 text-xs font-semibold !text-foreground shadow-sm transition-colors hover:border-primary/40 hover:!text-primary"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" aria-hidden /> {projectId ? "Quay lại P&L dự án" : "Quay lại Tổng quan P&L"}
-          </Link>
-          <h1 className="mt-3 !text-xl font-bold text-foreground">{TITLES[status].title}</h1>
-          <p className="mt-0.5 max-w-3xl text-sm text-muted-foreground">
-            {TITLES[status].hint}
-            {scopeText ? ` Phạm vi: ${scopeText}.` : ""}
-          </p>
-        </header>
+    <AppShell activeRoute="/pnl" title={title}>
+      <main className={pageMainClassName}>
+        <PageHeader
+          back={projectId ? { href: `/pnl/${encodeURIComponent(projectId)}`, label: projectName ? `P&L của ${projectName}` : "P&L của dự án" } : { href: "/pnl", label: "P&L dự án" }}
+          title={title}
+          subtitle={status ? ENTRY_STATUS_MEANING[status] : "Mọi giờ đã ghi và việc chúng đã được tính vào P&L dự án hay chưa."}
+        />
+        {state.statuses.length === 0 || state.statuses.includes("pending") ? (
+          <HelpToggle label="Cần làm gì với giờ chờ xử lý?" storageKey="pnl-help-hours">
+            {Object.keys(ENTRY_GROUP_NAME).map((group) => <li key={group}><span className="font-semibold text-foreground">{ENTRY_GROUP_NAME[group]}:</span> {ENTRY_GROUP_TODO[group]}</li>)}
+            <li>Cột “Việc cần làm” ở mỗi dòng dẫn thẳng tới nơi xử lý giờ đó. Xử lý xong, giờ tự chuyển sang “Đã tính vào P&amp;L”.</li>
+          </HelpToggle>
+        ) : null}
+        <section aria-label="Bộ lọc">
+          <FilterBar onReset={activeCount ? reset : undefined} activeCount={activeCount}>
+            <FilterField label="Tìm kiếm" className="min-w-[200px] flex-1">
+              <SearchFilter value={search} onChange={setSearch} placeholder="Dự án, nhân sự hoặc task..." ariaLabel="Tìm trong danh sách giờ" className="" />
+            </FilterField>
+            <FilterField label="Ngày ghi giờ" className="shrink-0">
+              <DateRangeFilter ariaLabel="Ngày ghi giờ" value={{ from: state.from, to: state.to }} onChange={(range) => change({ from: range.from, to: range.to })} />
+            </FilterField>
+            <PersonFilter label="Nhân sự" people={people} values={state.userIds} onChange={(userIds) => change({ userIds })} />
+            <MultiSelectFilter label="Dự án" options={projects} values={state.projectIds} onChange={(projectIds) => change({ projectIds })} allLabel="Tất cả dự án" searchPlaceholder="Tìm dự án..." />
+            <MultiSelectFilter label="Trạng thái" options={PNL_ENTRY_STATUSES.map((value) => ({ value, label: ENTRY_STATUS_NAME[value] }))} values={state.statuses} onChange={(statuses) => change({ statuses: statuses as PnlGateStatusCode[] })} allLabel="Tất cả trạng thái" searchable={false} />
+            <MultiSelectFilter label="Lý do chờ" options={reasons} values={state.reasons} onChange={(next) => change({ reasons: next })} allLabel="Tất cả lý do" />
+            <MultiSelectFilter label="Nhóm việc cần làm" options={Object.entries(ENTRY_GROUP_NAME).map(([value, label]) => ({ value, label }))} values={state.groups} onChange={(groups) => change({ groups })} allLabel="Tất cả nhóm" searchable={false} />
+          </FilterBar>
+        </section>
         {error ? <PnlLoadError error={error} onRetry={reload} /> : null}
         {payload ? (
-          <p role="status" className={`rounded-xl border px-4 py-3 text-sm font-medium ${payload.meta.overdueCount ? "border-rose-200 bg-rose-50 text-rose-800" : "border-border bg-card text-muted-foreground"}`}>
-            {payload.meta.entryCount} giờ log · {formatHoursValue(payload.meta.totalMinutes)} giờ
-            {status === "pending"
-              ? ` · hạn xử lý ${payload.meta.pendingDeadlineWorkingDays} ngày làm việc · ${payload.meta.overdueCount ? `${payload.meta.overdueCount} giờ log đã quá hạn` : "chưa có giờ log nào quá hạn"}`
-              : ""}
+          <p role="status" className={`rounded-xl border px-4 py-3 text-sm font-medium ${onlyPending && overdue ? "border-rose-200 bg-rose-50 text-rose-800" : "border-border bg-card text-muted-foreground"}`}>
+            {entries.length} dòng giờ · {formatHoursValue(minutes)} giờ
+            {onlyPending ? ` · hạn xử lý ${payload.meta.pendingDeadlineWorkingDays} ngày làm việc kể từ khi ghi · ${overdue ? `${overdue} dòng đã quá hạn` : "chưa có dòng nào quá hạn"}` : ""}
           </p>
         ) : null}
         {payload ? (
-          <section aria-label="Danh sách giờ log, theo dự án và người" className={cardClass}>
-            <EntryTable entries={entries} moneyVisible={payload.meta.moneyVisible} showDeadline={status === "pending"} />
+          <section aria-label="Danh sách giờ, theo dự án và người" aria-busy={loading} className={`${cardClass} ${loading ? "opacity-70" : ""}`}>
+            <EntryTable entries={entries} moneyVisible={payload.meta.moneyVisible} showDeadline={onlyPending} onReset={activeCount ? reset : undefined} />
           </section>
         ) : error ? null : (
-          <p role="status" className={`${cardClass} ${mutedNoteClass} px-4 py-8 text-center`}>Đang tải giờ log…</p>
+          <p role="status" className={`${cardClass} ${mutedNoteClass} px-4 py-8 text-center`}>Đang tải danh sách giờ…</p>
         )}
       </main>
     </AppShell>

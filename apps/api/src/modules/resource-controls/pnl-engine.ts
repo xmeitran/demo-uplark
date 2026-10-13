@@ -1,5 +1,5 @@
 /**
- * "Yêu cầu tab P&L – hệ thống PM", section 2.1 steps 4–12. Pure: values in, figures out.
+ * "Yêu cầu tab P&L – hệ thống PM" (v2, 13/10/2026), section 2.1 steps 4–12. Pure: values in, figures out.
  * Steps 1–3 (standard hours, cost rate, hour gate) are in pnl-rules.ts, the cost-item tree in pnl-tree.ts.
  *
  * Money is whole đồng. The one place a cost is rounded is `costOfMinutes` on a bucket of one person × one month
@@ -40,8 +40,6 @@ export interface RawEntry extends Omit<PnlGateInput, "hasCostRate"> {
   dateKey: string;
   minutes: number;
   roleGroup: RoleGroup;
-  /** Pre-sale hour of a project that has no line item yet ("đang chờ ký hợp đồng", A-1b). */
-  awaitingContract?: boolean;
 }
 
 export interface EngineEntry {
@@ -54,10 +52,8 @@ export interface EngineEntry {
   minutes: number;
   layer1: string | null;
   roleGroup: RoleGroup;
-  contractItemId: string | null;
   status: PnlGateStatus;
   reasons: PnlGateReason[];
-  awaitingContract: boolean;
   /** Cost rate of the person for the entry's month; undefined without an approved monthly cost. */
   rate?: CostRate;
   /** The figures of this entry come from a lock snapshot. */
@@ -69,9 +65,8 @@ export function classifyEntry(raw: RawEntry, rate: CostRate | undefined): Engine
   const gate = classifyPnlEntry({ ...raw, hasCostRate: Boolean(rate) });
   return {
     id: raw.id, projectId: raw.projectId ?? null, userId: raw.userId, taskId: raw.taskId ?? null, dateKey: raw.dateKey, periodKey: raw.dateKey.slice(0, 7),
-    minutes: raw.minutes, layer1: raw.taskTypeLayer1 ?? null, roleGroup: raw.roleGroup, contractItemId: raw.contractItemId ?? null,
+    minutes: raw.minutes, layer1: raw.taskTypeLayer1 ?? null, roleGroup: raw.roleGroup,
     status: gate.status, reasons: gate.reasons,
-    awaitingContract: Boolean(raw.awaitingContract) && gate.status === "pending" && gate.reasons.includes("missing_contract_item"),
     rate
   };
 }
@@ -88,8 +83,6 @@ export interface HourBucket {
   pendingMinutes: number;
   excludedMinutes: number;
   pendingByGroup: Record<PendingGroup, number>;
-  /** Pending Pre-sale hours waiting for the contract (subset of pendingMinutes). */
-  awaitingContractMinutes: number;
   /** Pending hours that block G7 (subset of pendingMinutes). */
   blockingMinutes: number;
   byReason: Partial<Record<PnlGateReason, number>>;
@@ -106,7 +99,7 @@ export function bucketEntries(entries: readonly EngineEntry[]): HourBucket[] {
     const key = `${entry.projectId ?? ""}|${entry.userId}|${entry.periodKey}`;
     let bucket = buckets.get(key);
     if (!bucket) {
-      bucket = { projectId: entry.projectId, userId: entry.userId, periodKey: entry.periodKey, roleGroup: entry.roleGroup, rate: entry.rate, loggedMinutes: 0, includedMinutes: 0, pendingMinutes: 0, excludedMinutes: 0, pendingByGroup: emptyPending(), awaitingContractMinutes: 0, blockingMinutes: 0, byReason: {}, internalMinutes: 0, afterCloseMinutes: 0, lostDealMinutes: 0 };
+      bucket = { projectId: entry.projectId, userId: entry.userId, periodKey: entry.periodKey, roleGroup: entry.roleGroup, rate: entry.rate, loggedMinutes: 0, includedMinutes: 0, pendingMinutes: 0, excludedMinutes: 0, pendingByGroup: emptyPending(), blockingMinutes: 0, byReason: {}, internalMinutes: 0, afterCloseMinutes: 0, lostDealMinutes: 0 };
       buckets.set(key, bucket);
     }
     bucket.rate = bucket.rate ?? entry.rate;
@@ -117,7 +110,6 @@ export function bucketEntries(entries: readonly EngineEntry[]): HourBucket[] {
     else if (entry.status === "pending") {
       bucket.pendingMinutes += entry.minutes;
       bucket.pendingByGroup[pendingGroupOf(entry.reasons)] += entry.minutes;
-      if (entry.awaitingContract) bucket.awaitingContractMinutes += entry.minutes;
       if (blocksG7(entry)) bucket.blockingMinutes += entry.minutes;
     } else {
       bucket.excludedMinutes += entry.minutes;
@@ -192,61 +184,8 @@ export function toVnd(sourceCurrency: string, sourceAmount: number, usdRate: num
 }
 
 // ---------------------------------------------------------------------------
-// Step 7 — revenue (PL-13, PL-14)
+// Step 7 — revenue (PL-13, PL-14): one "Giá trị dự án" per project, see computeProjectPnl
 // ---------------------------------------------------------------------------
-
-export interface ContractItemInput {
-  id: string;
-  /** FIXED_PRICE (Trọn gói) | TIME_AND_MATERIAL (Theo giờ) | INTERNAL (Nội bộ) | null (chờ phân loại). */
-  contractType: string | null;
-  /** Trọn gói: value. Theo giờ: ceiling. Nội bộ: cost cap (never revenue). */
-  valueAmount: number | null;
-}
-
-/**
- * Giá trị hợp đồng = cộng các hạng mục, không nhập tay: Trọn gói lấy giá trị, Theo giờ lấy mức trần, Nội bộ không cộng.
- * Undefined while there is no chargeable item or one of them has no value — never 0 in its place.
- */
-export function contractValue(items: readonly ContractItemInput[]) {
-  const chargeable = items.filter((row) => row.contractType !== "INTERNAL");
-  const missingValueCount = chargeable.filter((row) => row.valueAmount === null || row.contractType === null).length;
-  const fixedPriceAmount = sum(chargeable.filter((row) => row.contractType === "FIXED_PRICE").map((row) => row.valueAmount ?? 0));
-  const hourlyCeilingAmount = sum(chargeable.filter((row) => row.contractType === "TIME_AND_MATERIAL").map((row) => row.valueAmount ?? 0));
-  const known = chargeable.length > 0 && missingValueCount === 0;
-  return { amount: known ? fixedPriceAmount + hourlyCeilingAmount : undefined, fixedPriceAmount, hourlyCeilingAmount, missingValueCount, chargeableCount: chargeable.length };
-}
-
-export type SellRateLookup = (roleGroup: RoleGroup, periodKey: string) => number | undefined;
-
-/**
- * Doanh thu ghi nhận tại G7, một lần cho cả dự án: Trọn gói = giá trị hạng mục; Theo giờ = giờ tính P&L của hạng mục ×
- * đơn giá bán của vai trò người ghi, tối đa bằng mức trần. A role with hours but no sell rate leaves that item — and
- * so the project — without a recognised figure.
- */
-export function recognizedRevenue(items: readonly ContractItemInput[], entries: readonly EngineEntry[], sellRate: SellRateLookup) {
-  const byItem = items.filter((row) => row.contractType !== "INTERNAL").map((row) => {
-    if (row.contractType !== "TIME_AND_MATERIAL") return { itemId: row.id, amount: row.valueAmount ?? undefined, uncappedAmount: row.valueAmount ?? undefined, capped: false, missingSellRateRoles: [] as RoleGroup[] };
-    const minutesByRoleMonth = new Map<string, { roleGroup: RoleGroup; periodKey: string; minutes: number }>();
-    for (const entry of entries) {
-      if (entry.status !== "included" || entry.contractItemId !== row.id) continue;
-      const key = `${entry.roleGroup}|${entry.periodKey}`;
-      const current = minutesByRoleMonth.get(key) ?? { roleGroup: entry.roleGroup, periodKey: entry.periodKey, minutes: 0 };
-      current.minutes += entry.minutes;
-      minutesByRoleMonth.set(key, current);
-    }
-    const missing = new Set<RoleGroup>();
-    let uncapped = 0;
-    for (const group of minutesByRoleMonth.values()) {
-      const price = sellRate(group.roleGroup, group.periodKey);
-      if (price === undefined) missing.add(group.roleGroup);
-      else uncapped += Math.round((group.minutes * price) / 60);
-    }
-    if (missing.size || row.valueAmount === null) return { itemId: row.id, amount: undefined, uncappedAmount: missing.size ? undefined : uncapped, capped: false, missingSellRateRoles: [...missing] };
-    return { itemId: row.id, amount: Math.min(uncapped, row.valueAmount), uncappedAmount: uncapped, capped: uncapped > row.valueAmount, missingSellRateRoles: [] as RoleGroup[] };
-  });
-  const complete = byItem.length > 0 && byItem.every((row) => row.amount !== undefined);
-  return { amount: complete ? sum(byItem.map((row) => row.amount as number)) : undefined, byItem, missingSellRateRoles: [...new Set(byItem.flatMap((row) => row.missingSellRateRoles))] };
-}
 
 // ---------------------------------------------------------------------------
 // Steps 4–11 — one project over its lifecycle
@@ -255,7 +194,8 @@ export function recognizedRevenue(items: readonly ContractItemInput[], entries: 
 export interface ProjectPnlInput {
   /** Every hour of the project, classified. Locked months come from their snapshot (plus hours logged after the lock). */
   entries: readonly EngineEntry[];
-  items: readonly ContractItemInput[];
+  /** PL-13 "Giá trị dự án" (VND) as the PM entered it; undefined = chưa nhập. Loại Nội bộ / Đào tạo have none. */
+  projectValueAmount?: number;
   /** The P&L closing gate (G7) is approved. */
   closePassed: boolean;
   /** Accepted by its status only (no gate row, no status history): there is no real G7 date, so never "Chính thức". */
@@ -279,7 +219,6 @@ export interface ProjectPnlInput {
   disabledCodes: ReadonlySet<string>;
   /** Tỷ lệ hoa hồng in force for the project, percent (5 = 5%). Undefined = chưa nhập. */
   commissionPercent?: number;
-  sellRate: SellRateLookup;
   /** "Từ tháng – Đến tháng": totals and month rows only add the selected months; revenue and EBIT are whole-project only. */
   range?: { from: string; to: string };
 }
@@ -316,7 +255,7 @@ export interface ProjectPnl {
   months: MonthFigures[];
   whole: Omit<MonthFigures, "periodKey" | "locked">;
   people: PersonFigures[];
-  revenue: { amount?: number; basis: "contract" | "recognized" | "none"; contractAmount?: number; recognizedAmount?: number; rebateAmount: number; missingReason?: string };
+  revenue: { amount?: number; basis: "project_value" | "recognized" | "none"; projectValueAmount?: number; recognizedAmount?: number; rebateAmount: number; missingReason?: string };
   commission: { amount?: number; expected: boolean; enabled: boolean };
   /**
    * "Khoản tính cho cả dự án": the cost lines computed once for the lifecycle (Công thức — the commission), as they enter
@@ -331,7 +270,7 @@ export interface ProjectPnl {
   itemValues: Map<string, CostItemValue>;
   costGroups: ReturnType<typeof costByGroups>;
   afterClose: { minutes: number; amount: number; uncostedMinutes: number; rows: Array<{ periodKey: string; minutes: number; amount?: number }> };
-  /** Internal projects: hours are "Bị loại – Nội bộ" for a chargeable P&L but are costed to compare with the cap. */
+  /** Internal projects: hours are "Bị loại – Nội bộ" for a chargeable P&L but are still costed (dòng Chi phí nội bộ). */
   internalCost: { minutes: number; amount: number; uncostedMinutes: number };
   reconciliation: ReturnType<typeof reconcileHours>;
   blockingMinutes: number;
@@ -342,7 +281,7 @@ export interface ProjectPnl {
 
 const MISSING_LABELS: Record<PnlMonthMissing["kind"], string> = {
   cost_rate: "Thiếu cost rate",
-  classification: "Thiếu phân loại hoặc hạng mục",
+  classification: "Thiếu phân loại",
   layer2_mismatch: "Lớp 2 không khớp",
   locked_period: "Giờ ghi bù vào tháng đã khóa",
   fund_unallocated: "Quỹ chưa chia"
@@ -414,11 +353,9 @@ export function computeProjectPnl(input: ProjectPnlInput): ProjectPnl {
     };
   });
 
-  // Step 7: before G7 the revenue tile is the contract value; at G7 revenue is recognised once.
-  const contract = contractValue(input.items);
+  // Step 7 (PL-14): before G7 the revenue tile is Giá trị dự án (EBIT dự kiến); at G7 that same amount is recognised once.
   const revenueEnabled = !input.consumable && !input.disabledCodes.has(SYSTEM_ITEM_CODES.revenue);
-  const recognized = input.closePassed && revenueEnabled ? recognizedRevenue(input.items, input.entries, input.sellRate) : undefined;
-  const baseRevenue = !revenueEnabled ? undefined : input.closePassed ? recognized?.amount : contract.amount;
+  const baseRevenue = revenueEnabled ? input.projectValueAmount : undefined;
 
   // Step 10: the tree adds everything up over the lifecycle (never narrowed: revenue, commission and EBIT are whole-project figures).
   const laborByRole: Partial<Record<RoleGroup, number>> = {};
@@ -499,9 +436,8 @@ export function computeProjectPnl(input: ProjectPnlInput): ProjectPnl {
   const reasons: PnlReason[] = [];
   const notComputable: PnlReason[] = [];
   const anyRate = buckets.some((bucket) => bucket.rate);
-  if (revenueEnabled && contract.amount === undefined) notComputable.push({ code: "no_contract_value", label: "chưa có giá trị hợp đồng", target: "project_setup" });
-  // PL-25 "chưa có doanh thu": past G7 the revenue is the recognised one, and a Theo giờ item without a sell rate has none.
-  else if (recognized && recognized.amount === undefined) notComputable.push({ code: "missing_sell_rate", label: "thiếu đơn giá bán theo vai trò cho hạng mục Theo giờ", target: "parameters" });
+  // PL-25 "chưa có doanh thu (Giá trị dự án)".
+  if (revenueEnabled && baseRevenue === undefined) notComputable.push({ code: "no_project_value", label: "chưa có Giá trị dự án", target: "project_value" });
   if (buckets.length && !anyRate) notComputable.push({ code: "no_cost_rate", label: "chưa có cost rate nào", target: "staff_costs" });
   if (!input.closePassed && !input.consumable) reasons.push({ code: "not_closed", label: "chưa qua G7", target: "approval" });
   if (input.closePassed && input.acceptanceDateMissing) reasons.push({ code: "missing_acceptance_date", label: "Thiếu ngày nghiệm thu (G7)", target: "project_setup" });
@@ -524,15 +460,14 @@ export function computeProjectPnl(input: ProjectPnlInput): ProjectPnl {
 
   const official = (input.closePassed || input.consumable) && !unlockedMonths.length && pendingTotal === 0 && !reasons.length && !notComputable.length;
   const label: ResultLabel = notComputable.length ? "not_computable" : official ? "official" : "provisional";
-  const hasInternalItem = input.items.some((row) => row.contractType === "INTERNAL");
 
   return {
     months, whole, people,
     revenue: {
       amount: input.range ? undefined : revenueAmount,
-      basis: !revenueEnabled || baseRevenue === undefined ? "none" : input.closePassed ? "recognized" : "contract",
-      contractAmount: contract.amount, recognizedAmount: recognized?.amount, rebateAmount,
-      missingReason: !revenueEnabled ? undefined : contract.amount === undefined ? "chưa có giá trị hợp đồng" : input.closePassed && recognized?.amount === undefined ? "thiếu đơn giá bán" : undefined
+      basis: !revenueEnabled || baseRevenue === undefined ? "none" : input.closePassed ? "recognized" : "project_value",
+      projectValueAmount: baseRevenue, recognizedAmount: input.closePassed ? baseRevenue : undefined, rebateAmount,
+      missingReason: revenueEnabled && baseRevenue === undefined ? "chưa có Giá trị dự án" : undefined
     },
     commission: { amount: commissionAmount, expected: !input.closePassed, enabled: commissionEnabled },
     wholeProjectCosts,
@@ -543,7 +478,7 @@ export function computeProjectPnl(input: ProjectPnlInput): ProjectPnl {
     reconciliation: reconcileHours(whole),
     blockingMinutes: sum(buckets.map((bucket) => bucket.blockingMinutes)),
     result: { label, labelText: RESULT_LABELS[label], reasons: [...notComputable, ...reasons] },
-    recordState: recordStateOf({ lostDeal: input.lostDeal, g1Passed: input.g1Passed, closePassed: input.closePassed, internalTemplate: input.consumable, hasInternalItem, allHourMonthsLocked: !unlockedMonths.length, pendingMinutes: pendingTotal, acceptanceDateMissing: input.acceptanceDateMissing }),
+    recordState: recordStateOf({ lostDeal: input.lostDeal, g1Passed: input.g1Passed, closePassed: input.closePassed, internalTemplate: input.consumable, allHourMonthsLocked: !unlockedMonths.length, pendingMinutes: pendingTotal, acceptanceDateMissing: input.acceptanceDateMissing }),
     scoped: Boolean(input.range)
   };
 }
@@ -634,7 +569,7 @@ export interface ChecklistInput {
   /** Funds of the month: amount entered, allocated total, confirmed. */
   funds: ReadonlyArray<{ name: string; amount: number; allocatedAmount: number; confirmed: boolean }>;
   /** Projects whose closing gate was approved in the month. */
-  acceptedProjects: ReadonlyArray<{ name: string; acceptedOn: string | null; contractAmount?: number }>;
+  acceptedProjects: ReadonlyArray<{ name: string; acceptedOn: string | null; projectValueAmount?: number }>;
 }
 
 export interface ChecklistRow { key: "parameters" | "pending_hours" | "staff_costs" | "funds" | "accepted_projects"; ok: boolean; label: string; detail: string | null; count: number; names: string[]; target: PnlFixTarget | null; targetLabel: string | null }
@@ -644,17 +579,17 @@ const nameList = (names: string[]) => (names.length <= NAMES_SHOWN ? names.join(
 
 /** Khóa khi đủ năm điều kiện. Each row says how much is missing, names the few, and where to fix it. */
 export function periodChecklist(input: ChecklistInput): ChecklistRow[] {
-  // (2) "không còn giờ Chờ xử lý của tháng", Pre-sale hours waiting for the contract not counted (A-1b).
-  const pendingMinutes = sum(input.entries.filter((entry) => entry.status === "pending" && !entry.awaitingContract).map((entry) => entry.minutes));
+  // (2) "không còn giờ Chờ xử lý của tháng" — no exception any more: Pre-sale hours count from the start (chốt 13/10).
+  const pendingMinutes = sum(input.entries.filter((entry) => entry.status === "pending").map((entry) => entry.minutes));
   const noCost = input.usersWithoutApprovedCost.map((userId) => input.userNames.get(userId) ?? userId);
   const openFunds = input.funds.filter((fund) => !fund.confirmed || fund.allocatedAmount !== fund.amount).map((fund) => fund.name);
-  const badProjects = input.acceptedProjects.filter((project) => !project.acceptedOn || project.contractAmount === undefined).map((project) => project.name);
+  const badProjects = input.acceptedProjects.filter((project) => !project.acceptedOn || project.projectValueAmount === undefined).map((project) => project.name);
   return [
     { key: "parameters", ok: !input.missingParameters.length, label: "Tham số có hiệu lực cho tháng", detail: input.missingParameters.length ? `thiếu: ${input.missingParameters.join(", ")}` : null, count: input.missingParameters.length, names: input.missingParameters, target: input.missingParameters.length ? "parameters" : null, targetLabel: input.missingParameters.length ? "Tham số" : null },
-    { key: "pending_hours", ok: pendingMinutes === 0, label: "Không còn giờ Chờ xử lý của tháng (trừ Pre-sale chờ ký hợp đồng)", detail: pendingMinutes ? `còn ${hoursText(pendingMinutes)} giờ` : null, count: pendingMinutes, names: [], target: pendingMinutes ? "pending_hours" : null, targetLabel: pendingMinutes ? "Danh sách" : null },
+    { key: "pending_hours", ok: pendingMinutes === 0, label: "Không còn giờ Chờ xử lý của tháng", detail: pendingMinutes ? `còn ${hoursText(pendingMinutes)} giờ` : null, count: pendingMinutes, names: [], target: pendingMinutes ? "pending_hours" : null, targetLabel: pendingMinutes ? "Danh sách" : null },
     { key: "staff_costs", ok: !noCost.length, label: "Mọi người có giờ log có chi phí tháng Đã duyệt", detail: noCost.length ? `thiếu: ${nameList(noCost)}` : null, count: noCost.length, names: noCost, target: noCost.length ? "staff_costs" : null, targetLabel: noCost.length ? "Hồ sơ nhân sự" : null },
     { key: "funds", ok: !openFunds.length, label: "Mọi quỹ của tháng đã chia đủ và xác nhận", detail: openFunds.length ? `còn: ${openFunds.join(", ")}` : null, count: openFunds.length, names: openFunds, target: openFunds.length ? "funds" : null, targetLabel: openFunds.length ? "Quỹ chi phí chung" : null },
-    { key: "accepted_projects", ok: !badProjects.length, label: "Dự án qua G7 trong tháng có ngày nghiệm thu và giá trị hợp đồng", detail: badProjects.length ? `thiếu: ${badProjects.join(", ")}` : null, count: badProjects.length, names: badProjects, target: badProjects.length ? "project_setup" : null, targetLabel: badProjects.length ? "Thiết lập P&L của dự án" : null }
+    { key: "accepted_projects", ok: !badProjects.length, label: "Dự án qua G7 trong tháng có ngày nghiệm thu và Giá trị dự án", detail: badProjects.length ? `thiếu: ${badProjects.join(", ")}` : null, count: badProjects.length, names: badProjects, target: badProjects.length ? "project_value" : null, targetLabel: badProjects.length ? "P&L dự án" : null }
   ];
 }
 

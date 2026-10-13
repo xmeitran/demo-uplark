@@ -8,7 +8,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   AlertCircle,
-  ArrowLeft,
   Briefcase,
   Building2,
   Calendar,
@@ -20,6 +19,7 @@ import {
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { AppShell } from "@/components/constructor-x/app-shell";
+import { PageHeader, pageMainClassName } from "@/components/page-header";
 import type { AccountSummary, ContactSummary, ProjectSummary, ResourceListResponse } from "@b2b-crm/contracts";
 import { projectStatusLabel, resolveProjectStatus } from "@/lib/project-status";
 import { useAuth } from "@/lib/auth";
@@ -220,23 +220,20 @@ export default function ClientDetailPage() {
     <EmptyState icon={Briefcase} title="No production projects yet" description="This client has no projects in the current workspace. The page no longer fabricates placeholder project rows." />
   );
 
+  const back = { href: "/clients", label: "Khách hàng" };
+
   if (state.loading || state.error || !account) {
     return (
-      <AppShell activeRoute="/clients" title="Client Detail">
-          <main className="flex flex-1 items-center justify-center p-4 sm:p-8">
-            <div className="max-w-xl text-center">
+      <AppShell activeRoute="/clients" title="Khách hàng">
+          <main className={pageMainClassName}>
+            <PageHeader back={back} title={state.loading ? "Đang tải khách hàng…" : "Không tìm thấy khách hàng"} />
+            <div className="mx-auto max-w-xl py-12 text-center">
               <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-xl border border-border bg-card text-muted-foreground">
                 {state.loading ? <Building2 className="h-7 w-7" /> : <AlertCircle className="h-7 w-7" />}
               </div>
-              <h1 className="!text-xl font-black text-foreground">{state.loading ? "Loading client..." : state.error || "Client not found"}</h1>
-              <p className="mt-3 text-sm leading-6 text-muted-foreground">
-                {state.loading ? "Resolving the account workspace from production CRM data." : "This client does not exist in the production CRM workspace."}
+              <p className="text-sm leading-6 text-muted-foreground">
+                {state.loading ? "Đang lấy dữ liệu khách hàng từ CRM." : state.error && state.error !== "Client not found" ? state.error : "Khách hàng này không tồn tại trong workspace."}
               </p>
-              {!state.loading && (
-                <Link href="/clients" className="mt-6 inline-flex items-center gap-2 rounded-lg bg-foreground px-4 py-2 text-sm font-semibold text-background">
-                  <ArrowLeft className="h-4 w-4" /> Back to clients
-                </Link>
-              )}
             </div>
           </main>
       </AppShell>
@@ -244,33 +241,24 @@ export default function ClientDetailPage() {
   }
 
   return (
-    <AppShell activeRoute="/clients" title="Client Detail">
-        <main className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:p-5">
-          <Link href="/clients" className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
-            <ArrowLeft className="h-3.5 w-3.5" /> Back to Clients
-          </Link>
-
-          <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 items-center gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-base font-bold text-white shadow-sm" style={{ backgroundColor: accent }}>
-                {initialsFor(account.name)}
-              </div>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="!text-xl truncate font-bold text-foreground">{account.name}</h1>
-                  <span className="rounded-full px-2.5 py-1 text-[11px] font-bold" style={{ backgroundColor: health.bg, color: health.color }}>
-                    {health.label}
-                  </span>
-                </div>
-                <p className="mt-0.5 truncate text-sm text-muted-foreground">{account.code} · {account.ownerTeam}</p>
-              </div>
-            </div>
-            {account.picEmail && (
-              <a href={`mailto:${account.picEmail}`} className="flex items-center gap-1.5 rounded-xl border border-border px-3.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted">
+    <AppShell activeRoute="/clients" title="Khách hàng">
+        <main className={pageMainClassName}>
+          <PageHeader
+            back={back}
+            title={
+              <span className="flex min-w-0 flex-wrap items-center gap-3">
+                <span aria-hidden className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-base font-bold text-white shadow-sm" style={{ backgroundColor: accent }}>{initialsFor(account.name)}</span>
+                <span className="min-w-0 break-words">{account.name}</span>
+                <span className="rounded-full px-2.5 py-1 text-[11px] font-bold" style={{ backgroundColor: health.bg, color: health.color }}>{health.label}</span>
+              </span>
+            }
+            subtitle={`${account.code} · ${account.ownerTeam}`}
+            actions={account.picEmail ? (
+              <a href={`mailto:${account.picEmail}`} className="flex items-center gap-1.5 rounded-xl border border-border px-3.5 py-2 text-sm font-medium !text-muted-foreground transition-colors hover:bg-muted">
                 <Mail className="h-4 w-4" /> Email PIC
               </a>
-            )}
-          </header>
+            ) : undefined}
+          />
 
           <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
             <div className="min-w-0 space-y-5">

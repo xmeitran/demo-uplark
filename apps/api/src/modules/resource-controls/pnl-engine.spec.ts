@@ -4,16 +4,13 @@ import {
   classifyEntry,
   companyCostMonth,
   computeProjectPnl,
-  contractValue,
   dashboardPeriod,
   dashboardTab,
   dashboardTotals,
   g7Blockers,
   periodChecklist,
-  recognizedRevenue,
   splitFund,
   toVnd,
-  type ContractItemInput,
   type EngineEntry,
   type ProjectPnlInput,
   type RawEntry
@@ -29,14 +26,13 @@ function entry(patch: Partial<RawEntry> & { hours: number; rate?: CostRate | nul
   const { hours, rate, ...raw } = patch;
   return classifyEntry({
     id: `e-${++sequence}`, projectId: "p-1", userId: "u-a", dateKey: "2026-08-03", minutes: hours * H, roleGroup: "DELIVERY" as RoleGroup,
-    taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT", selectedTaskTypeLayer2: "CUSTOMER_PROJECT", contractItemId: "hm-01", afterPnlClose: false, ...raw
+    taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT", selectedTaskTypeLayer2: "CUSTOMER_PROJECT", afterPnlClose: false, ...raw
   }, rate === null ? undefined : rate ?? RATE_150);
 }
 
-const ITEMS: ContractItemInput[] = [{ id: "hm-01", contractType: "FIXED_PRICE", valueAmount: 60_000_000 }, { id: "hm-02", contractType: "TIME_AND_MATERIAL", valueAmount: 7_200_000 }];
 const project = (patch: Partial<ProjectPnlInput> = {}) => computeProjectPnl({
-  entries: [], items: ITEMS, closePassed: false, g1Passed: true, lostDeal: false, consumable: false, lockedPeriods: new Set(), fundShares: [], unallocatedFundPeriods: new Set(), manualLines: [],
-  tree: DEFAULT_COST_TREE, disabledCodes: new Set(), commissionPercent: 5, sellRate: (role) => (role === "DELIVERY" ? 400_000 : undefined), ...patch
+  entries: [], projectValueAmount: 67_200_000, closePassed: false, g1Passed: true, lostDeal: false, consumable: false, lockedPeriods: new Set(), fundShares: [], unallocatedFundPeriods: new Set(), manualLines: [],
+  tree: DEFAULT_COST_TREE, disabledCodes: new Set(), commissionPercent: 5, ...patch
 });
 
 describe("bước 6 — chia quỹ chung (PL-17)", () => {
@@ -67,44 +63,17 @@ describe("bước 6 — chia quỹ chung (PL-17)", () => {
 });
 
 describe("bước 7, 8 — doanh thu và hoa hồng (PL-13, PL-14, PL-15)", () => {
-  it("giá trị hợp đồng = Trọn gói lấy giá trị + Theo giờ lấy mức trần; Nội bộ không cộng; không nhập tay", () => {
-    expect(contractValue([...ITEMS, { id: "hm-03", contractType: "INTERNAL", valueAmount: 9_000_000 }])).toMatchObject({ amount: 67_200_000, fixedPriceAmount: 60_000_000, hourlyCeilingAmount: 7_200_000 });
-  });
-
-  it("no chargeable item, or one without a value or a type → no contract value (never 0)", () => {
-    expect(contractValue([]).amount).toBeUndefined();
-    expect(contractValue([{ id: "x", contractType: "INTERNAL", valueAmount: 1 }]).amount).toBeUndefined();
-    expect(contractValue([ITEMS[0], { id: "y", contractType: "TIME_AND_MATERIAL", valueAmount: null }])).toMatchObject({ amount: undefined, missingValueCount: 1 });
-    expect(contractValue([{ id: "z", contractType: null, valueAmount: 5 }]).amount).toBeUndefined();
-  });
-
-  it("Theo giờ = giờ tính P&L của hạng mục × đơn giá bán của vai trò người ghi, tối đa bằng mức trần", () => {
-    const entries = [entry({ hours: 20, contractItemId: "hm-02", dateKey: "2026-10-05" }), entry({ hours: 5, contractItemId: "hm-02", rate: null })]; // the pending 5 giờ earn nothing
-    const sell = (role: RoleGroup) => (role === "DELIVERY" ? 400_000 : undefined);
-    const capped = recognizedRevenue(ITEMS, entries, sell);
-    expect(capped.byItem.find((row) => row.itemId === "hm-02")).toMatchObject({ uncappedAmount: 8_000_000, amount: 7_200_000, capped: true });
-    expect(capped.amount).toBe(67_200_000);
-    const under = recognizedRevenue(ITEMS, [entry({ hours: 10, contractItemId: "hm-02" })], sell);
-    expect(under.byItem[1]).toMatchObject({ amount: 4_000_000, capped: false });
-    expect(under.amount).toBe(64_000_000);
-  });
-
-  it("a role with hours but no sell rate leaves the item, and the project, without recognised revenue", () => {
-    const revenue = recognizedRevenue(ITEMS, [entry({ hours: 10, contractItemId: "hm-02", roleGroup: "PM", userId: "u-pm" })], (role) => (role === "DELIVERY" ? 400_000 : undefined));
-    expect(revenue).toMatchObject({ amount: undefined, missingSellRateRoles: ["PM"] });
-  });
-
-  it("trước G7: ô doanh thu là giá trị hợp đồng, kết quả là EBIT dự kiến, hoa hồng dự kiến trên giá trị hợp đồng", () => {
+  it("trước G7: ô doanh thu là Giá trị dự án (PL-13), kết quả là EBIT dự kiến, hoa hồng dự kiến trên Giá trị dự án", () => {
     const pnl = project({ entries: [entry({ hours: 128 })] });
-    expect(pnl.revenue).toMatchObject({ amount: 67_200_000, basis: "contract" });
+    expect(pnl.revenue).toMatchObject({ amount: 67_200_000, basis: "project_value", projectValueAmount: 67_200_000, recognizedAmount: undefined });
     expect(pnl.commission).toEqual({ amount: 3_360_000, expected: true, enabled: true });
     expect(pnl.ebit).toMatchObject({ amount: 67_200_000 - 19_200_000 - 3_360_000, expected: true });
   });
 
-  it("tại G7: doanh thu ghi nhận một lần cho cả dự án, hoa hồng ghi nhận cùng lúc trên doanh thu ghi nhận", () => {
-    const pnl = project({ closePassed: true, entries: [entry({ hours: 10, contractItemId: "hm-02" })] });
-    expect(pnl.revenue).toMatchObject({ amount: 64_000_000, basis: "recognized", contractAmount: 67_200_000 });
-    expect(pnl.commission).toMatchObject({ amount: 3_200_000, expected: false });
+  it("tại G7: Giá trị dự án được ghi nhận một lần thành doanh thu cho cả dự án (PL-14), hoa hồng ghi nhận cùng lúc", () => {
+    const pnl = project({ closePassed: true, entries: [entry({ hours: 10 })] });
+    expect(pnl.revenue).toMatchObject({ amount: 67_200_000, basis: "recognized", recognizedAmount: 67_200_000 });
+    expect(pnl.commission).toMatchObject({ amount: 3_360_000, expected: false });
     expect(pnl.ebit.expected).toBe(false);
   });
 
@@ -176,16 +145,16 @@ describe("bước 4, 9, 10 — chi phí nhân sự, chi phí riêng, cộng vòn
     expect(pnl.whole.excludedMinutes).toBe(10 * H);
   });
 
-  it("dự án nội bộ: no revenue, no EBIT, no commission; its Nội bộ hours are costed to compare with the cap", () => {
+  it("dự án nội bộ: no revenue, no EBIT, no commission; its Nội bộ hours are still costed (dòng Chi phí nội bộ); Đang ghi nhận from creation", () => {
     const disabledCodes = effectiveDisabledCodes(DEFAULT_COST_TREE, DEFAULT_ITEM_TEMPLATES[1].disabledCodes);
-    const pnl = project({ consumable: true, disabledCodes, items: [{ id: "nb", contractType: "INTERNAL", valueAmount: 10_000_000 }], entries: [entry({ hours: 20, taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: "INTERNAL_PROJECT", contractItemId: "nb" })] });
+    const pnl = project({ consumable: true, g1Passed: false, disabledCodes, projectValueAmount: undefined, entries: [entry({ hours: 20, taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: "INTERNAL_PROJECT" })] });
     expect(pnl.revenue).toMatchObject({ amount: undefined, basis: "none" });
     expect(pnl.ebit.amount).toBeUndefined();
     expect(pnl.commission).toMatchObject({ amount: undefined, enabled: false });
     expect(pnl.whole).toMatchObject({ includedMinutes: 0, excludedMinutes: 20 * H, laborCostAmount: 3_000_000 });
     expect(pnl.internalCost).toMatchObject({ minutes: 20 * H, amount: 3_000_000 });
     expect(pnl.recordState).toBe("recognizing");
-    expect(pnl.result.reasons.map((reason) => reason.code)).not.toContain("no_contract_value");
+    expect(pnl.result.reasons.map((reason) => reason.code)).not.toContain("no_project_value");
   });
 });
 
@@ -204,10 +173,10 @@ describe("bước 11 — nhãn kết quả (PL-25)", () => {
     expect(waiting.recordState).toBe("closed");
   });
 
-  it("Không tính được: chưa có doanh thu (giá trị hợp đồng) hoặc chưa có cost rate nào", () => {
-    const noContract = project({ items: [], entries: [entry({ hours: 8 })] });
+  it("Không tính được: chưa có doanh thu (Giá trị dự án) hoặc chưa có cost rate nào", () => {
+    const noContract = project({ projectValueAmount: undefined, entries: [entry({ hours: 8 })] });
     expect(noContract.result).toMatchObject({ label: "not_computable", labelText: "Không tính được" });
-    expect(noContract.result.reasons[0]).toMatchObject({ code: "no_contract_value", target: "project_setup" });
+    expect(noContract.result.reasons[0]).toMatchObject({ code: "no_project_value", label: "chưa có Giá trị dự án", target: "project_value" });
     expect(noContract.revenue.amount).toBeUndefined(); // not 0
     expect(noContract.ebit).toMatchObject({ amount: undefined, marginPercent: undefined }); // not a 100% margin
     const noRate = project({ entries: [entry({ hours: 8, rate: null })] });
@@ -217,19 +186,19 @@ describe("bước 11 — nhãn kết quả (PL-25)", () => {
 
   it("the other reasons: missing or wrong classification, hours logged into a locked month, an unconfirmed fund", () => {
     const pnl = project({
-      entries: [entry({ hours: 8 }), entry({ hours: 2, contractItemId: null }), entry({ hours: 3, selectedTaskTypeLayer2: "INTERNAL_PROJECT" }), entry({ hours: 1, loggedAfterLock: true })],
+      entries: [entry({ hours: 8 }), entry({ hours: 2, taskTypeLayer1: null }), entry({ hours: 3, selectedTaskTypeLayer2: "INTERNAL_PROJECT" }), entry({ hours: 1, loggedAfterLock: true })],
       unallocatedFundPeriods: new Set(["2026-08", "2026-12"])
     });
-    expect(pnl.result.reasons.map((reason) => reason.label)).toEqual(["chưa qua G7", "2 giờ thiếu phân loại hoặc hạng mục", "3 giờ chọn Lớp 2 không khớp", "1 giờ ghi bù vào tháng đã khóa", "tháng 08 chưa khóa", "quỹ tháng 08 chưa chia"]);
+    expect(pnl.result.reasons.map((reason) => reason.label)).toEqual(["chưa qua G7", "2 giờ thiếu phân loại", "3 giờ chọn Lớp 2 không khớp", "1 giờ ghi bù vào tháng đã khóa", "tháng 08 chưa khóa", "quỹ tháng 08 chưa chia"]);
     expect(pnl.blockingMinutes).toBe(5 * H);
     expect(pnl.reconciliation).toMatchObject({ loggedMinutes: 14 * H, includedMinutes: 8 * H, pendingMinutes: 6 * H, balanced: true });
   });
 
-  it("g7Blockers: only missing or wrong classification / line item blocks; cost-rate waits are reported apart", () => {
-    const blockers = g7Blockers([entry({ hours: 8 }), entry({ hours: 2, contractItemId: null, rate: null }), entry({ hours: 3, selectedTaskTypeLayer2: "INTERNAL_PROJECT" }), entry({ hours: 5, rate: null }), entry({ hours: 1, loggedAfterLock: true })]);
+  it("g7Blockers: only missing or wrong classification blocks; cost-rate waits are reported apart", () => {
+    const blockers = g7Blockers([entry({ hours: 8 }), entry({ hours: 2, taskTypeLayer1: null, rate: null }), entry({ hours: 3, selectedTaskTypeLayer2: "INTERNAL_PROJECT" }), entry({ hours: 5, rate: null }), entry({ hours: 1, loggedAfterLock: true })]);
     expect(blockers).toEqual({
       blockingMinutes: 5 * H, entryCount: 2, waitingCostRateMinutes: 5 * H,
-      byReason: [{ reason: "missing_contract_item", label: "Chưa có hạng mục", minutes: 2 * H, entryCount: 1 }, { reason: "layer2_mismatch", label: "Lớp 2 không khớp", minutes: 3 * H, entryCount: 1 }]
+      byReason: [{ reason: "missing_layer1", label: "Thiếu phân loại Lớp 1", minutes: 2 * H, entryCount: 1 }, { reason: "layer2_mismatch", label: "Lớp 2 không khớp", minutes: 3 * H, entryCount: 1 }]
     });
   });
 });
@@ -241,7 +210,7 @@ describe("bước 12 — dòng cấp công ty (PL-12)", () => {
       entry({ hours: 100 }), // vào dự án
       entry({ hours: 6, projectId: "p-lost", userId: "u-bd", roleGroup: "BD", taskTypeLayer1: "PRE_SALE", lostDeal: true, rate: { monthlyAmount: 30_240_000, standardMinutes: 168 * H } }), // Chi phí Pre-sale
       entry({ hours: 10, userId: "u-cs", roleGroup: "CS", afterPnlClose: true, taskTypeLayer2: "TICKET_MAINTENANCE", selectedTaskTypeLayer2: "TICKET_MAINTENANCE", rate: rate160 }), // sau nghiệm thu
-      entry({ hours: 12, projectId: "p-worklog", taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: "INTERNAL_PROJECT", contractItemId: null }), // nội bộ
+      entry({ hours: 12, projectId: "p-worklog", taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: "INTERNAL_PROJECT" }), // nội bộ
       entry({ hours: 9, projectId: "p-test" }), // dự án thử nghiệm: out of every named part
       entry({ hours: 4, userId: "u-b", rate: null }) // chờ cost rate: no cost anywhere yet
     ];
@@ -263,7 +232,7 @@ describe("bước 12 — dòng cấp công ty (PL-12)", () => {
 });
 
 describe("lớp 3 — checklist năm điều kiện (mục 6.5)", () => {
-  const ready = { periodKey: "2026-09", missingParameters: [], entries: [entry({ hours: 8, dateKey: "2026-09-03" })], userNames: new Map([["u-a", "Nhân sự A"], ["u-b", "Nhân sự B"]]), usersWithoutApprovedCost: [], funds: [{ name: "Công cụ AI", amount: 5_260_000, allocatedAmount: 5_260_000, confirmed: true }], acceptedProjects: [{ name: "Dự án C", acceptedOn: "2026-09-20", contractAmount: 260_000_000 }] };
+  const ready = { periodKey: "2026-09", missingParameters: [], entries: [entry({ hours: 8, dateKey: "2026-09-03" })], userNames: new Map([["u-a", "Nhân sự A"], ["u-b", "Nhân sự B"]]), usersWithoutApprovedCost: [], funds: [{ name: "Công cụ AI", amount: 5_260_000, allocatedAmount: 5_260_000, confirmed: true }], acceptedProjects: [{ name: "Dự án C", acceptedOn: "2026-09-20", projectValueAmount: 260_000_000 }] };
 
   it("all five hold → every row is ticked", () => {
     expect(periodChecklist(ready).map((row) => [row.key, row.ok])).toEqual([["parameters", true], ["pending_hours", true], ["staff_costs", true], ["funds", true], ["accepted_projects", true]]);
@@ -272,23 +241,23 @@ describe("lớp 3 — checklist năm điều kiện (mục 6.5)", () => {
   it("each row says how much is missing, names the few and points to the screen to fix it", () => {
     const rows = periodChecklist({
       ...ready, missingParameters: ["Tỷ lệ hoa hồng"],
-      entries: [entry({ hours: 105.5, userId: "u-b", rate: null, dateKey: "2026-09-03" }), entry({ hours: 12, contractItemId: null, dateKey: "2026-09-04" })],
+      entries: [entry({ hours: 105.5, userId: "u-b", rate: null, dateKey: "2026-09-03" }), entry({ hours: 12, taskTypeLayer1: null, dateKey: "2026-09-04" })],
       usersWithoutApprovedCost: ["u-b"], funds: [{ name: "Công cụ AI", amount: 5_260_000, allocatedAmount: 0, confirmed: false }, { name: "Phần mềm dùng chung", amount: 3_000_000, allocatedAmount: 3_000_000, confirmed: true }],
-      acceptedProjects: [{ name: "Dự án C", acceptedOn: "2026-09-20", contractAmount: undefined }]
+      acceptedProjects: [{ name: "Dự án C", acceptedOn: "2026-09-20", projectValueAmount: undefined }]
     });
     expect(rows.map((row) => [row.ok, row.detail, row.targetLabel])).toEqual([
       [false, "thiếu: Tỷ lệ hoa hồng", "Tham số"],
       [false, "còn 117,5 giờ", "Danh sách"],
       [false, "thiếu: Nhân sự B", "Hồ sơ nhân sự"],
       [false, "còn: Công cụ AI", "Quỹ chi phí chung"],
-      [false, "thiếu: Dự án C", "Thiết lập P&L của dự án"]
+      [false, "thiếu: Dự án C", "P&L dự án"]
     ]);
   });
 
-  it("(2) giờ Pre-sale đang chờ ký hợp đồng không chặn khóa kỳ (A-1b)", () => {
-    const presale = entry({ hours: 6, taskTypeLayer1: "PRE_SALE", contractItemId: null, awaitingContract: true, dateKey: "2026-09-03" });
-    expect(presale).toMatchObject({ status: "pending", awaitingContract: true });
-    expect(periodChecklist({ ...ready, entries: [presale] })[1]).toMatchObject({ ok: true, detail: null });
+  it("(2) no exception any more: a Pre-sale hour counts from the start, and one still pending holds the month open (chốt 13/10)", () => {
+    const presale = entry({ hours: 6, taskTypeLayer1: "PRE_SALE", dateKey: "2026-09-03" });
+    expect(presale).toMatchObject({ status: "included", reasons: [] });
+    expect(periodChecklist({ ...ready, entries: [entry({ hours: 6, taskTypeLayer1: "PRE_SALE", rate: null, dateKey: "2026-09-03" })] })[1]).toMatchObject({ ok: false, label: "Không còn giờ Chờ xử lý của tháng", detail: "còn 6 giờ" });
   });
 
   it("(4) tổng đã chia khác tổng quỹ thì chặn khóa kỳ, even when confirmed", () => {
@@ -326,8 +295,8 @@ describe("lớp 4 — Tổng quan P&L (mục 4)", () => {
   });
 
   it("ô tổng = cộng số Toàn dự án; biên EBIT = tổng EBIT ÷ tổng doanh thu, không lấy trung bình biên từng dự án", () => {
-    const a = project({ closePassed: true, lockedPeriods: new Set(["2026-08"]), items: [{ id: "hm-01", contractType: "FIXED_PRICE", valueAmount: 100_000_000 }], commissionPercent: 0, entries: [entry({ hours: 400 })] }); // cost 60, EBIT 40, biên 40%
-    const b = project({ closePassed: true, items: [{ id: "hm-01", contractType: "FIXED_PRICE", valueAmount: 20_000_000 }], commissionPercent: 0, entries: [entry({ hours: 120 })] }); // cost 18, EBIT 2, biên 10%
+    const a = project({ closePassed: true, lockedPeriods: new Set(["2026-08"]), projectValueAmount: 100_000_000, commissionPercent: 0, entries: [entry({ hours: 400 })] }); // cost 60, EBIT 40, biên 40%
+    const b = project({ closePassed: true, projectValueAmount: 20_000_000, commissionPercent: 0, entries: [entry({ hours: 120 })] }); // cost 18, EBIT 2, biên 10%
     const totals = dashboardTotals([a, b]);
     expect(totals).toMatchObject({ projectCount: 2, revenueAmount: 120_000_000, totalCostAmount: 78_000_000, laborCostAmount: 78_000_000, otherCostAmount: 0, ebitAmount: 42_000_000, marginPercent: 35 });
     expect(totals.marginPercent).not.toBe((40 + 10) / 2);
@@ -338,7 +307,7 @@ describe("lớp 4 — Tổng quan P&L (mục 4)", () => {
 
   it("a project without a figure is left out of that sum and counted — never added as 0", () => {
     const known = project({ closePassed: true, lockedPeriods: new Set(["2026-08"]), entries: [entry({ hours: 8 })] });
-    const unknown = project({ closePassed: true, items: [], entries: [entry({ hours: 8 })] });
+    const unknown = project({ closePassed: true, projectValueAmount: undefined, entries: [entry({ hours: 8 })] });
     const totals = dashboardTotals([known, unknown]);
     expect(totals.revenueAmount).toBe(known.revenue.amount);
     expect(totals).toMatchObject({ notComputableProjectCount: 1, label: "provisional" });

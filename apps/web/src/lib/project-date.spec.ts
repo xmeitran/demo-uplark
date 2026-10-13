@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatProjectDateRange, projectDueSortValue, uiProjectDateToIso } from "./project-date";
+import { formatProjectDateRange, parsePickerDate, projectDueSortValue, uiProjectDateToIso } from "./project-date";
 
 describe("project date serialization", () => {
   it("keeps date-only input on the same calendar day", () => {
@@ -46,5 +46,17 @@ describe("project due-date sorting", () => {
     ];
     const sorted = [...projects].sort((a, b) => projectDueSortValue(a) - projectDueSortValue(b)).map((project) => project.id);
     expect(sorted).toEqual(["display-only", "mar-2026", "apr-2027", "none"]);
+  });
+});
+
+describe("date picker values", () => {
+  it("reads the picker's display text and an ISO day as the same local calendar day", () => {
+    for (const value of ["Oct 13, 2026", "2026-10-13"]) {
+      const date = parsePickerDate(value)!;
+      expect([date.getFullYear(), date.getMonth(), date.getDate()]).toEqual([2026, 9, 13]);
+    }
+    expect(parsePickerDate("")).toBeNull();
+    expect(parsePickerDate("TBD")).toBeNull();
+    expect(parsePickerDate("not a date")).toBeNull();
   });
 });

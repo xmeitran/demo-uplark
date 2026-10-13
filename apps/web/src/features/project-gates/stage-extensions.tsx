@@ -2,8 +2,7 @@
 
 /**
  * Stage extensions on a gate card (TD-04, TD-05, D-21): how many times the stage's due date was extended, why, and
- * the "Gia hạn stage" action for an Admin (PM, Dx Director). Extensions caused by a change request are listed but
- * not counted (V-40).
+ * the "Gia hạn stage" action for an Admin (PM, Dx Director). Every extension counts (chốt 13/10).
  */
 import React, { useState } from "react";
 import type { ProjectGateListResponse, ProjectStageSlaSummary } from "@b2b-crm/contracts";
@@ -57,7 +56,6 @@ export function StageExtensions({ projectId, sla, onExtended }: {
           {extensions.map((item) => (
             <li key={item.id}>
               {item.previousDueAt ? `${formatVietnamDate(item.previousDueAt)} → ` : ""}{formatVietnamDate(item.newDueAt)} · <span className="text-foreground">{item.reason}</span> · {item.approvedByName ?? "Admin"} duyệt {formatVietnamDate(item.approvedAt)}
-              {item.counted ? "" : ` · theo ${item.changeRequestCode ?? "yêu cầu thay đổi"}, không tính`}
             </li>
           ))}
         </ul>

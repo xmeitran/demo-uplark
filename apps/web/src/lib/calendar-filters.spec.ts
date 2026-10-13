@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildCalendarMemberOptions,
   buildCalendarProjectOptions,
+  buildCalendarStatusOptions,
   filterCalendarEvents,
   pruneCalendarFilterIds,
   type CalendarFilterEvent
@@ -104,6 +105,24 @@ describe("calendar filters", () => {
       projectIds: ["project-a"],
       memberIds: ["user-2"]
     }).map((event) => event.id)).toEqual(["event-3"]);
+  });
+
+  it("narrows by type and plan status; logged hours carry no status", () => {
+    const typed = [
+      { id: "plan-1", userId: "user-1", kind: "planned", status: "planned" },
+      { id: "plan-2", userId: "user-1", kind: "planned", status: "completed" },
+      { id: "actual-1", userId: "user-1", kind: "actual", status: "actual" }
+    ];
+    const ids = (kinds: string[], statuses: string[]) => filterCalendarEvents(typed, { projectIds: [], memberIds: [], kinds, statuses }).map((event) => event.id);
+    expect(ids(["actual"], [])).toEqual(["actual-1"]);
+    expect(ids(["planned", "actual"], [])).toEqual(["plan-1", "plan-2", "actual-1"]);
+    expect(ids([], ["completed", "cancelled"])).toEqual(["plan-2"]);
+    expect(ids(["actual"], ["completed"])).toEqual([]);
+    expect(filterCalendarEvents(typed, { projectIds: [], memberIds: [], kinds: [], statuses: [] })).toBe(typed);
+    expect(buildCalendarStatusOptions(typed, (status) => status.toUpperCase())).toEqual([
+      { value: "planned", label: "PLANNED" },
+      { value: "completed", label: "COMPLETED" }
+    ]);
   });
 
   it("returns the canonical collection when all filters are cleared", () => {

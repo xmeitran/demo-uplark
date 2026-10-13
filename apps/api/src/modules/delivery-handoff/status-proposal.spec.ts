@@ -169,3 +169,23 @@ describe("proposal or automatic transition (V-17, V-19)", () => {
     expect(canDecideStatusProposal({ isPm: false, isAdmin: false })).toBe(false);
   });
 });
+
+describe("project without G1–G8 (hand-built milestones)", () => {
+  const own = (milestones: ProjectStatusFacts["milestones"], currentStatus = "planning") => facts({ gates: null, milestones, currentStatus });
+
+  it("moves to Đã hoàn thành by itself once every milestone is approved", () => {
+    const computed = computeProjectStatus(own({ total: 2, approved: 2, started: true }));
+    expect(computed?.status).toBe("completed");
+    expect(planStatusSync("planning", computed).apply.map((step) => step.to)).toEqual(["completed"]);
+  });
+
+  it("proposes Đang triển khai after the first approval or once work has started", () => {
+    expect(planStatusSync("planning", computeProjectStatus(own({ total: 2, approved: 1, started: true }))).propose?.proposedStatus).toBe("active");
+    expect(planStatusSync("planning", computeProjectStatus(own({ total: 2, approved: 0, started: true }))).propose?.proposedStatus).toBe("active");
+  });
+
+  it("says nothing for a project with no milestones or nothing started", () => {
+    expect(computeProjectStatus(own({ total: 0, approved: 0, started: false }))).toBeNull();
+    expect(planStatusSync("planning", computeProjectStatus(own({ total: 2, approved: 0, started: false })))).toEqual({ apply: [] });
+  });
+});

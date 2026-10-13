@@ -7,14 +7,14 @@
  */
 import type { PnlParameterKey, PnlParameterScopeType } from "@b2b-crm/contracts";
 import { loadLatestParameterRows } from "../../shared/system-parameters";
-import { defaultContractItemId, isLostDealProject } from "../delivery-handoff/contract-item";
-import { isGatePassed } from "../delivery-handoff/gates";
+import { isLostDealProject } from "../delivery-handoff/lost-deal";
+import { isGatePassed, projectGatePosition } from "../delivery-handoff/gates";
 import { NON_ACTUAL_TIME_ENTRY_STATUSES } from "../delivery-handoff/member-participation";
 import { normalizeProjectStatus } from "../delivery-handoff/project-status";
 import { firstStageOf } from "../delivery-handoff/project-visibility";
 import { isInternalWorklogProjectType } from "../delivery-handoff/task-classification";
 import { nextMonthKey, reportDayStart, reportMonthKey, reportMonthStart } from "./pnl-calc";
-import { classifyEntry, computeProjectPnl, type ContractItemInput, type EngineEntry, type ProjectPnl } from "./pnl-engine";
+import { classifyEntry, computeProjectPnl, type EngineEntry, type ProjectPnl } from "./pnl-engine";
 import { costRateOf, isPnlGateReason, rateKey, roleGroupOf, standardMonthMinutes, workingDaysOfMonth, type CostRate, type PnlGateReason, type PnlGateStatus, type RoleGroup } from "./pnl-rules";
 import { DEFAULT_COST_TREE, DEFAULT_ITEM_TEMPLATES, effectiveDisabledCodes, templateKeyOfProjectType, type CostItemDef, type ItemTemplateDef } from "./pnl-tree";
 
@@ -39,8 +39,7 @@ export const PNL_PARAMETER_CATALOGUE: Record<PnlParameterKey, { label: string; u
   standardDayHours: { label: "Giờ chuẩn một ngày", unit: "giờ", kind: "number", allowedScopes: ["company"], scopeText: "Công ty", note: null, fallback: 8, fallbackFrom: "2026-01", min: 0.5, max: 24 },
   usdRate: { label: "Tỷ giá USD", unit: "đ", kind: "number", allowedScopes: ["company"], scopeText: "Công ty, theo tháng", note: null, min: 1, max: 1_000_000 },
   pnlCloseGate: { label: "Mốc đóng P&L dự án", unit: "", kind: "gate", allowedScopes: ["company"], scopeText: "Công ty", note: null, fallback: "G7", fallbackFrom: "2026-10" },
-  commissionPercent: { label: "Tỷ lệ hoa hồng", unit: "%", kind: "number", allowedScopes: ["company", "customer", "project_type", "project"], scopeText: "Công ty, khách hàng", note: "nhập tay", min: 0, max: 100 },
-  sellRate: { label: "Đơn giá bán theo vai trò", unit: "đ/giờ", kind: "number", allowedScopes: ["company", "project"], scopeText: "Công ty, dự án", note: "đề xuất A-5", min: 0, max: 1_000_000_000 }
+  commissionPercent: { label: "Tỷ lệ hoa hồng", unit: "%", kind: "number", allowedScopes: ["company", "customer", "project_type", "project"], scopeText: "Công ty, khách hàng", note: "nhập tay", min: 0, max: 100 }
 };
 export const PNL_PARAMETER_KEYS = Object.keys(PNL_PARAMETER_CATALOGUE) as PnlParameterKey[];
 /** Only G7 can be evaluated: a stage knows its side of G7 (ProjectStage.afterPnlClose). The parameter keeps scope, period and history so moving it later is a value, not a structure (PL-27). */
@@ -81,7 +80,8 @@ export class ParameterStore {
 // Snapshot of a locked month (PL-23)
 // ---------------------------------------------------------------------------
 
-export interface SnapshotEntry { id: string; p: string | null; u: string; t: string | null; d: string; m: number; l1: string | null; l2: string | null; s2: string | null; rg: RoleGroup; ci: string | null; s: PnlGateStatus; r: PnlGateReason[]; ac: boolean }
+/** `r` of a lock taken before 13/10/2026 may hold the retired reason "missing_contract_item"; `ci` (line item) and `ac` (Pre-sale chờ ký hợp đồng) are no longer written. */
+export interface SnapshotEntry { id: string; p: string | null; u: string; t: string | null; d: string; m: number; l1: string | null; l2: string | null; s2: string | null; rg: RoleGroup; ci?: string | null; s: PnlGateStatus; r: string[]; ac?: boolean }
 export interface SnapshotData {
   /** 2 adds `tree`, `disabledCodes` and the creation time of every parameter value. */
   version: 1 | 2;
@@ -122,7 +122,8 @@ export interface ProjectCtx {
   /** Template + this project's override (or the set frozen at G7), ancestors expanded. */
   disabledCodes: Set<string>;
   record: any | null;
-  items: Array<ContractItemInput & { code: string; name: string; kind: string; sortOrder: number; estimateMinutes: number | null; changeRequestId: string | null; warnThresholdPercent: number }>;
+  /** PL-13 "Giá trị dự án" (VND); undefined = chưa nhập, or a Loại Nội bộ / Đào tạo project (it has none). */
+  projectValueAmount?: number;
   g1Passed: boolean; g1At?: Date;
   closeGate: string; closePassed: boolean; acceptedAt?: Date; acceptedOn?: string;
   /**
@@ -222,7 +223,7 @@ export async function loadPnlContext(prisma: any, workspaceId: string, scope: Pn
     prisma.pnlItemTemplate.findMany({ where: { workspaceId } }),
     (scope.projectIds && !scope.projectIds.length) ? [] : prisma.taskTimeEntry.findMany({
       where: entryWhere,
-      select: { id: true, projectId: true, taskId: true, userId: true, minutes: true, workDate: true, createdAt: true, taskTypeLayer1: true, taskTypeLayer2: true, selectedTaskTypeLayer2: true, contractItemId: true, legacyConvertedAt: true, legacyPendingReason: true }
+      select: { id: true, projectId: true, taskId: true, userId: true, minutes: true, workDate: true, createdAt: true, taskTypeLayer1: true, taskTypeLayer2: true, selectedTaskTypeLayer2: true, legacyConvertedAt: true, legacyPendingReason: true }
     })
   ]);
 
@@ -261,23 +262,28 @@ export async function loadPnlContext(prisma: any, workspaceId: string, scope: Pn
   const ids = projectRows.map((project) => project.id);
   const inProjects = { projectId: { in: ids } };
   const closeGate = String(params.resolve("pnlCloseGate", null, currentPeriodKey) ?? "G7");
-  const [accounts, itemsRows, gateRows, historyRows, recordRows, projectStages] = ids.length ? await Promise.all([
+  const [accounts, gateRows, historyRows, recordRows, projectStages, milestoneRows] = ids.length ? await Promise.all([
     prisma.account.findMany({ where: { id: { in: [...new Set(projectRows.map((project) => project.accountId))] } }, select: { id: true, name: true } }),
-    prisma.projectContractItem.findMany({ where: { ...inProjects, archivedAt: null }, orderBy: { sortOrder: "asc" } }),
     prisma.projectGate.findMany({ where: { ...inProjects, code: { in: ["G1", closeGate] } } }),
     prisma.projectStatusHistory.findMany({ where: inProjects, select: { projectId: true, fromStatus: true, toStatus: true, closeReasonCode: true, changedAt: true } }),
     prisma.projectPnlRecord.findMany({ where: inProjects }),
-    prisma.projectStage.findMany({ where: inProjects, orderBy: { sortOrder: "asc" }, select: { projectId: true, ownerUserId: true, sortOrder: true, createdAt: true, plannedStartAt: true, plannedEndAt: true } })
+    prisma.projectStage.findMany({ where: inProjects, orderBy: { sortOrder: "asc" }, select: { projectId: true, ownerUserId: true, sortOrder: true, createdAt: true, plannedStartAt: true, plannedEndAt: true } }),
+    prisma.projectMilestone.findMany({ where: inProjects, select: { projectId: true, sortOrder: true, gateStatus: true } })
   ]) : [[], [], [], [], [], []];
 
   const gatesByProject = group<any>(gateRows, (row) => row.projectId);
   const historyByProject = group<any>(historyRows, (row) => row.projectId);
   const recordByProject = new Map<string, any>(recordRows.map((row: any) => [row.projectId, row]));
-  // Acceptance: the gate row is the source; a project created before gates existed falls back to its status.
+  const milestonesByProject = group<any>(milestoneRows, (row) => row.projectId);
+  // Acceptance: the gate row is the source. A project without G1–G8 (hand-built milestones, or older than the gates) has
+  // passed the closing point when every milestone of its own is approved, or — as before — by its status.
   const acceptance = new Map<string, { passed: boolean; at?: Date }>(projectRows.map((row) => {
     const gates = gatesByProject.get(row.id) ?? [];
     const close = gates.find((gate) => gate.code === closeGate);
-    return [row.id, close ? { passed: isGatePassed(close.status), at: isGatePassed(close.status) ? GATE_DATE(close) : undefined } : gates.length ? { passed: false } : acceptedByStatus(row.status, historyByProject.get(row.id) ?? [])];
+    if (close) return [row.id, { passed: isGatePassed(close.status), at: isGatePassed(close.status) ? GATE_DATE(close) : undefined }];
+    if (gates.length) return [row.id, { passed: false }];
+    const byStatus = acceptedByStatus(row.status, historyByProject.get(row.id) ?? []);
+    return [row.id, { passed: byStatus.passed || projectGatePosition([], milestonesByProject.get(row.id) ?? [], closeGate).closePassed, at: byStatus.at }];
   }));
   // Accepted without a date: every hour of those projects, to find the last one before the closing point (never the
   // month scope of this load — the estimate must be the same on every screen).
@@ -289,12 +295,12 @@ export async function loadPnlContext(prisma: any, workspaceId: string, scope: Pn
     needsTemplateHistory ? prisma.auditEvent.findMany({ where: { workspaceId, resource: "pnl_template", action: "pnl.template_changed" }, orderBy: { createdAt: "asc" } }) : []
   ]);
 
-  // Tasks → stage (a sub-task saved without a stage sits in its parent's) and line item.
+  // Tasks → stage (a sub-task saved without a stage sits in its parent's).
   const taskIds = [...new Set([...entryRows, ...closingRows].map((row: any) => row.taskId).filter(Boolean))];
-  const tasks: any[] = taskIds.length ? await prisma.projectTask.findMany({ where: { id: { in: taskIds } }, select: { id: true, title: true, stageId: true, parentTaskId: true, contractItemId: true } }) : [];
+  const tasks: any[] = taskIds.length ? await prisma.projectTask.findMany({ where: { id: { in: taskIds } }, select: { id: true, title: true, stageId: true, parentTaskId: true } }) : [];
   const taskById = new Map<string, any>(tasks.map((task) => [task.id, task]));
   const parentIds = [...new Set(tasks.filter((task) => !task.stageId && task.parentTaskId && !taskById.has(task.parentTaskId)).map((task) => task.parentTaskId))];
-  if (parentIds.length) for (const parent of await prisma.projectTask.findMany({ where: { id: { in: parentIds } }, select: { id: true, title: true, stageId: true, parentTaskId: true, contractItemId: true } })) taskById.set(parent.id, parent);
+  if (parentIds.length) for (const parent of await prisma.projectTask.findMany({ where: { id: { in: parentIds } }, select: { id: true, title: true, stageId: true, parentTaskId: true } })) taskById.set(parent.id, parent);
   const stageIdOf = (taskId: string | null) => { const task = taskId ? taskById.get(taskId) : undefined; return task?.stageId ?? (task?.parentTaskId ? taskById.get(task.parentTaskId)?.stageId : undefined) ?? undefined; };
   const stageIds = [...new Set([...entryRows, ...closingRows].map((row: any) => stageIdOf(row.taskId)).filter(Boolean))];
   const stageRows: any[] = stageIds.length ? await prisma.projectStage.findMany({ where: { id: { in: stageIds } }, select: { id: true, activity: true, afterPnlClose: true } }) : [];
@@ -307,7 +313,6 @@ export async function loadPnlContext(prisma: any, workspaceId: string, scope: Pn
   for (const row of templateRows) templates.set(row.key, { key: row.key, name: row.name, disabledCodes: row.disabledCodes ?? [], consumable: Boolean(row.consumable) });
 
   const accountName = new Map<string, string>(accounts.map((account: any) => [account.id, account.name]));
-  const itemsByProject = group<any>(itemsRows, (row) => row.projectId);
   const lastHourBeforeClose = new Map<string, string>();
   for (const row of closingRows) {
     if (stageById.get(stageIdOf(row.taskId) ?? "")?.afterPnlClose === true) continue;
@@ -326,14 +331,11 @@ export async function loadPnlContext(prisma: any, workspaceId: string, scope: Pn
     const gates = gatesByProject.get(row.id) ?? [];
     const history = historyByProject.get(row.id) ?? [];
     const g1 = gates.find((gate) => gate.code === "G1");
-    const items = (itemsByProject.get(row.id) ?? []).filter((item) => item.status !== "archived").map((item) => ({
-      id: item.id, code: item.code, name: item.name, kind: item.kind, sortOrder: item.sortOrder, contractType: item.contractType ?? null,
-      valueAmount: item.valueAmount === null || item.valueAmount === undefined ? null : Number(item.valueAmount),
-      estimateMinutes: item.estimateMinutes ?? null, changeRequestId: item.changeRequestId ?? null, warnThresholdPercent: item.warnThresholdPercent ?? 80
-    }));
     const accepted = acceptance.get(row.id)!;
-    const g1Passed = g1 ? isGatePassed(g1.status) : gates.length ? false : items.some((item) => item.contractType);
+    // "G1 đã duyệt": the gate row, or — without G1–G8 — the project's first milestone being approved.
+    const g1Passed = projectGatePosition(gates, milestonesByProject.get(row.id) ?? [], closeGate).g1Passed;
     const record = recordByProject.get(row.id) ?? null;
+    const storedValue = record?.projectValueAmount === null || record?.projectValueAmount === undefined ? undefined : Number(record.projectValueAmount);
     const templateKey = templateKeyOfProjectType(row.projectType);
     const template = templates.get(templateKey) ?? DEFAULT_ITEM_TEMPLATES[0];
     const switchedOff = record?.frozenAt
@@ -350,7 +352,8 @@ export async function loadPnlContext(prisma: any, workspaceId: string, scope: Pn
     projects.set(row.id, {
       id: row.id, code: row.code, name: row.name, accountId: row.accountId, accountName: accountName.get(row.accountId) ?? "", projectType: row.projectType, status: String(row.status),
       isTest: Boolean(row.isTestProject), internalWorklog: isInternalWorklogProjectType(row.projectType),
-      templateKey, template, consumable: template.consumable, disabledCodes: effectiveDisabledCodes(tree, switchedOff), record, items,
+      templateKey, template, consumable: template.consumable, disabledCodes: effectiveDisabledCodes(tree, switchedOff), record,
+      projectValueAmount: template.consumable ? undefined : storedValue,
       g1Passed, g1At: g1 && isGatePassed(g1.status) ? GATE_DATE(g1) : undefined,
       closeGate, closePassed: accepted.passed, acceptedAt, acceptedOn: accepted.at ? dayKeyOf(accepted.at) : estimatedOn, acceptanceEstimated: accepted.passed && !accepted.at,
       lostDeal: isLostDealProject(row.status, history),
@@ -403,30 +406,25 @@ export async function loadPnlContext(prisma: any, workspaceId: string, scope: Pn
     const ids = snapshotIds.get(periodKey);
     if (ids?.has(row.id)) continue; // the snapshot's version of this hour is the one that counts
     const project = row.projectId ? projects.get(row.projectId) : undefined;
-    const fallbackItem = project && !project.internalWorklog ? defaultContractItemId(project.items) : null;
     entries.push(classifyEntry({
       id: row.id, projectId: row.projectId ?? null, userId: row.userId, taskId: row.taskId ?? null, dateKey, minutes: row.minutes,
       taskTypeLayer1: row.taskTypeLayer1 ?? null, taskTypeLayer2: row.taskTypeLayer2 ?? null, selectedTaskTypeLayer2: row.selectedTaskTypeLayer2 ?? null,
-      // D-06 / Phụ lục B ca 4: once the project has a line item, an hour without one belongs to the root item.
-      contractItemId: row.contractItemId ?? task?.contractItemId ?? fallbackItem,
       afterPnlClose: stage?.afterPnlClose ?? null,
       lostDeal: Boolean(project?.lostDeal),
       loggedAfterLock: Boolean(ids),
       legacyPendingReason: row.legacyPendingReason ?? null,
-      roleGroup: roleGroupOfUser(row.userId),
-      awaitingContract: row.taskTypeLayer1 === "PRE_SALE" && Boolean(project) && !project!.items.length && !project!.lostDeal
+      roleGroup: roleGroupOfUser(row.userId)
     }, rate(row.userId, periodKey)));
   }
   for (const { periodKey, entry } of snapshotEntries) {
-    let settled: Pick<EngineEntry, "status" | "reasons" | "contractItemId" | "awaitingContract"> = { status: entry.s, reasons: (entry.r ?? []).filter(isPnlGateReason), contractItemId: entry.ci, awaitingContract: Boolean(entry.ac) };
-    // A-1b: the lock lets a Pre-sale hour "chờ ký hợp đồng" through, so its result is not final. It is settled when the
-    // deal is: lost → "Thua deal – Chi phí Pre-sale" of this month; signed → the root line item, as for an open month.
-    const project = entry.ac && entry.p ? projects.get(entry.p) : undefined;
-    if (project?.lostDeal) settled = { status: "excluded", reasons: ["lost_deal_pre_sale"], contractItemId: entry.ci, awaitingContract: false };
-    else if (project?.items.length) {
-      const reasons = settled.reasons.filter((reason) => reason !== "missing_contract_item");
-      settled = { status: reasons.length ? "pending" : "included", reasons, contractItemId: taskById.get(entry.t ?? "")?.contractItemId ?? defaultContractItemId(project.items), awaitingContract: false };
-    }
+    // A locked month keeps its snapshot — a deal lost later moves only the Pre-sale hours of open months. The one thing
+    // re-read is an hour a lock before 13/10/2026 left waiting for a contract line item ("Chưa có hạng mục", retired):
+    // nothing is missing on it any more, so it is settled by today's rule — Chi phí Pre-sale of a lost deal, else Được tính.
+    const reasons = (entry.r ?? []).filter(isPnlGateReason);
+    const retired = entry.s === "pending" && reasons.length < (entry.r ?? []).length;
+    const settled: Pick<EngineEntry, "status" | "reasons"> = retired && entry.l1 === "PRE_SALE" && entry.p && projects.get(entry.p)?.lostDeal
+      ? { status: "excluded", reasons: ["lost_deal_pre_sale"] }
+      : { status: retired && !reasons.length ? "included" : entry.s, reasons };
     entries.push({
       id: entry.id, projectId: entry.p, userId: entry.u, taskId: entry.t, dateKey: entry.d, periodKey, minutes: entry.m, layer1: entry.l1, roleGroup: entry.rg,
       ...settled, rate: rate(entry.u, periodKey), fromSnapshot: true
@@ -488,14 +486,13 @@ export async function loadPnlContext(prisma: any, workspaceId: string, scope: Pn
       // An open month follows the template in force now; a locked month what was switched on when it was locked.
       const on = <T extends { itemCode: string | null; counted?: boolean }>(row: T): T => ({ ...row, counted: row.counted ?? !(row.itemCode && project.disabledCodes.has(row.itemCode)) });
       return computeProjectPnl({
-        entries: context.entriesOf(projectId), items: project.items, closePassed: project.closePassed, acceptanceDateMissing: project.acceptanceEstimated, g1Passed: project.g1Passed, lostDeal: project.lostDeal, consumable: project.consumable,
+        entries: context.entriesOf(projectId), projectValueAmount: project.projectValueAmount, closePassed: project.closePassed, acceptanceDateMissing: project.acceptanceEstimated, g1Passed: project.g1Passed, lostDeal: project.lostDeal, consumable: project.consumable,
         lockedPeriods: lockedKeys,
         fundShares: fundShares.filter((share) => share.projectId === projectId).map(on),
         unallocatedFundPeriods,
         manualLines: manualLines.filter((line) => line.projectId === projectId).map(on),
         ...pnlTreeOf(projectId),
         commissionPercent: paramsOf(commissionPeriod).number("commissionPercent", null, commissionPeriod, parameterScope),
-        sellRate: (roleGroup, periodKey) => paramsOf(periodKey).number("sellRate", roleGroup, periodKey, parameterScope),
         range
       });
     }

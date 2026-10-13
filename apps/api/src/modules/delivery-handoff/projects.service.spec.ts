@@ -121,7 +121,12 @@ describe("task estimate validation", () => {
   });
 
   it("rejects planned time above eight hours", () => {
-    expect(() => validateTaskEstimateMinutes(MAX_TASK_ESTIMATE_MINUTES + 1)).toThrow("8 hours");
+    expect(() => validateTaskEstimateMinutes(MAX_TASK_ESTIMATE_MINUTES + 1)).toThrow("tối đa 8 giờ");
+  });
+
+  it("keeps an older estimate above the cap when it is sent back unchanged, and rejects a new one", () => {
+    expect(validateTaskEstimateMinutes(960, "estimateMinutes", 960)).toBe(960);
+    expect(() => validateTaskEstimateMinutes(900, "estimateMinutes", 960)).toThrow("tối đa 8 giờ");
   });
 });
 
@@ -135,8 +140,10 @@ describe("ProjectsService.deleteProject", () => {
     const service = new ProjectsService(withMutationDependencies(prisma) as any);
 
     await expect(service.deleteProject("prj-1", principal)).rejects.toThrow(BadRequestException);
-    await expect(service.deleteProject("prj-1", principal)).rejects.toThrow("operational records");
+    await expect(service.deleteProject("prj-1", principal)).rejects.toThrow("Hãy đóng dự án");
     expect(prisma.project.delete).not.toHaveBeenCalled();
+    // The UI reads the code to offer "Đóng dự án" instead of a dead end.
+    await expect(service.deleteProject("prj-1", principal)).rejects.toMatchObject({ response: { code: "PROJECT_HAS_RECORDS", statusCode: 400 } });
   });
 
   it("cleans lightweight metadata before deleting an otherwise empty project", async () => {
@@ -155,7 +162,7 @@ describe("ProjectsService.deleteProject", () => {
     prisma.$transaction = vi.fn().mockRejectedValue({ code: "P2003" });
     const service = new ProjectsService(withMutationDependencies(prisma) as any);
 
-    await expect(service.deleteProject("prj-1", principal)).rejects.toThrow("linked to operational records");
+    await expect(service.deleteProject("prj-1", principal)).rejects.toThrow("Hãy đóng dự án");
   });
 });
 
@@ -1309,7 +1316,7 @@ describe("ProjectsService.createTask", () => {
       title: "Invalid schedule",
       plannedStartAt: "2026-07-16T00:00:00.000Z",
       dueAt: "2026-07-15T00:00:00.000Z"
-    }, principal, principal.subjectId)).rejects.toThrow("plannedStartAt must not be later than dueAt");
+    }, principal, principal.subjectId)).rejects.toThrow("Ngày bắt đầu không được sau");
 
     expect(prisma.projectTask.create).not.toHaveBeenCalled();
   });
@@ -1485,7 +1492,7 @@ describe("ProjectsService.updateTask", () => {
 
     await expect(service.updateTask("task-1", { projectId: "prj-2", stageId: null }, {
       ...principal, roleCodes: [roleCode]
-    })).rejects.toThrow("Task hierarchy parent changes require a dedicated move endpoint");
+    })).rejects.toThrow("Không đổi stage hoặc task cha của task ở màn sửa này");
     expect(prisma.projectTask.update).not.toHaveBeenCalled();
     expect(prisma.auditEvent.create).not.toHaveBeenCalled();
   });
@@ -2002,7 +2009,7 @@ describe("ProjectsService.createTimeEntry", () => {
       approvalStatus: "submitted",
       note: "Legacy entry"
     }, principal, "usr-1")).rejects.toThrow(
-      "Daily log cannot exceed 8 office hours; create an approved overtime plan for the remainder"
+      "Mỗi người chỉ ghi giờ tối đa 8 giờ hành chính một ngày. Ngày này người thực hiện đã ghi"
     );
     expect(prisma.taskTimeEntry.create).not.toHaveBeenCalled();
 
@@ -2812,6 +2819,7 @@ describe("ProjectsService interaction remediation", () => {
     await expect(service.createProject({
       accountId: "acc-1",
       opportunityId: "opp-other-workspace",
+      projectType: "delivery",
       name: "Unsafe project"
     }, principal)).rejects.toThrow(NotFoundException);
 
@@ -2877,6 +2885,12 @@ describe("ProjectsService interaction remediation", () => {
     expect(prisma.projectBudget.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ plannedRevenueAmount: 125000, currency: "VND" })
     }));
+
+    // No PIC chosen: the creator owns the first stage (the project PIC) and is a member.
+    const stageCallsBefore = prisma.projectStage.createMany.mock.calls.length;
+    await service.createProject({ accountId: "acc-1", code: "ACME-NO-PIC", name: "No PIC chosen", projectType: "delivery" } as any, principal);
+    expect(prisma.projectStage.createMany.mock.calls[stageCallsBefore][0].data[0].ownerUserId).toBe(principal.subjectId);
+    expect(prisma.projectMember.createMany.mock.calls.at(-1)[0].data).toEqual([{ workspaceId: "twk-1", projectId: "prj-new", userId: principal.subjectId, relation: "member" }]);
   });
 
   it("reviews a submitted time entry with optimistic concurrency and audit fields", async () => {

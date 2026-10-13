@@ -1,5 +1,5 @@
 /**
- * Test helper: an in-memory stand-in for the few Prisma calls the baseline / change-request / import code makes.
+ * Test helper: an in-memory stand-in for the few Prisma calls the baseline / stage-extension / conversion code makes.
  * Supports equality, `in`, `notIn`, `not`, `lt/lte/gt/gte` in `where`, a single-key `orderBy`, `increment`, and the
  * two `groupBy` shapes used (`_sum.minutes`, `_max.version`). Not a general Prisma fake.
  */
@@ -8,9 +8,7 @@ type Row = Record<string, any>;
 /** Column defaults of the schema that the code under test relies on. */
 const COLUMN_DEFAULTS: Record<string, Row> = {
   projectWarning: { status: "open" },
-  projectTask: { archivedAt: null, parentTaskId: null },
-  projectContractItem: { status: "active", contractType: null, valueAmount: null, currency: "VND" },
-  projectStage: { changeRequestId: null }
+  projectTask: { archivedAt: null, parentTaskId: null }
 };
 
 function matches(row: Row, where: Row = {}): boolean {
@@ -43,10 +41,7 @@ export function fakePrisma(seed: Record<string, Row[]> = {}) {
   const table = (name: string) => (db[name] ??= [...(seed[name] ?? [])]);
   const model = (name: string) => ({
     findMany: async (args: any = {}) => {
-      const rows = ordered(table(name).filter((row) => matches(row, args.where)), args.orderBy);
-      // The one relation the code selects: a change-request stage with its evaluation task.
-      const tasks = name === "projectStage" ? args.select?.tasks : undefined;
-      return tasks ? rows.map((row) => ({ ...row, tasks: table("projectTask").filter((task) => task.stageId === row.id && matches(task, tasks.where)) })) : rows;
+      return ordered(table(name).filter((row) => matches(row, args.where)), args.orderBy);
     },
     findFirst: async (args: any = {}) => ordered(table(name).filter((row) => matches(row, args.where)), args.orderBy)[0] ?? null,
     count: async (args: any = {}) => table(name).filter((row) => matches(row, args.where)).length,
@@ -59,6 +54,12 @@ export function fakePrisma(seed: Record<string, Row[]> = {}) {
       return row;
     },
     updateMany: async ({ where, data }: any) => { const rows = table(name).filter((row) => matches(row, where)); rows.forEach((row) => Object.assign(row, data)); return { count: rows.length }; },
+    deleteMany: async ({ where }: any = {}) => {
+      const rows = table(name);
+      const gone = rows.filter((row) => matches(row, where));
+      for (const row of gone) rows.splice(rows.indexOf(row), 1);
+      return { count: gone.length };
+    },
     upsert: async ({ where, create, update }: any) => {
       const row = table(name).find((item) => matches(item, where.projectId_prefix ?? where));
       if (!row) { table(name).push({ ...create }); return { ...create }; }

@@ -20,11 +20,13 @@ import {
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { CustomDropdown, CustomDatePicker } from "@/components/constructor-x/custom-controls";
 import { ModalLayer } from "@/components/modal-layer";
+import { HeaderButton, PageHeader, pageMainClassName } from "@/components/page-header";
+import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilter, type DateRange } from "@/components/filters";
 import { AnimatePresence } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { loadExcelWorkbook } from "@/lib/excel-import";
 import type { Member, Project } from "./projects/data";
-import { PROJECT_STATUS_LABELS } from "@/lib/project-status";
+import { PROJECT_STATUS_LABELS, PROJECT_STATUS_OPTIONS } from "@/lib/project-status";
 import {
   fetchAccountOptions,
   fetchLiveProjects,
@@ -39,7 +41,7 @@ import {
   type WorkspaceUserOption
 } from "@/lib/workspace-users";
 import { uiProjectDateToIso } from "@/lib/project-date";
-import type { ResourceListPaginationMeta } from "@b2b-crm/contracts";
+import { PROJECT_TYPE_OPTIONS, type ResourceListPaginationMeta } from "@b2b-crm/contracts";
 
 // ─── Live Dashboard Data ─────────────────────────────────────────────────────
 
@@ -272,6 +274,16 @@ export default function DashboardPage() {
   const [loadingWorkspaceUsers, setLoadingWorkspaceUsers] = useState(true);
   const [workspaceUsersError, setWorkspaceUsersError] = useState<string | null>(null);
   const [projectTab, setProjectTab] = useState<"last" | "deadline">("last");
+  // Project list filters; sent to /api/projects like the Projects page does. Empty = all.
+  const [periodFilter, setPeriodFilter] = useState<DateRange>({ from: "", to: "" });
+  const [ownerFilter, setOwnerFilter] = useState<string[]>([]);
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  const [clientFilter, setClientFilter] = useState<string[]>([]);
+  const activeFilterCount = [periodFilter.from || periodFilter.to, ownerFilter.length, statusFilter.length, clientFilter.length].filter(Boolean).length;
+  const filterKey = JSON.stringify([periodFilter, ownerFilter, statusFilter, clientFilter]);
+  // A filter change always restarts the list at its first page.
+  const changeFilter = <T,>(setter: (value: T) => void) => (value: T) => { setter(value); setProjectPage(1); };
+  const resetFilters = () => { setPeriodFilter({ from: "", to: "" }); setOwnerFilter([]); setStatusFilter([]); setClientFilter([]); setProjectPage(1); };
 
   // Modal State
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -281,6 +293,7 @@ export default function DashboardPage() {
   const [client, setClient] = useState("");
   const [priority, setPriority] = useState<"Critical" | "High" | "Medium" | "Low">("Medium");
   const [isTestProject, setIsTestProject] = useState(false);
+  const [createProjectType, setCreateProjectType] = useState("");
   const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [dueDate, setDueDate] = useState(() => new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10));
   const [color, setColor] = useState("#2563eb");
@@ -352,6 +365,11 @@ export default function DashboardPage() {
         const live = await fetchLiveProjects({
           limit: PROJECT_PAGE_SIZE,
           offset: (projectPage - 1) * PROJECT_PAGE_SIZE,
+          status: statusFilter as Project["status"][],
+          accountId: clientFilter,
+          ownerUserId: ownerFilter,
+          from: periodFilter.from,
+          to: periodFilter.to,
           signal: controller.signal
         });
         setProjectsList(live.projects.map(toDashboardProject));
@@ -374,7 +392,8 @@ export default function DashboardPage() {
 
     loadProjects();
     return () => controller.abort();
-  }, [projectPage]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- filterKey stands for every filter value
+  }, [projectPage, filterKey]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -488,6 +507,10 @@ export default function DashboardPage() {
       setDashboardError("Select an existing CRM account before creating a production project.");
       return;
     }
+    if (!createProjectType) {
+      setDashboardError("Chọn Loại dự án: Khách hàng, Nội bộ hoặc Đào tạo.");
+      return;
+    }
 
     createSubmittingRef.current = true;
     setSavingProject(true);
@@ -500,6 +523,7 @@ export default function DashboardPage() {
           name: name.trim(),
           ownerUserId: ownerUserId || undefined,
           memberUserIds: selectedMembers,
+          projectType: createProjectType,
           isTestProject,
           plannedStartAt: uiProjectDateToIso(startDate),
           plannedEndAt: uiProjectDateToIso(dueDate),
@@ -544,6 +568,7 @@ export default function DashboardPage() {
 
       // Reset Form
       setName("");
+      setCreateProjectType("");
       setDescription("");
       setClient(accountOptions[0]?.value ?? "");
       setPriority("Medium");
@@ -565,29 +590,12 @@ export default function DashboardPage() {
 
   return (
     <AppShell activeRoute="/" onCreateProjectClick={openCreateProject} title="Dashboard">
-        <main className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-5">
-
-          {/* Greeting */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="text-2xl">👋</span>
-              <div>
-                <h1 className="text-xl font-bold text-foreground tracking-tight">Hi, {displayName}</h1>
-                <p className="text-xs text-muted-foreground">Welcome back to UpLark Partner CRM operations workspace.</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={openCreateProject}
-                className="hidden sm:flex items-center gap-1.5 px-3.5 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-semibold shadow-sm shadow-primary/15 transition-colors"
-                data-testid="dashboard-add-project"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add New Project</span>
-              </button>
-            </div>
-          </div>
+        <main className={pageMainClassName}>
+          <PageHeader
+            title={<><span aria-hidden>👋</span> Hi, {displayName}</>}
+            subtitle="Welcome back to UpLark Partner CRM operations workspace."
+            actions={<HeaderButton variant="primary" icon={<Plus className="w-4 h-4" />} onClick={openCreateProject} data-testid="dashboard-add-project">Add New Project</HeaderButton>}
+          />
 
           {/* ── MAIN 3-COLUMN GRID ────────────────────────────────────────── */}
           {dashboardError && (
@@ -659,6 +667,16 @@ export default function DashboardPage() {
 
             {/* ─ MIDDLE COLUMN ────────────────────────────────────────────── */}
             <div className="space-y-4 min-w-0">
+              <div className="bg-card border border-border rounded-2xl shadow-sm p-3" data-testid="dashboard-project-filters">
+                <FilterBar onReset={activeFilterCount > 0 ? resetFilters : undefined} activeCount={activeFilterCount}>
+                  <FilterField label="Thời gian dự án" className="min-w-[15rem]">
+                    <DateRangeFilter value={periodFilter} onChange={changeFilter(setPeriodFilter)} ariaLabel="Thời gian dự án" />
+                  </FilterField>
+                  <PersonFilter label="PIC" people={workspaceUsers.map((member) => ({ id: member.id, name: member.name, email: member.email, avatarUrl: member.avatarUrl }))} values={ownerFilter} onChange={changeFilter(setOwnerFilter)} allLabel="Tất cả PIC" />
+                  <MultiSelectFilter label="Trạng thái" options={PROJECT_STATUS_OPTIONS} values={statusFilter} onChange={changeFilter(setStatusFilter)} allLabel="Tất cả trạng thái" searchable={false} />
+                  <MultiSelectFilter label="Khách hàng" options={accountOptions.map((account) => ({ value: account.accountId, label: account.label }))} values={clientFilter} onChange={changeFilter(setClientFilter)} allLabel="Tất cả khách hàng" searchPlaceholder="Tìm khách hàng..." />
+                </FilterBar>
+              </div>
               <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
                 {/* Tabs */}
                 <div className="flex items-center justify-between px-5 pt-4 pb-0 border-b border-border">
@@ -735,7 +753,13 @@ export default function DashboardPage() {
                       </div>
                     </motion.div>
                   ))}
-                  {!loadingProjects && visibleDashboardProjects.length === 0 && (
+                  {!loadingProjects && visibleDashboardProjects.length === 0 && activeFilterCount > 0 && (
+                    <div className="px-5 py-10 text-center">
+                      <p className="text-sm font-semibold text-foreground">Không có kết quả phù hợp bộ lọc</p>
+                      <button type="button" onClick={resetFilters} className="mt-2 !text-xs !font-semibold text-primary hover:underline">Đặt lại bộ lọc</button>
+                    </div>
+                  )}
+                  {!loadingProjects && visibleDashboardProjects.length === 0 && activeFilterCount === 0 && (
                     <div className="px-5 py-10 text-center">
                       <p className="text-sm font-semibold text-foreground">No live projects available</p>
                       <p className="mt-1 text-xs text-muted-foreground">
@@ -867,6 +891,18 @@ export default function DashboardPage() {
                         value={client}
                         onChange={setClient}
                         placeholder={clientOptions.length > 0 ? "Select CRM account" : "No CRM accounts loaded"}
+                      />
+                    </div>
+
+                    {/* V-01: Loại dự án is required — it decides Lớp 2 of every task and the project's P&L template. */}
+                    <div className="space-y-1.5">
+                      <span className="text-xs font-semibold text-muted-foreground">Loại dự án <span className="text-destructive">*</span></span>
+                      <CustomDropdown
+                        ariaLabel="Loại dự án"
+                        options={PROJECT_TYPE_OPTIONS}
+                        value={createProjectType}
+                        onChange={setCreateProjectType}
+                        placeholder="Chọn loại dự án"
                       />
                     </div>
 

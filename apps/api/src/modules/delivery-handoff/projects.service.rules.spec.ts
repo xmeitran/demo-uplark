@@ -199,13 +199,13 @@ describe("task rules", () => {
   it("a planning block can only be created for a member of the task's project", async () => {
     const { prisma, service } = setup({ member: true });
     prisma.projectMember.findMany.mockResolvedValue([]);
-    await expect(service.createTaskPlanningBlock("task-1", { userId: "usr-outsider", startAt: "2026-10-05T02:00:00.000Z", endAt: "2026-10-05T03:00:00.000Z" } as any, as("usr-1"), "usr-1")).rejects.toThrow("not project members");
+    await expect(service.createTaskPlanningBlock("task-1", { userId: "usr-outsider", startAt: "2026-10-05T02:00:00.000Z", endAt: "2026-10-05T03:00:00.000Z" } as any, as("usr-1"), "usr-1")).rejects.toThrow("chưa là thành viên dự án");
     expect(prisma.taskPlanningBlock.create).not.toHaveBeenCalled();
   });
 });
 
 describe("project status", () => {
-  const createInput = { accountId: "acc-1", name: "New project", code: "NEW", createStageTemplate: false };
+  const createInput = { accountId: "acc-1", name: "New project", code: "NEW", projectType: "delivery", createStageTemplate: false };
   function createSetup() {
     const ctx = setup();
     ctx.prisma.tenantWorkspace.findUnique.mockResolvedValue({ id: "twk-1", status: "active", tenantKey: "prod" });
@@ -219,6 +219,19 @@ describe("project status", () => {
     const update = setup({ pic: "usr-1" });
     await expect(update.service.updateProject("prj-1", { status: "hold on" } as any, as("usr-1"))).rejects.toThrow("Trạng thái dự án không hợp lệ");
     expect(update.prisma.project.update).not.toHaveBeenCalled();
+  });
+
+  it("V-01: Loại dự án is required on create — Khách hàng, Nội bộ or Đào tạo", async () => {
+    for (const projectType of [undefined, "", "Implementation"]) {
+      const sent = createSetup();
+      await expect(sent.service.createProject({ ...createInput, projectType } as any, as("usr-1"))).rejects.toThrow("Chọn Loại dự án: Khách hàng, Nội bộ, Đào tạo.");
+      expect(sent.prisma.project.create).not.toHaveBeenCalled();
+    }
+    for (const projectType of ["delivery", "internal", "training"]) {
+      const sent = createSetup();
+      await sent.service.createProject({ ...createInput, projectType } as any, as("usr-1"));
+      expect(sent.prisma.project.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ projectType }) }));
+    }
   });
 
   it("always creates a project at Lên kế hoạch, ignoring a status sent by the client (5.1), and writes the first status history row", async () => {
@@ -405,6 +418,56 @@ describe("reads", () => {
     const unfiltered = setup();
     await unfiltered.service.listProjects({}, as("usr-1"));
     expect(unfiltered.prisma.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("accepts comma-separated status, category and accountId on the project list, and still a single value", async () => {
+    const { prisma, service } = setup();
+    await service.listProjects({ status: "on_hold, at_risk", category: "Delivery,Proposal", accountId: "acc-1, acc-2,acc-1" }, as("usr-1", "WORKSPACE_ADMIN"));
+    const where = prisma.project.findMany.mock.calls[0][0].where;
+    expect(where.accountId).toEqual({ in: ["acc-1", "acc-2"] });
+    const [categoryWhere, statusWhere] = where.AND;
+    expect(categoryWhere.OR).toHaveLength(2);
+    expect(JSON.stringify(categoryWhere)).toContain('"proposal"');
+    const statuses = statusWhere.OR.map((item: any) => item.status.equals);
+    expect(statuses).toEqual(expect.arrayContaining(["on_hold", "paused", "at_risk", "blocked"]));
+    expect(prisma.project.count.mock.calls[0][0].where).toEqual(where);
+
+    const single = setup();
+    await single.service.listProjects({ status: "closed", category: "Won", accountId: "acc-9" }, as("usr-1", "WORKSPACE_ADMIN"));
+    const singleWhere = single.prisma.project.findMany.mock.calls[0][0].where;
+    expect(singleWhere.accountId).toBe("acc-9");
+    expect(singleWhere.AND).toHaveLength(2);
+    expect(singleWhere.AND[1].OR.map((item: any) => item.status.equals)).toContain("cancelled");
+  });
+
+  it("filters the project list by planned period: from/to are inclusive Vietnam days matched against the stage dates", async () => {
+    const { prisma, service } = setup();
+    prisma.$queryRaw.mockResolvedValue([{ id: "prj-3" }]);
+    await service.listProjects({ from: "2026-10-01", to: "2026-10-31" }, as("usr-1", "WORKSPACE_ADMIN"));
+    expect(prisma.project.findMany.mock.calls[0][0].where.AND).toEqual([{ id: { in: ["prj-3"] } }]);
+    const [strings, workspaceId, startsBy, endsFrom] = prisma.$queryRaw.mock.calls[0];
+    expect(strings.join("?")).toContain('LEFT JOIN "ProjectStage"');
+    expect(workspaceId).toBe("twk-1");
+    // Overlap: the project starts on or before the last day of the range and ends on or after its first day; no date = open-ended.
+    expect(startsBy.sql).toContain('"plannedStartAt")) IS NULL OR');
+    expect(startsBy.values).toEqual([new Date("2026-10-31T16:59:59.999Z")]);
+    expect(endsFrom.sql).toContain('"plannedEndAt")) IS NULL OR');
+    expect(endsFrom.values).toEqual([new Date("2026-09-30T17:00:00.000Z")]);
+
+    const openEnded = setup();
+    await openEnded.service.listProjects({ from: "2026-10-01", to: "" }, as("usr-1", "WORKSPACE_ADMIN"));
+    expect(openEnded.prisma.$queryRaw.mock.calls[0][2].values).toEqual([]);
+
+    const none = setup();
+    await none.service.listProjects({ from: "", to: "" }, as("usr-1", "WORKSPACE_ADMIN"));
+    expect(none.prisma.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed or reversed project period", async () => {
+    const { service } = setup();
+    await expect(service.listProjects({ from: "01/10/2026" }, as("usr-1"))).rejects.toThrow("from phải có dạng YYYY-MM-DD.");
+    await expect(service.listProjects({ to: "2026-13-40" }, as("usr-1"))).rejects.toThrow("to phải có dạng YYYY-MM-DD.");
+    await expect(service.listProjects({ from: "2026-10-02", to: "2026-10-01" }, as("usr-1"))).rejects.toThrow("to phải sau hoặc bằng from.");
   });
 });
 

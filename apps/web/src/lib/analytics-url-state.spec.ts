@@ -113,6 +113,18 @@ describe("resolvePresetRange", () => {
     expect(quarter).toEqual({ from: "2026-07-01", to: "2026-07-16" });
   });
 
+  it("resolves the whole previous month and the year to date", () => {
+    expect(resolvePresetRange({ ...ANALYTICS_DEFAULT_STATE, preset: "last-month" }, NOW)).toEqual({ from: "2026-06-01", to: "2026-07-01" });
+    expect(resolvePresetRange({ ...ANALYTICS_DEFAULT_STATE, preset: "year" }, NOW)).toEqual({ from: "2026-01-01", to: "2026-07-16" });
+    // January: the previous month is December of the year before.
+    expect(resolvePresetRange({ ...ANALYTICS_DEFAULT_STATE, preset: "last-month" }, new Date("2026-01-10T04:00:00.000Z"))).toEqual({ from: "2025-12-01", to: "2026-01-01" });
+    // 31 December of a leap year stays within the 366-day limit.
+    const leap = resolvePresetRange({ ...ANALYTICS_DEFAULT_STATE, preset: "year" }, new Date("2028-12-31T04:00:00.000Z"));
+    expect((Date.parse(leap.to) - Date.parse(leap.from)) / 86_400_000).toBe(366);
+    expect(parseAnalyticsSearchParams(new URLSearchParams("preset=last-month")).preset).toBe("last-month");
+    expect(serializeAnalyticsState({ ...ANALYTICS_DEFAULT_STATE, preset: "year" })).toBe("preset=year");
+  });
+
   it("handles the HCM date shift near UTC midnight", () => {
     // 2026-07-15T18:30Z is already 2026-07-16 in HCM
     const shifted = resolvePresetRange({ ...ANALYTICS_DEFAULT_STATE, preset: "7d" }, new Date("2026-07-15T18:30:00.000Z"));

@@ -1,17 +1,18 @@
 "use client";
 
-import { Fragment, useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
+import { ChevronDown, ChevronRight, ChevronUp } from "lucide-react";
 import type { PnlHistoryEvent, PnlManualCostInput, PnlManualLine, PnlProjectItemRow } from "@b2b-crm/contracts";
-import { formatMoneyInput, inputClass, labelClass, parseMoneyInput } from "./pnl-cost-shared";
-import { formatDateTime, formatExactVnd, formatMillions, formatMonth, formatPercent } from "./pnl-format";
+import { formatMoneyInput, inputClass, labelClass, parseMoneyInput, visibleTreeRows } from "./pnl-cost-shared";
+import { NO_VALUE, formatDateTime, formatExactVnd, formatMillions, formatMonth, formatPercent } from "./pnl-format";
 import {
-  PnlApiError, cardClass, mutedNoteClass, pnlRequest, primaryButtonClass, secondaryButtonClass, tdClass, tdNumberClass, thClass, thNumberClass
+  NoValue, PnlApiError, cardClass, mutedNoteClass, pnlRequest, primaryButtonClass, secondaryButtonClass
 } from "./pnl-ui";
 
 const PERMISSION_NOTE = "Chỉ nhóm quyền chi phí";
 
 /** Một thanh gập của khối 5. `locked`: người xem ngoài nhóm quyền chi phí — không mở được. */
-function Collapsible({ id, title, locked, children }: Readonly<{ id: string; title: string; locked: boolean; children: ReactNode }>) {
+function Collapsible({ id, title, hint, locked, children }: Readonly<{ id: string; title: string; hint: string; locked: boolean; children: ReactNode }>) {
   const [open, setOpen] = useState(false);
   return (
     <section className={cardClass}>
@@ -22,13 +23,16 @@ function Collapsible({ id, title, locked, children }: Readonly<{ id: string; tit
         disabled={locked}
         title={locked ? "Bạn không thuộc nhóm quyền chi phí nên không mở được mục này." : undefined}
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left disabled:cursor-not-allowed"
+        className="flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left transition-colors hover:bg-muted/25 disabled:cursor-not-allowed"
       >
         <span className={`flex min-w-0 items-center gap-2 text-sm font-semibold ${locked ? "text-muted-foreground" : "text-foreground"}`}>
-          <span aria-hidden className="text-xs">{open ? "▾" : "▸"}</span>
-          {title}
+          <span aria-hidden className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-muted text-xs">{open ? "▾" : "▸"}</span>
+          <span className="min-w-0">
+            {title}
+            <span className="block text-xs font-normal text-muted-foreground">{hint}</span>
+          </span>
         </span>
-        <span className="shrink-0 text-xs text-muted-foreground">{PERMISSION_NOTE}</span>
+        <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold ${locked ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary"}`}>{PERMISSION_NOTE}</span>
       </button>
       {open && !locked ? <div id={`${id}-panel`} className="border-t border-border">{children}</div> : null}
     </section>
@@ -38,7 +42,7 @@ function Collapsible({ id, title, locked, children }: Readonly<{ id: string; tit
 function itemAmount(item: PnlProjectItemRow) {
   if (item.unit === "PERCENT") return formatPercent(item.amount);
   if (item.unit === "VND") return formatMillions(item.amount, "table");
-  return item.amount === null ? "—" : String(item.amount);
+  return item.amount === null ? NO_VALUE : String(item.amount);
 }
 
 type Draft = { id: string | null; periodKey: string; label: string; amount: string; note: string };
@@ -164,8 +168,11 @@ function ManualLines({ projectId, item, months, canEdit, onChanged }: Readonly<{
   );
 }
 
-/** Cây khoản mục theo mẫu của dự án, lũy kế toàn dự án; bấm một dòng xem nguồn số. */
-function ItemTree({ projectId, items, months, canEdit, onChanged }: Readonly<{
+/**
+ * Cây khoản mục theo mẫu của dự án, cộng dồn cả dự án, đọc từ trên xuống như một báo cáo lãi lỗ: tên bên trái,
+ * số tiền bên phải. Nhóm gập / mở được; "Nguồn số" mở cách tính và — ở dòng Nhập tay — nơi nhập chi phí riêng.
+ */
+export function ItemTree({ projectId, items, months, canEdit, onChanged }: Readonly<{
   projectId: string;
   items: PnlProjectItemRow[];
   months: string[];
@@ -173,58 +180,65 @@ function ItemTree({ projectId, items, months, canEdit, onChanged }: Readonly<{
   onChanged: () => void;
 }>) {
   const [openCode, setOpenCode] = useState<string | null>(null);
-  if (items.length === 0) return <p className={`${mutedNoteClass} px-4 py-6`}>Mẫu khoản mục của dự án chưa có khoản mục nào.</p>;
+  // Level 1 and its direct lines show; deeper groups start folded so the statement stays short.
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => {
+    const parents = new Set(items.map((item) => item.parentCode));
+    return new Set(items.filter((item) => item.level >= 2 && parents.has(item.code)).map((item) => item.code));
+  });
+  if (items.length === 0) return <p className={`${mutedNoteClass} px-4 py-6 sm:px-5`}>Mẫu khoản mục của dự án chưa có khoản mục nào.</p>;
+  const toggleGroup = (code: string) => setCollapsed((current) => { const next = new Set(current); if (!next.delete(code)) next.add(code); return next; });
   return (
-    <table className="w-full border-separate border-spacing-0 text-left">
-      <thead>
-        <tr className="bg-muted/30">
-          <th scope="col" className={thClass}>Khoản mục</th>
-          <th scope="col" className={thClass}>Cách lấy số</th>
-          <th scope="col" className={thNumberClass}>Lũy kế toàn dự án</th>
-        </tr>
-      </thead>
-      <tbody>
-        {items.map((item) => {
-          const open = openCode === item.code;
-          const manual = item.method === "MANUAL";
-          return (
-            <Fragment key={item.code}>
-              <tr className={manual ? "bg-primary/5" : undefined}>
-                <th scope="row" className={`${tdClass} text-left font-normal`} style={{ paddingLeft: `${1 + Math.max(0, item.level - 1) * 1.25}rem` }}>
-                  <button type="button" aria-expanded={open} aria-controls={`pnl-item-${item.code}`} onClick={() => setOpenCode(open ? null : item.code)} className={`inline-flex items-center gap-1.5 text-left hover:text-primary ${item.level <= 1 ? "font-bold" : ""}`}>
-                    <span aria-hidden className="text-xs">{open ? "▾" : "▸"}</span>
-                    {item.name}
-                  </button>
-                </th>
-                <td className={`${tdClass} whitespace-nowrap text-muted-foreground`}>{item.methodLabel}</td>
-                <td title={item.unit === "VND" ? formatExactVnd(item.amount) : undefined} className={`${tdNumberClass} ${item.level <= 1 ? "font-bold" : ""}`}>
-                  {itemAmount(item)}
-                  {item.incomplete ? <span title="Có khoản mục con chưa có số" className="ml-1 font-sans text-xs font-semibold text-amber-700">chưa đủ</span> : null}
-                </td>
-              </tr>
-              {open ? (
-                <tr id={`pnl-item-${item.code}`}>
-                  <td colSpan={3} className="space-y-3 border-b border-border/70 bg-muted/20 px-4 py-3">
-                    <p className="text-sm text-foreground">Nguồn số: {item.source.description}</p>
-                    {item.source.byMonth.length ? (
-                      <p className="text-xs text-muted-foreground">
-                        {item.source.byMonth.map((month) => `${formatMonth(month.periodKey)}: ${formatMillions(month.amount, "table")}`).join(" · ")}
-                      </p>
-                    ) : null}
-                    {manual ? <ManualLines projectId={projectId} item={item} months={months} canEdit={canEdit} onChanged={onChanged} /> : null}
-                  </td>
-                </tr>
-              ) : null}
-            </Fragment>
-          );
-        })}
-      </tbody>
-    </table>
+    <div id="pnl-items-panel">
+      {visibleTreeRows(items, collapsed).map((item) => {
+        const open = openCode === item.code;
+        const manual = item.method === "MANUAL";
+        const top = item.level <= 1;
+        return (
+          <div key={item.code} data-item-code={item.code} className={`border-t border-border ${top ? "bg-muted/20" : ""}`}>
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 px-4 py-2.5 sm:grid-cols-[minmax(0,1fr)_150px_112px] sm:px-5">
+              <div className="flex min-w-0 items-start gap-1.5" style={{ paddingLeft: `${Math.max(0, item.level - 1) * 1.25}rem` }}>
+                {item.hasChildren
+                  ? <button type="button" aria-expanded={item.expanded} aria-label={`${item.expanded ? "Gập" : "Mở"} nhóm ${item.name}`} onClick={() => toggleGroup(item.code)} className="mt-0.5 rounded p-0.5 text-muted-foreground hover:bg-muted">{item.expanded ? <ChevronDown className="h-4 w-4" aria-hidden /> : <ChevronRight className="h-4 w-4" aria-hidden />}</button>
+                  : <span aria-hidden className="w-5 shrink-0" />}
+                <div className="min-w-0">
+                  <p className={`text-sm text-foreground ${top ? "font-bold" : manual ? "font-semibold" : ""}`}>{item.name}</p>
+                  <p className="!mt-0.5 text-xs text-muted-foreground">{item.methodLabel}{manual ? " · nhập chi phí riêng của dự án ở đây" : ""}</p>
+                </div>
+              </div>
+              <p title={item.unit === "VND" ? formatExactVnd(item.amount) : undefined} className={`text-right font-mono text-sm tabular-nums text-foreground ${top ? "font-bold" : "font-semibold"}`}>
+                {item.amount === null ? <NoValue why="Khoản mục này chưa có số: bấm “Nguồn số” để xem vì sao" /> : itemAmount(item)}
+                {item.incomplete ? <span title="Có khoản mục con chưa có số nên tổng này chưa đủ" className="ml-1.5 font-sans text-xs font-semibold text-amber-700">chưa đủ</span> : null}
+              </p>
+              <button type="button" aria-expanded={open} aria-controls={`pnl-item-${item.code}`} aria-label={`${manual ? "Nhập tay" : "Nguồn số"} của ${item.name}`} onClick={() => setOpenCode(open ? null : item.code)} className="col-span-2 inline-flex h-8 items-center justify-center gap-1 whitespace-nowrap rounded-lg border border-border px-2.5 !text-xs !font-semibold text-muted-foreground transition-colors hover:bg-muted sm:col-span-1">
+                {manual ? "Nhập tay" : "Nguồn số"} {open ? <ChevronUp className="h-3.5 w-3.5" aria-hidden /> : <ChevronDown className="h-3.5 w-3.5" aria-hidden />}
+              </button>
+            </div>
+            {open ? (
+              <div id={`pnl-item-${item.code}`} className="space-y-3 border-t border-border bg-muted/20 px-4 py-3 sm:px-5">
+                <p className="text-sm text-foreground">Nguồn số: {item.source.description}</p>
+                {item.source.byMonth.length ? (
+                  <p className="text-xs text-muted-foreground">
+                    {item.source.byMonth.map((month) => `${formatMonth(month.periodKey)}: ${formatMillions(month.amount, "table")}`).join(" · ")}
+                  </p>
+                ) : null}
+                {manual ? <ManualLines projectId={projectId} item={item} months={months} canEdit={canEdit} onChanged={onChanged} /> : null}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
 function historyValue(value: unknown) {
-  return typeof value === "number" || typeof value === "string" ? String(value) : null;
+  if (typeof value === "number" || typeof value === "string") return String(value);
+  // "Sửa Giá trị dự án": { amount } before and after, in đồng.
+  if (value && typeof value === "object" && "amount" in value) {
+    const amount = (value as { amount: unknown }).amount;
+    return typeof amount === "number" ? formatExactVnd(amount) ?? null : "chưa nhập";
+  }
+  return null;
 }
 
 function HistoryList({ events }: Readonly<{ events: PnlHistoryEvent[] }>) {
@@ -249,24 +263,11 @@ function HistoryList({ events }: Readonly<{ events: PnlHistoryEvent[] }>) {
   );
 }
 
-/** Khối 5 — hai mục gập, chỉ nhóm quyền chi phí mở được (`items`, `history` là null với người khác). */
-export function ProjectDetails({ projectId, items, history, months, canEdit, onChanged }: Readonly<{
-  projectId: string;
-  items: PnlProjectItemRow[] | null;
-  history: PnlHistoryEvent[] | null;
-  /** Các tháng nhập được chi phí riêng (phạm vi của dự án). */
-  months: string[];
-  canEdit: boolean;
-  onChanged: () => void;
-}>) {
+/** Khối cuối — lịch sử thay đổi, một thanh gập; chỉ nhóm quyền chi phí mở được (`history` là null với người khác). */
+export function ProjectHistory({ history }: Readonly<{ history: PnlHistoryEvent[] | null }>) {
   return (
-    <div className="space-y-2">
-      <Collapsible id="pnl-items" title="Chi tiết theo khoản mục P&L · nhập chi phí riêng ở dòng Nhập tay" locked={items === null}>
-        {items ? <ItemTree projectId={projectId} items={items} months={months} canEdit={canEdit} onChanged={onChanged} /> : null}
-      </Collapsible>
-      <Collapsible id="pnl-history" title="Lịch sử thay đổi số liệu · gồm khóa và mở lại kỳ" locked={history === null}>
-        {history ? <HistoryList events={history} /> : null}
-      </Collapsible>
-    </div>
+    <Collapsible id="pnl-history" title="Lịch sử thay đổi số liệu" hint="Ai đã sửa gì, khi nào — gồm các lần sửa Giá trị dự án, khóa sổ và mở lại kỳ." locked={history === null}>
+      {history ? <HistoryList events={history} /> : null}
+    </Collapsible>
   );
 }

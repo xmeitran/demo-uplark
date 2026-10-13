@@ -73,7 +73,7 @@ export function projectCreatedCard(input: { project: ProjectRef; createdByName?:
     input.frameworkLabel && `**Khung milestone:** ${input.frameworkLabel}`,
     `**Thành viên (${input.memberNames.length}):** ${input.memberNames.join(", ") || "chưa có"}`,
     `**Nhóm khách hàng:** ${input.hasCustomerGroup ? "đã tạo — chỉ dùng để gửi yêu cầu xác nhận cho khách" : "chưa tạo được, PM tạo lại trên trang dự án"}`,
-    "Sổ vấn đề của dự án đang trống. Blocker, Risk, Issue và Yêu cầu thay đổi ghi vào sổ, không chỉ trao đổi trong nhóm."
+    "Sổ vấn đề của dự án đang trống. Blocker, Risk và Issue ghi vào sổ, không chỉ trao đổi trong nhóm."
   ], { text: "Mở dự án", url: input.url });
 }
 

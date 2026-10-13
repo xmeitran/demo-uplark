@@ -72,6 +72,18 @@ export function visibleTreeRows<T extends TreeNode>(items: readonly T[], collaps
   return items.filter((item) => !hidden(item)).map((item) => ({ ...item, hasChildren: parents.has(item.code), expanded: !collapsed.has(item.code) }));
 }
 
+/** Tree search: the items `matches` picks plus all their ancestors, so a hit keeps its place in the tree. */
+export function filterTree<T extends TreeNode>(items: readonly T[], matches: (item: T) => boolean): T[] {
+  const byCode = new Map(items.map((item) => [item.code, item]));
+  const keep = new Set<string>();
+  for (const item of items) {
+    if (!matches(item)) continue;
+    // Stops at a node already kept, which also ends a parent cycle.
+    for (let node: T | undefined = item; node && !keep.has(node.code); node = node.parentCode ? byCode.get(node.parentCode) : undefined) keep.add(node.code);
+  }
+  return items.filter((item) => keep.has(item.code));
+}
+
 const formulaNumber = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 4 });
 type FormulaToken = { item: string } | { param: string } | { value: number } | { op: "+" | "-" | "*" | "/" };
 const OP_SIGNS = { "+": "+", "-": "−", "*": "×", "/": "÷" } as const;

@@ -13,7 +13,8 @@ describe("accounts.mapper", () => {
       picUserId: "usr-1",
       picUser: { displayName: "Kha Nguyen", email: "kha@example.com", avatarUrl: null },
       annualValue: { toNumber: () => 120000000 },
-      commercialNote: "Enterprise pilot"
+      commercialNote: "Enterprise pilot",
+      createdAt: new Date("2026-10-01T03:00:00.000Z")
     }, true);
 
     expect(account).toMatchObject({
@@ -22,7 +23,8 @@ describe("accounts.mapper", () => {
       ownerTeam: "Delivery",
       picName: "Kha Nguyen",
       health: "amber",
-      annualValue: 120000000
+      annualValue: 120000000,
+      createdAt: "2026-10-01T03:00:00.000Z"
     });
   });
 

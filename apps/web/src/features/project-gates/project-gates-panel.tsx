@@ -7,7 +7,7 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import { Check, ChevronDown, ChevronUp, Circle, Clock, Lock, X } from "lucide-react";
-import { PROJECT_GATE_ACTION_LABELS, type ProjectGateAction, type ProjectGateListResponse, type ProjectGateSummary } from "@b2b-crm/contracts";
+import { gateActionLabel, gatePaymentText, type ProjectGateAction, type ProjectGateListResponse, type ProjectGateSummary } from "@b2b-crm/contracts";
 import { CustomDropdown } from "@/components/constructor-x/custom-controls";
 import { ModalLayer } from "@/components/modal-layer";
 import { apiErrorMessage, readApiError } from "@/lib/api-error";
@@ -33,7 +33,7 @@ const ACTION_HINT: Partial<Record<ProjectGateAction, string>> = {
   approve_conditional: "Phần tồn đọng được tạo thành một Issue trong sổ vấn đề, có người chịu trách nhiệm và hạn.",
   confirm_customer: "Ghi nhận sau khi PM đã duyệt nội bộ. Dự án rời Tạm dừng khi đề xuất trạng thái được xác nhận.",
   exception: "Chỉ Dx Director (Admin). Lý do được lưu vết và hiển thị trên điểm chốt.",
-  confirm_payment: "PM xác nhận BD đã thu đợt 1 trước khi mở Milestone 2."
+  confirm_payment: "PM xác nhận theo thông tin từ BD. Chỉ là một dấu xác nhận: không nhập số tiền, không vào EBIT."
 };
 
 function withPrincipal(path: string) {
@@ -50,7 +50,7 @@ function ActionDialog({ gate, action, members, saving, error, onClose, onSubmit 
   const fields = gateActionFields(action, gate.definition, gate);
   const [values, setValues] = useState<Partial<Record<GateActionFieldKey, string>>>({ goLiveDate: gate.goLiveDate ?? "" });
   const missing = missingGateActionFields(fields, values);
-  const title = `${gate.code} · ${PROJECT_GATE_ACTION_LABELS[action]}`;
+  const title = `${gate.code} · ${gateActionLabel(action, gate.code)}`;
   const set = (key: GateActionFieldKey) => (value: string) => setValues((current) => ({ ...current, [key]: value }));
   return (
     <ModalLayer onClose={onClose}>
@@ -62,7 +62,7 @@ function ActionDialog({ gate, action, members, saving, error, onClose, onSubmit 
           </div>
           <div className="grid min-h-[12rem] content-start gap-3 overflow-y-auto px-5 py-4">
             {ACTION_HINT[action] ? <p className="rounded-lg bg-muted/30 px-3 py-2 text-[11px] leading-5 text-muted-foreground">{ACTION_HINT[action]}</p> : null}
-            {fields.length === 0 ? <p className="text-sm text-foreground">Xác nhận {PROJECT_GATE_ACTION_LABELS[action].toLowerCase()} hồ sơ {gate.code}?</p> : null}
+            {fields.length === 0 ? <p className="text-sm text-foreground">Xác nhận {gateActionLabel(action, gate.code).toLowerCase()} hồ sơ {gate.code}?</p> : null}
             {fields.map((field) => {
               const label = <span className={labelClass}>{field.label}{field.required ? " *" : ""}</span>;
               const value = values[field.key] ?? "";
@@ -76,7 +76,7 @@ function ActionDialog({ gate, action, members, saving, error, onClose, onSubmit 
             <p role="alert" className="text-xs text-rose-600">{error ?? (missing.length ? `Bắt buộc: ${missing.join(", ")}` : "")}</p>
             <div className="flex shrink-0 justify-end gap-2">
               <button type="button" onClick={onClose} className="rounded-lg border border-border px-3 py-2 text-xs font-semibold">Đóng</button>
-              <button type="submit" disabled={saving || missing.length > 0} className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-60">{saving ? "Đang lưu…" : PROJECT_GATE_ACTION_LABELS[action]}</button>
+              <button type="submit" disabled={saving || missing.length > 0} className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-60">{saving ? "Đang lưu…" : gateActionLabel(action, gate.code)}</button>
             </div>
           </div>
         </form>
@@ -120,7 +120,7 @@ function GateCard({ gate, onAction, extend }: { gate: ProjectGateSummary; onActi
           <p className="mt-1.5">Chuẩn bị: <span className="font-semibold text-foreground">{definition.preparedBy}</span>{gate.submittedAt ? ` · ${gate.submittedByName ?? "—"} nộp ${dateTime(gate.submittedAt)}` : ""}</p>
           <p>Duyệt: <span className="font-semibold text-foreground">{definition.approvedBy}</span>{gate.decidedAt ? ` · ${gate.decidedByName ?? "Hệ thống"} ${gate.decision === "rejected" ? "từ chối" : "duyệt"} ${dateTime(gate.decidedAt)}` : ""}</p>
           {gate.decisionReason ? <p>{gate.decision === "rejected" ? "Lý do từ chối" : "Tồn đọng"}: <span className="text-foreground">{gate.decisionReason}</span>{gate.conditionIssueCode ? ` (${gate.conditionIssueCode} trong sổ vấn đề)` : ""}</p> : null}
-          {definition.paymentConfirmation ? <p>Thu đợt 1: {gate.paymentConfirmedAt ? <span className="text-foreground">{gate.paymentConfirmedByName ?? "PM"} xác nhận {dateTime(gate.paymentConfirmedAt)}{gate.paymentNote ? ` · ${gate.paymentNote}` : ""}</span> : "PM chưa xác nhận"}</p> : null}
+          {gate.paymentConfirmationRequired ? <p>Thu tiền ({gatePaymentText(gate.code)}): {gate.paymentConfirmedAt ? <span className="text-foreground">{gate.paymentConfirmedByName ?? "PM"} xác nhận {dateTime(gate.paymentConfirmedAt)}{gate.paymentNote ? ` · ${gate.paymentNote}` : ""}</span> : "PM chưa xác nhận"}</p> : null}
           {definition.goLiveDate ? <p>Ngày Go-live: <span className="text-foreground">{gate.goLiveDate ? formatVietnamDate(gate.goLiveDate) : "Chưa có"}</span></p> : null}
           {gate.exceptionAt ? <p className="text-violet-700">Ngoại lệ: {gate.exceptionByName ?? "Dx Director"} · {dateTime(gate.exceptionAt)} · {gate.exceptionReason}</p> : null}
           <p>Sau khi duyệt: {definition.opensNext}</p>
@@ -153,7 +153,7 @@ function GateCard({ gate, onAction, extend }: { gate: ProjectGateSummary; onActi
       {/* P&L spec 12/10 point 6: the data condition of G7, shown before the approve action. */}
       {gate.pnlPendingCheck?.blocked ? (
         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status" aria-label={`Giờ Chờ xử lý chặn duyệt ${gate.code}`}>
-          <p className="font-semibold">Chưa duyệt được {gate.code}: còn giờ log Chờ xử lý vì thiếu hoặc sai phân loại, hạng mục</p>
+          <p className="font-semibold">Chưa duyệt được {gate.code}: còn giờ log Chờ xử lý vì thiếu hoặc sai phân loại</p>
           <ul className="mt-1 space-y-0.5">
             {gate.pnlPendingCheck.reasons.map((item) => <li key={item.reason}>{item.label}: {item.entryCount} giờ log · {(Math.round(item.minutes / 6) / 10).toLocaleString("vi-VN")} giờ</li>)}
           </ul>
@@ -163,7 +163,7 @@ function GateCard({ gate, onAction, extend }: { gate: ProjectGateSummary; onActi
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {gate.allowedActions.map((action) => (
-          <button key={action} type="button" onClick={() => onAction(gate, action)} className={`rounded-lg px-3 py-1.5 text-xs font-bold transition hover:opacity-90 ${ACTION_TONE[action]}`}>{PROJECT_GATE_ACTION_LABELS[action]}</button>
+          <button key={action} type="button" onClick={() => onAction(gate, action)} className={`rounded-lg px-3 py-1.5 text-xs font-bold transition hover:opacity-90 ${ACTION_TONE[action]}`}>{gateActionLabel(action, gate.code)}</button>
         ))}
         <button type="button" aria-expanded={historyOpen} onClick={() => setHistoryOpen((value) => !value)} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:underline">
           {historyOpen ? <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" /> : <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />} Lịch sử hồ sơ ({gate.history.length})

@@ -1,7 +1,7 @@
 "use client";
 
 import { TASK_TYPE_LAYER1_FIELD_LABEL, TASK_TYPE_LAYER1_OPTIONS, TASK_TYPE_PENDING_LABEL, type TaskTypeLayer1 } from "@/lib/task-classification";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowRight,
   BellRing,
@@ -18,7 +18,6 @@ import {
   RefreshCw,
   Save,
   Send,
-  Search,
   ShieldAlert,
   ShieldCheck,
   Settings2,
@@ -55,7 +54,10 @@ import { WorkspaceDayOffSettings } from "@/components/settings/workspace-day-off
 import { PersonalLeavePanel } from "@/components/settings/personal-leave-panel";
 import { CustomDropdown, type TaskSelectOption } from "@/components/crm-workspace/tasks-workbench";
 import { CrmSelect } from "@/components/crm-workspace/crm-select";
-import { FilterBar, FilterField } from "@/components/filters/filter-controls";
+import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
+import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilter, SearchFilter, dayOf, isWithinRange, matchesAny, toCsvParam, type DateRange, type FilterPerson } from "@/components/filters";
+import { PageHeader } from "@/components/page-header";
+import { fetchAllPages } from "@/lib/api-pages";
 import { useAuth } from "@/lib/auth";
 import { isAdminView } from "@/lib/auth-role";
 import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-tab-bar";
@@ -65,6 +67,14 @@ import { SystemParametersPanel, WarningRecordsPanel } from "./alert-admin-panels
 
 type AdminSection = "overview" | "alerts" | "parameters" | "day-offs" | "reminders" | "milestones" | "approval" | "history" | "pnl-config";
 type MilestoneView = "templates" | "project-gates";
+type HistoryEntries = AdminHistoryResponse["data"];
+
+const ALL_TIME: DateRange = { from: "", to: "" };
+const HISTORY_PAGE_SIZE = 50; // the API's cap for /admin/history
+
+function FilterEmpty({ onReset }: { onReset: () => void }) {
+  return <div className="p-10 text-center"><p className="text-sm font-bold text-slate-900">Không có kết quả phù hợp bộ lọc</p><button type="button" onClick={onReset} className="mt-3 rounded-lg border border-border px-3 py-1.5 !text-xs !font-semibold text-primary hover:bg-slate-50">Đặt lại bộ lọc</button></div>;
+}
 
 const MILESTONE_TAB_ITEMS: WorkspaceTabItem<MilestoneView>[] = [
   { id: "templates", label: "Thư viện template", description: "Format dùng cho project mới" },
@@ -124,7 +134,6 @@ export function WorkspaceAdminDashboard() {
   const [policy, setPolicy] = useState<WorkspaceReminderPolicy | null>(null);
   const [reminderRecipients, setReminderRecipients] = useState<WorkspaceReminderRecipientsResponse["data"]>({ users: [], teams: [] });
   const [alertDetails, setAlertDetails] = useState<AdminAlertDetailRow[]>([]);
-  const [historyEntries, setHistoryEntries] = useState<AdminHistoryResponse["data"]>([]);
   const [approvalHistoryEntries, setApprovalHistoryEntries] = useState<AdminHistoryResponse["data"]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -148,16 +157,16 @@ export function WorkspaceAdminDashboard() {
     setMilestoneTemplatesLoading(true);
     setError(null);
     try {
-      const [overviewResponse, policyResponse, alertsResponse, recipientsResponse, projectsResponse, templatesResponse, historyResponse, approvalHistoryResponse] = await Promise.all([
+      const [overviewResponse, policyResponse, alertsResponse, recipientsResponse, projects, templatesResponse, approvalHistoryResponse] = await Promise.all([
         fetch("/api/admin/overview", { cache: "no-store", credentials: "same-origin" }),
         fetch("/api/admin/reminders", { cache: "no-store", credentials: "same-origin" }),
         fetch("/api/admin/alerts", { cache: "no-store", credentials: "same-origin" }),
         fetch("/api/admin/reminders/recipients", { cache: "no-store", credentials: "same-origin" }),
         // Keep the local admin screen usable before an auth session is created.
         // The BFF ignores this fallback when a real Lark session is present.
-        fetch("/api/projects?limit=100&offset=0&principal=founder", { cache: "no-store", credentials: "same-origin" }),
+        // Every page (the API caps one at 100) so the gate picker misses no project; a failure only empties that picker.
+        fetchAllPages<ProjectSummary>("/api/projects?principal=founder").catch(() => null),
         fetch("/api/milestone-templates?principal=founder", { cache: "no-store", credentials: "same-origin" }),
-        fetch("/api/admin/history?limit=50&scope=all", { cache: "no-store", credentials: "same-origin" }),
         fetch("/api/admin/history?limit=12&scope=mine", { cache: "no-store", credentials: "same-origin" })
       ]);
       const overviewBody = await overviewResponse.json().catch(() => null);
@@ -165,25 +174,20 @@ export function WorkspaceAdminDashboard() {
       const alertsBody = await alertsResponse.json().catch(() => null);
       const recipientsBody = await recipientsResponse.json().catch(() => null);
       const templatesBody = await templatesResponse.json().catch(() => null);
-      const projectsBody = await projectsResponse.json().catch(() => null);
-      const historyBody = await historyResponse.json().catch(() => null);
       const approvalHistoryBody = await approvalHistoryResponse.json().catch(() => null);
       if (!overviewResponse.ok) throw new Error(errorMessage(overviewBody, "Không tải được tổng quan admin."));
       if (!policyResponse.ok) throw new Error(errorMessage(policyBody, "Không tải được lịch nhắc Lark."));
       if (!alertsResponse.ok) throw new Error(errorMessage(alertsBody, "Không tải được chi tiết cảnh báo."));
       if (!recipientsResponse.ok) throw new Error(errorMessage(recipientsBody, "Không tải được danh sách người nhận nhắc Lark."));
       if (!templatesResponse.ok) throw new Error(errorMessage(templatesBody, "Không tải được danh sách template milestone."));
-      if (!historyResponse.ok) throw new Error(errorMessage(historyBody, "Không tải được lịch sử thao tác admin."));
       if (!approvalHistoryResponse.ok) throw new Error(errorMessage(approvalHistoryBody, "Không tải được lịch sử duyệt của bạn."));
       setOverview((overviewBody as AdminOverviewResponse).data);
       setPolicy((policyBody as { data: WorkspaceReminderPolicy }).data);
       setAlertDetails((alertsBody as AdminAlertsResponse).data);
       setReminderRecipients((recipientsBody as WorkspaceReminderRecipientsResponse).data);
       setMilestoneTemplates((templatesBody as { data?: ProjectMilestoneTemplateSummary[] }).data ?? []);
-      setHistoryEntries((historyBody as AdminHistoryResponse).data ?? []);
       setApprovalHistoryEntries((approvalHistoryBody as AdminHistoryResponse).data ?? []);
-      if (projectsResponse.ok) {
-        const projects = (projectsBody as { data?: ProjectSummary[] } | null)?.data ?? [];
+      if (projects) {
         setProjectOptions(projects);
         setSelectedProjectId((current) => current || projects[0]?.id || "");
       }
@@ -313,11 +317,12 @@ export function WorkspaceAdminDashboard() {
 
   if (!isAdmin) {
     return (
-      <AppShell activeRoute="/admin" title="Admin">
-        <main className="flex flex-1 items-center justify-center p-6">
-          <section className="w-full max-w-lg rounded-3xl border border-border bg-card p-8 text-center shadow-sm">
+      <AppShell activeRoute="/admin" title="Điều hành workspace">
+        <main className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4 xl:p-6">
+          <PageHeader title="Điều hành workspace" subtitle="Khu vực dành cho Admin" />
+          <section className="mx-auto mt-10 w-full max-w-lg rounded-3xl border border-border bg-card p-8 text-center shadow-sm">
             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-50 text-rose-600"><ShieldAlert className="h-7 w-7" /></div>
-            <h1 className="!text-xl mt-5 font-bold text-foreground">Khu vực dành cho Admin</h1>
+            <p className="mt-5 text-base font-bold text-foreground">Khu vực dành cho Admin</p>
             <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">Bạn cần tài khoản Admin ở chế độ quản trị để xem cảnh báo, khóa ngày nghỉ và cấu hình nhắc Lark.</p>
           </section>
         </main>
@@ -326,21 +331,18 @@ export function WorkspaceAdminDashboard() {
   }
 
   return (
-    <AppShell activeRoute="/admin" title="Admin workspace">
+    <AppShell activeRoute="/admin" title="Điều hành workspace">
       <main className="admin-workspace-page min-h-0 flex-1 overflow-y-auto bg-background p-3 sm:p-4 xl:p-6">
-        <div className="mx-auto grid max-w-[1480px] gap-4">
-          <header className="flex shrink-0 flex-col gap-4 border-b border-border pb-4 lg:flex-row lg:items-end lg:justify-between">
-            <div className="min-w-0">
-              <div>
-                <h1 className="!text-xl font-bold tracking-tight text-foreground">Điều hành workspace</h1>
-                <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Quản lý quy trình, quyền duyệt và các chính sách vận hành của workspace.</p>
-              </div>
-            </div>
-            <div className="inline-flex w-fit items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold text-muted-foreground"><span className="h-2 w-2 rounded-full bg-emerald-500" /> {overview?.workspace.name ?? "Workspace"}<span className="text-border">·</span>{overview?.workspace.timezone ?? "Asia/Ho_Chi_Minh"}</div>
-          </header>
+        <div className="mx-auto grid max-w-[1480px] grid-cols-[minmax(0,1fr)] gap-4">
+          <PageHeader
+            className="border-b border-border pb-4"
+            title="Điều hành workspace"
+            subtitle="Quản lý quy trình, quyền duyệt và các chính sách vận hành của workspace."
+            meta={<span className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 font-semibold"><span className="h-2 w-2 rounded-full bg-emerald-500" /> {overview?.workspace.name ?? "Workspace"}<span className="text-border">·</span>{overview?.workspace.timezone ?? "Asia/Ho_Chi_Minh"}</span>}
+          />
 
           <div className="sticky top-0 z-10 -mx-3 bg-background/95 px-3 py-1 backdrop-blur sm:-mx-4 sm:px-4 xl:-mx-6 xl:px-6">
-            <nav aria-label="Admin sections">
+            <nav aria-label="Admin sections" className="overflow-x-auto">
               <WorkspaceTabBar
                 items={[
                   { id: "overview" as AdminSection, label: "Tổng quan", description: "Sức khỏe workspace", icon: <LayoutDashboard className="h-4 w-4" /> },
@@ -424,7 +426,7 @@ export function WorkspaceAdminDashboard() {
             }} />}
             </> : null}
             {section === "approval" ? <ApprovalPanel approvalHistory={approvalHistoryEntries} historyLoading={loading} onRefreshHistory={() => void load()} onApproved={() => void load()} /> : null}
-            {section === "history" ? <AdminHistoryPanel entries={historyEntries} loading={loading} onRefresh={() => void load()} scope="all" /> : null}
+            {section === "history" ? <AdminHistoryLog people={reminderRecipients.users.map((person) => ({ id: person.id, name: person.displayName, email: person.email, avatarUrl: person.avatarUrl }))} /> : null}
           </div>
         </div>
       </main>
@@ -446,19 +448,98 @@ function historyIconTone(category: AdminHistoryResponse["data"][number]["categor
   return "bg-violet-50 text-violet-700";
 }
 
-function AdminHistoryPanel({ entries, loading, onRefresh, scope }: { entries: AdminHistoryResponse["data"]; loading: boolean; onRefresh: () => void; scope: "all" | "mine" }) {
+/**
+ * Admin › Lịch sử: the audit log, filtered and paged by the API (`from`/`to`, `actorUserId`, `action`, `q`, `offset`).
+ * "Tải thêm" appends the next 50 rows of the same filter.
+ */
+function AdminHistoryLog({ people }: { people: FilterPerson[] }) {
+  const [entries, setEntries] = useState<HistoryEntries>([]);
+  const [total, setTotal] = useState(0);
+  const [actionOptions, setActionOptions] = useState<Array<{ value: string; label: string }>>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
+  const [range, setRange] = useState<DateRange>(ALL_TIME);
+  const [actors, setActors] = useState<string[]>([]);
+  const [actions, setActions] = useState<string[]>([]);
+  const requestRef = useRef(0);
+
+  // Typing does not fire a request per keystroke.
+  useEffect(() => {
+    const timer = window.setTimeout(() => setQuery(search.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  const loadPage = useCallback(async (offset: number) => {
+    const request = ++requestRef.current;
+    setLoading(true);
+    setError(null);
+    const params = new URLSearchParams({ scope: "all", limit: String(HISTORY_PAGE_SIZE), offset: String(offset) });
+    const filters = { from: range.from, to: range.to, actorUserId: toCsvParam(actors), action: toCsvParam(actions), q: query };
+    for (const [key, value] of Object.entries(filters)) if (value) params.set(key, value);
+    try {
+      const response = await fetch(`/api/admin/history?${params}`, { cache: "no-store", credentials: "same-origin" });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(errorMessage(body, "Không tải được lịch sử thao tác admin."));
+      if (request !== requestRef.current) return;
+      const result = body as AdminHistoryResponse;
+      setEntries((current) => offset ? [...current, ...result.data.filter((entry) => !current.some((loaded) => loaded.id === entry.id))] : result.data);
+      setTotal(result.meta.total);
+      if (result.meta.actions) setActionOptions(result.meta.actions);
+    } catch (reason) {
+      if (request === requestRef.current) setError(reason instanceof Error ? reason.message : "Không tải được lịch sử thao tác admin.");
+    } finally {
+      if (request === requestRef.current) setLoading(false);
+    }
+  }, [range, actors, actions, query]);
+
+  useEffect(() => { void loadPage(0); }, [loadPage]);
+
+  // People who acted but are no longer active recipients stay selectable.
+  const actorPeople = useMemo(() => {
+    const known = new Map(people.map((person) => [person.id, person]));
+    for (const entry of entries) if (entry.actorUserId && !known.has(entry.actorUserId)) known.set(entry.actorUserId, { id: entry.actorUserId, name: entry.actorDisplayName ?? entry.actorUserId });
+    return [...known.values()];
+  }, [people, entries]);
+  const activeCount = [Boolean(search.trim()), Boolean(range.from || range.to), actors.length > 0, actions.length > 0].filter(Boolean).length;
+  const reset = () => { setSearch(""); setQuery(""); setRange(ALL_TIME); setActors([]); setActions([]); };
+
+  return <AdminHistoryPanel
+    entries={entries}
+    total={total}
+    loading={loading}
+    onRefresh={() => void loadPage(0)}
+    scope="all"
+    onResetFilters={activeCount ? reset : undefined}
+    filters={<>
+      <FilterBar onReset={activeCount ? reset : undefined} activeCount={activeCount}>
+        <FilterField label="Tìm kiếm" className="min-w-[220px] flex-1"><SearchFilter className="" value={search} onChange={setSearch} placeholder="Thao tác, người thực hiện, project, milestone..." ariaLabel="Tìm trong lịch sử" /></FilterField>
+        <FilterField label="Thời điểm"><DateRangeFilter value={range} onChange={(next) => setRange(next)} ariaLabel="Lọc theo thời điểm thao tác" /></FilterField>
+        <PersonFilter label="Người thực hiện" people={actorPeople} values={actors} onChange={setActors} allLabel="Tất cả mọi người" />
+        <MultiSelectFilter label="Loại thao tác" options={actionOptions} values={actions} onChange={setActions} allLabel="Tất cả thao tác" />
+      </FilterBar>
+      {error ? <p role="alert" className="mt-3 text-xs font-semibold text-rose-700">{error}</p> : null}
+    </>}
+    footer={entries.length < total ? <div className="border-t border-border px-5 py-4 text-center"><button type="button" disabled={loading} onClick={() => void loadPage(entries.length)} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-border bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60">{loading ? "Đang tải…" : `Tải thêm (${entries.length}/${total})`}</button></div> : null}
+  />;
+}
+
+function AdminHistoryPanel({ entries, loading, onRefresh, scope, filters, total, footer, onResetFilters }: { entries: HistoryEntries; loading: boolean; onRefresh: () => void; scope: "all" | "mine"; filters?: ReactNode; total?: number; footer?: ReactNode; onResetFilters?: () => void }) {
   const isMine = scope === "mine";
   return <section aria-labelledby={isMine ? "admin-approval-history-title" : "admin-history-title"} className="grid gap-5">
-    <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
-      <div className="flex items-center justify-between gap-3 border-b border-border bg-slate-50/70 px-5 py-4">
+    <section className="rounded-3xl border border-border bg-card shadow-sm">
+      <div className="flex items-center justify-between gap-3 rounded-t-3xl border-b border-border bg-slate-50/70 px-5 py-4">
         <div><h2 id={isMine ? "admin-approval-history-title" : "admin-history-title"} className="!text-base !font-bold text-slate-950">{isMine ? "Các milestone tôi đã duyệt" : "Các hoạt động gần đây"}</h2><p className="mt-1 text-xs text-slate-500">{isMine ? "Log này không bao gồm các thao tác cấu hình khác." : "Chỉ hiển thị các sự kiện quản trị quan trọng, không lưu thao tác xem hoặc lọc dữ liệu."}</p></div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-          <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-bold text-slate-600">{entries.length} bản ghi</span>
+          <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-bold text-slate-600">{total !== undefined && total > entries.length ? `${entries.length}/${total}` : entries.length} bản ghi</span>
           <button type="button" onClick={onRefresh} disabled={loading} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Làm mới</button>
         </div>
       </div>
+      {filters ? <div className="border-b border-border px-5 py-4">{filters}</div> : null}
       {loading && !entries.length ? <div className="p-10 text-center text-sm text-slate-500">Đang tải lịch sử…</div> : null}
-      {!loading && !entries.length ? <div className="p-12 text-center"><Clock3 className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 text-sm font-bold text-slate-900">Chưa có lịch sử</p><p className="mt-1 text-xs text-slate-500">Các thao tác phù hợp sẽ xuất hiện tại đây.</p></div> : null}
+      {!loading && !entries.length && onResetFilters ? <FilterEmpty onReset={onResetFilters} /> : null}
+      {!loading && !entries.length && !onResetFilters ? <div className="p-12 text-center"><Clock3 className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 text-sm font-bold text-slate-900">Chưa có lịch sử</p><p className="mt-1 text-xs text-slate-500">Các thao tác phù hợp sẽ xuất hiện tại đây.</p></div> : null}
       {entries.length ? <ol className="divide-y divide-border">{entries.map((entry) => <li key={entry.id} className="flex gap-3 px-5 py-4 sm:px-6">
         <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${historyIconTone(entry.category)}`}>{historyIcon(entry.category)}</span>
         <div className="min-w-0 flex-1">
@@ -467,6 +548,7 @@ function AdminHistoryPanel({ entries, loading, onRefresh, scope }: { entries: Ad
           {entry.href ? <a href={entry.href} className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-primary hover:underline"><ExternalLink className="h-3.5 w-3.5" /> Mở chi tiết</a> : null}
         </div>
       </li>)}</ol> : null}
+      {footer}
     </section>
   </section>;
 }
@@ -479,6 +561,21 @@ function ApprovalPanel({ approvalHistory, historyLoading, onRefreshHistory, onAp
   const [notice, setNotice] = useState<string | null>(null);
   const pendingForMe = rows.filter((row) => row.canApprove).length;
   const waitingForOtherReviewer = rows.length - pendingForMe;
+  const [search, setSearch] = useState("");
+  const [sentRange, setSentRange] = useState<DateRange>(ALL_TIME);
+  const [requesters, setRequesters] = useState<string[]>([]);
+  const [projectIds, setProjectIds] = useState<string[]>([]);
+  const [rights, setRights] = useState<string[]>([]);
+  // The queue carries the requester as a label only, so the label is the person's key.
+  const requesterPeople = useMemo(() => [...new Set(rows.map((row) => row.requesterLabel))].sort((a, b) => a.localeCompare(b, "vi")).map((name) => ({ id: name, name })), [rows]);
+  const projectOptions = useMemo(() => [...new Map(rows.map((row) => [row.project.id, `${row.project.code} · ${row.project.name}`]))].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, "vi")), [rows]);
+  const visibleRows = rows.filter((row) => matchesSearch(search, row.project.name, row.project.code, row.milestone.name, row.requesterLabel, row.reviewerLabel)
+    && isWithinRange(dayOf(row.pendingSince), sentRange)
+    && matchesAny(requesters, row.requesterLabel)
+    && matchesAny(projectIds, row.project.id)
+    && matchesAny(rights, row.canApprove ? "mine" : "other"));
+  const activeFilterCount = [Boolean(search.trim()), Boolean(sentRange.from || sentRange.to), requesters.length > 0, projectIds.length > 0, rights.length > 0].filter(Boolean).length;
+  const resetFilters = () => { setSearch(""); setSentRange(ALL_TIME); setRequesters([]); setProjectIds([]); setRights([]); };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -525,22 +622,30 @@ function ApprovalPanel({ approvalHistory, historyLoading, onRefreshHistory, onAp
       {error ? <div role="alert" className="flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />{error}</div> : null}
       {notice ? <div role="status" className="flex items-start gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />{notice}</div> : null}
 
-      <section aria-labelledby="admin-approval-queue-title" className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
-        <div className="flex flex-col gap-2 border-b border-border bg-slate-50/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+      <section aria-labelledby="admin-approval-queue-title" className="rounded-3xl border border-border bg-card shadow-sm">
+        <div className="flex flex-col gap-2 rounded-t-3xl border-b border-border bg-slate-50/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div>
             <h2 id="admin-approval-queue-title" className="!text-base !font-bold text-slate-950">Danh sách yêu cầu</h2>
             <p className="mt-1 text-xs text-slate-500">Mỗi hồ sơ cho biết project, milestone, người gửi, người duyệt và quyền xử lý hiện tại.</p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <span className="w-fit rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800">{rows.length} đang chờ</span>
+            <span className="w-fit rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800">{visibleRows.length < rows.length ? `${visibleRows.length}/${rows.length}` : rows.length} đang chờ</span>
             <button type="button" onClick={() => void load()} disabled={loading} className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-600 shadow-sm hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Làm mới</button>
           </div>
         </div>
 
+        {rows.length ? <FilterBar className="border-b border-border px-5 py-4 sm:px-6" onReset={activeFilterCount ? resetFilters : undefined} activeCount={activeFilterCount}>
+          <FilterField label="Tìm kiếm" className="min-w-[220px] flex-1"><SearchFilter className="" value={search} onChange={setSearch} placeholder="Project, milestone, người gửi, người duyệt..." ariaLabel="Tìm hồ sơ chờ duyệt" /></FilterField>
+          <FilterField label="Ngày gửi yêu cầu"><DateRangeFilter value={sentRange} onChange={(next) => setSentRange(next)} ariaLabel="Lọc theo ngày gửi yêu cầu" /></FilterField>
+          <PersonFilter label="Người yêu cầu" people={requesterPeople} values={requesters} onChange={setRequesters} allLabel="Tất cả người yêu cầu" searchPlaceholder="Tìm theo tên..." />
+          <MultiSelectFilter label="Dự án" options={projectOptions} values={projectIds} onChange={setProjectIds} allLabel="Tất cả dự án" />
+          <MultiSelectFilter label="Trạng thái" options={[{ value: "mine", label: "Bạn có thể duyệt" }, { value: "other", label: "Chờ người khác duyệt" }]} values={rights} onChange={setRights} allLabel="Tất cả trạng thái" searchable={false} />
+        </FilterBar> : null}
+        {rows.length && !visibleRows.length ? <FilterEmpty onReset={resetFilters} /> : null}
         {loading && !rows.length ? <div className="space-y-3 p-5" aria-busy="true" aria-label="Đang tải hàng chờ duyệt"><div className="h-24 animate-pulse rounded-2xl bg-slate-100" /><div className="h-24 animate-pulse rounded-2xl bg-slate-100" /></div> : null}
         {!loading && !rows.length ? <div className="p-12 text-center"><span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600"><CheckCircle2 className="h-7 w-7" /></span><p className="mt-4 text-sm font-bold text-slate-900">Không còn hồ sơ chờ duyệt</p><p className="mt-1 text-xs text-slate-500">Khi user gửi yêu cầu, hồ sơ sẽ xuất hiện tại đây.</p></div> : null}
-        {rows.length ? <div className="divide-y divide-border">
-          {rows.map((row) => <article key={row.id} className="grid min-w-0 gap-5 p-5 transition-colors hover:bg-slate-50/60 lg:grid-cols-[minmax(0,1.25fr)_minmax(220px,0.8fr)_auto] lg:items-center lg:px-6">
+        {visibleRows.length ? <div className="divide-y divide-border">
+          {visibleRows.map((row) => <article key={row.id} className="grid min-w-0 gap-5 p-5 transition-colors hover:bg-slate-50/60 lg:grid-cols-[minmax(0,1.25fr)_minmax(220px,0.8fr)_auto] lg:items-center lg:px-6">
             <div className="flex min-w-0 items-start gap-3">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700"><Clock3 className="h-5 w-5" /></span>
               <div className="min-w-0">
@@ -600,20 +705,19 @@ function alertBadgeClass(row: AdminAlertDetailRow) {
 }
 
 function AlertsPanel({ rows, loading, onRefresh }: { rows: AdminAlertDetailRow[]; loading: boolean; onRefresh: () => void }) {
-  const [typeFilter, setTypeFilter] = useState<"all" | AdminAlertType>("all");
-  const [severityFilter, setSeverityFilter] = useState<"all" | AdminAlertDetailRow["severity"]>("all");
+  const [typeFilter, setTypeFilter] = useState<string[]>([]);
+  const [severityFilter, setSeverityFilter] = useState<string[]>([]);
   const [search, setSearch] = useState("");
-  const filtered = rows.filter((row) => {
-    const query = search.trim().toLowerCase();
-    return (typeFilter === "all" || row.type === typeFilter) && (severityFilter === "all" || row.severity === severityFilter) && (!query || `${row.project.name} ${row.project.code} ${row.detail}`.toLowerCase().includes(query));
-  });
+  const filtered = rows.filter((row) => matchesAny(typeFilter, row.type) && matchesAny(severityFilter, row.severity) && matchesSearch(search, row.project.name, row.project.code, row.detail));
+  const activeFilterCount = [Boolean(search.trim()), typeFilter.length > 0, severityFilter.length > 0].filter(Boolean).length;
+  const resetFilters = () => { setSearch(""); setTypeFilter([]); setSeverityFilter([]); };
   const critical = rows.filter((row) => row.severity === "critical").length;
   const warning = rows.filter((row) => row.severity === "warning").length;
   const affectedTasks = rows.reduce((sum, row) => sum + row.affectedTaskCount, 0);
   return <section aria-label="Chi tiết cảnh báo" className="grid gap-5">
     <section aria-label="Alert summary" className="grid gap-3 sm:grid-cols-2"><Metric icon={<ShieldAlert className="h-4 w-4" />} label="Cần xử lý ngay" value={critical + warning} tone="rose" /><Metric icon={<TimerReset className="h-4 w-4" />} label="Task liên quan" value={affectedTasks} tone="indigo" /></section>
-    <section className="rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5"><FilterBar onReset={search || typeFilter !== "all" || severityFilter !== "all" ? () => { setSearch(""); setTypeFilter("all"); setSeverityFilter("all"); } : undefined} actions={<button type="button" onClick={onRefresh} className="inline-flex h-10 items-center justify-center gap-2 shrink-0 rounded-[10px] border border-border bg-white px-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"><RefreshCw className="h-4 w-4" /> Làm mới dữ liệu</button>}><div className="relative min-w-[220px] flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm theo project, mã project hoặc nguyên nhân…" className="h-10 w-full rounded-[10px] border border-border bg-white pl-9 pr-3 text-sm outline-none ring-primary/30 focus:ring-2" /></div><FilterField className="w-full sm:w-56"><CrmSelect ariaLabel="Loại cảnh báo" options={[{ value: "all", label: "Tất cả loại cảnh báo" }, ...Object.entries(ALERT_TYPE_LABELS).map(([value, label]) => ({ value, label }))]} value={typeFilter} onChange={(value) => setTypeFilter(value as typeof typeFilter)} /></FilterField><FilterField className="w-full sm:w-40"><CrmSelect ariaLabel="Mức độ" options={[{ value: "all", label: "Tất cả mức độ" }, { value: "critical", label: "Critical" }, { value: "warning", label: "Warning" }, { value: "info", label: "Info" }]} value={severityFilter} onChange={(value) => setSeverityFilter(value as typeof severityFilter)} /></FilterField></FilterBar><div className="mt-3 flex items-center justify-between text-xs text-slate-500"><span>Hiển thị {filtered.length}/{rows.length} cảnh báo</span><span>{new Date().toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" })}</span></div></section>
-    <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm"><div className="flex flex-col gap-1 border-b border-border bg-gradient-to-r from-amber-50 via-white to-sky-50 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6"><div><h3 className="text-base font-bold text-slate-950">Estimate Hour và Actual Hour</h3><p className="mt-1 text-xs text-slate-500">Mỗi dòng là một nguyên nhân cảnh báo độc lập; một project có thể xuất hiện nhiều dòng.</p></div></div><div className="overflow-x-auto"><table className="w-full min-w-[1040px] text-left text-sm"><thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500"><tr><th className="px-5 py-3 font-bold">Project</th><th className="px-4 py-3 text-right font-bold">Estimate</th><th className="px-4 py-3 text-right font-bold">Actual</th><th className="px-4 py-3 text-right font-bold">Chênh lệch</th><th className="px-4 py-3 font-bold">Cảnh báo</th><th className="px-5 py-3 font-bold">Chi tiết cần xử lý</th><th className="px-4 py-3" /></tr></thead><tbody className="divide-y divide-border">{filtered.map((row) => <tr key={row.id} className="align-top transition hover:bg-slate-50/80"><td className="px-5 py-4"><a href={row.href} className="group block min-w-[220px]"><span className="block font-bold text-slate-900 group-hover:text-primary">{row.project.name}</span><span className="mt-1 block text-xs font-medium text-slate-500">{row.project.code}</span></a></td><td className="px-4 py-4 text-right font-semibold tabular-nums text-slate-700">{formatAlertHours(row.estimateMinutes)}</td><td className="px-4 py-4 text-right font-semibold tabular-nums text-slate-700">{formatAlertHours(row.actualMinutes)}</td><td className={`px-4 py-4 text-right font-bold tabular-nums ${row.varianceMinutes > 0 ? "text-rose-600" : "text-slate-500"}`}>{row.varianceMinutes > 0 ? "+" : ""}{formatAlertHours(row.varianceMinutes)}</td><td className="px-4 py-4"><span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold ${alertBadgeClass(row)}`}>{ALERT_TYPE_LABELS[row.type]}</span><span className="mt-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">{row.severity}</span></td><td className="max-w-[390px] px-5 py-4 text-xs leading-relaxed text-slate-600">{row.detail}<span className="mt-1 block font-semibold text-slate-400">{row.affectedTaskCount} task liên quan</span></td><td className="px-4 py-4"><a aria-label={`Mở project ${row.project.name}`} href={row.href} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border text-slate-500 hover:bg-slate-100 hover:text-slate-900"><ExternalLink className="h-3.5 w-3.5" /></a></td></tr>)}{loading && !rows.length ? <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-500">Đang tổng hợp cảnh báo từ task và time entry…</td></tr> : null}{!loading && !filtered.length ? <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-500">Không có cảnh báo phù hợp bộ lọc hiện tại.</td></tr> : null}</tbody></table></div></section>
+    <section className="rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5"><FilterBar onReset={activeFilterCount ? resetFilters : undefined} activeCount={activeFilterCount} actions={<button type="button" onClick={onRefresh} className="inline-flex h-10 items-center justify-center gap-2 shrink-0 rounded-[10px] border border-border bg-white px-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"><RefreshCw className="h-4 w-4" /> Làm mới dữ liệu</button>}><FilterField label="Tìm kiếm" className="min-w-[220px] flex-1"><SearchFilter className="" value={search} onChange={setSearch} placeholder="Project, mã project hoặc nguyên nhân..." ariaLabel="Tìm cảnh báo chất lượng dữ liệu" /></FilterField><MultiSelectFilter label="Loại cảnh báo" options={Object.entries(ALERT_TYPE_LABELS).map(([value, label]) => ({ value, label }))} values={typeFilter} onChange={setTypeFilter} allLabel="Tất cả loại cảnh báo" /><MultiSelectFilter label="Mức độ" options={[{ value: "critical", label: "Critical" }, { value: "warning", label: "Warning" }, { value: "info", label: "Info" }]} values={severityFilter} onChange={setSeverityFilter} allLabel="Tất cả mức độ" searchable={false} /></FilterBar><div className="mt-3 flex items-center justify-between text-xs text-slate-500"><span>Hiển thị {filtered.length}/{rows.length} cảnh báo</span><span>{new Date().toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" })}</span></div></section>
+    <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm"><div className="flex flex-col gap-1 border-b border-border bg-gradient-to-r from-amber-50 via-white to-sky-50 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6"><div><h3 className="text-base font-bold text-slate-950">Estimate Hour và Actual Hour</h3><p className="mt-1 text-xs text-slate-500">Mỗi dòng là một nguyên nhân cảnh báo độc lập; một project có thể xuất hiện nhiều dòng.</p></div></div><div className="overflow-x-auto"><table className="w-full min-w-[1040px] text-left text-sm"><thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500"><tr><th className="px-5 py-3 font-bold">Project</th><th className="px-4 py-3 text-right font-bold">Estimate</th><th className="px-4 py-3 text-right font-bold">Actual</th><th className="px-4 py-3 text-right font-bold">Chênh lệch</th><th className="px-4 py-3 font-bold">Cảnh báo</th><th className="px-5 py-3 font-bold">Chi tiết cần xử lý</th><th className="px-4 py-3" /></tr></thead><tbody className="divide-y divide-border">{filtered.map((row) => <tr key={row.id} className="align-top transition hover:bg-slate-50/80"><td className="px-5 py-4"><a href={row.href} className="group block min-w-[220px]"><span className="block font-bold text-slate-900 group-hover:text-primary">{row.project.name}</span><span className="mt-1 block text-xs font-medium text-slate-500">{row.project.code}</span></a></td><td className="px-4 py-4 text-right font-semibold tabular-nums text-slate-700">{formatAlertHours(row.estimateMinutes)}</td><td className="px-4 py-4 text-right font-semibold tabular-nums text-slate-700">{formatAlertHours(row.actualMinutes)}</td><td className={`px-4 py-4 text-right font-bold tabular-nums ${row.varianceMinutes > 0 ? "text-rose-600" : "text-slate-500"}`}>{row.varianceMinutes > 0 ? "+" : ""}{formatAlertHours(row.varianceMinutes)}</td><td className="px-4 py-4"><span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold ${alertBadgeClass(row)}`}>{ALERT_TYPE_LABELS[row.type]}</span><span className="mt-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">{row.severity}</span></td><td className="max-w-[390px] px-5 py-4 text-xs leading-relaxed text-slate-600">{row.detail}<span className="mt-1 block font-semibold text-slate-400">{row.affectedTaskCount} task liên quan</span></td><td className="px-4 py-4"><a aria-label={`Mở project ${row.project.name}`} href={row.href} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border text-slate-500 hover:bg-slate-100 hover:text-slate-900"><ExternalLink className="h-3.5 w-3.5" /></a></td></tr>)}{loading && !rows.length ? <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-500">Đang tổng hợp cảnh báo từ task và time entry…</td></tr> : null}{!loading && !filtered.length ? <tr><td colSpan={7}>{activeFilterCount ? <FilterEmpty onReset={resetFilters} /> : <p className="px-5 py-12 text-center text-sm text-slate-500">Không có cảnh báo.</p>}</td></tr> : null}</tbody></table></div></section>
     <div className="flex items-start gap-2 rounded-2xl border border-sky-100 bg-sky-50/70 px-4 py-3 text-xs leading-relaxed text-sky-800"><Info className="mt-0.5 h-4 w-4 shrink-0" /> “Thiếu dữ liệu” chỉ là tín hiệu cần bổ sung record; hệ thống không tự kết luận hiệu suất khi chưa đủ estimate, actual hoặc deadline.</div>
   </section>;
 }

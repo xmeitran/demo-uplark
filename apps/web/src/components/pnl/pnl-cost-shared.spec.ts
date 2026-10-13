@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checklistRow, configCheckParts, formulaText, importResultText, mapStaffCostSheet, nextFormulaStep, parseDecimalInput, setupTabOf, visibleTreeRows } from "./pnl-cost-shared";
+import { checklistRow, configCheckParts, filterTree, formulaText, importResultText, mapStaffCostSheet, nextFormulaStep, parseDecimalInput, setupTabOf, visibleTreeRows } from "./pnl-cost-shared";
 
 describe("P&L setup input", () => {
   it("reads typed numbers", () => {
@@ -89,5 +89,22 @@ describe("staff cost import", () => {
   it("summarises the import result as the screen shows it", () => {
     expect(importResultText({ periodKey: "2026-09", validCount: 44, errors: [{ employeeCode: "NS-099", reason: "không tồn tại" }] })).toBe("Import 09/2026: 44 dòng hợp lệ vào Nháp · 1 dòng lỗi: mã NS-099 không tồn tại");
     expect(importResultText({ periodKey: "2026-09", validCount: 45, errors: [] })).toBe("Import 09/2026: 45 dòng hợp lệ vào Nháp · không có dòng lỗi");
+  });
+});
+
+describe("filterTree", () => {
+  const tree = [
+    { code: "REV", parentCode: null }, { code: "COST", parentCode: null }, { code: "COST.STAFF", parentCode: "COST" },
+    { code: "COST.STAFF.DEL", parentCode: "COST.STAFF" }, { code: "COST.FUND", parentCode: "COST" }
+  ];
+
+  it("keeps a hit together with its ancestors, in tree order", () => {
+    expect(filterTree(tree, (item) => item.code === "COST.STAFF.DEL").map((item) => item.code)).toEqual(["COST", "COST.STAFF", "COST.STAFF.DEL"]);
+    expect(filterTree(tree, (item) => item.code.endsWith("FUND") || item.code === "REV").map((item) => item.code)).toEqual(["REV", "COST", "COST.FUND"]);
+    expect(filterTree(tree, () => false)).toEqual([]);
+  });
+
+  it("survives a parent cycle", () => {
+    expect(filterTree([{ code: "A", parentCode: "B" }, { code: "B", parentCode: "A" }], (item) => item.code === "A").map((item) => item.code)).toEqual(["A", "B"]);
   });
 });

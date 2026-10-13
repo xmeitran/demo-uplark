@@ -1,5 +1,5 @@
 /**
- * Tab P&L — API contract of "Yêu cầu tab P&L – hệ thống PM" (12/10/2026).
+ * Tab P&L — API contract of "Yêu cầu tab P&L – hệ thống PM" (v2, 13/10/2026: revenue is one "Giá trị dự án" per project).
  * Screen-by-screen mapping: docs/pnl-api-cho-man-hinh.md. Rules: apps/api/src/modules/resource-controls/pnl-*.ts.
  *
  * Conventions for every type below:
@@ -18,7 +18,7 @@
 export type PnlGateStatusCode = "included" | "pending" | "excluded";
 export type PnlGateReasonCode =
   | "internal" | "after_close" | "lost_deal_pre_sale"
-  | "missing_project" | "missing_layer1" | "missing_layer2" | "layer2_mismatch" | "missing_contract_item" | "unknown_close_position"
+  | "missing_project" | "missing_layer1" | "missing_layer2" | "layer2_mismatch" | "unknown_close_position"
   | "legacy_group_in_project" | "legacy_unmapped_stage" | "legacy_no_stage"
   | "missing_staff_cost" | "locked_period";
 
@@ -35,12 +35,13 @@ export type PnlCostItemMethod = "MANUAL" | "SYSTEM" | "FORMULA" | "FUND" | "GROU
 export type PnlFormulaToken = { item: string } | { param: string } | { value: number } | { op: "+" | "-" | "*" | "/" };
 
 /** Where a "thiếu …" link leads (mục 2.4 bước 7, 11, 14). */
-export type PnlFixTarget = "staff_costs" | "pending_hours" | "funds" | "periods" | "project_setup" | "parameters" | "approval";
+/** `project_value`: the Doanh thu figure of the project P&L screen, where the PM enters Giá trị dự án. */
+export type PnlFixTarget = "staff_costs" | "pending_hours" | "funds" | "periods" | "project_setup" | "project_value" | "parameters" | "approval";
 
 export type PnlReasonCode =
   | "not_closed" | "pending_cost_rate" | "pending_classification" | "pending_layer2_mismatch" | "pending_locked_period"
-  | "months_unlocked" | "fund_unallocated" | "missing_commission_rate" | "missing_sell_rate" | "uncosted_hours"
-  | "no_contract_value" | "no_cost_rate"
+  | "months_unlocked" | "fund_unallocated" | "missing_commission_rate" | "uncosted_hours"
+  | "no_project_value" | "no_cost_rate"
   /** Accepted by its status alone: the G7 date is only an estimate, the project stays Tạm tính. */
   | "missing_acceptance_date";
 
@@ -85,7 +86,8 @@ export interface PnlMeta {
 // Mục 4 — Tổng quan P&L (GET /pnl/dashboard)
 // ---------------------------------------------------------------------------
 
-export type PnlDashboardPeriodUnit = "year" | "half" | "quarter" | "month";
+/** "custom": an arbitrary month range given by `fromMonth` / `toMonth` (YYYY-MM, inclusive, at most 60 months). */
+export type PnlDashboardPeriodUnit = "year" | "half" | "quarter" | "month" | "custom";
 /** "Bắt đầu trong kỳ & đã nghiệm thu" (default) | "Nghiệm thu trong kỳ". */
 export type PnlDashboardRule = "started_and_accepted" | "accepted_in_period";
 
@@ -95,9 +97,15 @@ export interface PnlDashboardQuery {
   /** half: 1–2, quarter: 1–4, month: 1–12. Ignored for year. */
   index?: number;
   rule?: PnlDashboardRule;
+  /** unit "custom" only. */
+  fromMonth?: string;
+  toMonth?: string;
+  /** These three take one value or several comma-joined ("a,b"); a project matches when it has one of them. */
   projectType?: string;
   accountId?: string;
   picUserId?: string;
+  /** Text found in the project name, project code or client name (case- and accent-insensitive). */
+  q?: string;
   /** "accepted" (default) | "in_progress" — which tab the page/sort apply to. Both tabs are always returned counted. */
   tab?: "accepted" | "in_progress";
   /** Filter the project table to one cost group of block 4 (key of PnlCostGroup). */
@@ -346,11 +354,21 @@ export interface PnlProjectResponse {
       loggedVsPlanPercent: number | null;
       monthsWithHours: number;
       /** null + wholeProjectOnly when the scope is narrowed: show "Chỉ xem ở Toàn dự án". */
-      revenue: { amount: number | null; basis: "contract" | "recognized" | "none"; label: string; note: string; wholeProjectOnly: boolean; missingReason: string | null };
+      revenue: {
+        amount: number | null; basis: "project_value" | "recognized" | "none"; label: string; note: string; wholeProjectOnly: boolean; missingReason: string | null;
+        /** D-22 / PL-13: Giá trị dự án as stored (whatever the scope); null = chưa nhập, or hidden outside the cost permission group. */
+        projectValueAmount: number | null;
+        /** The viewer may enter or change it now (Admin - PM in the cost group, a Loại Khách hàng project, G7 not passed). */
+        canEdit: boolean;
+        /** A change needs a reason: G1 is approved and a value already exists (the first entry never needs one). */
+        reasonRequired: boolean;
+        /** Why it cannot be edited although the viewer has the right ("đã khóa khi G7 được duyệt"); null otherwise. */
+        lockedReason: string | null;
+      };
       cost: { totalAmount: number | null; laborAmount: number | null; otherAmount: number | null };
       ebit: { amount: number | null; marginPercent: number | null; expected: boolean; label: string; wholeProjectOnly: boolean; missingReason: string | null };
-      /** Internal projects (mẫu Nội bộ, Đào tạo): the fifth tile is "Chi phí so với trần". */
-      costVsCap: { costAmount: number | null; capAmount: number | null; usedPercent: number | null; warnThresholdPercent: number } | null;
+      /** Loại Nội bộ / Đào tạo: read as "chi phí tiêu hao" — no Doanh thu, no EBIT. */
+      consumable: boolean;
     };
     /** Khối 3. */
     people: PnlProjectPersonRow[];
@@ -372,8 +390,29 @@ export interface PnlProjectResponse {
     /** Khối 5 — both null outside the cost permission group. */
     items: PnlProjectItemRow[] | null;
     history: PnlHistoryEvent[] | null;
+    /** PL-22: the item template of the project's Loại dự án and this project's own deviation from it ("ghi đè mẫu", reason mandatory). */
+    template: PnlProjectTemplate;
   };
   meta: PnlMeta;
+}
+
+export interface PnlProjectTemplate {
+  key: string;
+  name: string;
+  /** Codes switched off for this project right now (template + override, or the set frozen at G7). */
+  disabledCodes: string[];
+  override: null | { disabledCodes: string[]; enabledCodes: string[]; reason: string; byName: string | null; at: string };
+  /** Admin - PM may override the template for this project. */
+  canOverride: boolean;
+}
+
+/** PUT /pnl/projects/:projectId/template-override. */
+export interface PnlTemplateOverrideInput {
+  /** Codes switched off / back on for this project only. */
+  disabledCodes: string[];
+  enabledCodes?: string[];
+  /** Bắt buộc. */
+  reason: string;
 }
 
 export interface PnlHistoryEvent {
@@ -402,14 +441,15 @@ export interface PnlProjectMonthDetail {
     hourlyCostRate: number | null;
     loggedMinutes: number; includedMinutes: number; pendingMinutes: number; excludedMinutes: number;
     laborCostAmount: number | null;
-    status: { ok: boolean; label: string };
+    /** `missing`: what the label stands for, by kind (the same rows as PnlProjectPersonRow.status.missing). */
+    status: { ok: boolean; label: string; missing?: PnlMonthMissing[] };
     /** Personal leave days of the month (YYYY-MM-DD). */
     leaveDays: string[];
     byDay: Array<{ dateKey: string; loggedMinutes: number; includedMinutes: number; pendingMinutes: number; excludedMinutes: number }>;
   }>;
   /** "đổi được sang xem theo task". */
   tasks: Array<{
-    taskId: string; taskTitle: string; contractItemId: string | null; contractItemCode: string | null; layer1: string | null;
+    taskId: string; taskTitle: string; layer1: string | null;
     loggedMinutes: number; includedMinutes: number; pendingMinutes: number; excludedMinutes: number;
     /** Display figure (minutes × each person's rate); the month's total is the people table's. */
     laborCostAmount: number | null;
@@ -419,6 +459,15 @@ export interface PnlProjectMonthDetail {
   reconciliation: PnlHourReconciliation;
 }
 export interface PnlProjectMonthDetailResponse { data: PnlProjectMonthDetail[]; meta: PnlMeta }
+
+/**
+ * PUT /pnl/projects/:projectId/project-value — "Giá trị dự án" (D-22, PL-13), entered on the Doanh thu figure.
+ * `amount` null clears it (only before G1). `reason` is mandatory when G1 is approved and a value already exists.
+ */
+export interface PnlProjectValueInput {
+  amount: number | null;
+  reason?: string;
+}
 
 /** POST/PATCH /pnl/projects/:projectId/manual-costs — the "Nhập tay" line. */
 export interface PnlManualCostInput {
@@ -450,15 +499,12 @@ export interface PnlSourceEntryRow {
   taskTypeLayer2: string | null;
   /** Chosen by the person; null on legacy rows. */
   selectedTaskTypeLayer2: string | null;
-  contractItemId: string | null; contractItemName?: string;
   status: PnlGateStatusCode; statusLabel: string;
   reason?: PnlGateReasonCode;
   reasons: PnlGateReasonCode[];
   reasonLabels: string[];
-  /** Blocks the G7 approval (thiếu hoặc sai phân loại, hạng mục). */
+  /** Blocks the G7 approval (thiếu hoặc sai phân loại). */
   blocksG7: boolean;
-  /** Pre-sale hour waiting for the contract: no 10-day deadline, does not block the period lock. */
-  awaitingContract: boolean;
   hourlyCostRate: number | null;
   costAmount: number | null;
   deadline?: string;
@@ -476,106 +522,12 @@ export interface PnlSourceEntriesResponse {
 /** Result of ResourceControlsService/PnlService.pendingHoursBlockingG7(workspaceId, projectId). */
 export interface PnlG7Blockers {
   projectId: string;
-  /** Hours "Chờ xử lý" because of a missing or wrong classification or line item. 0 = G7 may be approved. */
+  /** Hours "Chờ xử lý" because of a missing or wrong classification. 0 = G7 may be approved. */
   blockingMinutes: number;
   entryCount: number;
   byReason: Array<{ reason: PnlGateReasonCode; label: string; minutes: number; entryCount: number }>;
   /** Hours only waiting for a cost rate: they do NOT block G7; the P&L stays Tạm tính. */
   waitingCostRateMinutes: number;
-}
-
-// ---------------------------------------------------------------------------
-// Mục 6.1 — Thiết lập P&L của dự án (GET /pnl/projects/:projectId/setup)
-// ---------------------------------------------------------------------------
-
-export type PnlInstallmentStatus = "not_due" | "accepted" | "invoiced" | "paid";
-
-export interface PnlInstallment {
-  id: string;
-  sequence: number;
-  /** "Khi ký (G1)", "Nghiệm thu (G7)", … */
-  label: string;
-  gateCode: string | null;
-  percent: number;
-  /** Tự tính = giá trị hạng mục × tỷ lệ. */
-  amount: number | null;
-  expectedOn: string | null;
-  status: PnlInstallmentStatus;
-  statusLabel: string;
-}
-
-export interface PnlSetupItem {
-  id: string;
-  code: string;
-  name: string;
-  kind: string; kindLabel: string;
-  contractType: string | null; contractTypeLabel: string;
-  /** Trọn gói: giá trị; Theo giờ: mức trần; Nội bộ: trần chi phí (not part of the contract value). */
-  valueAmount: number | null;
-  /** "60,0" / "Trần 7,2" / "" — which kind of number valueAmount is. */
-  valueKind: "value" | "ceiling" | "cost_cap" | "none";
-  estimateMinutes: number | null;
-  /** "Một lần tại G7" / "Giờ × giá bán" / "Không có doanh thu". */
-  revenueRecognition: string;
-  /** Khối F: loại và giá trị gốc tự khóa. */
-  locked: boolean;
-  lockReasons: Array<{ kind: "logged_hours" | "invoiced" | "contract_signed"; label: string; minutes?: number; installmentSequence?: number }>;
-  changeRequestId: string | null;
-  loggedMinutes: number;
-  includedMinutes: number;
-  /** Khối C (Trọn gói). */
-  installments: PnlInstallment[];
-  installmentPercentTotal: number;
-  /** Khối D (Theo giờ). */
-  hourly: null | {
-    ceilingAmount: number | null;
-    sellRates: Array<{ roleGroup: PnlRoleGroupCode; roleGroupLabel: string; amount: number | null; scope: "company" | "project" | "customer" | "project_type" | null; effectiveFrom: string | null }>;
-    /** Giờ tính P&L × đơn giá bán to date, before the ceiling. */
-    revenueToDateAmount: number | null;
-    usedPercent: number | null;
-    warnThresholdPercent: number;
-    overThreshold: boolean;
-  };
-  /** Khối E (Nội bộ). */
-  internal: null | { costCapAmount: number | null; costToDateAmount: number | null; usedPercent: number | null; warnThresholdPercent: number; overThreshold: boolean };
-}
-
-export interface PnlProjectSetupResponse {
-  data: {
-    projectId: string; projectName: string; accountName: string;
-    /** Khối A. */
-    contract: {
-      totalAmount: number | null;
-      fixedPriceAmount: number | null;
-      hourlyCeilingAmount: number | null;
-      status: "draft" | "signed"; statusLabel: string;
-      signedOn: string | null;
-      /** Đã ký → giá trị gốc chỉ đọc. */
-      baseValuesReadOnly: boolean;
-      collectedAmount: number | null;
-      collectedInstallments: number; installmentCount: number;
-    };
-    /** Khối B (and C/D/E per item). */
-    items: PnlSetupItem[];
-    /** Khối G. */
-    baseline: { g1Approved: boolean; g1ApprovedOn: string | null; firstInstallmentPaid: boolean; rootItemReady: boolean; blockers: string[] };
-    template: { key: string; name: string; disabledCodes: string[]; override: null | { disabledCodes: string[]; enabledCodes: string[]; reason: string; byName: string | null; at: string } };
-  };
-  meta: PnlMeta;
-}
-
-export interface PnlInstallmentsInput {
-  /** Must total exactly 100. */
-  installments: Array<{ label: string; gateCode?: string | null; percent: number; expectedOn?: string | null }>;
-}
-export interface PnlContractStatusInput { status: "draft" | "signed"; reason?: string }
-export interface PnlItemSettingsInput { warnThresholdPercent?: number }
-export interface PnlTemplateOverrideInput {
-  /** Codes switched off / back on for this project only. */
-  disabledCodes: string[];
-  enabledCodes?: string[];
-  /** Bắt buộc. */
-  reason: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -658,18 +610,17 @@ export interface PnlCostItemsResponse {
 // Mục 6.3 — tab Tham số (GET /pnl/config/parameters)
 // ---------------------------------------------------------------------------
 
-export type PnlParameterKey = "standardDayHours" | "usdRate" | "pnlCloseGate" | "commissionPercent" | "sellRate";
+export type PnlParameterKey = "standardDayHours" | "usdRate" | "pnlCloseGate" | "commissionPercent";
 export type PnlParameterScopeType = "company" | "customer" | "project_type" | "project";
 
 export interface PnlParameterValue {
   id: string;
   key: PnlParameterKey;
-  /** sellRate only: the role group the price is for. */
+  /** Always null today: no parameter of the tab has one value per sub-key any more (the selling rate per role is gone, chốt 13/10). */
   subKey: string | null;
   scopeType: PnlParameterScopeType;
   scopeId: string | null;
   scopeLabel: string;
-  /** null: a sell rate read outside the cost permission group (PL-26). */
   value: number | string | null;
   /** "5%", "26.300 đ", "8 giờ", "G7 (nghiệm thu)". */
   valueText: string | null;
@@ -711,7 +662,7 @@ export interface PnlParametersResponse {
     moved: Array<{ label: string; movedTo: string }>;
     priorityNote: string;
     openPeriodKeys: string[];
-    scopeOptions: { customers: Array<{ id: string; name: string }>; projectTypes: Array<{ value: string; label: string }>; projects: Array<{ id: string; name: string }>; roleGroups: Array<{ value: PnlRoleGroupCode; label: string }> };
+    scopeOptions: { customers: Array<{ id: string; name: string }>; projectTypes: Array<{ value: string; label: string }>; projects: Array<{ id: string; name: string }> };
   };
   meta: PnlMeta;
 }

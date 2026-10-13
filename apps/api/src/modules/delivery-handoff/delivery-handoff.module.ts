@@ -9,14 +9,14 @@ import { ProjectsService } from "./projects.service";
 import { ProjectPermissionsService } from "./project-permissions.service";
 import { TimeEntriesService } from "./time-entries.service";
 import { MilestoneGatesService } from "./milestone-gates.service";
-import { ContractItemsService } from "./contract-items.service";
+import { TaskClassificationService } from "./task-classification.service";
 import { ProjectTemplatesService } from "./project-templates.service";
 
 @Module({
   // ResourceControlsModule: the cost-period lock (D-28). It imports nothing from this module, so there is no cycle.
   imports: [PrismaModule, IdentityAccessModule, NotificationsModule, ResourceControlsModule],
   controllers: [ProjectsController, BaselineController],
-  providers: [ProjectsService, ProjectPermissionsService, TimeEntriesService, MilestoneGatesService, ContractItemsService, ProjectTemplatesService],
-  exports: [ProjectsService, ProjectPermissionsService, TimeEntriesService, MilestoneGatesService, ContractItemsService, ProjectTemplatesService],
+  providers: [ProjectsService, ProjectPermissionsService, TimeEntriesService, MilestoneGatesService, TaskClassificationService, ProjectTemplatesService],
+  exports: [ProjectsService, ProjectPermissionsService, TimeEntriesService, MilestoneGatesService, TaskClassificationService, ProjectTemplatesService],
 })
 export class DeliveryHandoffModule {}

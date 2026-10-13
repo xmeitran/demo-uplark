@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Home, ArrowLeft, MapPin } from "lucide-react";
+import { ArrowLeft, MapPin } from "lucide-react";
+
+// Mirrors PageHeader's back link (this page renders outside the app shell, so it cannot use PageHeader's layout).
+const BACK_LINK_CLASS = "inline-flex items-center gap-1.5 !text-xs !font-semibold !text-muted-foreground transition-colors hover:!text-foreground";
 
 export default function NotFound() {
   return (
@@ -32,32 +35,19 @@ export default function NotFound() {
           <MapPin className="w-6 h-6 text-muted-foreground" />
         </div>
 
-        <h1 className="text-xl font-bold text-foreground mb-2">Page not found</h1>
+        <h1 className="text-xl font-bold text-foreground mb-2">Không tìm thấy trang</h1>
         <p className="text-sm text-muted-foreground mb-8 leading-relaxed">
-          The page you&apos;re looking for doesn&apos;t exist yet or has moved.
+          Trang bạn tìm chưa tồn tại hoặc đã được chuyển đi.
         </p>
 
-        <div className="flex items-center justify-center gap-3">
-          <Link href="/">
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.97 }}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm"
-              style={{ backgroundColor: "var(--color-primary)" }}
-            >
-              <Home className="w-4 h-4" />
-              Dashboard
-            </motion.button>
+        {/* Same look as the PageHeader back link; "Quay lại trang trước" keeps the browser-history behaviour. */}
+        <div className="flex flex-col items-center gap-3">
+          <Link href="/" aria-label="Quay lại Dashboard" className={BACK_LINK_CLASS}>
+            <ArrowLeft className="h-3.5 w-3.5" aria-hidden />Quay lại Dashboard
           </Link>
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.97 }}
-            onClick={() => window.history.back()}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium border border-border text-foreground hover:bg-muted transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Go back
-          </motion.button>
+          <button type="button" onClick={() => window.history.back()} className={BACK_LINK_CLASS}>
+            <ArrowLeft className="h-3.5 w-3.5" aria-hidden />Quay lại trang trước
+          </button>
         </div>
       </motion.div>
     </div>

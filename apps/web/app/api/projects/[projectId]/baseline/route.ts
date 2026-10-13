@@ -2,7 +2,7 @@ import { proxyCrmBffJson, readJsonBody } from "../../../../../src/lib/crm-bff-pr
 
 export const dynamic = "force-dynamic";
 
-/** Baselines B0 / B1 of the project: current versions, history and diffs (D-20, D-21). */
+/** The plan baseline of the project: current version, history and diffs (D-20, D-21). */
 export async function GET(request: Request, { params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await params;
   return proxyCrmBffJson({ request, path: `/projects/${encodeURIComponent(projectId)}/baseline` });

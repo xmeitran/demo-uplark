@@ -86,7 +86,8 @@ describe("work groups follow the derived Layer 2 (rules 4.2)", () => {
     const { projectWorkGroup } = await import("./timesheet-live-data");
     expect(projectWorkGroup("internal_worklog")).toBe("internal_project");
     expect(projectWorkGroup("delivery")).toBe("customer_project");
-    expect(projectWorkGroup("internal")).toBe("unclassified");
+    expect(projectWorkGroup("internal")).toBe("internal_project");
+    expect(projectWorkGroup("training")).toBe("internal_project");
     expect(projectWorkGroup(undefined)).toBe("unclassified");
   });
 });

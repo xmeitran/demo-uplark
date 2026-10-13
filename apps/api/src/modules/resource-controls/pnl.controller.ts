@@ -47,21 +47,9 @@ export class PnlController {
   @Delete("projects/:projectId/manual-costs/:costId")
   deleteManualCost(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Param("projectId") projectId: string, @Param("costId") costId: string) { return this.as(auth, fallback, (p) => this.config.deleteManualCost(projectId, costId, p)); }
 
-  // --- Mục 6.1: Thiết lập P&L của dự án ---
-  @Get("projects/:projectId/setup")
-  setup(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Param("projectId") projectId: string) { return this.as(auth, fallback, (p) => this.config.projectSetup(projectId, p)); }
-
-  @Put("projects/:projectId/setup/contract-status")
-  contractStatus(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Param("projectId") projectId: string, @Body() body: any) { return this.as(auth, fallback, (p) => this.config.setContractStatus(projectId, body, p)); }
-
-  @Put("projects/:projectId/setup/items/:itemId/installments")
-  installments(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Param("projectId") projectId: string, @Param("itemId") itemId: string, @Body() body: any) { return this.as(auth, fallback, (p) => this.config.setInstallments(projectId, itemId, body, p)); }
-
-  @Patch("projects/:projectId/setup/installments/:installmentId")
-  installmentStatus(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Param("projectId") projectId: string, @Param("installmentId") installmentId: string, @Body() body: any) { return this.as(auth, fallback, (p) => this.config.setInstallmentStatus(projectId, installmentId, body, p)); }
-
-  @Patch("projects/:projectId/setup/items/:itemId")
-  itemSettings(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Param("projectId") projectId: string, @Param("itemId") itemId: string, @Body() body: any) { return this.as(auth, fallback, (p) => this.config.setItemSettings(projectId, itemId, body, p)); }
+  // --- Mục 5 khối 2: Giá trị dự án (PL-13) ---
+  @Put("projects/:projectId/project-value")
+  projectValue(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Param("projectId") projectId: string, @Body() body: any) { return this.as(auth, fallback, (p) => this.config.setProjectValue(projectId, body, p)); }
 
   @Put("projects/:projectId/template-override")
   templateOverride(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Param("projectId") projectId: string, @Body() body: any) { return this.as(auth, fallback, (p) => this.config.setTemplateOverride(projectId, body, p)); }

@@ -7,7 +7,6 @@
  * "legacy:", milestone name prefixed "[Khung cũ] ", moved to the end). Issue log records and documents keep pointing at
  * them, and a restore only has to write the old columns back.
  */
-import { defaultContractItemId } from "./contract-item";
 import { PROJECT_POSITIONS, TPL_001_KEY, classifyProjectPosition, isRunningProject, lookupLegacyName, mapLegacyStage, normalizeLegacyName, type ProjectPosition } from "./legacy-conversion";
 import { PROJECT_STATUS_CATALOGUE, normalizeProjectStatus } from "./project-status";
 import { PILOT_PROJECT_MILESTONE_TEMPLATE } from "./stage-template";
@@ -18,7 +17,6 @@ export const HOLDING_STAGE_KEY = "cho-xep-stage";
 export const HOLDING_STAGE_NAME = "Chờ xếp stage";
 export const RETIRED_KEY_PREFIX = "legacy:";
 export const RETIRED_NAME_PREFIX = "[Khung cũ] ";
-export const ROOT_ITEM_REF = "root:new";
 
 type TemplateStage = (typeof PILOT_PROJECT_MILESTONE_TEMPLATE)[number]["stages"][number];
 const TEMPLATE_STAGES: Array<{ stage: TemplateStage; milestone: 1 | 2 | 3 | 4 }> = PILOT_PROJECT_MILESTONE_TEMPLATE.flatMap((milestone, index) =>
@@ -72,8 +70,7 @@ export interface FrameworkSnapshot {
     taskTypeLayer1: string | null; afterPnlClose: boolean | null; slaDays?: number | null; loggedMinutes?: number;
   }>;
   gates: Array<{ stageId: string; code: string }>;
-  contractItems: Array<{ id: string; kind: string; status: string; sortOrder: number; archivedAt?: Date | string | null }>;
-  tasks: Array<{ id: string; stageId: string | null; parentTaskId: string | null; status: string; archivedAt?: Date | string | null; taskTypeLayer1: string | null; contractItemId: string | null }>;
+  tasks: Array<{ id: string; stageId: string | null; parentTaskId: string | null; status: string; archivedAt?: Date | string | null; taskTypeLayer1: string | null }>;
 }
 
 /** Stages are referred to by stage key: the executor resolves the key after the framework operations ran. */
@@ -87,13 +84,12 @@ export type FrameworkOperation =
   | { type: "create_gate"; stageKey: string; code: string; passed: boolean }
   | { type: "set_template_key"; templateKey: string }
   | { type: "move_task"; taskId: string; toStageKey: string }
-  | { type: "create_root_contract_item" }
-  | { type: "classify_task"; taskId: string; taskTypeLayer1?: string; contractItemId?: string }
+  | { type: "classify_task"; taskId: string; taskTypeLayer1: string }
   | { type: "set_project_status"; from: string; to: string };
 
 export const EMPTY_FRAMEWORK_TOTALS = {
   milestonesCreated: 0, stagesCreated: 0, gatesCreated: 0, milestonesMapped: 0, stagesMapped: 0, milestonesRetired: 0, stagesRetired: 0,
-  tasksRehomed: 0, tasksToHolding: 0, contractItemsCreated: 0, tasksClassified: 0, statusesChanged: 0
+  tasksRehomed: 0, tasksToHolding: 0, tasksClassified: 0, statusesChanged: 0
 };
 export type FrameworkTotals = typeof EMPTY_FRAMEWORK_TOTALS;
 
@@ -141,7 +137,6 @@ export function planFrameworkConversion(snapshot: FrameworkSnapshot, options: { 
       else if (operation.type === "map_stage") totals.stagesMapped += 1;
       else if (operation.type === "retire_milestone") { totals.milestonesRetired += 1; totals.stagesRetired += operation.stageIds.length; }
       else if (operation.type === "move_task") { if (operation.toStageKey === HOLDING_STAGE_KEY) totals.tasksToHolding += 1; else totals.tasksRehomed += 1; }
-      else if (operation.type === "create_root_contract_item") totals.contractItemsCreated += 1;
       else if (operation.type === "classify_task") totals.tasksClassified += 1;
       else if (operation.type === "set_project_status") totals.statusesChanged += 1;
     }
@@ -255,14 +250,7 @@ export function planFrameworkConversion(snapshot: FrameworkSnapshot, options: { 
     if (created.length && !movedTo.size && !operations.some((operation) => operation.type === "create_stage")) steps.push(`Tạo điểm chốt cho các stage TPL-001: ${created.join(", ")}. Điểm chốt đứng trước stage đang làm được ghi "đã qua trước ngày áp dụng".`);
   }
 
-  // Root contract item (D-01 / D-06) and the classification of OPEN tasks, for all three rows.
-  const activeItems = snapshot.contractItems.filter((item) => item.status === "active" && !item.archivedAt);
-  const hasRoot = activeItems.some((item) => item.kind === "ROOT");
-  if (!hasRoot) {
-    operations.push({ type: "create_root_contract_item" });
-    steps.push(`Tạo hạng mục hợp đồng gốc "${project.name}" (loại và giá trị để PM điền).`);
-  }
-  const defaultItemId = hasRoot ? defaultContractItemId(activeItems)! : ROOT_ITEM_REF;
+  // Classification of OPEN tasks, for all three rows (v2, chốt 13/10: no contract line item is created or assigned).
   const layer1ByKey = new Map(finalStages.map((stage) => [stage.key, stage.layer1]));
   const keyById = new Map(finalStages.filter((stage) => stage.id).map((stage) => [stage.id!, stage.key]));
   const taskById = new Map(snapshot.tasks.map((task) => [task.id, task]));
@@ -274,20 +262,15 @@ export function planFrameworkConversion(snapshot: FrameworkSnapshot, options: { 
     return parent && depth < 8 ? layer1Of(parent, depth + 1) : parent ? null : stageLayer1(task);
   };
   let layer1Count = 0;
-  let itemCount = 0;
   let pending = 0;
   for (const task of snapshot.tasks.filter(isOpenTask)) {
-    const layer1 = task.taskTypeLayer1 ? undefined : layer1Of(task);
-    const parent = task.parentTaskId ? taskById.get(task.parentTaskId) : undefined;
-    const contractItemId = task.contractItemId ? undefined : parent?.contractItemId ?? defaultItemId;
-    if (!task.taskTypeLayer1 && !isTaskTypeLayer1(layer1)) pending += 1;
-    const data = { ...(isTaskTypeLayer1(layer1) ? { taskTypeLayer1: layer1 } : {}), ...(contractItemId ? { contractItemId } : {}) };
-    if (!Object.keys(data).length) continue;
-    if (data.taskTypeLayer1) layer1Count += 1;
-    if (data.contractItemId) itemCount += 1;
-    operations.push({ type: "classify_task", taskId: task.id, ...data });
+    if (task.taskTypeLayer1) continue;
+    const layer1 = layer1Of(task);
+    if (!isTaskTypeLayer1(layer1)) { pending += 1; continue; }
+    layer1Count += 1;
+    operations.push({ type: "classify_task", taskId: task.id, taskTypeLayer1: layer1 });
   }
-  if (layer1Count || itemCount) steps.push(`Phân loại task đang mở: gán Lớp 1 theo stage cho ${layer1Count} task, gán hạng mục hợp đồng cho ${itemCount} task. Lớp 2 được suy ra lại theo bảng 4.2.`);
+  if (layer1Count) steps.push(`Phân loại task đang mở: gán Lớp 1 theo stage cho ${layer1Count} task. Lớp 2 được suy ra lại theo bảng 4.2 (Loại dự án và vị trí task).`);
   if (pending) notes.push(`${pending} task đang mở vẫn "${taskTypeLayer1Label(null)}" Lớp 1 vì stage của chúng chưa có Lớp 1.`);
 
   if (position === "milestone_3_4") {

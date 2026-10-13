@@ -14,10 +14,10 @@
 import {
   eachDate,
   isWorkingDay,
-  monthBounds,
-  monthOf
+  monthBounds
 } from "./timesheet-dates";
 import { isClosedNodeStatus, isTaskOverdue } from "./timesheet-status";
+import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
 import type {
   MemberState,
   MilestoneNode,
@@ -35,40 +35,81 @@ import { WORK_GROUPS } from "./timesheet-types";
 
 export interface TimesheetFilters {
   month: string;
+  /** Optional inclusive date range. When omitted, the selected month is used. */
+  dateFrom?: string;
+  dateTo?: string;
   departmentId: string | "all";
+  /** Multi-select values win over the single legacy field next to them; an empty list means "all". */
+  departmentIds?: string[];
   personId: string | "all";
-  /** Supports both the legacy single-person value and the multi-select UI. */
   personIds?: string[];
   projectId: string | "all";
+  projectIds?: string[];
   workGroup: WorkGroup | "all";
+  workGroups?: WorkGroup[];
+  /** Accent-insensitive text looked up in the log note, task name and project code/name. */
+  search?: string;
 }
 
-function selectedPersonIds(filters: TimesheetFilters) {
-  if (filters.personIds) return filters.personIds;
-  return filters.personId === "all" ? [] : [filters.personId];
+const pick = <T extends string>(many: T[] | undefined, single: T | "all"): T[] => many ?? (single === "all" ? [] : [single]);
+const selectedPersonIds = (filters: TimesheetFilters) => pick(filters.personIds, filters.personId);
+export const selectedDepartmentIds = (filters: TimesheetFilters) => pick(filters.departmentIds, filters.departmentId);
+export const selectedProjectIds = (filters: TimesheetFilters) => pick(filters.projectIds, filters.projectId);
+export const selectedWorkGroups = (filters: TimesheetFilters) => pick(filters.workGroups, filters.workGroup);
+
+/** The inclusive days the filters cover: the custom range, otherwise the whole selected month. */
+export function filterPeriod(filters: TimesheetFilters): { start: string; end: string; wholeMonth: boolean } {
+  const monthRange = monthBounds(filters.month);
+  const start = filters.dateFrom || monthRange.start;
+  const end = filters.dateTo || monthRange.end;
+  return { start, end, wholeMonth: start === monthRange.start && end === monthRange.end };
+}
+
+/**
+ * Query values for a picked day range. Rule: "Khoảng ngày" decides what is shown and "Kỳ báo cáo"
+ * follows it — the month becomes the one holding the range's last day, so a range outside the
+ * selected month moves the month instead of showing nothing. A range that is exactly one whole
+ * month is stored as that month alone. Days before the loaded window are cut off.
+ */
+export function periodParamsForRange(range: { from: string; to: string }, windowStart = ""): { month: string; from: string; to: string } {
+  const to = range.to < windowStart ? windowStart : range.to;
+  const from = range.from < windowStart ? windowStart : range.from > to ? to : range.from;
+  const month = to.slice(0, 7);
+  const bounds = monthBounds(month);
+  return from === bounds.start && to === bounds.end ? { month, from: "", to: "" } : { month, from, to };
 }
 
 export function filterLogs(dataset: TimesheetDataset, filters: TimesheetFilters): TimeLog[] {
   const peopleById = new Map(dataset.people.map((person) => [person.id, person]));
   const personIds = selectedPersonIds(filters);
-  return dataset.logs.filter((log) => {
-    if (monthOf(log.date) !== filters.month) return false;
-    if (personIds.length > 0 && !personIds.includes(log.personId)) return false;
-    if (filters.projectId !== "all" && log.projectId !== filters.projectId) return false;
-    if (filters.workGroup !== "all" && log.workGroup !== filters.workGroup) return false;
-    if (filters.departmentId !== "all") {
-      const person = peopleById.get(log.personId);
-      if (!person || person.departmentId !== filters.departmentId) return false;
+  const departmentIds = selectedDepartmentIds(filters);
+  const projectIds = selectedProjectIds(filters);
+  const workGroups = selectedWorkGroups(filters);
+  const { start, end } = filterPeriod(filters);
+  const search = filters.search?.trim() ?? "";
+  const searchText = new Map<string, string>();
+  if (search) {
+    for (const project of dataset.projects) {
+      for (const task of projectTasks(project)) searchText.set(`${project.id}:${task.id}`, `${task.name} ${project.code} ${project.name}`);
     }
+  }
+  return dataset.logs.filter((log) => {
+    if (log.date < start || log.date > end) return false;
+    if (personIds.length > 0 && !personIds.includes(log.personId)) return false;
+    if (projectIds.length > 0 && !projectIds.includes(log.projectId)) return false;
+    if (workGroups.length > 0 && !workGroups.includes(log.workGroup)) return false;
+    if (departmentIds.length > 0 && !departmentIds.includes(peopleById.get(log.personId)?.departmentId ?? "")) return false;
+    if (search && !matchesSearch(search, log.note, searchText.get(`${log.projectId}:${log.taskId}`))) return false;
     return true;
   });
 }
 
 export function peopleInScope(dataset: TimesheetDataset, filters: TimesheetFilters): Person[] {
   const personIds = selectedPersonIds(filters);
+  const departmentIds = selectedDepartmentIds(filters);
   return dataset.people.filter((person) => {
     if (!person.active) return false;
-    if (filters.departmentId !== "all" && person.departmentId !== filters.departmentId) return false;
+    if (departmentIds.length > 0 && !departmentIds.includes(person.departmentId)) return false;
     if (personIds.length > 0 && !personIds.includes(person.id)) return false;
     return true;
   });
@@ -80,6 +121,15 @@ export function workingDaysInMonth(month: string, holidays: readonly string[], u
   const { start, end } = monthBounds(month);
   const cap = upToISO && upToISO < end ? upToISO : end;
   return eachDate(start, cap).filter((iso) => isWorkingDay(iso, holidays));
+}
+
+function workingDaysInFilterRange(filters: TimesheetFilters, holidays: readonly string[], upToISO?: string): string[] {
+  const monthRange = monthBounds(filters.month);
+  const start = filters.dateFrom || monthRange.start;
+  const requestedEnd = filters.dateTo || monthRange.end;
+  const end = upToISO && upToISO < requestedEnd ? upToISO : requestedEnd;
+  if (start > end) return [];
+  return eachDate(start, end).filter((iso) => isWorkingDay(iso, holidays));
 }
 
 /** MTS-01: 8h × working days × contract ratio. */
@@ -111,7 +161,7 @@ export function buildPersonMonthSummaries(
   filters: TimesheetFilters,
   logs: TimeLog[]
 ): PersonMonthSummary[] {
-  const workingDays = workingDaysInMonth(filters.month, dataset.holidays, dataset.generatedAt);
+  const workingDays = workingDaysInFilterRange(filters, dataset.holidays, dataset.generatedAt);
   const logsByPerson = new Map<string, TimeLog[]>();
   for (const log of logs) {
     const bucket = logsByPerson.get(log.personId);
@@ -170,7 +220,7 @@ export function buildMonthlyKpis(
   logs: TimeLog[],
   summaries: PersonMonthSummary[]
 ): MonthlyKpis {
-  const workingDays = workingDaysInMonth(filters.month, dataset.holidays, dataset.generatedAt);
+  const workingDays = workingDaysInFilterRange(filters, dataset.holidays, dataset.generatedAt);
   const actualMinutes = sum(logs.map((log) => log.minutes));
   // Completeness is judged on the people in scope only: hours of former/inactive
   // users stay in the total but must not fill anyone else's standard hours.
@@ -246,8 +296,11 @@ export function buildPersonDayMatrix(
   filters: TimesheetFilters,
   logs: TimeLog[]
 ): PersonDayMatrix {
-  const { start, end } = monthBounds(filters.month);
+  const monthRange = monthBounds(filters.month);
+  const start = filters.dateFrom || monthRange.start;
+  const end = filters.dateTo || monthRange.end;
   const cap = dataset.generatedAt < end ? dataset.generatedAt : end;
+  if (start > cap) return { days: [], rows: [], dayTotals: [] };
   const days = eachDate(start, cap).map((date) => ({
     date,
     isWorkingDay: isWorkingDay(date, dataset.holidays)

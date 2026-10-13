@@ -7,6 +7,7 @@
  */
 import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import {
+  gatePaymentText,
   PROJECT_GATE_ACTIONS,
   PROJECT_GATE_ACTION_LABELS,
   PROJECT_GATE_CATALOGUE,
@@ -36,11 +37,13 @@ export interface GateFacts {
   documents: ReadonlyArray<{ type: string; present: boolean }>;
   /** Tasks of the closing stage(s) that are neither done nor cancelled. */
   openTaskCount: number;
-  /** G1: a root contract item with type and value exists. */
-  rootContractItemReady: boolean;
+  /** Loại Khách hàng: the only kind with a Giá trị dự án and payment confirmations (Nội bộ / Đào tạo need neither). */
+  chargeable: boolean;
+  /** G1 (D-22): Giá trị dự án has been entered on the project P&L screen. */
+  projectValueReady: boolean;
   /** G7, G8: open Blocker/Risk/Issue records without an owner or a due date. */
   openIssuesWithoutOwnerOrDue: number;
-  /** G7: hours "Chờ xử lý" for a missing / wrong classification or line item (never cost-rate waits). */
+  /** G7: hours "Chờ xử lý" for a missing / wrong classification (never cost-rate waits). */
   pnlPending?: ProjectGatePnlPendingCheck;
 }
 
@@ -59,6 +62,25 @@ export function gateDefinition(code: string): ProjectGateDefinition {
 /** Approved, or opened by the audited exception: the next stage may start. */
 export function isGatePassed(status: unknown): boolean {
   return status === "approved" || status === "exception";
+}
+
+/**
+ * "G1 đã duyệt" and "mốc đóng P&L đã qua" of any project. On G1–G8 the gate rows answer. A project on hand-built
+ * milestones has no gate rows and follows its own milestones, exactly as its status does (status-proposal.ts,
+ * positionStatus): G1 = the first milestone is approved, the closing point = every milestone is approved.
+ */
+export function projectGatePosition(
+  gates: ReadonlyArray<{ code: string; status: string }>,
+  milestones: ReadonlyArray<{ sortOrder: number; gateStatus?: string | null }>,
+  closeGate = "G7"
+): { g1Passed: boolean; closePassed: boolean } {
+  if (gates.length) {
+    const passed = (code: string) => isGatePassed(gates.find((gate) => gate.code === code)?.status);
+    return { g1Passed: passed("G1"), closePassed: passed(closeGate) };
+  }
+  const ordered = [...milestones].sort((left, right) => left.sortOrder - right.sortOrder);
+  const approved = (milestone: { gateStatus?: string | null }) => milestone.gateStatus === "approved";
+  return { g1Passed: ordered.length > 0 && approved(ordered[0]), closePassed: ordered.length > 0 && ordered.every(approved) };
 }
 
 function normalizeType(value: unknown) {
@@ -101,8 +123,8 @@ export function gateRequirements(definition: ProjectGateDefinition, state: GateS
   const missingDocuments = facts.documents.filter((document) => !document.present).map((document) => document.type);
   if (missingDocuments.length) requirements.push({ text: `Thiếu tài liệu bắt buộc: ${missingDocuments.join(", ")}.`, waivable: false });
   if (facts.openTaskCount > 0) requirements.push({ text: `Còn ${facts.openTaskCount} task của stage chưa hoàn thành hoặc chưa được chuyển có lý do.`, waivable: true });
-  if (definition.paymentConfirmation && !state.paymentConfirmedAt) requirements.push({ text: "PM chưa xác nhận đã thu đợt 1 theo thông tin từ BD.", waivable: false });
-  if (definition.code === "G1" && !facts.rootContractItemReady) requirements.push({ text: "Chưa có hạng mục gốc với loại và giá trị.", waivable: false });
+  if (definition.paymentConfirmation && facts.chargeable && !state.paymentConfirmedAt) requirements.push({ text: `PM chưa xác nhận ${gatePaymentText(definition.code)} theo thông tin từ BD.`, waivable: false });
+  if (definition.code === "G1" && facts.chargeable && !facts.projectValueReady) requirements.push({ text: "Chưa nhập Giá trị dự án (màn P&L dự án, ô Doanh thu).", waivable: false });
   if ((definition.code === "G7" || definition.code === "G8") && facts.openIssuesWithoutOwnerOrDue > 0) {
     requirements.push({ text: `Còn ${facts.openIssuesWithoutOwnerOrDue} vấn đề đang mở chưa có người chịu trách nhiệm hoặc hạn.`, waivable: false });
   }
@@ -119,7 +141,7 @@ export function canGrantGateException(actor: Pick<IssueLogActor, "isAdmin" | "ca
 }
 
 /** Why the actor cannot take the action in the gate's current state; null when they can. Input fields are checked by planGateAction. */
-export function gateActionBlocker(definition: ProjectGateDefinition, state: GateState, facts: Pick<GateFacts, "reachable">, actor: IssueLogActor, action: ProjectGateAction): { kind: "state" | "role"; message: string } | null {
+export function gateActionBlocker(definition: ProjectGateDefinition, state: GateState, facts: Pick<GateFacts, "reachable"> & Partial<Pick<GateFacts, "chargeable">>, actor: IssueLogActor, action: ProjectGateAction): { kind: "state" | "role"; message: string } | null {
   const status = state.status as ProjectGateStatus;
   const state_ = (message: string) => ({ kind: "state" as const, message });
   const role = (message: string) => ({ kind: "role" as const, message });
@@ -144,8 +166,9 @@ export function gateActionBlocker(definition: ProjectGateDefinition, state: Gate
   }
   if (action === "confirm_payment") {
     if (!definition.paymentConfirmation) return state_(`${definition.code} không có bước xác nhận thu tiền.`);
-    if (state.paymentConfirmedAt) return state_("Đã xác nhận thu đợt 1.");
-    if (!actor.isPm) return role("Chỉ PM (Admin) mới được xác nhận đã thu đợt 1.");
+    if (facts.chargeable === false) return state_("Dự án Loại Nội bộ, Đào tạo không có bước xác nhận thu tiền.");
+    if (state.paymentConfirmedAt) return state_(`Đã xác nhận ${gatePaymentText(definition.code)}.`);
+    if (!actor.isPm) return role(`Chỉ PM (Admin) mới được xác nhận ${gatePaymentText(definition.code)}.`);
     return null;
   }
   if (action === "confirm_customer") {
@@ -161,7 +184,7 @@ export function gateActionBlocker(definition: ProjectGateDefinition, state: Gate
   return state_("Thao tác không hợp lệ.");
 }
 
-export function allowedGateActions(definition: ProjectGateDefinition, state: GateState, facts: Pick<GateFacts, "reachable">, actor: IssueLogActor): ProjectGateAction[] {
+export function allowedGateActions(definition: ProjectGateDefinition, state: GateState, facts: Pick<GateFacts, "reachable"> & Partial<Pick<GateFacts, "chargeable">>, actor: IssueLogActor): ProjectGateAction[] {
   return PROJECT_GATE_ACTIONS.filter((action) => gateActionBlocker(definition, state, facts, actor, action) === null);
 }
 
@@ -270,7 +293,7 @@ export function planGateAction(
     return {
       toStatus: fromStatus,
       patch: { paymentConfirmedAt: now, paymentConfirmedByUserId: actor.userId, paymentNote: note ?? null },
-      history: entry(fromStatus, note ?? "PM xác nhận BD đã thu đợt 1"),
+      history: entry(fromStatus, note ?? `PM xác nhận BD ${gatePaymentText(definition.code)}`),
       passed: false
     };
   }
@@ -345,7 +368,7 @@ export function g7PendingCheck(blockers: Pick<PnlG7Blockers, "projectId" | "bloc
 const hoursText = (minutes: number) => `${String(Math.round(minutes / 6) / 10).replace(".", ",")} giờ`;
 
 export function g7PendingHoursMessage(check: ProjectGatePnlPendingCheck): string {
-  return `Còn giờ log Chờ xử lý vì thiếu hoặc sai phân loại, hạng mục: ${check.reasons.map((item) => `${item.label} ${item.entryCount} giờ log (${hoursText(item.minutes)})`).join("; ")}. Xử lý tại danh sách giờ chờ: ${check.worklistHref}. Giờ chỉ chờ cost rate không chặn G7.`;
+  return `Còn giờ log Chờ xử lý vì thiếu hoặc sai phân loại: ${check.reasons.map((item) => `${item.label} ${item.entryCount} giờ log (${hoursText(item.minutes)})`).join("; ")}. Xử lý tại danh sách giờ chờ: ${check.worklistHref}. Giờ chỉ chờ cost rate không chặn G7.`;
 }
 
 /** The moment a gate was passed — for G7, the P&L closing date. Read from the gate row; nothing is stored twice. */

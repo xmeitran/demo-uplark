@@ -49,7 +49,8 @@ async function main() {
               workspaceId: workspace.id
             }
           },
-          update: { endsAt: null },
+          // Granted once: a cost role an admin later ended in the Users screen stays ended.
+          update: {},
           create: { userId: user.id, roleId: role.id, tenantKey, workspaceId: workspace.id }
         })
       )
@@ -108,6 +109,23 @@ async function main() {
     }
   });
 
+  // The project must be valid under the current rules: one open milestone with a stage owned by the operator (the
+  // stage owner is the project PIC), so its dates, PIC and tasks can be edited like any other project.
+  const milestone = await prisma.projectMilestone.upsert({
+    where: { projectId_normalizedKey: { projectId: project.id, normalizedKey: "delivery" } },
+    update: {},
+    create: { id: `${prefix}-milestone`, workspaceId: workspace.id, accountId: account.id, projectId: project.id, name: "Triển khai", normalizedKey: "delivery", sortOrder: 10, gateStatus: "open" }
+  });
+  const stage = await prisma.projectStage.upsert({
+    where: { projectId_stageKey: { projectId: project.id, stageKey: "delivery" } },
+    update: {},
+    create: {
+      id: `${prefix}-stage`, workspaceId: workspace.id, accountId: account.id, projectId: project.id, milestoneId: milestone.id,
+      stageKey: "delivery", phase: "Triển khai", activity: "Triển khai", sortOrder: 10, cumulativePercent: 100, activityPercent: 100,
+      criteria: "Hoàn tất triển khai", status: "in_progress", ownerUserId: operator.id, taskTypeLayer1: "DELIVERY", afterPnlClose: false
+    }
+  });
+
   const task = await prisma.projectTask.upsert({
     where: { id: `${prefix}-task` },
     update: {
@@ -118,8 +136,7 @@ async function main() {
       status: "in_progress",
       assigneeUserId: operator.id,
       ownerUserId: operator.id,
-      createdByUserId: operator.id,
-      estimateMinutes: 960
+      createdByUserId: operator.id
     },
     create: {
       id: `${prefix}-task`,
@@ -134,9 +151,16 @@ async function main() {
       assigneeUserId: operator.id,
       ownerUserId: operator.id,
       createdByUserId: operator.id,
-      estimateMinutes: 960
+      stageId: stage.id,
+      taskTypeLayer1: "DELIVERY",
+      taskTypeLayer2: "CUSTOMER_PROJECT",
+      // A task takes at most 8 planned hours (480 minutes).
+      estimateMinutes: 480
     }
   });
+  // Rows seeded before these rules: bring them in line once, without overwriting later edits.
+  await prisma.projectTask.updateMany({ where: { id: task.id, estimateMinutes: { gt: 480 } }, data: { estimateMinutes: 480 } });
+  await prisma.projectTask.updateMany({ where: { id: task.id, stageId: null }, data: { stageId: stage.id, taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT" } });
 
   await prisma.projectMember.upsert({
     where: {

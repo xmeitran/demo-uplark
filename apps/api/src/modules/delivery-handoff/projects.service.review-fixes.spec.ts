@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import { expandRoleCodes, type PrincipalContext } from "@b2b-crm/contracts";
 import { LarkIntegrationController } from "../lark-integration/lark-integration.controller";
 import { captureBaseline } from "./baseline.service";
-import { lockedContractItemFields } from "./contract-item";
 import { fakePrisma } from "./fake-prisma.testing";
 import { syncProjectStatus } from "./gates.service";
 import { issueLogHooks, runHooks } from "./issue-log.service";
@@ -118,7 +117,7 @@ describe("7 · back-logging and the daily cap", () => {
   it("11 · the daily cap reads the workspace's stored 'Giờ chuẩn một ngày', not the import-time default", async () => {
     const { prisma, service } = setup();
     prisma.systemParameter.findMany.mockResolvedValue([{ key: "standardDayHours", value: 6, createdAt: new Date() }]);
-    await expect(service.createTimeEntry("task-1", log(420), founder, "usr-1")).rejects.toThrow("Daily log cannot exceed 6 office hours");
+    await expect(service.createTimeEntry("task-1", log(420), founder, "usr-1")).rejects.toThrow("ghi giờ tối đa 6 giờ hành chính một ngày");
     await expect(service.createTimeEntry("task-1", log(360), founder, "usr-1")).resolves.toMatchObject({ id: "time-1" });
   });
 
@@ -129,62 +128,25 @@ describe("7 · back-logging and the daily cap", () => {
   });
 });
 
-describe("8 · contract base values after the contract is signed (P&L spec 6.1)", () => {
-  it("a signed contract locks type and value of every line item, even ones without hours or invoices", () => {
-    const item = { contractType: "FIXED_PRICE", valueAmount: 100 };
-    expect(lockedContractItemFields(item, { valueAmount: 200, contractType: "TIME_MATERIAL" }, { hasTimeEntries: false, hasIssuedInvoice: false })).toEqual([]);
-    expect(lockedContractItemFields(item, { valueAmount: 200, contractType: "TIME_MATERIAL" }, { hasTimeEntries: false, hasIssuedInvoice: false, contractSigned: true })).toEqual(["loại hợp đồng", "giá trị gốc"]);
-    // Read-only as a whole: also a value that was never filled in. An unchanged value is not a change.
-    expect(lockedContractItemFields({ contractType: "FIXED_PRICE", valueAmount: null }, { valueAmount: 200 }, { hasTimeEntries: false, hasIssuedInvoice: false, contractSigned: true })).toEqual(["giá trị gốc"]);
-    expect(lockedContractItemFields(item, { valueAmount: 100 }, { hasTimeEntries: false, hasIssuedInvoice: false, contractSigned: true })).toEqual([]);
-  });
-
-  it("update and delete read ProjectPnlRecord.contractStatus and answer in Vietnamese", async () => {
-    const { prisma, service } = setup();
-    prisma.projectContractItem.findFirst.mockResolvedValue({ id: "item-1", code: "HM-01", name: "Gốc", kind: "ROOT", status: "active", contractType: "FIXED_PRICE", valueAmount: 100, estimateMinutes: null, changeRequestId: null, sortOrder: 10, archivedAt: null });
-    prisma.projectPnlRecord.findFirst.mockResolvedValue({ contractStatus: "signed" });
-    await expect(service.updateProjectContractItem("prj-1", "item-1", { valueAmount: 200 }, founder)).rejects.toThrow("Hợp đồng đã ở trạng thái Đã ký nên giá trị gốc đã khóa. Muốn đổi phải qua yêu cầu thay đổi.");
-    await expect(service.deleteProjectContractItem("prj-1", "item-1", founder)).rejects.toThrow(/Hợp đồng đã ở trạng thái Đã ký nên không xóa được hạng mục/);
-    expect(prisma.projectContractItem.update).not.toHaveBeenCalled();
-    expect(prisma.projectContractItem.delete).not.toHaveBeenCalled();
-    // Nháp: the delete goes through.
-    prisma.projectPnlRecord.findFirst.mockResolvedValue({ contractStatus: "draft" });
-    await expect(service.deleteProjectContractItem("prj-1", "item-1", founder)).resolves.toEqual({ deleted: true });
-  });
-});
-
 describe("9 · baseline drift (D-20, D-21)", () => {
   const lockedProject = async () => {
     const fake = fakePrisma({
       project: [{ id: "p1", workspaceId: "twk-1", accountId: "acc-1", status: "active", projectType: "delivery" }],
       projectStage: [{ id: "s1", workspaceId: "twk-1", projectId: "p1", milestoneId: "m1", activity: "Build", sortOrder: 10, ownerUserId: "usr-1" }],
-      projectTask: [{ id: "t1", workspaceId: "twk-1", projectId: "p1", stageId: "s1", title: "Dựng base", estimateMinutes: 120, status: "todo", ownerUserId: "usr-1", assigneeUserId: null }],
-      projectContractItem: [{ id: "i1", workspaceId: "twk-1", projectId: "p1", code: "HM-01", name: "Gốc", kind: "ROOT", sortOrder: 10, valueAmount: 100, contractType: "FIXED_PRICE", estimateMinutes: 600, createdAt: new Date() }]
+      projectTask: [{ id: "t1", workspaceId: "twk-1", projectId: "p1", stageId: "s1", title: "Dựng base", estimateMinutes: 120, status: "todo", ownerUserId: "usr-1", assigneeUserId: null }]
     });
     await captureBaseline(fake.prisma, { workspaceId: "twk-1", projectId: "p1", cause: { type: "manual", reason: "Khóa" }, actor: { userId: "usr-1" } });
     const versions = () => fake.table("projectBaseline").map((row) => `${row.layer}v${row.version}:${row.causeType}`);
     return { ...fake, service: new ProjectsService(fake.prisma), versions };
   };
 
-  it("archiving a top-level task writes the next B1 version", async () => {
+  it("archiving a top-level task writes the next baseline version", async () => {
     const { prisma, table, service, versions } = await lockedProject();
     const task = table("projectTask")[0];
     task.archivedAt = new Date();
     await (service as any).afterTaskArchived(prisma, founder, { ...task, status: "todo" }, task.archivedAt);
-    expect(versions()).toEqual(["B0v1:manual", "B1v1:manual", "B1v2:plan_edit"]);
+    expect(versions()).toEqual(["B1v1:manual", "B1v2:plan_edit"]);
     expect(table("projectBaseline").at(-1)).toMatchObject({ reason: 'Lưu trữ task "Dựng base"', createdByUserId: "usr-1" });
-  });
-
-  it("adding and deleting a contract line item writes the next B0 version", async () => {
-    const { prisma, table, service, versions } = await lockedProject();
-    await service.createProjectContractItem("p1", { name: "Phụ lục 1", kind: "APPENDIX", valueAmount: 50, contractType: "FIXED_PRICE" }, founder);
-    expect(versions()).toEqual(["B0v1:manual", "B1v1:manual", "B0v2:plan_edit"]);
-    const appendix = table("projectContractItem").find((item) => item.name === "Phụ lục 1")!;
-    // The fake has no delete: give it one that removes the row, as Prisma would.
-    prisma.projectContractItem.delete = async ({ where }: any) => table("projectContractItem").splice(table("projectContractItem").findIndex((item) => item.id === where.id), 1)[0];
-    prisma.invoice.count = async () => 0;
-    await service.deleteProjectContractItem("p1", appendix.id, founder);
-    expect(versions().at(-1)).toBe("B0v3:plan_edit");
   });
 
   it("Kế toán (User-type FINANCE_ADMIN) is not a plan approver: a task that adds planned hours after B1 is refused", async () => {
@@ -192,7 +154,7 @@ describe("9 · baseline drift (D-20, D-21)", () => {
     prisma.account.findFirst.mockResolvedValue({ id: "acc-1" });
     prisma.projectBaseline.findFirst.mockResolvedValue({ id: "b1" });
     const input = { projectId: "prj-1", stageId: "stage-1", accountId: "acc-1", title: "Thêm việc", estimateMinutes: 60 } as any;
-    await expect(service.createTask(input, as("usr-kt", ["FINANCE_ADMIN"]))).rejects.toThrow(/Baseline B1 đã khóa/);
+    await expect(service.createTask(input, as("usr-kt", ["FINANCE_ADMIN"]))).rejects.toThrow(/Baseline đã khóa/);
     expect(prisma.projectTask.create).not.toHaveBeenCalled();
   });
 
@@ -201,7 +163,7 @@ describe("9 · baseline drift (D-20, D-21)", () => {
       const { prisma, service } = setup();
       prisma.account.findFirst.mockResolvedValue({ id: "acc-1" });
       prisma.projectBaseline.findFirst.mockResolvedValue({ id: "b1", layer: "B1", version: 1, snapshot: { milestones: [], stages: [], tasks: [] } });
-      prisma.projectTask.findMany.mockResolvedValue([{ id: "task-9", stageId: "stage-1", title: "Việc phát sinh", plannedStartAt: null, dueAt: null, estimateMinutes: 0, contractItemId: null, parentTaskId: null }]);
+      prisma.projectTask.findMany.mockResolvedValue([{ id: "task-9", stageId: "stage-1", title: "Việc phát sinh", plannedStartAt: null, dueAt: null, estimateMinutes: 0, parentTaskId: null }]);
       prisma.projectTask.create.mockImplementation(async ({ data }: any) => ({ id: "task-9", taskAssignees: [], ...data }));
       prisma.projectTask.findUnique.mockResolvedValue(null); // the created row is the result
       await service.createTask({ projectId: "prj-1", stageId: "stage-1", accountId: "acc-1", title: "Việc phát sinh" } as any, principal);
@@ -287,11 +249,11 @@ describe("10 · project status", () => {
   });
 });
 
-describe("11 · change-request side effects", () => {
+describe("11 · issue-log side effects", () => {
   it("a failing hook is written to the record's history and returned with the record, instead of only to the console", async () => {
     const { prisma, table } = fakePrisma();
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    issueLogHooks.failsForTheSpec = async () => { throw new Error("Không tạo được stage Change Request"); };
+    issueLogHooks.failsForTheSpec = async () => { throw new Error("Không gửi được đề xuất Tạm dừng"); };
     const record = { id: "risk-1", events: [] as any[] };
     try {
       await runHooks(["failsForTheSpec"], { ctx: { prisma, principal: founder, actor: { userId: "usr-1", isAdmin: true, isPm: true, isBd: false, isMember: true } }, record, project: { id: "p1" } });
@@ -299,7 +261,7 @@ describe("11 · change-request side effects", () => {
       delete issueLogHooks.failsForTheSpec;
       error.mockRestore();
     }
-    expect(table("projectRiskEvent")).toMatchObject([{ riskId: "risk-1", action: "side_effect_failed", note: "failsForTheSpec: Không tạo được stage Change Request", actorUserId: "usr-1" }]);
+    expect(table("projectRiskEvent")).toMatchObject([{ riskId: "risk-1", action: "side_effect_failed", note: "failsForTheSpec: Không gửi được đề xuất Tạm dừng", actorUserId: "usr-1" }]);
     expect(table("auditEvent")).toMatchObject([{ action: "issue_log.side_effect_failed", resourceId: "risk-1" }]);
     expect(record.events).toMatchObject([{ action: "side_effect_failed", changes: { label: "Bước tự động chưa hoàn tất" } }]);
   });

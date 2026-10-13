@@ -14,6 +14,7 @@ function iconForTone(tone: ConfirmActionTone): ShopifyIconName {
 export function ConfirmActionDialog({
   cancelLabel = "Hủy",
   children,
+  className = "",
   confirmLabel = "Xác nhận",
   loading = false,
   onCancel,
@@ -23,6 +24,7 @@ export function ConfirmActionDialog({
 }: Readonly<{
   cancelLabel?: string;
   children?: ReactNode;
+  className?: string;
   confirmLabel?: string;
   loading?: boolean;
   onCancel: () => void;
@@ -38,15 +40,17 @@ export function ConfirmActionDialog({
       <section
         aria-labelledby={titleId}
         aria-modal="true"
-        className={`crm-confirm-dialog tone-${tone}`}
+        className={`crm-confirm-dialog tone-${tone} ${className}`}
         onMouseDown={(event) => event.stopPropagation()}
         role="dialog"
       >
-        <div className="crm-confirm-icon" aria-hidden="true">
-          <ShopifyIcon name={iconForTone(tone)} size={18} />
+        <div className="crm-confirm-header">
+          <div className="crm-confirm-icon" aria-hidden="true">
+            <ShopifyIcon name={iconForTone(tone)} size={18} />
+          </div>
+          <h3 id={titleId}>{title}</h3>
         </div>
         <div className="crm-confirm-body">
-          <h3 id={titleId}>{title}</h3>
           {typeof children === "string" ? <p>{children}</p> : children}
         </div>
         <div className="crm-confirm-actions">

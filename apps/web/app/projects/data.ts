@@ -35,6 +35,8 @@ export interface Project {
   startDate: string;
   dueDate: string;
   /** ISO planned end date behind the formatted `dueDate`; sort by this, never by the formatted string. */
+  /** startDate is the actual start (the earliest stage has started), not the planned one. */
+  startIsActual?: boolean;
   dueAt?: string;
   members: Member[];
   ownerUserId?: string;

@@ -17,13 +17,16 @@ import {
 } from "@/lib/analytics-url-state";
 import { businessProjectStatusLabel, businessStatusLabel } from "./analytics-copy";
 import { projectStatusOrder } from "@/lib/project-status";
+import { useWorkspaceAvatars } from "@/lib/workspace-users";
 
 const PRESET_OPTIONS: Array<{ id: Exclude<AnalyticsPreset, "custom">; label: string }> = [
   { id: "7d", label: "7 ngày gần nhất" },
   { id: "30d", label: "30 ngày gần nhất" },
   { id: "90d", label: "90 ngày gần nhất" },
   { id: "month", label: "Tháng này" },
-  { id: "quarter", label: "Quý này" }
+  { id: "last-month", label: "Tháng trước" },
+  { id: "quarter", label: "Quý này" },
+  { id: "year", label: "Năm nay" }
 ];
 
 const GRAIN_OPTIONS: Array<{ value: AnalyticsUiState["grain"]; label: string }> = [
@@ -50,15 +53,18 @@ function inclusiveRange(state: AnalyticsUiState) {
  * is for the mobile sheet, which already has its own "Áp dụng".
  * A filter with fewer than two options is hidden unless it is already set.
  */
-function AppliedMultiSelect({ label, options, selected, onApply, mapLabel, immediate }: {
+function AppliedMultiSelect({ label, options, selected, onApply, mapLabel, immediate, people = false }: {
   label: string;
   options: AnalyticsFilterOption[];
   selected: string[];
   onApply: (ids: string[]) => void;
   mapLabel?: (value: string) => string;
   immediate: boolean;
+  /** Person options: avatar from the workspace directory (the summary carries none), initials as fallback. */
+  people?: boolean;
 }) {
   const [draft, setDraft] = useState(selected);
+  const avatarOf = useWorkspaceAvatars();
   const timer = useRef<number | undefined>(undefined);
   const apply = useRef(onApply);
   apply.current = onApply;
@@ -71,9 +77,17 @@ function AppliedMultiSelect({ label, options, selected, onApply, mapLabel, immed
     <FilterField label={label}>
       <CrmMultiSelect
         ariaLabel={label}
-        placeholder="Tất cả"
-        searchPlaceholder={`Tìm ${label.toLocaleLowerCase("vi")}…`}
-        options={options.map((option) => ({ value: option.id, label: mapLabel ? mapLabel(option.label) : option.label, meta: option.count === undefined ? undefined : String(option.count) }))}
+        placeholder={people ? "Tất cả nhân sự" : "Tất cả"}
+        searchPlaceholder={people ? "Tìm theo tên..." : `Tìm ${label.toLocaleLowerCase("vi")}…`}
+        showSelectAll
+        menuPortal
+        options={options.map((option) => ({
+          value: option.id,
+          label: mapLabel ? mapLabel(option.label) : option.label,
+          meta: option.count === undefined ? undefined : String(option.count),
+          avatarUrl: people ? avatarOf({ id: option.id, name: option.label }) : undefined,
+          initials: people ? option.label.trim().split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]?.toUpperCase()).join("") || "U" : undefined
+        }))}
         values={draft}
         onChange={(values) => {
           setDraft(values);
@@ -98,7 +112,7 @@ export function AnalyticsFilterControls({ state, summary, onChange, onReset, onE
   const options = summary?.filterOptions;
   const inline = mode === "mobile";
   const projectOptions = (options?.projects ?? []).filter((project) => state.accountIds.length === 0 || Boolean(project.parentId && state.accountIds.includes(project.parentId)));
-  const advancedCount = state.departmentIds.length + state.teamIds.length + state.userIds.length + state.projectStatuses.length + state.taskStatuses.length + state.workTypes.length + state.taskTypeLayer1Ids.length + state.taskTypeLayer2Ids.length + (state.billable === "all" ? 0 : 1);
+  const advancedCount = state.departmentIds.length + state.teamIds.length + state.projectStatuses.length + state.taskStatuses.length + state.workTypes.length + state.taskTypeLayer1Ids.length + state.taskTypeLayer2Ids.length + (state.billable === "all" ? 0 : 1);
   const presets: DateRangePreset[] = PRESET_OPTIONS.map((preset) => ({ ...preset, ...inclusiveRange({ ...state, preset: preset.id }) }));
   const dirty = countActiveFilters(state) > 0 || state.grain !== ANALYTICS_DEFAULT_STATE.grain;
 
@@ -116,6 +130,7 @@ export function AnalyticsFilterControls({ state, summary, onChange, onReset, onE
       <FilterField label="Mức tổng hợp" className={inline ? "" : "w-40"}>
         <CrmSelect ariaLabel="Mức tổng hợp" options={GRAIN_OPTIONS} value={state.grain} onChange={(grain) => onChange({ grain: grain as AnalyticsUiState["grain"] })} />
       </FilterField>
+      <AppliedMultiSelect people immediate={inline} label="Nhân sự" options={options?.users ?? []} selected={state.userIds} onApply={(userIds) => onChange({ userIds })} />
       <AppliedMultiSelect immediate={inline} label="Khách hàng" options={options?.accounts ?? []} selected={state.accountIds} onApply={(accountIds) => {
         const validProjects = state.projectIds.filter((projectId) => {
           const project = (options?.projects ?? []).find((item) => item.id === projectId);
@@ -134,7 +149,6 @@ export function AnalyticsFilterControls({ state, summary, onChange, onReset, onE
     <>
       <AppliedMultiSelect immediate={inline} label="Phòng ban" options={options?.departments ?? []} selected={state.departmentIds} onApply={(departmentIds) => onChange({ departmentIds })} />
       <AppliedMultiSelect immediate={inline} label="Nhóm" options={options?.teams ?? []} selected={state.teamIds} onApply={(teamIds) => onChange({ teamIds })} />
-      <AppliedMultiSelect immediate={inline} label="Nhân sự" options={options?.users ?? []} selected={state.userIds} onApply={(userIds) => onChange({ userIds })} />
       <AppliedMultiSelect immediate={inline} label="Trạng thái dự án" options={[...(options?.projectStatuses ?? [])].sort((a, b) => projectStatusOrder(a.id) - projectStatusOrder(b.id))} selected={state.projectStatuses} onApply={(projectStatuses) => onChange({ projectStatuses })} mapLabel={businessProjectStatusLabel} />
       <AppliedMultiSelect immediate={inline} label="Trạng thái công việc" options={options?.taskStatuses ?? []} selected={state.taskStatuses} onApply={(taskStatuses) => onChange({ taskStatuses })} mapLabel={businessStatusLabel} />
       <AppliedMultiSelect immediate={inline} label="Loại công việc" options={options?.workTypes ?? []} selected={state.workTypes} onApply={(workTypes) => onChange({ workTypes })} mapLabel={businessStatusLabel} />
@@ -156,7 +170,7 @@ export function AnalyticsFilterControls({ state, summary, onChange, onReset, onE
 
   return (
     <div className="rounded-xl border border-border bg-card p-3">
-      <FilterBar onReset={dirty ? onReset : undefined} actions={exportButton}>
+      <FilterBar onReset={dirty ? onReset : undefined} activeCount={countActiveFilters(state)} actions={exportButton}>
         {main}
         <AdvancedFilters count={advancedCount}>{advanced}</AdvancedFilters>
       </FilterBar>

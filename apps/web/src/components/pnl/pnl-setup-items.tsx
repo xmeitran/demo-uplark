@@ -5,7 +5,9 @@ import { createPortal } from "react-dom";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { PnlCostItem, PnlCostItemInput, PnlCostItemMethod, PnlCostItemsResponse, PnlFormulaToken, PnlRoleGroupCode } from "@b2b-crm/contracts";
 import { CrmSelect } from "@/components/crm-workspace/crm-select";
-import { configCheckParts, formulaText, nextFormulaStep, visibleTreeRows } from "./pnl-cost-shared";
+import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
+import { FilterBar, FilterField, SearchFilter } from "@/components/filters";
+import { configCheckParts, filterTree, formulaText, nextFormulaStep, visibleTreeRows } from "./pnl-cost-shared";
 import { formatMonth } from "./pnl-format";
 import { LoadingBlock, SaveFeedback, smallButton, Strip, tableCellClass, tableHeadClass, useSave } from "./pnl-setup-ui";
 import { cardClass, PnlLoadError, pnlRequest, primaryButtonClass, secondaryButtonClass, usePnlLoad } from "./pnl-ui";
@@ -31,7 +33,13 @@ export function PnlSetupItems({ actionSlot }: Readonly<{ actionSlot: HTMLElement
   const [selectedCode, setSelectedCode] = useState<string | null>(null);
   const [showRequired, setShowRequired] = useState(false);
   const data = api.data?.data;
-  const rows = useMemo(() => visibleTreeRows(data?.items ?? [], collapsed), [data, collapsed]);
+  const [search, setSearch] = useState("");
+  // A search shows every hit with its parents, whatever is folded.
+  const rows = useMemo(() => {
+    const items = data?.items ?? [];
+    const query = search.trim();
+    return query ? visibleTreeRows(filterTree(items, (item) => matchesSearch(query, item.name, item.code, item.methodLabel)), new Set()) : visibleTreeRows(items, collapsed);
+  }, [data, collapsed, search]);
   const selected = data?.items.find((item) => item.code === selectedCode) ?? null;
 
   if (!data || api.error) return api.loading ? <LoadingBlock rows={6} label="Đang tải cây khoản mục…" /> : (api.error ? <PnlLoadError error={api.error} onRetry={api.reload} forbiddenText={FORBIDDEN} /> : null);
@@ -68,6 +76,12 @@ export function PnlSetupItems({ actionSlot }: Readonly<{ actionSlot: HTMLElement
       {data.hasDraft ? <p className="text-xs text-muted-foreground">Đang có thay đổi ở bản nháp, chưa dùng để tính. Chọn “Áp dụng bản nháp” và một kỳ đang mở để có hiệu lực.</p> : null}
       <SaveFeedback error={save.error} message={save.message} />
 
+      <FilterBar onReset={search ? () => setSearch("") : undefined} activeCount={search.trim() ? 1 : 0}>
+        <FilterField label="Tìm khoản mục" className="min-w-[220px] max-w-md flex-1">
+          <SearchFilter value={search} onChange={setSearch} placeholder="Tên khoản mục, mã hoặc cách lấy số..." ariaLabel="Tìm khoản mục" className="" />
+        </FilterField>
+      </FilterBar>
+
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,11fr)_minmax(0,9fr)]">
         {/* ② Cây khoản mục */}
         <section aria-label="Cây khoản mục" className={`${cardClass} overflow-x-auto`}>
@@ -94,7 +108,7 @@ export function PnlSetupItems({ actionSlot }: Readonly<{ actionSlot: HTMLElement
               })}
             </tbody>
           </table>
-          {!rows.length ? <p className="px-4 py-8 text-center text-sm text-muted-foreground">Chưa có khoản mục nào. Bấm “Nạp bộ khoản mục mặc định”.</p> : null}
+          {!rows.length ? <p className="px-4 py-8 text-center text-sm text-muted-foreground">{search.trim() ? <>Không có kết quả phù hợp bộ lọc. <button type="button" onClick={() => setSearch("")} className="font-semibold text-primary hover:underline">Đặt lại bộ lọc</button></> : "Chưa có khoản mục nào. Bấm “Nạp bộ khoản mục mặc định”."}</p> : null}
         </section>
 
         {/* ③ Panel khai báo */}

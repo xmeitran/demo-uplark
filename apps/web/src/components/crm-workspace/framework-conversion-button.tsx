@@ -89,6 +89,7 @@ export function FrameworkConversionButton({ projectId, className = "" }: { proje
       </button>
       {open ? (
         <ConfirmActionDialog
+          className="framework-conversion-dialog"
           title="Chuyển sang khung TPL-001"
           tone={canApply ? "warning" : "info"}
           loading={saving}
@@ -100,21 +101,26 @@ export function FrameworkConversionButton({ projectId, className = "" }: { proje
           {backupDirectory !== null ? (
             <p>Đã chuyển đổi. Bản sao lưu để hoàn tác nằm tại <code className="break-all">{backupDirectory}</code>.</p>
           ) : (
-            <div className="space-y-2 text-left text-sm">
-              <p><strong>Vị trí:</strong> {plan.positionLabel}. <strong>Cách xử lý (bảng 9.1):</strong> {plan.handling}.</p>
+            <div className="space-y-4 text-left text-sm">
+              <div className="framework-conversion-summary">
+                <span className="framework-conversion-summary-label">Vị trí hiện tại</span>
+                <span className="framework-conversion-summary-value">{plan.positionLabel}</span>
+                <p className="framework-conversion-help">Cách xử lý theo bảng 9.1: {plan.handling}.</p>
+              </div>
               {needsPosition ? (
-                <div className="text-xs font-semibold text-muted-foreground">
-                  <span className="mb-1 block">Vị trí do PM xác nhận</span>
+                <div className="framework-conversion-field">
+                  <span className="framework-conversion-label">Vị trí do PM xác nhận</span>
                   <CrmSelect
                     ariaLabel="Vị trí do PM xác nhận"
                     value={position}
                     onChange={(value) => { setPosition(value); void load(value); }}
                     options={[{ value: "", label: "Chưa xác nhận" }, ...POSITION_OPTIONS.map(([value, label]) => ({ value, label }))]}
                   />
+                  <p className="framework-conversion-help">Chọn đúng vị trí thực tế của dự án để hệ thống sắp xếp lại milestone và task.</p>
                 </div>
               ) : null}
               {plan.steps.length ? <ul className="list-disc space-y-1 pl-5">{plan.steps.map((step) => <li key={step}>{step}</li>)}</ul> : <p>Không có gì để chuyển đổi.</p>}
-              {plan.notes.map((note) => <p key={note} className="text-xs text-amber-700">{note}</p>)}
+              {plan.notes.map((note) => <p key={note} className="framework-conversion-note">{note}</p>)}
               {canApply ? <p className="text-xs text-muted-foreground">Hệ thống sao lưu dữ liệu của dự án trước khi áp dụng; có thể hoàn tác từ bản sao lưu.</p> : null}
               {error ? <p role="alert" className="text-xs text-rose-600">{error}</p> : null}
             </div>

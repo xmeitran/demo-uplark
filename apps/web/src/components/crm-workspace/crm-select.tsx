@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { Check, Info, Search } from "lucide-react";
 import { ShopifyIcon, type ShopifyIconName } from "../shopify-ui";
 import { portalMenuStyle } from "./crm-select-position";
+import { matchesSearch } from "./crm-select-search";
 
 export type CrmSelectOption = {
   value: string;
@@ -19,6 +20,8 @@ export type CrmSelectOption = {
   iconTone?: string;
   pillBg?: string;
   pillColor?: string;
+  /** Extra text the search box matches but the option never shows (an e-mail, a code). */
+  keywords?: string;
 };
 
 export type CrmSelectProps = {
@@ -49,11 +52,14 @@ export type CrmMultiSelectProps = {
   onChange: (values: string[]) => void;
   disabled?: boolean;
   openDirection?: "up" | "down";
+  /** Same as CrmSelect: the menu goes to a body portal so a card, table or dialog cannot clip it. */
+  menuPortal?: boolean;
   searchable?: boolean;
   searchPlaceholder?: string;
   placeholder?: string;
   selectedCountLabel?: (count: number) => string;
   onClear?: () => void;
+  showSelectAll?: boolean;
   className?: string;
 };
 
@@ -132,7 +138,7 @@ export function CrmSelect({
   const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);
   const selectedOption = options.find((option) => option.value === value);
   const filteredOptions = searchable && query.trim()
-    ? options.filter((option) => `${option.label} ${optionText(option) ?? ""}`.toLocaleLowerCase("vi").includes(query.trim().toLocaleLowerCase("vi")))
+    ? options.filter((option) => matchesSearch(query, option.label, optionText(option), option.keywords))
     : options;
 
   useEffect(() => {
@@ -267,11 +273,13 @@ export function CrmMultiSelect({
   onChange,
   disabled = false,
   openDirection = "down",
+  menuPortal = false,
   searchable = true,
   searchPlaceholder = "Tìm kiếm...",
   placeholder = "Chọn một hoặc nhiều lựa chọn",
   selectedCountLabel = (count) => `${count} đã chọn`,
   onClear,
+  showSelectAll = false,
   className = ""
 }: CrmMultiSelectProps) {
   const generatedId = useId();
@@ -281,9 +289,11 @@ export function CrmMultiSelect({
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);
   const selectedOptions = options.filter((option) => values.includes(option.value));
   const filteredOptions = searchable && query.trim()
-    ? options.filter((option) => `${option.label} ${optionText(option) ?? ""}`.toLocaleLowerCase("vi").includes(query.trim().toLocaleLowerCase("vi")))
+    ? options.filter((option) => matchesSearch(query, option.label, optionText(option), option.keywords))
     : options;
 
   useEffect(() => {
@@ -293,7 +303,7 @@ export function CrmMultiSelect({
     }
 
     const onPointerDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      if (!rootRef.current?.contains(event.target as Node) && !menuRef.current?.contains(event.target as Node)) setOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -310,48 +320,53 @@ export function CrmMultiSelect({
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!open || !menuPortal) {
+      setMenuStyle(null);
+      return;
+    }
+    // The menu follows its trigger while the page scrolls or resizes (closing it mid-scroll loses the user's place).
+    const place = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      // A narrow filter trigger still gets a readable menu, kept inside the viewport.
+      const width = Math.max(rect.width, 240);
+      setMenuStyle(portalMenuStyle({ top: rect.top, bottom: rect.bottom, left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)), width }, window.innerHeight, openDirection));
+    };
+    place();
+    const onScroll = (event: Event) => {
+      if (!menuRef.current?.contains(event.target as Node)) place();
+    };
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open, menuPortal, openDirection]);
+
   const toggle = (value: string) => {
     onChange(values.includes(value) ? values.filter((current) => current !== value) : [...values, value]);
   };
+  const allVisibleSelected = filteredOptions.length > 0 && filteredOptions.every((option) => values.includes(option.value));
 
-  return (
-    <div ref={rootRef} className={`task-select-control relative min-w-0 ${className}`}>
-      {label ? <span className="task-field-label text-slate-400 text-[10px] font-bold block mb-1" id={`${controlId}-label`}>{label}</span> : null}
-      <button
-        ref={triggerRef}
-        aria-label={ariaLabel}
-        aria-controls={listboxId}
-        aria-disabled={disabled}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        aria-labelledby={label ? `${controlId}-label ${controlId}-value` : undefined}
-        className={`task-select-trigger ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
-        data-open={open ? "true" : "false"}
-        disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
-        type="button"
-      >
-        <span className="task-select-current min-w-0" id={`${controlId}-value`}>
-          {selectedOptions.slice(0, 3).map((option) => <span key={option.value}>{optionIcon(option, "trigger")}</span>)}
-          <span className={`task-select-value truncate ${selectedOptions.length === 0 ? "text-slate-400" : ""}`}>
-            {selectedOptions.length === 0 ? placeholder : selectedOptions.length === 1 ? selectedOptions[0]?.label : selectedCountLabel(selectedOptions.length)}
-          </span>
-        </span>
-        <ShopifyIcon className="task-select-chevron" name="chevron-down" size={14} />
-      </button>
-
-      {open ? (
+  const menu = open && (!menuPortal || menuStyle) ? (
         <div
+          ref={menuRef}
           aria-labelledby={label ? `${controlId}-label` : undefined}
           aria-multiselectable="true"
-          className={`task-select-menu ${openDirection === "up" ? "bottom-[calc(100%+6px)]" : "top-[calc(100%+6px)]"}`}
+          className={`task-select-menu ${menuPortal ? "" : openDirection === "up" ? "bottom-[calc(100%+6px)]" : "top-[calc(100%+6px)]"}`}
           data-direction={openDirection}
           id={listboxId}
           role="listbox"
+          style={menuPortal ? menuStyle ?? undefined : undefined}
         >
           <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-2 py-2">
             <span className="truncate text-[10px] font-bold uppercase tracking-wider text-slate-500">{label ?? "Lựa chọn"} · {selectedCountLabel(selectedOptions.length)}</span>
-            {selectedOptions.length > 0 ? <button type="button" className="shrink-0 text-[11px] font-semibold text-blue-600 hover:text-blue-700" onClick={() => onClear ? onClear() : onChange([])}>Bỏ chọn</button> : null}
+            <div className="flex shrink-0 items-center gap-2">
+              {showSelectAll && filteredOptions.length > 0 ? <button type="button" className="text-[11px] font-semibold text-blue-600 hover:text-blue-700" onClick={() => onChange(allVisibleSelected ? [] : filteredOptions.map((option) => option.value))}>{allVisibleSelected ? "Bỏ chọn tất cả" : "Chọn tất cả"}</button> : null}
+              {selectedOptions.length > 0 ? <button type="button" className="text-[11px] font-semibold text-slate-500 hover:text-slate-700" onClick={() => onClear ? onClear() : onChange([])}>Xóa lọc</button> : null}
+            </div>
           </div>
           {searchable ? (
             <div className="relative mb-1 border-b border-slate-100 px-1 pb-2 pt-1">
@@ -381,7 +396,35 @@ export function CrmMultiSelect({
             );
           }) : <p className="px-3 py-3 text-center text-xs text-slate-400">Không có lựa chọn</p>}
         </div>
-      ) : null}
+      ) : null;
+
+  return (
+    <div ref={rootRef} className={`task-select-control relative min-w-0 ${className}`}>
+      {label ? <span className="task-field-label text-slate-400 text-[10px] font-bold block mb-1" id={`${controlId}-label`}>{label}</span> : null}
+      <button
+        ref={triggerRef}
+        aria-label={ariaLabel}
+        aria-controls={listboxId}
+        aria-disabled={disabled}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-labelledby={label ? `${controlId}-label ${controlId}-value` : undefined}
+        className={`task-select-trigger ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
+        data-open={open ? "true" : "false"}
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+        type="button"
+      >
+        <span className="task-select-current min-w-0" id={`${controlId}-value`}>
+          {selectedOptions.slice(0, 3).map((option) => <span key={option.value}>{optionIcon(option, "trigger")}</span>)}
+          <span className={`task-select-value truncate ${selectedOptions.length === 0 ? "text-slate-400" : ""}`}>
+            {selectedOptions.length === 0 ? placeholder : selectedOptions.length === 1 ? selectedOptions[0]?.label : selectedCountLabel(selectedOptions.length)}
+          </span>
+        </span>
+        <ShopifyIcon className="task-select-chevron" name="chevron-down" size={14} />
+      </button>
+
+      {menuPortal ? (menu ? createPortal(menu, document.body) : null) : menu}
     </div>
   );
 }

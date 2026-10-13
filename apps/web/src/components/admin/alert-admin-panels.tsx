@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { ExternalLink, Info, Play, RefreshCw, RotateCcw, Save, Search } from "lucide-react";
+import { ExternalLink, Info, Play, RefreshCw, RotateCcw, Save } from "lucide-react";
 import {
   ALERT_SEVERITY_LABELS,
   ALERT_TIERS,
@@ -15,7 +15,9 @@ import {
   type SystemParameterItem
 } from "@b2b-crm/contracts";
 import { CrmSelect } from "@/components/crm-workspace/crm-select";
-import { FilterBar, FilterField } from "@/components/filters/filter-controls";
+import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
+import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilter, SearchFilter, matchesAny, type DateRange, type FilterPerson } from "@/components/filters";
+import { fetchAllPages } from "@/lib/api-pages";
 import { TABLE_HEAD_CLASS } from "@/components/ui/kpi-tile";
 
 const buttonClass = "inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-[10px] border border-border bg-white px-3 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50";
@@ -65,13 +67,23 @@ function countsText(counts: Record<string, number>) {
 
 type WarningsResponse = { data: AdminWarningItem[]; meta: { total: number; open: number; byCode: Record<string, number> } };
 
+const ALL_TIME: DateRange = { from: "", to: "" };
+const OPEN_ONLY = ["open"];
+const NO_OWNER = "__none__";
+
+/**
+ * Status and the "Ngày mở" range are sent to the API and every page of the answer is loaded (no row cap);
+ * the other filters narrow the loaded rows, so their option lists always show the whole result.
+ */
 export function WarningRecordsPanel({ legacy }: { legacy: ReactNode }) {
   const [rows, setRows] = useState<AdminWarningItem[]>([]);
   const [meta, setMeta] = useState<WarningsResponse["meta"]>({ total: 0, open: 0, byCode: {} });
-  const [status, setStatus] = useState("open");
-  const [typeCode, setTypeCode] = useState("all");
-  const [severity, setSeverity] = useState("all");
-  const [projectId, setProjectId] = useState("all");
+  const [statuses, setStatuses] = useState<string[]>(OPEN_ONLY);
+  const [opened, setOpened] = useState<DateRange>(ALL_TIME);
+  const [typeCodes, setTypeCodes] = useState<string[]>([]);
+  const [severities, setSeverities] = useState<string[]>([]);
+  const [projectIds, setProjectIds] = useState<string[]>([]);
+  const [ownerIds, setOwnerIds] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
@@ -83,15 +95,23 @@ export function WarningRecordsPanel({ legacy }: { legacy: ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      const body = await readJson<WarningsResponse>(await fetch(`/api/admin/warnings?status=${encodeURIComponent(status)}`, { cache: "no-store", credentials: "same-origin" }), "Không tải được danh sách cảnh báo.");
-      setRows(body.data);
-      setMeta(body.meta);
+      const params = new URLSearchParams({ status: statuses.length ? statuses.join(",") : "all" });
+      if (opened.from) params.set("from", opened.from);
+      if (opened.to) params.set("to", opened.to);
+      const fallback = "Không tải được danh sách cảnh báo.";
+      const [data, summary] = await Promise.all([
+        fetchAllPages<AdminWarningItem>(`/api/admin/warnings?${params}`, { errorLabel: "Không tải được danh sách cảnh báo" }),
+        // The workspace-wide open counts come with any page; one row is enough.
+        fetch("/api/admin/warnings?limit=1", { cache: "no-store", credentials: "same-origin" }).then((response) => readJson<WarningsResponse>(response, fallback))
+      ]);
+      setRows(data);
+      setMeta(summary.meta);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Không tải được danh sách cảnh báo.");
     } finally {
       setLoading(false);
     }
-  }, [status]);
+  }, [statuses, opened]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -109,38 +129,46 @@ export function WarningRecordsPanel({ legacy }: { legacy: ReactNode }) {
     }
   }
 
-  const projects = useMemo(() => [...new Map(rows.map((row) => [row.projectId, row.projectName])).entries()].sort((a, b) => a[1].localeCompare(b[1], "vi")), [rows]);
-  const filtered = rows.filter((row) => {
-    const query = search.trim().toLowerCase();
-    return (typeCode === "all" || row.typeCode === typeCode)
-      && (severity === "all" || row.severity === severity)
-      && (projectId === "all" || row.projectId === projectId)
-      && (!query || `${row.projectName} ${row.projectCode ?? ""} ${row.title} ${row.detail ?? ""} ${row.ownerName ?? ""}`.toLowerCase().includes(query));
-  });
-  const filtering = Boolean(search) || typeCode !== "all" || severity !== "all" || projectId !== "all" || status !== "open";
-  const reset = () => { setSearch(""); setTypeCode("all"); setSeverity("all"); setProjectId("all"); setStatus("open"); };
+  const projects = useMemo(() => [...new Map(rows.map((row) => [row.projectId, row.projectName])).entries()].sort((a, b) => a[1].localeCompare(b[1], "vi")).map(([value, label]) => ({ value, label })), [rows]);
+  const owners = useMemo(() => {
+    const people = new Map<string, FilterPerson>();
+    for (const row of rows) if (row.ownerUserId) people.set(row.ownerUserId, { id: row.ownerUserId, name: row.ownerName ?? row.ownerUserId });
+    const sorted = [...people.values()].sort((a, b) => a.name.localeCompare(b.name, "vi"));
+    return rows.some((row) => !row.ownerUserId) ? [...sorted, { id: NO_OWNER, name: "Chưa có người phụ trách" }] : sorted;
+  }, [rows]);
+  const filtered = rows.filter((row) => matchesAny(typeCodes, row.typeCode)
+    && matchesAny(severities, row.severity)
+    && matchesAny(projectIds, row.projectId)
+    && matchesAny(ownerIds, row.ownerUserId ?? NO_OWNER)
+    && matchesSearch(search, row.projectName, row.projectCode, row.title, row.detail, row.ownerName));
+  const statusChanged = statuses.length !== 1 || statuses[0] !== "open";
+  const activeCount = [Boolean(search.trim()), Boolean(opened.from || opened.to), ownerIds.length > 0, statusChanged, typeCodes.length > 0, severities.length > 0, projectIds.length > 0].filter(Boolean).length;
+  const reset = () => { setSearch(""); setOpened(ALL_TIME); setOwnerIds([]); setStatuses(OPEN_ONLY); setTypeCodes([]); setSeverities([]); setProjectIds([]); };
 
   return <section aria-label="Bản ghi cảnh báo" className="grid gap-5">
     {error ? <Notice tone="error">{error}</Notice> : null}
     {scan ? <Notice tone="ok">Đã quét {scan.projects} dự án lúc {formatDateTime(scan.scannedAt)}. Mở mới: {countsText(scan.opened)}. Làm mới: {countsText(scan.refreshed)}. Đóng: {countsText(scan.closed)}. Thông báo trong ứng dụng: {scan.notifications.inApp}; Lark: {scan.notifications.lark}.</Notice> : null}
     <section className="rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5">
       <FilterBar
-        onReset={filtering ? reset : undefined}
+        onReset={activeCount ? reset : undefined}
+        activeCount={activeCount}
         actions={<>
           <button type="button" onClick={() => void load()} disabled={loading} className={buttonClass}><RefreshCw className="h-4 w-4" /> Làm mới</button>
           <button type="button" onClick={() => void runScan()} disabled={scanning} className={buttonClass}><Play className="h-4 w-4" /> {scanning ? "Đang quét…" : "Quét ngay"}</button>
         </>}
       >
-        <div className="relative min-w-[220px] flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm theo dự án, nội dung, người chịu trách nhiệm…" aria-label="Tìm cảnh báo" className="h-10 w-full rounded-[10px] border border-border bg-white pl-9 pr-3 text-sm outline-none ring-primary/30 focus:ring-2" /></div>
-        <FilterField className="w-full sm:w-40"><CrmSelect ariaLabel="Trạng thái" value={status} onChange={setStatus} options={[{ value: "open", label: "Đang mở" }, { value: "closed", label: "Đã đóng" }, { value: "all", label: "Tất cả trạng thái" }]} /></FilterField>
-        <FilterField className="w-full sm:w-64"><CrmSelect ariaLabel="Điểm kích hoạt" value={typeCode} onChange={setTypeCode} options={[{ value: "all", label: "Tất cả điểm kích hoạt" }, ...ALERT_TRIGGERS.map((item) => ({ value: item.code, label: `${item.code} · ${item.name}${meta.byCode[item.code] ? ` (${meta.byCode[item.code]})` : ""}` }))]} /></FilterField>
-        <FilterField className="w-full sm:w-40"><CrmSelect ariaLabel="Mức" value={severity} onChange={setSeverity} options={[{ value: "all", label: "Tất cả mức" }, ...Object.entries(ALERT_SEVERITY_LABELS).map(([value, label]) => ({ value, label }))]} /></FilterField>
-        <FilterField className="w-full sm:w-64"><CrmSelect ariaLabel="Dự án" searchable value={projectId} onChange={setProjectId} options={[{ value: "all", label: "Tất cả dự án" }, ...projects.map(([value, label]) => ({ value, label }))]} /></FilterField>
+        <FilterField label="Tìm kiếm" className="min-w-[220px] flex-1"><SearchFilter className="" value={search} onChange={setSearch} placeholder="Dự án, nội dung, người phụ trách..." ariaLabel="Tìm cảnh báo" /></FilterField>
+        <FilterField label="Ngày mở"><DateRangeFilter value={opened} onChange={(range) => setOpened(range)} ariaLabel="Lọc theo ngày mở cảnh báo" /></FilterField>
+        <PersonFilter label="Người phụ trách" people={owners} values={ownerIds} onChange={setOwnerIds} allLabel="Tất cả người phụ trách" searchPlaceholder="Tìm theo tên..." />
+        <MultiSelectFilter label="Trạng thái" values={statuses} onChange={setStatuses} options={[{ value: "open", label: "Đang mở" }, { value: "closed", label: "Đã đóng" }]} allLabel="Tất cả trạng thái" searchable={false} />
+        <MultiSelectFilter label="Điểm kích hoạt" values={typeCodes} onChange={setTypeCodes} options={ALERT_TRIGGERS.map((item) => ({ value: item.code, label: `${item.code} · ${item.name}${meta.byCode[item.code] ? ` (${meta.byCode[item.code]})` : ""}` }))} allLabel="Tất cả điểm kích hoạt" />
+        <MultiSelectFilter label="Mức" values={severities} onChange={setSeverities} options={Object.entries(ALERT_SEVERITY_LABELS).map(([value, label]) => ({ value, label }))} allLabel="Tất cả mức" searchable={false} />
+        <MultiSelectFilter label="Dự án" values={projectIds} onChange={setProjectIds} options={projects} allLabel="Tất cả dự án" />
       </FilterBar>
     </section>
     <section className={cardClass}>
       <div className="flex flex-col gap-1 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-        <div><h3 className="text-base font-bold text-slate-950">Bản ghi cảnh báo</h3><p className="mt-1 text-xs text-slate-500">{meta.open} cảnh báo đang mở trong workspace · đang hiển thị {filtered.length}/{rows.length}{meta.total > rows.length ? ` (tổng ${meta.total}, chỉ tải 500 bản ghi mới nhất)` : ""}</p></div>
+        <div><h3 className="text-base font-bold text-slate-950">Bản ghi cảnh báo</h3><p className="mt-1 text-xs text-slate-500">{meta.open} cảnh báo đang mở trong workspace · đang hiển thị {filtered.length}/{rows.length}</p></div>
       </div>
       <div className="overflow-x-auto"><table className="w-full min-w-[1080px] text-left text-sm">
         <thead className={headClass}><tr><th className="px-5 py-3 font-bold">Mã</th><th className="px-4 py-3 font-bold">Dự án</th><th className="px-4 py-3 font-bold">Cảnh báo</th><th className="px-4 py-3 font-bold">Mức</th><th className="px-4 py-3 font-bold">Người chịu trách nhiệm</th><th className="px-4 py-3 font-bold">Hạn xử lý</th><th className="px-4 py-3 font-bold">Mở lúc</th><th className="px-4 py-3 font-bold">Trạng thái</th></tr></thead>
@@ -155,7 +183,7 @@ export function WarningRecordsPanel({ legacy }: { legacy: ReactNode }) {
             <td className="whitespace-nowrap px-4 py-4 text-slate-600">{formatDateTime(row.openedAt)}</td>
             <td className="whitespace-nowrap px-4 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${row.status === "open" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-600"}`}>{row.status === "open" ? "Đang mở" : "Đã đóng"}</span>{row.closedAt ? <span className="mt-1 block text-xs text-slate-500">{formatDateTime(row.closedAt)}</span> : null}</td>
           </tr>)}
-          {!filtered.length ? <tr><td colSpan={8} className="px-5 py-10 text-center text-sm text-slate-500">{loading ? "Đang tải…" : rows.length ? "Không có cảnh báo khớp bộ lọc." : "Chưa có bản ghi cảnh báo. Bấm “Quét ngay” để chạy lượt quét đầu ngày."}</td></tr> : null}
+          {!filtered.length ? <tr><td colSpan={8} className="px-5 py-10 text-center text-sm text-slate-500">{loading ? "Đang tải…" : activeCount ? <>Không có kết quả phù hợp bộ lọc. <button type="button" onClick={reset} className="!font-semibold text-primary hover:underline">Đặt lại bộ lọc</button></> : "Chưa có bản ghi cảnh báo. Bấm “Quét ngay” để chạy lượt quét đầu ngày."}</td></tr> : null}
         </tbody>
       </table></div>
     </section>

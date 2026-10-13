@@ -55,7 +55,7 @@ async function snapshot(tx: Tx, workspaceId: string, worklogProjectIds: string[]
     tx.taskTimeEntry.findMany({
       where: { workspaceId },
       select: {
-        projectId: true, userId: true, minutes: true, workDate: true, approvalStatus: true, taskTypeLayer1: true, taskTypeLayer2: true, contractItemId: true,
+        projectId: true, userId: true, minutes: true, workDate: true, approvalStatus: true, taskTypeLayer1: true, taskTypeLayer2: true,
         legacyPendingReason: true, beforeEightHourRule: true, task: { select: { stage: { select: { afterPnlClose: true } }, parentTask: { select: { stage: { select: { afterPnlClose: true } } } } } }
       }
     }),
@@ -107,7 +107,7 @@ async function moveToInternalWorklog(tx: Tx, workspaceId: string, worklog: { id:
         ?? await tx.projectTask.create({ data: { workspaceId, accountId: worklog.accountId, projectId: worklog.id, stageId: stage.id, title, status: "done", ownerUserId: entry.userId, assigneeUserId: entry.userId, taskTypeLayer2: "INTERNAL_PROJECT", legacyConvertedAt: now }, select: { id: true } })).id;
       taskByUser.set(entry.userId, taskId);
     }
-    await tx.taskTimeEntry.update({ where: { id: entry.id }, data: { taskId, projectId: worklog.id, accountId: worklog.accountId, contractItemId: null, taskTypeLayer2: "INTERNAL_PROJECT", legacyConvertedAt: now } });
+    await tx.taskTimeEntry.update({ where: { id: entry.id }, data: { taskId, projectId: worklog.id, accountId: worklog.accountId, taskTypeLayer2: "INTERNAL_PROJECT", legacyConvertedAt: now } });
     await tx.auditEvent.create({ data: { workspaceId, action: "legacy.time_entry_moved_to_internal_worklog", resource: "task_time_entry", resourceId: entry.id, before: { taskId: entry.taskId, projectId: entry.projectId }, after: { taskId, projectId: worklog.id }, requestId: "legacy-conversion" } });
   }
   return entries.length;

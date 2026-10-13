@@ -1,5 +1,5 @@
 /**
- * "Yêu cầu tab P&L – hệ thống PM" (12/10/2026), section 2.1 steps 1–3 and the labels of section 3.
+ * "Yêu cầu tab P&L – hệ thống PM" (v2, 13/10/2026), section 2.1 steps 1–3 and the labels of section 3.
  * Pure: no Prisma, no Nest. Steps 4–12 are in pnl-engine.ts, the cost-item tree in pnl-tree.ts.
  * Where this document and "Nguyên tắc nền tảng hệ thống PM" differ, this one wins (its section 1, points 5 and 6).
  */
@@ -71,12 +71,11 @@ export const PNL_GATE_REASON_LABELS = {
   internal: "Nội bộ",
   after_close: "Sau mốc đóng P&L",
   lost_deal_pre_sale: "Thua deal – Chi phí Pre-sale",
-  // Chờ xử lý (PL-05) — thiếu hoặc sai phân loại, hạng mục
+  // Chờ xử lý (PL-05) — thiếu hoặc sai phân loại
   missing_project: "Thiếu dự án",
   missing_layer1: "Thiếu phân loại Lớp 1",
   missing_layer2: "Thiếu phân loại Lớp 2",
   layer2_mismatch: "Lớp 2 không khớp",
-  missing_contract_item: "Chưa có hạng mục",
   unknown_close_position: "Chưa xác định trước hay sau mốc đóng P&L",
   legacy_group_in_project: "Nhóm cũ Họp/Khác trong dự án",
   legacy_unmapped_stage: "Dữ liệu cũ: stage chưa ánh xạ được sang Lớp 1 hoặc mốc đóng P&L",
@@ -89,13 +88,13 @@ export type PnlGateReason = keyof typeof PNL_GATE_REASON_LABELS;
 
 export const isPnlGateReason = (value: unknown): value is PnlGateReason => typeof value === "string" && Object.prototype.hasOwnProperty.call(PNL_GATE_REASON_LABELS, value);
 
-/** Pending reasons that are NOT a classification / line-item problem (mục 7 điểm 6, PL-16, A-9). */
+/** Pending reasons that are NOT a classification problem (mục 7 điểm 6, PL-16, A-9). */
 const NON_BLOCKING_PENDING: ReadonlySet<PnlGateReason> = new Set(["missing_staff_cost", "locked_period"]);
 
 /** How the dashboard's "Dữ liệu chờ xử lý" strip groups pending hours (mục 4 khối 3). */
 export const PENDING_GROUP_LABELS = {
   cost_rate: "giờ chờ cost rate",
-  classification: "giờ thiếu phân loại hoặc hạng mục",
+  classification: "giờ thiếu phân loại",
   layer2_mismatch: "giờ chọn Lớp 2 không khớp",
   locked_period: "giờ ghi bù vào tháng đã khóa"
 } as const;
@@ -109,7 +108,7 @@ export function pendingGroupOf(reasons: readonly PnlGateReason[]): PendingGroup 
 }
 
 /**
- * Mục 7 điểm 6: G7 is blocked only by hours pending for a missing or wrong classification or line item.
+ * Mục 7 điểm 6: G7 is blocked only by hours pending for a missing or wrong classification.
  * Hours that only wait for a cost rate (or sit in a locked month) do not block it.
  */
 export function blocksG7(entry: { status: PnlGateStatus; reasons: readonly PnlGateReason[] }): boolean {
@@ -124,7 +123,6 @@ export interface PnlGateInput {
   taskTypeLayer2?: string | null;
   /** Layer 2 the person chose when logging; null on rows written before the picker was restored (12/10/2026). */
   selectedTaskTypeLayer2?: string | null;
-  contractItemId?: string | null;
   /** Side of the P&L closing point the task's stage sits on: true = from Milestone 4 on, false = before, null = not known. */
   afterPnlClose?: boolean | null;
   /** The person has an APPROVED monthly cost for the month of the work date. */
@@ -148,7 +146,7 @@ export interface PnlGateResult {
  * PL-04: an hour is "Được tính" when ALL FOUR hold —
  *   (1) the chosen Layer 2 is Dự án tính phí or Ticket/bảo trì AND agrees with the task;
  *   (2) it lies before the P&L closing point;
- *   (3) classification and line item are complete;
+ *   (3) the classification is complete ("đủ phân loại" — there is no contract line item any more, chốt 13/10);
  *   (4) the person has an approved cost rate for that month.
  * PL-06: "Bị loại" always has a reason — Nội bộ, or Sau mốc đóng P&L (tasks from Milestone 4 on); Pre-sale hours of a
  * lost deal are excluded too because PL-12 moves them to the company line "Chi phí Pre-sale".
@@ -184,7 +182,6 @@ export function classifyPnlEntry(input: PnlGateInput): PnlGateResult {
   if (!input.projectId) reasons.push("missing_project");
   if (!input.taskTypeLayer1) reasons.push("missing_layer1");
   if (!layer2) reasons.push("missing_layer2");
-  if (!input.contractItemId) reasons.push("missing_contract_item");
   if (input.afterPnlClose !== false) reasons.push("unknown_close_position");
   // Ticket/bảo trì only exists from Milestone 4 on (table 4.2); before the closing point it cannot agree with the task.
   if (layer2 === "TICKET_MAINTENANCE" && input.afterPnlClose === false) reasons.push("layer2_mismatch");
@@ -202,10 +199,7 @@ export function reconcileHours(group: { loggedMinutes: number; includedMinutes: 
   return { loggedMinutes, includedMinutes, pendingMinutes, excludedMinutes, differenceMinutes, balanced: differenceMinutes === 0 };
 }
 
-/**
- * PL-05: a pending hour older than N working days becomes data warning DL-01. Pre-sale hours waiting for the contract
- * to be signed are exempt (A-1b) — the caller passes `exempt`.
- */
+/** PL-05: a pending hour older than N working days becomes data warning DL-01. Trial projects are exempt (PL-02) — the caller passes `exempt`. */
 export function pendingDeadline(since: Date, now: Date, workingDays: number, dayOffKeys: ReadonlySet<string> = new Set(), exempt = false) {
   if (exempt) return { deadline: undefined, overdue: false };
   const deadline = addWorkingDays(since, workingDays, dayOffKeys);
@@ -263,12 +257,12 @@ export type RecordState = keyof typeof RECORD_STATE_LABELS;
  * The record's state is never chosen: it follows the project's events (state diagram of mục 2.2).
  *   Chờ hợp đồng → (G1 được duyệt) → Đang ghi nhận → (G7 được duyệt) → Đã đóng → (mọi tháng khóa, hết giờ chờ) → Chính thức
  *   Chờ hợp đồng → (dự án đóng, lý do Thua deal — only before G1) → Đóng, thua deal
- * An internal project (mẫu Nội bộ, Đào tạo) is "Đang ghi nhận" as soon as it has a Nội bộ line item.
+ * An internal project (Loại Nội bộ, Đào tạo) is "Đang ghi nhận" from the moment it is created.
  */
-export function recordStateOf(input: { lostDeal: boolean; g1Passed: boolean; closePassed: boolean; internalTemplate: boolean; hasInternalItem: boolean; allHourMonthsLocked: boolean; pendingMinutes: number; acceptanceDateMissing?: boolean }): RecordState {
+export function recordStateOf(input: { lostDeal: boolean; g1Passed: boolean; closePassed: boolean; internalTemplate: boolean; allHourMonthsLocked: boolean; pendingMinutes: number; acceptanceDateMissing?: boolean }): RecordState {
   if (input.lostDeal && !input.g1Passed) return "lost_deal";
   // A project accepted by its status alone (no G7 date) is closed but never "Chính thức".
   if (input.closePassed) return input.allHourMonthsLocked && input.pendingMinutes === 0 && !input.acceptanceDateMissing ? "official" : "closed";
-  if (input.g1Passed || (input.internalTemplate && input.hasInternalItem)) return "recognizing";
+  if (input.g1Passed || input.internalTemplate) return "recognizing";
   return "awaiting_contract";
 }

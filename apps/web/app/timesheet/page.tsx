@@ -28,7 +28,7 @@ export default function TimesheetPage() {
       shellTestId="timesheet-shell"
       title="Timesheet"
     >
-      <main data-testid="timesheet-main" className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-none p-4 sm:p-6">
+      <main data-testid="timesheet-main" className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-none p-3 sm:p-4 xl:p-6">
         <Suspense fallback={<WorkbenchFallback />}>
           <TimesheetWorkbench />
         </Suspense>

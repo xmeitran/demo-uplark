@@ -2,29 +2,30 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangle, Download, Info, Users, Clock3 } from "lucide-react";
-import { CustomDropdown, type DropdownOption } from "@/components/constructor-x/custom-controls";
-import { CrmMultiSelect } from "@/components/crm-workspace/crm-select";
-import { AdvancedFilters, FilterBar, FilterField, MonthFilter } from "@/components/filters/filter-controls";
-import { hasChoice } from "@/components/filters/filter-dates";
+import { AlertTriangle, Download } from "lucide-react";
+import { CrmSelect } from "@/components/crm-workspace/crm-select";
+import { AdvancedFilters, DateRangeFilter, FilterBar, FilterField, MonthFilter, MultiSelectFilter, PersonFilter, SearchFilter, fromCsvParam, standardDatePresets, type DateRange } from "@/components/filters";
+import { HeaderButton, PageHeader } from "@/components/page-header";
 import { emptyTimesheetDataset, loadTimesheetDataset } from "./timesheet-live-data";
-import { filterLogs, type TimesheetFilters } from "./timesheet-selectors";
-import { formatDate, formatHours } from "./timesheet-format";
+import { filterLogs, periodParamsForRange, type TimesheetFilters } from "./timesheet-selectors";
+import { formatMonth } from "./timesheet-format";
 import {
   VIEWER_SCOPE_LABELS,
   WORK_GROUP_LABELS,
   WORK_GROUPS,
-  type ViewerScope,
-  type WorkGroup
+  type Person,
+  type ViewerScope
 } from "./timesheet-types";
 import { Drawer } from "./timesheet-ui";
 import { MonthlyTimesheet } from "./monthly-timesheet";
 import { ProjectTimesheet } from "./project-timesheet";
 import { useAuth } from "@/lib/auth";
+import { fetchWorkspaceUserOptions } from "@/lib/workspace-users";
 import { exportTimesheetWorkbook } from "./timesheet-export";
 import { canViewTimesheetGroup } from "./timesheet-access";
 import { buildTimesheetAlerts } from "./timesheet-alerts";
 import { TimesheetViewNav } from "./timesheet-view-nav";
+import { monthBounds } from "./timesheet-dates";
 
 /**
  * /timesheet workbench — the shell that owns filters, permission scope and the
@@ -36,101 +37,20 @@ import { TimesheetViewNav } from "./timesheet-view-nav";
 
 type TimesheetView = "monthly" | "project";
 
-type FilterKind = "month" | "department" | "person" | "project" | "workGroup" | "scope";
-
-interface FilterDetailLog {
-  id: string;
-  date: string;
-  person: string;
-  project: string;
-  task: string;
-  hours: string;
-}
-interface FilterDetail {
-  kind: FilterKind;
-  title: string;
-  description: string;
-  metrics: Array<{ label: string; value: string }>;
-  relatedLogs: FilterDetailLog[];
-}
-
-function buildFilterDetail(
-  kind: FilterKind,
-  option: DropdownOption,
-  scopedDataset: ReturnType<typeof emptyTimesheetDataset>,
-  filters: TimesheetFilters,
-  scope: ViewerScope
-): FilterDetail {
-  const peopleById = new Map(scopedDataset.people.map((person) => [person.id, person]));
-  const projectsById = new Map(scopedDataset.projects.map((project) => [project.id, project]));
-  const taskNames = new Map<string, string>();
-  for (const project of scopedDataset.projects) {
-    for (const milestone of project.milestones) {
-      for (const stage of milestone.stages) {
-        for (const task of stage.tasks) taskNames.set(`${project.id}:${task.id}`, `${stage.name} › ${task.name}`);
-      }
-    }
-  }
-
-  const contextFilters: TimesheetFilters = {
-    ...filters,
-    month: kind === "month" ? option.value : filters.month,
-    departmentId: kind === "department" ? option.value : filters.departmentId,
-    personId: kind === "person" ? option.value : filters.personId,
-    personIds: kind === "person" ? [option.value] : filters.personIds,
-    projectId: kind === "project" ? option.value : filters.projectId,
-    workGroup: kind === "workGroup" ? (option.value as TimesheetFilters["workGroup"]) : filters.workGroup
-  };
-  const detailLogs = kind === "scope" ? filterLogs(scopedDataset, filters) : filterLogs(scopedDataset, contextFilters);
-  const minutes = detailLogs.reduce((sum, log) => sum + log.minutes, 0);
-  const peopleCount = new Set(detailLogs.map((log) => log.personId)).size;
-  const projectCount = new Set(detailLogs.map((log) => log.projectId)).size;
-  const dates = new Set(detailLogs.map((log) => log.date));
-  const relatedLogs = detailLogs
-    .slice()
-    .sort((a, b) => b.date.localeCompare(a.date) || b.minutes - a.minutes)
-    .slice(0, 10)
-    .map((log) => ({
-      id: log.id,
-      date: log.date,
-      person: peopleById.get(log.personId)?.name ?? log.personId,
-      project: projectsById.get(log.projectId)?.code ?? log.projectId,
-      task: taskNames.get(`${log.projectId}:${log.taskId}`) ?? log.taskId,
-      hours: formatHours(log.minutes)
-    }));
-
-  const title = kind === "scope" ? `Chi tiết phạm vi: ${option.label}` : `Chi tiết ${option.label}`;
-  const description = kind === "scope"
-    ? `Số liệu hiển thị trong phạm vi ${VIEWER_SCOPE_LABELS[scope]}, theo đúng bộ lọc hiện tại.`
-    : `Số liệu live theo bộ lọc hiện tại · ${option.label}.`;
-
+function mapDirectoryPerson(user: Awaited<ReturnType<typeof fetchWorkspaceUserOptions>>[number]): Person {
   return {
-    kind,
-    title,
-    description,
-    metrics: [
-      { label: "Dòng ghi nhận", value: `${detailLogs.length}` },
-      { label: "Tổng giờ", value: formatHours(minutes) },
-      { label: "Nhân sự", value: `${peopleCount}` },
-      { label: "Dự án", value: `${projectCount}` },
-      { label: "Ngày có log", value: `${dates.size}` }
-    ],
-    relatedLogs
+    id: user.id,
+    name: user.name,
+    initials: user.initials,
+    avatarUrl: user.avatarUrl,
+    avatarColor: user.color,
+    role: user.role,
+    departmentId: "unassigned",
+    teamName: user.role,
+    standardMinutesPerDay: 480,
+    contractRatio: 1,
+    active: user.status === "active"
   };
-}
-
-function decorateOptions(
-  kind: FilterKind,
-  options: DropdownOption[],
-  scopedDataset: ReturnType<typeof emptyTimesheetDataset>,
-  filters: TimesheetFilters,
-  scope: ViewerScope
-) {
-  return options.map((option) => {
-    const detail = buildFilterDetail(kind, option, scopedDataset, filters, scope);
-    const lines = detail.metrics.slice(0, 2).map((metric) => `${metric.value} ${metric.label.toLowerCase()}`);
-    return { ...option, description: lines.join(" · ") };
-  });
 }
 
 /** The viewer's role decides which people and projects they may see. */
@@ -141,13 +61,13 @@ export function TimesheetWorkbench() {
 
   const { user } = useAuth();
   const [dataset, setDataset] = useState(() => emptyTimesheetDataset());
+  const [directoryPeople, setDirectoryPeople] = useState<Person[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [exporting, setExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
-  const [filterDetail, setFilterDetail] = useState<FilterDetail | null>(null);
   const [alertsOpen, setAlertsOpen] = useState(false);
 
   useEffect(() => {
@@ -160,46 +80,76 @@ export function TimesheetWorkbench() {
     return () => controller.abort();
   }, [reloadToken]);
 
+  // Keep the personnel picker usable even when logs/projects/holidays are
+  // temporarily unavailable. The workspace directory is an independent source.
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchWorkspaceUserOptions(controller.signal)
+      .then((users) => setDirectoryPeople(users.map(mapDirectoryPerson)))
+      .catch(() => {
+        if (!controller.signal.aborted) setDirectoryPeople([]);
+      });
+    return () => controller.abort();
+  }, [reloadToken]);
+
+  const availablePeople = useMemo(() => {
+    const byId = new Map(directoryPeople.map((person) => [person.id, person]));
+    for (const person of dataset.people) byId.set(person.id, { ...byId.get(person.id), ...person });
+    return [...byId.values()];
+  }, [dataset.people, directoryPeople]);
+
   // Anything else (including the retired `daily` view) falls back to the month view.
   const view: TimesheetView = searchParams.get("view") === "project" ? "project" : "monthly";
   const requestedScope = (searchParams.get("scope") as ViewerScope | null) ?? "workspace";
   const canViewWorkspace = canViewTimesheetGroup(user?.roleCodes);
   const scope: ViewerScope = canViewWorkspace ? requestedScope : "self";
 
-  const filters = useMemo<TimesheetFilters>(
-    () => {
-      const personIds = (searchParams.get("person") ?? "").split(",").map((value) => value.trim()).filter(Boolean);
-      return {
-      month: searchParams.get("month") ?? dataset.months[dataset.months.length - 1],
-      departmentId: searchParams.get("dept") ?? "all",
+  const defaultMonth = dataset.months[dataset.months.length - 1];
+  const filters = useMemo<TimesheetFilters>(() => {
+    // Comma-joined values; a link saved with one value (the old single dropdowns) reads the same way.
+    const csv = (key: string) => fromCsvParam(searchParams.get(key)).filter((value) => value !== "all");
+    const personIds = csv("person");
+    const from = searchParams.get("from") ?? "";
+    const to = searchParams.get("to") ?? "";
+    // The day range decides the period: an old link whose range ends in another month moves the month.
+    const month = to ? to.slice(0, 7) : searchParams.get("month") ?? defaultMonth;
+    const monthRange = monthBounds(month);
+    return {
+      month,
+      dateFrom: from || monthRange.start,
+      dateTo: to || monthRange.end,
+      departmentId: "all",
+      departmentIds: csv("dept"),
       personId: personIds.length === 1 ? personIds[0] : personIds.length > 1 ? "multiple" : "all",
       personIds,
-      projectId: searchParams.get("project") ?? "all",
+      projectId: "all",
+      projectIds: csv("project"),
+      workGroup: "all",
       // A link saved with a removed group ("Họp", "Khác"…) falls back to all groups.
-      workGroup: WORK_GROUPS.find((group) => group === searchParams.get("group")) ?? "all"
-      };
-    },
-    [searchParams, dataset.months]
-  );
+      workGroups: WORK_GROUPS.filter((group) => csv("group").includes(group)),
+      search: searchParams.get("q") ?? ""
+    };
+  }, [searchParams, defaultMonth]);
 
   /** Permission narrowing applied before any screen sees the data. */
   const scopedDataset = useMemo(() => {
-    if (scope === "workspace") return dataset;
+    const datasetWithDirectoryPeople = { ...dataset, people: availablePeople };
+    if (scope === "workspace") return datasetWithDirectoryPeople;
     if (scope === "self") {
       const selfId = user?.id;
       return {
-        ...dataset,
-        people: selfId ? dataset.people.filter((person) => person.id === selfId) : [],
-        projects: dataset.projects.filter((project) => selfId ? project.members.some((member) => member.personId === selfId) : false),
-        logs: selfId ? dataset.logs.filter((log) => log.personId === selfId) : []
+        ...datasetWithDirectoryPeople,
+        people: selfId ? availablePeople.filter((person) => person.id === selfId) : [],
+        projects: datasetWithDirectoryPeople.projects.filter((project) => selfId ? project.members.some((member) => member.personId === selfId) : false),
+        logs: selfId ? datasetWithDirectoryPeople.logs.filter((log) => log.personId === selfId) : []
       };
     }
     return {
-      ...dataset,
-      projects: dataset.projects.filter((project) => user?.id && (project.picId === user.id || project.members.some((member) => member.personId === user.id))),
-      logs: dataset.logs.filter((log) => dataset.projects.some((project) => project.id === log.projectId && user?.id && (project.picId === user.id || project.members.some((member) => member.personId === user.id))))
+      ...datasetWithDirectoryPeople,
+      projects: datasetWithDirectoryPeople.projects.filter((project) => user?.id && (project.picId === user.id || project.members.some((member) => member.personId === user.id))),
+      logs: datasetWithDirectoryPeople.logs.filter((log) => datasetWithDirectoryPeople.projects.some((project) => project.id === log.projectId && user?.id && (project.picId === user.id || project.members.some((member) => member.personId === user.id))))
     };
-  }, [dataset, scope, user?.id]);
+  }, [availablePeople, dataset, scope, user?.id]);
 
   const logs = useMemo(() => filterLogs(scopedDataset, filters), [scopedDataset, filters]);
 
@@ -244,48 +194,46 @@ export function TimesheetWorkbench() {
     }
   }, [exporting, loading, scopedDataset, filters, logs, scope, view]);
 
-  /* ── Dropdown option lists ────────────────────────────────────────── */
+  /* ── Filter options ───────────────────────────────────────────────── */
 
-  const scopeOptions: DropdownOption[] = decorateOptions("scope", (Object.keys(VIEWER_SCOPE_LABELS) as ViewerScope[]).filter((key) => canViewWorkspace || key === "self").map((key) => ({
-    value: key,
-    label: VIEWER_SCOPE_LABELS[key]
-  })), scopedDataset, filters, scope);
-  const departmentOptions: DropdownOption[] = decorateOptions("department", [
-    { value: "all", label: "Tất cả phòng ban" },
-    ...dataset.departments.map((department) => ({ value: department.id, label: department.name }))
-  ], scopedDataset, filters, scope);
-  const personOptions: DropdownOption[] = decorateOptions("person", [
-    { value: "all", label: "Tất cả nhân sự" },
-    ...scopedDataset.people
-      .filter((person) => filters.departmentId === "all" || person.departmentId === filters.departmentId)
-      .map((person) => ({
-        value: person.id,
-        label: person.name,
-        meta: `${person.role} · ${person.teamName}`,
-        avatarUrl: person.avatarUrl,
-        initials: person.initials,
-        avatarColor: person.avatarColor
-      }))
-  ], scopedDataset, filters, scope);
-  const projectOptions: DropdownOption[] = decorateOptions("project", [
-    { value: "all", label: "Tất cả dự án" },
-    ...scopedDataset.projects.map((project) => ({ value: project.id, label: `${project.code} — ${project.name}` }))
-  ], scopedDataset, filters, scope);
-  const groupOptions: DropdownOption[] = decorateOptions("workGroup", [
-    { value: "all", label: "Tất cả nhóm công việc" },
-    ...WORK_GROUPS.map((group) => ({ value: group, label: WORK_GROUP_LABELS[group] }))
-  ], scopedDataset, filters, scope);
+  const scopeOptions = (Object.keys(VIEWER_SCOPE_LABELS) as ViewerScope[]).filter((key) => canViewWorkspace || key === "self").map((key) => ({ value: key, label: VIEWER_SCOPE_LABELS[key] }));
+  const departmentOptions = dataset.departments.length > 0
+    ? dataset.departments.map((department) => ({ value: department.id, label: department.name }))
+    : [...new Set(availablePeople.map((person) => person.departmentId).filter((id) => id !== "unassigned"))].map((id) => ({ value: id, label: id }));
+  const departmentIds = filters.departmentIds ?? [];
+  const peopleOptions = scopedDataset.people
+    .filter((person) => departmentIds.length === 0 || departmentIds.includes(person.departmentId))
+    .map((person) => ({ id: person.id, name: person.name, avatarUrl: person.avatarUrl, subtitle: `${person.role} · ${person.teamName}` }));
+  const projectOptions = scopedDataset.projects.map((project) => ({ value: project.id, label: `${project.code} — ${project.name}` }));
+  const groupOptions = WORK_GROUPS.map((group) => ({ value: group, label: WORK_GROUP_LABELS[group] }));
 
-  const openFilterDetail = useCallback((kind: FilterKind, option: DropdownOption) => {
-    setFilterDetail(buildFilterDetail(kind, option, scopedDataset, filters, scope));
-  }, [scopedDataset, filters, scope]);
+  const monthRange = monthBounds(filters.month);
+  const dateRange: DateRange = { from: filters.dateFrom ?? monthRange.start, to: filters.dateTo ?? monthRange.end };
+  const today = dataset.generatedAt.slice(0, 10);
+  const windowStart = dataset.windowStart ?? "";
+  // Standard presets that fit the loaded 365-day window, plus the whole selected month.
+  const dateRangePresets = useMemo(() => [
+    ...standardDatePresets(today)
+      .filter((preset) => ["today", "last-7-days", "last-30-days", "this-month", "last-month", "this-quarter"].includes(preset.id))
+      .map((preset) => ({ ...preset, from: preset.from < windowStart ? windowStart : preset.from })),
+    { id: "month", label: `Cả ${formatMonth(filters.month).toLowerCase()}`, from: monthRange.start, to: monthRange.end }
+  ], [filters.month, monthRange.end, monthRange.start, today, windowStart]);
+
+  // The search box types freely; the URL (and the tables) follow after a short pause.
+  const [searchDraft, setSearchDraft] = useState(filters.search ?? "");
+  useEffect(() => { setSearchDraft(filters.search ?? ""); }, [filters.search]);
+  useEffect(() => {
+    if (searchDraft === (filters.search ?? "")) return;
+    const timer = window.setTimeout(() => commit({ q: searchDraft.trim() }), 300);
+    return () => window.clearTimeout(timer);
+  }, [commit, filters.search, searchDraft]);
 
   // "Đặt lại" keeps the permission scope, so scope only counts towards the advanced badge.
-  const activeFilterCount = [filters.departmentId, filters.projectId, filters.workGroup].filter(
-    (value) => value !== "all"
-  ).length + (filters.personIds?.length ? 1 : 0) + (searchParams.get("month") && filters.month !== dataset.months[dataset.months.length - 1] ? 1 : 0);
-  const advancedFilterCount = [filters.projectId, filters.workGroup].filter((value) => value !== "all").length
-    + (canViewWorkspace && scope !== "workspace" ? 1 : 0);
+  const customDateRange = dateRange.from !== monthRange.start || dateRange.to !== monthRange.end;
+  const activeFilterCount = [departmentIds, filters.personIds, filters.projectIds, filters.workGroups].filter((values) => values?.length).length
+    + (filters.search ? 1 : 0)
+    + (customDateRange || filters.month !== defaultMonth ? 1 : 0);
+  const advancedFilterCount = (filters.workGroups?.length ? 1 : 0) + (canViewWorkspace && scope !== "workspace" ? 1 : 0);
 
   const viewCopy = view === "project"
     ? {
@@ -301,22 +249,11 @@ export function TimesheetWorkbench() {
 
   return (
     <div className="space-y-4">
-      <header className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
-        <div>
-          <h1 className="!text-xl font-bold text-foreground">{viewCopy.title}</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">{viewCopy.description}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={exportExcel}
-            disabled={loading || exporting}
-            className="flex items-center gap-1.5 rounded-xl border border-border px-3.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
-          >
-            <Download className="h-4 w-4" aria-hidden /> {exporting ? "Đang tạo Excel…" : "Xuất Excel"}
-          </button>
-        </div>
-      </header>
+      <PageHeader
+        title={viewCopy.title}
+        subtitle={viewCopy.description}
+        actions={<HeaderButton icon={<Download className="h-4 w-4" aria-hidden />} onClick={exportExcel} disabled={loading || exporting}>{exporting ? "Đang tạo Excel…" : "Xuất Excel"}</HeaderButton>}
+      />
       {exportMessage ? <p role="status" className="text-[11px] font-medium text-success">{exportMessage}</p> : null}
       {exportError ? <p role="alert" className="text-[11px] font-medium text-rose-700">{exportError}</p> : null}
 
@@ -344,46 +281,33 @@ export function TimesheetWorkbench() {
         groupScope={canViewWorkspace ? scope : "self"}
       />
 
-      {/* ── Filters: three main ones on a row, the rest behind a toggle ─── */}
+      {/* ── Filters ─── */}
       <section aria-label="Bộ lọc và phạm vi xem Timesheet" className="rounded-xl border border-border bg-card p-3">
-        <FilterBar onReset={activeFilterCount > 0 ? resetFilters : undefined}>
-          <FilterField label="Kỳ báo cáo" className="shrink-0">
-            <MonthFilter ariaLabel="Chọn tháng" months={dataset.months} value={filters.month} onChange={(value) => commit({ month: value })} />
+        <FilterBar onReset={activeFilterCount > 0 ? resetFilters : undefined} activeCount={activeFilterCount}>
+          <FilterField label="Tìm kiếm" className="min-w-[200px] flex-1">
+            <SearchFilter className="" ariaLabel="Tìm theo công việc, dự án hoặc ghi chú" placeholder="Tìm công việc, dự án, ghi chú..." value={searchDraft} onChange={setSearchDraft} />
           </FilterField>
-          {hasChoice(departmentOptions) || filters.departmentId !== "all" ? (
-            <FilterField label="Phòng ban">
-              <CustomDropdown
-                ariaLabel="Chọn phòng ban"
-                options={departmentOptions}
-                value={filters.departmentId}
-                onChange={(value) => commit({ dept: value, person: "all" })}
-                onOptionInfo={(option) => openFilterDetail("department", option)}
-              />
-            </FilterField>
-          ) : null}
-          <FilterField label="Nhân sự">
-            <CrmMultiSelect
-              ariaLabel="Chọn một hoặc nhiều nhân sự"
-              options={personOptions.filter((option) => option.value !== "all")}
-              values={filters.personIds ?? []}
-              onChange={(values) => commit({ person: values.join(",") })}
-              selectedCountLabel={(count) => `${count} nhân sự đã chọn`}
-              placeholder="Tất cả nhân sự"
-              searchPlaceholder="Tìm nhân sự..."
+          <FilterField label="Kỳ báo cáo" className="shrink-0">
+            <MonthFilter ariaLabel="Chọn tháng" months={[...new Set([...dataset.months, filters.month])]} value={filters.month} onChange={(value) => commit({ month: value, from: "", to: "" })} />
+          </FilterField>
+          <FilterField label="Khoảng ngày ghi nhận" className="min-w-[15rem] flex-[1.2]">
+            <DateRangeFilter
+              ariaLabel="Lọc theo khoảng ngày ghi nhận"
+              value={dateRange}
+              presets={dateRangePresets}
+              maxDays={366}
+              clearable={false}
+              onChange={(range) => commit(periodParamsForRange(range, windowStart))}
             />
           </FilterField>
+          <PersonFilter people={peopleOptions} values={filters.personIds ?? []} onChange={(values) => commit({ person: values.join(",") })} />
+          <MultiSelectFilter label="Phòng ban" options={departmentOptions} values={departmentIds} onChange={(values) => commit({ dept: values.join(","), person: "" })} hideWhenSingle={departmentIds.length === 0} />
+          <MultiSelectFilter label="Dự án" options={projectOptions} values={filters.projectIds ?? []} onChange={(values) => commit({ project: values.join(",") })} allLabel="Tất cả dự án" />
           <AdvancedFilters count={advancedFilterCount}>
-            {hasChoice(projectOptions) || filters.projectId !== "all" ? (
-              <FilterField label="Dự án">
-                <CustomDropdown ariaLabel="Chọn dự án" options={projectOptions} value={filters.projectId} onChange={(value) => commit({ project: value })} onOptionInfo={(option) => openFilterDetail("project", option)} />
-              </FilterField>
-            ) : null}
-            <FilterField label="Nhóm công việc">
-              <CustomDropdown ariaLabel="Chọn nhóm công việc" options={groupOptions} value={filters.workGroup} onChange={(value) => commit({ group: value })} onOptionInfo={(option) => openFilterDetail("workGroup", option)} />
-            </FilterField>
+            <MultiSelectFilter label="Nhóm công việc" options={groupOptions} values={filters.workGroups ?? []} onChange={(values) => commit({ group: values.join(",") })} searchable={false} />
             {scopeOptions.length > 1 ? (
               <FilterField label="Phạm vi quyền xem">
-                <CustomDropdown ariaLabel="Chọn phạm vi quyền xem" options={scopeOptions} value={scope} onChange={(value) => commit({ scope: value })} onOptionInfo={(option) => openFilterDetail("scope", option)} />
+                <CrmSelect ariaLabel="Chọn phạm vi quyền xem" options={scopeOptions} value={scope} onChange={(value) => commit({ scope: value })} menuPortal />
               </FilterField>
             ) : null}
           </AdvancedFilters>
@@ -393,6 +317,13 @@ export function TimesheetWorkbench() {
       {loadError ? <section role="alert" className="flex flex-col gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 sm:flex-row sm:items-center sm:justify-between"><span>{loadError}</span><button type="button" onClick={() => setReloadToken((value) => value + 1)} className="inline-flex min-h-9 items-center justify-center rounded-lg border border-rose-300 bg-white px-3 font-semibold text-rose-700 hover:bg-rose-100">Thử lại</button></section> : null}
       {loading ? <section aria-live="polite" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><div className="h-24 animate-pulse rounded-xl bg-muted" /><div className="h-24 animate-pulse rounded-xl bg-muted" /><div className="h-24 animate-pulse rounded-xl bg-muted" /><div className="h-24 animate-pulse rounded-xl bg-muted" /></section> : null}
 
+      {!loading && !loadError && logs.length === 0 && activeFilterCount > 0 ? (
+        <section role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+          <span>Không có kết quả phù hợp bộ lọc.</span>
+          <button type="button" onClick={resetFilters} className="!text-[12px] !font-semibold text-primary hover:underline">Đặt lại bộ lọc</button>
+        </section>
+      ) : null}
+
       {/* ── Active view ────────────────────────────────────────────────── */}
       {!loading && (view === "monthly" ? (
         <MonthlyTimesheet dataset={scopedDataset} filters={filters} logs={logs} currentUserId={user?.id} />
@@ -400,7 +331,6 @@ export function TimesheetWorkbench() {
         <ProjectTimesheet dataset={scopedDataset} filters={filters} logs={logs} currentUserId={user?.id} />
       ))}
 
-      <FilterOptionDetailDrawer detail={filterDetail} onClose={() => setFilterDetail(null)} />
       <Drawer
         open={alertsOpen}
         title="Cảnh báo Timesheet"
@@ -425,63 +355,5 @@ export function TimesheetWorkbench() {
         </div>
       </Drawer>
     </div>
-  );
-}
-
-function FilterOptionDetailDrawer({ detail, onClose }: { detail: FilterDetail | null; onClose: () => void }) {
-  return (
-    <Drawer open={detail !== null} title={detail?.title ?? "Chi tiết bộ lọc"} description={detail?.description} icon={Info} onClose={onClose}>
-      {detail ? (
-        <>
-          <div className="grid grid-cols-2 gap-2 border-b border-border bg-muted/20 p-4 sm:grid-cols-3">
-            {detail.metrics.map((metric) => (
-              <div key={metric.label} className="rounded-xl border border-border bg-card p-2.5">
-                <p className="text-[10px] text-muted-foreground">{metric.label}</p>
-                <p className="mt-1 text-[14px] font-bold tabular-nums text-foreground">{metric.value}</p>
-              </div>
-            ))}
-          </div>
-
-          <section className="p-4">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <div>
-                <h3 className="text-[13px] font-bold text-foreground">Một số dòng log gần nhất</h3>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">Mở từ chính dữ liệu live sau khi áp dụng bộ lọc.</p>
-              </div>
-              <span className="inline-flex items-center gap-1 rounded-lg border border-primary/20 bg-primary/5 px-2 py-1 text-[10px] font-semibold text-primary">
-                <Clock3 className="h-3 w-3" aria-hidden /> {detail.relatedLogs.length} dòng
-              </span>
-            </div>
-
-            {detail.relatedLogs.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-border bg-muted/20 p-5 text-center text-[12px] text-muted-foreground">Không có dòng log trong phạm vi này.</div>
-            ) : (
-              <div className="divide-y divide-border rounded-xl border border-border">
-                {detail.relatedLogs.map((log) => (
-                  <div key={log.id} className="flex items-start gap-3 px-3 py-2.5">
-                    <div className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary" aria-hidden>
-                      {log.person.slice(0, 1).toUpperCase()}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="truncate text-[12px] font-semibold text-foreground">{log.person}</p>
-                        <span className="shrink-0 font-mono text-[12px] font-bold tabular-nums text-primary">{log.hours}</span>
-                      </div>
-                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{log.project} · {log.task}</p>
-                      <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">{formatDate(log.date)} · {log.id}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <p className="mt-4 inline-flex items-start gap-1.5 text-[10.5px] leading-relaxed text-muted-foreground">
-              <Users className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
-              Số liệu được tính lại từ các dòng time log hiện có, không lấy từ số liệu demo hoặc tổng hợp cũ.
-            </p>
-          </section>
-        </>
-      ) : null}
-    </Drawer>
   );
 }

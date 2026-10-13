@@ -23,7 +23,7 @@ describe("quyền (PL-26)", () => {
     await expect(s.pnl.dashboard({}, plainUser)).rejects.toThrow("Admin");
     await expect(s.pnl.project("p-a", {}, plainUser)).rejects.toThrow("Admin");
     await expect(s.config.items(plainUser)).rejects.toThrow("Admin");
-    await expect(s.config.projectSetup("p-a", plainUser)).rejects.toThrow("Admin");
+    await expect(s.config.setProjectValue("p-a", { amount: 1_000_000 }, plainUser)).rejects.toThrow("PM");
   });
 
   it("Admin ngoài nhóm quyền chi phí: hours are shown, every money figure is null, the two collapsed details stay closed", async () => {
@@ -83,19 +83,19 @@ describe("lớp 4 — Tổng quan P&L", () => {
   it("đã nghiệm thu, đủ dữ liệu, mọi tháng khóa: năm ô tổng, dòng tổng, đối soát, nhãn Chính thức, chi phí theo hai cách nhóm", async () => {
     const s = await closedScenario();
     const { data } = await s.pnl.dashboard({ year: 2026 }, founder);
-    // Doanh thu ghi nhận: HM-01 60.000.000; HM-02 (Theo giờ) has no counted hour, so it earns nothing — the ceiling is not revenue.
-    // labor 21.340.000 + 5.010.000 + 15.825.000; other = quỹ 1.260.000 + 5.260.000 + hoa hồng 60.000.000 × 5% = 3.000.000
-    expect(data.totals).toMatchObject({ projectCount: 1, revenueAmount: 60_000_000, laborCostAmount: 42_175_000, otherCostAmount: 9_520_000, totalCostAmount: 51_695_000, ebitAmount: 8_305_000, provisionalProjectCount: 0, result: { label: "official", labelText: "Chính thức" } });
-    expect((data.totals.marginPercent as number).toFixed(1)).toBe("13.8");
+    // Doanh thu ghi nhận = Giá trị dự án 67.200.000 (PL-14).
+    // labor 21.340.000 + 5.010.000 + 15.825.000; other = quỹ 1.260.000 + 5.260.000 + hoa hồng 67.200.000 × 5% = 3.360.000
+    expect(data.totals).toMatchObject({ projectCount: 1, revenueAmount: 67_200_000, laborCostAmount: 42_175_000, otherCostAmount: 9_880_000, totalCostAmount: 52_055_000, ebitAmount: 15_145_000, provisionalProjectCount: 0, result: { label: "official", labelText: "Chính thức" } });
+    expect((data.totals.marginPercent as number).toFixed(1)).toBe("22.5");
     expect(data.pending).toEqual([]); // ẩn khi không còn gì chờ
     expect(data.accepted.rows).toHaveLength(1);
-    expect(data.accepted.rows[0]).toMatchObject({ projectId: "p-a", acceptedOn: "2026-09-30", revenueAmount: 60_000_000, ebitAmount: 8_305_000, result: { label: "official" }, adjustedAfterClose: false });
+    expect(data.accepted.rows[0]).toMatchObject({ projectId: "p-a", acceptedOn: "2026-09-30", revenueAmount: 67_200_000, ebitAmount: 15_145_000, result: { label: "official" }, adjustedAfterClose: false });
     expect(data.accepted.totalRow).toMatchObject({ revenueAmount: data.totals.revenueAmount, laborCostAmount: data.totals.laborCostAmount, otherCostAmount: data.totals.otherCostAmount, ebitAmount: data.totals.ebitAmount });
     expect(data.accepted.reconciliation).toMatchObject({ loggedMinutes: hours(273.5), includedMinutes: hours(273.5), pendingMinutes: 0, excludedMinutes: 0, balanced: true });
     expect(data.inProgress.total).toBe(0);
     const amounts = (rows: typeof data.costGroups.role) => Object.fromEntries(rows.map((row) => [row.label, row.amount]));
-    expect(amounts(data.costGroups.role)).toEqual({ "Delivery/DX": 38_435_000, PM: 3_200_000, BD: 540_000, "Quỹ chung": 6_520_000, "Hoa hồng": 3_000_000 });
-    expect(amounts(data.costGroups.accounting)).toEqual({ "Salaries related": 42_175_000, "Functional operation": 6_520_000, "Hoa hồng": 3_000_000 });
+    expect(amounts(data.costGroups.role)).toEqual({ "Delivery/DX": 38_435_000, PM: 3_200_000, BD: 540_000, "Quỹ chung": 6_520_000, "Hoa hồng": 3_360_000 });
+    expect(amounts(data.costGroups.accounting)).toEqual({ "Salaries related": 42_175_000, "Functional operation": 6_520_000, "Hoa hồng": 3_360_000 });
     expect(data.costGroups.role.reduce((total, row) => total + (row.sharePercent as number), 0)).toBeCloseTo(100, 2);
     // Bấm một nhóm thì bảng dự án lọc theo nhóm đó.
     expect((await s.pnl.dashboard({ year: 2026, groupKey: "FUND" }, founder)).data.accepted.total).toBe(1);
@@ -114,6 +114,24 @@ describe("lớp 4 — Tổng quan P&L", () => {
     expect(await count({ year: 2026, projectType: "customer", accountId: "acc-a", picUserId: "u-bd" })).toBe(1);
     expect(await count({ year: 2026, projectType: "internal" })).toBe(0);
     expect(await count({ year: 2026, picUserId: "u-pm" })).toBe(0);
+    // Several values arrive comma-joined: a project matches when it has one of them.
+    expect(await count({ year: 2026, projectType: "internal,customer", accountId: "acc-x,acc-a", picUserId: "u-pm,u-bd" })).toBe(1);
+    expect(await count({ year: 2026, accountId: "acc-x,acc-y" })).toBe(0);
+    // q: project name, code or client name, without accents or case.
+    expect(await count({ year: 2026, q: "du an a" })).toBe(1);
+    expect(await count({ year: 2026, q: "KHACH a" })).toBe(1);
+    expect(await count({ year: 2026, q: "da-a" })).toBe(1);
+    expect(await count({ year: 2026, q: "không có" })).toBe(0);
+    // unit "custom": the same selection rule over any month range.
+    const custom = (await s.pnl.dashboard({ unit: "custom", fromMonth: "2026-07", toMonth: "2026-08" }, founder)).data;
+    expect(custom.filter).toMatchObject({ unit: "custom", index: null, fromPeriodKey: "2026-07", toPeriodKey: "2026-08" });
+    expect(custom.accepted.total).toBe(1);
+    expect(custom.companyCosts.periodKeys).toEqual(["2026-07", "2026-08"]);
+    expect(await count({ unit: "custom", fromMonth: "2026-09", toMonth: "2026-12" })).toBe(0);
+    expect(await count({ unit: "custom", fromMonth: "2026-09", toMonth: "2026-12", rule: "accepted_in_period" })).toBe(1);
+    await expect(s.pnl.dashboard({ unit: "custom" }, founder)).rejects.toThrow("fromMonth");
+    await expect(s.pnl.dashboard({ unit: "custom", fromMonth: "2026-09", toMonth: "2026-08" }, founder)).rejects.toThrow("Khoảng tháng");
+    await expect(s.pnl.dashboard({ unit: "custom", fromMonth: "2020-01", toMonth: "2026-08" }, founder)).rejects.toThrow("Khoảng tháng");
     const paged = (await s.pnl.dashboard({ year: 2026, page: 2, pageSize: 1 }, founder)).data;
     expect(paged.accepted).toMatchObject({ total: 1, page: 2, pageSize: 1, rows: [] });
     expect(paged.totals.projectCount).toBe(1); // ô tổng tính trên toàn danh sách, not the page
@@ -196,7 +214,7 @@ describe("lớp 4 — P&L dự án", () => {
     expect(Math.round(a.hourlyCostRate as number)).toBe(162_381);
     expect(a.byDay.map((day) => [day.dateKey, day.loggedMinutes / 60])).toEqual([["2026-09-01", 8], ["2026-09-03", 8], ["2026-09-04", 5]]); // nothing on the holiday
     expect(september.people.find((row) => row.userId === "u-b")).toMatchObject({ hourlyCostRate: null, pendingMinutes: hours(105.5), laborCostAmount: null, status: { ok: false, label: "Chờ cost rate T09" } });
-    expect(september.tasks.map((task) => [task.taskTitle, task.contractItemCode, task.loggedMinutes / 60, task.laborCostAmount])).toEqual([["Xây dựng – B", "HM-01", 105.5, null], ["Xây dựng – A", "HM-01", 21, 3_410_000], ["Quản lý dự án", "HM-01", 8, 1_600_000]]);
+    expect(september.tasks.map((task) => [task.taskTitle, task.loggedMinutes / 60, task.laborCostAmount])).toEqual([["Xây dựng – B", 105.5, null], ["Xây dựng – A", 21, 3_410_000], ["Quản lý dự án", 8, 1_600_000]]);
     expect(september.reconciliation).toEqual({ loggedMinutes: hours(134.5), includedMinutes: hours(29), pendingMinutes: hours(105.5), excludedMinutes: 0, differenceMinutes: 0, balanced: true });
     // "Mở hết các tháng"
     expect((await s.pnl.projectMonths("p-a", "all", founder)).data.map((row) => row.periodKey)).toEqual(["2026-08", "2026-09"]);
@@ -231,17 +249,19 @@ describe("lớp 4 — P&L dự án", () => {
     expect(data.history!.find((event) => event.action === "pnl.period_locked")).toMatchObject({ periodKey: "2026-08", actorName: null });
   });
 
-  it("dự án nội bộ: cùng bố cục, không có Doanh thu và EBIT; ô thứ năm là Chi phí so với trần; không lên Tổng quan", async () => {
+  it("dự án nội bộ (Loại Nội bộ, Đào tạo): cùng bố cục, không có Doanh thu và EBIT, không có Giá trị dự án; Đang ghi nhận từ khi tạo; không lên Tổng quan", async () => {
     const s = scenario();
     s.db.table("project").push({ id: "p-int", workspaceId: WS, code: "NB-01", name: "Chuẩn hóa quy trình", status: "active", projectType: "internal", isTestProject: false, accountId: "acc-a", createdAt: new Date("2026-09-01T02:00:00.000Z") });
-    s.db.table("projectContractItem").push({ id: "nb-01", workspaceId: WS, projectId: "p-int", code: "HM-01", name: "Nội bộ", kind: "ROOT", contractType: "INTERNAL", valueAmount: 10_000_000, estimateMinutes: null, status: "active", sortOrder: 10, archivedAt: null, warnThresholdPercent: 80 });
-    s.db.table("projectTask").push({ id: "t-nb", workspaceId: WS, projectId: "p-int", stageId: null, parentTaskId: null, title: "Viết quy trình", taskTypeLayer1: "DELIVERY", contractItemId: "nb-01", estimateMinutes: 600, assigneeUserId: "u-a" });
+    // A value stored on the record of an internal project (e.g. typed before the project type was corrected) is never read.
+    s.db.table("projectPnlRecord").push({ id: "ppr_p-int", workspaceId: WS, projectId: "p-int", overrideDisabledCodes: [], overrideEnabledCodes: [], projectValueAmount: 10_000_000, frozenDisabledCodes: [], frozenAt: null });
+    s.db.table("projectTask").push({ id: "t-nb", workspaceId: WS, projectId: "p-int", stageId: null, parentTaskId: null, title: "Viết quy trình", taskTypeLayer1: "DELIVERY", estimateMinutes: 600, assigneeUserId: "u-a" });
     s.log({ userId: "u-a", taskId: "t-nb", dateKey: "2026-09-22", hours: 8, taskLayer2: "INTERNAL_PROJECT" });
     const data = await s.project({}, "p-int");
     expect(data.header).toMatchObject({ templateKey: "internal", templateName: "Nội bộ", recordState: "recognizing", recordStateLabel: "Đang ghi nhận" });
-    expect(data.totals.revenue).toMatchObject({ amount: null, basis: "none", label: "Không có doanh thu" });
+    expect(data.totals.revenue).toMatchObject({ amount: null, basis: "none", label: "Không có doanh thu", projectValueAmount: null, canEdit: false });
     expect(data.totals.ebit).toMatchObject({ amount: null, missingReason: "Dự án nội bộ không có EBIT" });
-    expect(data.totals.costVsCap).toEqual({ costAmount: 1_299_048, capAmount: 10_000_000, usedPercent: 12.9905, warnThresholdPercent: 80 }); // 8 × 27.280.000 ÷ 168
+    expect(data.totals.consumable).toBe(true);
+    expect(data.totals.cost).toMatchObject({ totalAmount: 1_299_048, laborAmount: 1_299_048 }); // 8 × 27.280.000 ÷ 168
     expect(data.months.whole).toMatchObject({ includedMinutes: 0, excludedMinutes: hours(8), excludedByReason: [{ reason: "internal", label: "Nội bộ", minutes: hours(8) }], laborCostAmount: 1_299_048 });
     expect(data.months.wholeProjectItems).toEqual([]);
     expect(data.items!.map((row) => row.code)).not.toEqual(expect.arrayContaining(["DOANHTHU", "CP.HOAHONG", "KQ.EBIT"]));
@@ -257,7 +277,7 @@ describe("lớp 4 — P&L dự án", () => {
     const record = s.db.table("projectPnlRecord").find((row) => row.projectId === "p-a")!;
     expect(record.frozenAt).toBeInstanceOf(Date);
     await s.config.setTemplate("customer", { disabledCodes: ["CP.HOAHONG"] }, founder); // a later change of the template…
-    expect((await s.project()).months.wholeProjectItems[0]).toMatchObject({ amount: 3_000_000, expected: false }); // …does not reach the closed project (60.000.000 × 5%)
+    expect((await s.project()).months.wholeProjectItems[0]).toMatchObject({ amount: 3_360_000, expected: false }); // …does not reach the closed project (67.200.000 × 5%)
     await expect(s.config.setTemplateOverride("p-a", { disabledCodes: ["CP.HOAHONG"], reason: "x" }, founder)).rejects.toThrow("G7");
   });
 });
@@ -275,10 +295,10 @@ describe("lớp 3 — Kỳ và khóa kỳ (PL-23, PL-24)", () => {
     expect(data.selected).toMatchObject({ periodKey: "2026-09", state: "awaiting_lock", canLock: false, lockButtonText: "Khóa kỳ 09/2026 · còn 3 việc", snapshotNote: "Khóa lưu ảnh chụp tham số, cost rate, số chia quỹ, kết quả cổng lọc" });
     expect(data.selected!.checklist.map((row) => [row.ok, row.label, row.detail, row.targetLabel])).toEqual([
       [true, "Tham số có hiệu lực cho tháng", null, null],
-      [false, "Không còn giờ Chờ xử lý của tháng (trừ Pre-sale chờ ký hợp đồng)", "còn 105,5 giờ", "Danh sách"],
+      [false, "Không còn giờ Chờ xử lý của tháng", "còn 105,5 giờ", "Danh sách"],
       [false, "Mọi người có giờ log có chi phí tháng Đã duyệt", "thiếu: Nhân sự B", "Hồ sơ nhân sự"],
       [false, "Mọi quỹ của tháng đã chia đủ và xác nhận", "còn: Công cụ AI", "Quỹ chi phí chung"],
-      [true, "Dự án qua G7 trong tháng có ngày nghiệm thu và giá trị hợp đồng", null, null]
+      [true, "Dự án qua G7 trong tháng có ngày nghiệm thu và Giá trị dự án", null, null]
     ]);
   });
 
@@ -503,17 +523,13 @@ describe("lớp 1 — Hồ sơ nhân sự › Chi phí theo tháng (PL-08, mục
 });
 
 describe("lớp 0 — Tham số (PL-19, mục 6.3)", () => {
-  it("bảng tham số: chỉ tỷ lệ, tỷ giá, giờ chuẩn, đơn giá bán và mốc; giờ chuẩn của tháng do hệ thống tính từ lịch", async () => {
+  it("bảng tham số: chỉ tỷ lệ, tỷ giá, giờ chuẩn và mốc (không còn đơn giá bán theo vai trò); giờ chuẩn của tháng do hệ thống tính từ lịch", async () => {
     const { data } = await scenario().config.parameters(founder);
     expect(data.rows.map((row) => [row.label, row.defaultValueText, row.scopeText, row.specificValueCount, row.effectiveFrom])).toEqual([
       ["Giờ chuẩn một ngày", "8 giờ", "Công ty", 0, "2026-01"],
       ["Tỷ giá USD", null, "Công ty, theo tháng", 0, null],
       ["Mốc đóng P&L dự án", "G7 (nghiệm thu)", "Công ty", 0, "2026-10"],
-      ["Tỷ lệ hoa hồng", "5%", "Công ty, khách hàng", 0, "2026-08"],
-      ["Đơn giá bán theo vai trò · Delivery/DX", "400.000 đ", "Công ty, dự án", 0, "2026-08"],
-      ["Đơn giá bán theo vai trò · PM", null, "Công ty, dự án", 0, null],
-      ["Đơn giá bán theo vai trò · BD", null, "Công ty, dự án", 0, null],
-      ["Đơn giá bán theo vai trò · CS", null, "Công ty, dự án", 0, null]
+      ["Tỷ lệ hoa hồng", "5%", "Công ty, khách hàng", 0, "2026-08"]
     ]);
     expect(data.rows[0].derived).toMatchObject({ periodKey: "2026-10", workingDays: 22, standardHours: 176, text: "Giờ chuẩn tháng 10/2026: 22 ngày × 8 = 176 giờ, hệ thống tính từ lịch ngày nghỉ" });
     expect(data.moved).toEqual([{ label: "Lương tháng tiêu chuẩn", movedTo: "Hồ sơ nhân sự" }, { label: "Tiền giao thông", movedTo: "bỏ khỏi Tham số" }, { label: "Phí công cụ AI", movedTo: "quỹ AI, Quỹ chi phí chung" }]);
@@ -546,25 +562,13 @@ describe("lớp 0 — Tham số (PL-19, mục 6.3)", () => {
     await expect(s.config.addParameterValue({ key: "commissionPercent", scopeType: "company", value: 7, effectiveFrom: "2026-10", reason: "x" }, adminNoCost)).resolves.toBeDefined(); // Admin cấu hình
     await expect(s.config.addParameterValue({ key: "commissionPercent", scopeType: "company", value: 7, effectiveFrom: "2026-10", reason: "x" }, plainUser)).rejects.toThrow("Admin");
     expect(s.db.table("pnlParameterValue").filter((row) => row.key === "commissionPercent").map((row) => [row.value, row.effectiveFrom])).toEqual([[5, "2026-08"], [7, "2026-10"]]); // the old row is untouched
-    // Not accepted yet: the rate in force now (10/2026) is 7%, on the contract value. Accepted in 09/2026: the rate of
-    // that month, 5%, on the recognised revenue (HM-01 60.000.000; HM-02 has no counted hour).
+    // Not accepted yet: the rate in force now (10/2026) is 7%, on Giá trị dự án. Accepted in 09/2026: the rate of
+    // that month, 5%, on the recognised revenue (the same 67.200.000).
     expect((await s.project()).months.wholeProjectItems[0].amount).toBe(4_704_000);
     s.approveG7("2026-09-30");
-    expect((await s.project()).months.wholeProjectItems[0].amount).toBe(3_000_000);
+    expect((await s.project()).months.wholeProjectItems[0].amount).toBe(3_360_000);
   });
 
-  it("đơn giá bán theo vai trò: bảng chung của công ty, dự án ghi đè khi hợp đồng có giá riêng", async () => {
-    const s = scenario({ now: "2026-11-02T03:00:00.000Z" });
-    s.log({ userId: "u-a", taskId: "t-cr", month: "2026-10", hours: 10 });
-    await s.approveCost("u-a", "2026-10", 26_400_000);
-    const toDate = async () => (await s.config.projectSetup("p-a", founder)).data.items.find((item) => item.code === "HM-02")!.hourly!;
-    expect(await toDate()).toMatchObject({ revenueToDateAmount: 4_000_000, overThreshold: false });
-    expect((await toDate()).sellRates[0]).toEqual({ roleGroup: "DELIVERY", roleGroupLabel: "Delivery/DX", amount: 400_000, scope: "company", effectiveFrom: "2026-08" });
-    await expect(s.config.addParameterValue({ key: "sellRate", scopeType: "project", scopeId: "p-a", value: 600_000, effectiveFrom: "2026-10", reason: "x" }, founder)).rejects.toThrow("vai trò");
-    await s.config.addParameterValue({ key: "sellRate", subKey: "DELIVERY", scopeType: "project", scopeId: "p-a", value: 600_000, effectiveFrom: "2026-10", reason: "Hợp đồng có giá riêng" }, founder);
-    expect(await toDate()).toMatchObject({ revenueToDateAmount: 6_000_000, overThreshold: true }); // ≥ 80% of the 7.200.000 ceiling
-    expect((await toDate()).sellRates[0]).toMatchObject({ amount: 600_000, scope: "project" });
-  });
 });
 
 describe("lớp 0 — Khoản mục và Mẫu khoản mục (mục 6.2, 6.6)", () => {
@@ -655,70 +659,7 @@ describe("lớp 0 — Khoản mục và Mẫu khoản mục (mục 6.2, 6.6)", (
     const { overrides } = (await s.config.templates(founder)).data;
     expect(overrides).toHaveLength(1);
     expect(overrides[0]).toMatchObject({ projectName: "Dự án A", summary: "tắt Hoa hồng", byName: "Admin chi phí", reason: "Hợp đồng không qua BD" });
-    expect((await s.config.projectSetup("p-a", founder)).data.template.override).toMatchObject({ disabledCodes: ["CP.HOAHONG"], reason: "Hợp đồng không qua BD" });
-  });
-});
-
-describe("lớp 1 — Thiết lập P&L của dự án (mục 6.1)", () => {
-  it("khối A, B, F: tổng giá trị hợp đồng do hệ thống cộng, tách theo loại; hạng mục; khóa kèm lý do và số", async () => {
-    const { data, meta } = await scenario().config.projectSetup("p-a", founder);
-    expect(meta.moneyVisible).toBe(true);
-    expect(data.contract).toMatchObject({ totalAmount: 67_200_000, fixedPriceAmount: 60_000_000, hourlyCeilingAmount: 7_200_000, status: "signed", statusLabel: "Đã ký", baseValuesReadOnly: true, collectedAmount: 0, collectedInstallments: 0, installmentCount: 2 });
-    expect(data.items.map((item) => [item.code, item.kindLabel, item.contractTypeLabel, item.valueKind, item.valueAmount, (item.estimateMinutes as number) / 60, item.revenueRecognition, item.locked])).toEqual([
-      ["HM-01", "HĐ gốc", "Trọn gói", "value", 60_000_000, 240, "Một lần tại G7", true],
-      ["HM-02", "Yêu cầu thay đổi", "Theo giờ", "ceiling", 7_200_000, 20, "Giờ × giá bán", true]
-    ]);
-    expect(data.items[0].lockReasons).toEqual([{ kind: "logged_hours", label: "đã có 273,5 giờ log", minutes: hours(273.5) }, { kind: "contract_signed", label: "hợp đồng Đã ký" }]);
-    expect(data.items[1]).toMatchObject({ loggedMinutes: 0, changeRequestId: "cr-1", lockReasons: [{ kind: "contract_signed" }] });
-    expect(data.baseline).toMatchObject({ g1Approved: true, g1ApprovedOn: "2026-08-07", rootItemReady: true });
-    // Every Admin sees this screen's values, cost group or not (PL-26: "User không thấy giá trị").
-    expect((await scenario().config.projectSetup("p-a", adminNoCost)).data.contract.totalAmount).toBe(67_200_000);
-  });
-
-  it("khối C: đợt thanh toán mặc định 70% khi ký, 30% khi nghiệm thu; tổng tỷ lệ phải đúng 100%; Đã thu chỉ theo dõi dòng tiền", async () => {
-    const s = scenario();
-    let item = (await s.config.projectSetup("p-a", founder)).data.items[0];
-    expect(item.installments.map((row) => [row.sequence, row.label, row.percent, row.amount, row.statusLabel])).toEqual([[1, "Khi ký (G1)", 70, 42_000_000, "Chưa đến"], [2, "Nghiệm thu (G7)", 30, 18_000_000, "Chưa đến"]]);
-    expect(item.installmentPercentTotal).toBe(100);
-    await expect(s.config.setInstallments("p-a", "hm-01", { installments: [{ label: "Khi ký", percent: 60 }, { label: "Nghiệm thu", percent: 30 }] }, founder)).rejects.toThrow("thiếu 10%");
-    await expect(s.config.setInstallments("p-a", "hm-01", { installments: [{ label: "Khi ký", percent: 80 }, { label: "Nghiệm thu", percent: 30 }] }, founder)).rejects.toThrow("thừa 10%");
-    await expect(s.config.setInstallments("p-a", "hm-02", { installments: [{ label: "x", percent: 100 }] }, founder)).rejects.toThrow("Trọn gói");
-    await s.config.setInstallments("p-a", "hm-01", { installments: [{ label: "Khi ký (G1)", gateCode: "G1", percent: 70, expectedOn: "2026-03-15" }, { label: "Nghiệm thu (G7)", gateCode: "G7", percent: 30, expectedOn: "2026-07-30" }] }, founder);
-    item = (await s.config.projectSetup("p-a", founder)).data.items[0];
-    expect(item.installments.map((row) => row.expectedOn)).toEqual(["2026-03-15", "2026-07-30"]);
-    const ebitBefore = (await s.project()).totals.ebit.amount;
-    await s.config.setInstallmentStatus("p-a", item.installments[0].id, { status: "paid" }, founder);
-    const setup = (await s.config.projectSetup("p-a", founder)).data;
-    expect(setup.contract).toMatchObject({ collectedAmount: 42_000_000, collectedInstallments: 1, installmentCount: 2 });
-    expect(setup.items[0].installments[0]).toMatchObject({ status: "paid", statusLabel: "Đã thu tiền" });
-    expect(setup.items[0].lockReasons.map((reason) => reason.label)).toContain("đã xuất hóa đơn đợt 1");
-    expect(setup.baseline.firstInstallmentPaid).toBe(true);
-    expect((await s.project()).totals.ebit.amount).toBe(ebitBefore); // không vào EBIT
-    await expect(s.config.setInstallments("p-a", "hm-01", { installments: [{ label: "x", percent: 100 }] }, founder)).rejects.toThrow("yêu cầu thay đổi");
-    await expect(s.config.setInstallmentStatus("p-a", item.installments[0].id, { status: "refunded" }, founder)).rejects.toThrow("Trạng thái đợt");
-  });
-
-  it("the default 70/30 plan is stored the first time one of its instalments moves", async () => {
-    const s = scenario();
-    const virtual = (await s.config.projectSetup("p-a", founder)).data.items[0].installments[0];
-    expect(virtual.id).toBe("default:hm-01:1");
-    await s.config.setInstallmentStatus("p-a", virtual.id, { status: "invoiced" }, founder);
-    expect(s.db.table("projectContractInstallment").map((row) => [row.sequence, row.percent, row.status])).toEqual([[1, 70, "invoiced"], [2, 30, "not_due"]]);
-  });
-
-  it("trạng thái hợp đồng Nháp / Đã ký; ngưỡng cảnh báo mặc định 80%, PM sửa được", async () => {
-    const s = scenario();
-    await expect(s.config.setContractStatus("p-a", { status: "draft" }, founder)).rejects.toThrow("lý do");
-    await s.config.setContractStatus("p-a", { status: "draft", reason: "Khách đổi phạm vi trước khi ký lại" }, founder);
-    expect((await s.config.projectSetup("p-a", founder)).data.contract).toMatchObject({ status: "draft", statusLabel: "Nháp", baseValuesReadOnly: false });
-    Object.assign(s.db.table("projectContractItem").find((row) => row.id === "hm-02")!, { valueAmount: null });
-    await expect(s.config.setContractStatus("p-a", { status: "signed" }, founder)).rejects.toThrow("HM-02");
-    Object.assign(s.db.table("projectContractItem").find((row) => row.id === "hm-02")!, { valueAmount: 7_200_000 });
-    await s.config.setContractStatus("p-a", { status: "signed" }, founder);
-    expect((await s.config.projectSetup("p-a", founder)).data.contract).toMatchObject({ status: "signed", signedOn: "2026-10-12" });
-    await s.config.setItemSettings("p-a", "hm-02", { warnThresholdPercent: 60 }, founder);
-    expect((await s.config.projectSetup("p-a", founder)).data.items[1].hourly).toMatchObject({ warnThresholdPercent: 60 });
-    await expect(s.config.setItemSettings("p-a", "hm-02", { warnThresholdPercent: 0 }, founder)).rejects.toThrow("1 đến 100");
+    expect(data.template).toMatchObject({ key: "customer", name: "Khách hàng", canOverride: true, override: { disabledCodes: ["CP.HOAHONG"], reason: "Hợp đồng không qua BD" } });
   });
 });
 
@@ -731,8 +672,32 @@ describe("giờ log nguồn (PL-07)", () => {
     expect(included.meta).toMatchObject({ totalMinutes: hours(139), totalCostAmount: 21_340_000 });
     const waiting = await s.pnl.entries({ periodKey: "2026-09", group: "cost_rate" }, founder);
     expect(waiting.meta.totalMinutes).toBe(hours(105.5));
-    expect(waiting.data[0]).toMatchObject({ userDisplayName: "Nhân sự B", projectName: "Dự án A", taskTitle: "Xây dựng – B", contractItemName: "Triển khai hệ thống", reasonLabels: ["Thiếu cost rate của tháng"], blocksG7: false, target: "staff_costs", ownerDisplayName: "BD-1", overdue: true, costAmount: null, hourlyCostRate: null });
+    expect(waiting.data[0]).toMatchObject({ userDisplayName: "Nhân sự B", projectName: "Dự án A", taskTitle: "Xây dựng – B", reasonLabels: ["Thiếu cost rate của tháng"], blocksG7: false, target: "staff_costs", ownerDisplayName: "BD-1", overdue: true, costAmount: null, hourlyCostRate: null });
     expect((await s.pnl.entries({ projectId: "p-a", userId: "u-bd" }, founder)).data[0]).toMatchObject({ roleGroup: "BD", taskTypeLayer1: "PRE_SALE", minutes: hours(3), costAmount: 540_000 });
     await expect(s.pnl.entries({ status: "approved" }, founder)).rejects.toThrow("status");
+  });
+
+  it("bộ lọc nhận nhiều giá trị nối bằng dấu phẩy và khoảng ngày cụ thể (fromDay / toDay)", async () => {
+    const s = scenario();
+    const minutes = async (query: Record<string, unknown>) => (await s.pnl.entries(query, founder)).meta.totalMinutes;
+    const all = await minutes({ projectId: "p-a" });
+    expect(await minutes({ projectId: "p-a,p-a" })).toBe(all);
+    expect(await minutes({ status: "included,pending,excluded", projectId: "p-a" })).toBe(all);
+    expect(await minutes({ projectId: "p-a", userId: "u-bd,u-b" })).toBe(hours(3) + hours(105.5));
+    expect(await minutes({ periodKey: "2026-09", group: "cost_rate,classification" })).toBe(hours(105.5));
+    expect(await minutes({ periodKey: "2026-09", reason: "missing_staff_cost,missing_layer1" })).toBe(hours(105.5));
+    expect(await minutes({ periodKey: "2026-09", status: "pending,excluded" })).toBe(hours(105.5));
+    // Days are inclusive; the month parameters still work on their own.
+    const firstDay = await s.pnl.entries({ fromDay: "2026-08-03", toDay: "2026-08-03", userId: "u-bd" }, founder);
+    expect(firstDay.data.map((row) => row.workDate)).toEqual(["2026-08-03"]);
+    expect(firstDay.meta.totalMinutes).toBe(hours(3));
+    expect(await minutes({ fromDay: "2026-08-04", toDay: "2026-08-31", userId: "u-bd" })).toBe(0);
+    expect(await minutes({ fromDay: "2026-08-01", toDay: "2026-09-30", projectId: "p-a" })).toBe(all);
+    expect(await minutes({ fromDay: "2026-09-01", projectId: "p-a" })).toBe(await minutes({ projectId: "p-a", periodKey: "2026-09" }));
+    expect(await minutes({ toDay: "2026-08-31", projectId: "p-a" })).toBe(await minutes({ projectId: "p-a", periodKey: "2026-08" }));
+    await expect(s.pnl.entries({ fromDay: "2026-8-3" }, founder)).rejects.toThrow("fromDay");
+    await expect(s.pnl.entries({ fromDay: "2026-08-10", toDay: "2026-08-01" }, founder)).rejects.toThrow("toDay");
+    await expect(s.pnl.entries({ reason: "missing_staff_cost,nope" }, founder)).rejects.toThrow("reason");
+    await expect(s.pnl.entries({ projectId: "p-a,p-zzz" }, founder)).rejects.toThrow("workspace");
   });
 });

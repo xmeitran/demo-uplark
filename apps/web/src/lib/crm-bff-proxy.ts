@@ -1,5 +1,6 @@
 import { isSameOriginAuthRequest } from "./auth-bff-security";
 import { isStagingBypassAuthEnabled, shouldFailClosedOnProtectedFallback } from "./crm-public-session-policy";
+import { API_UNAVAILABLE_MESSAGE, API_UNAVAILABLE_STATUSES } from "./api-error";
 
 export const CRM_SESSION_COOKIE_NAME = "lcrm_session";
 export const DEFAULT_CRM_API_BASE_URL = "http://localhost:4000";
@@ -51,18 +52,30 @@ export async function proxyCrmBffJson(options: CrmBffProxyOptions): Promise<Resp
   });
   const hasBody = options.body !== undefined;
 
-  const response = await fetcher(targetUrl, {
-    method,
-    cache: "no-store",
-    headers: {
-      ...(hasBody ? { "content-type": "application/json" } : {}),
-      ...(method === "POST" && options.path === "/projects" && options.request.headers.get("Idempotency-Key") ? { "Idempotency-Key": options.request.headers.get("Idempotency-Key")! } : {}),
-      ...(sessionToken ? { authorization: `Bearer ${sessionToken}` } : {})
-    },
-    body: hasBody ? JSON.stringify(options.body) : undefined
-  });
+  let response: Response;
+  try {
+    response = await fetcher(targetUrl, {
+      method,
+      cache: "no-store",
+      headers: {
+        ...(hasBody ? { "content-type": "application/json" } : {}),
+        ...(method === "POST" && options.path === "/projects" && options.request.headers.get("Idempotency-Key") ? { "Idempotency-Key": options.request.headers.get("Idempotency-Key")! } : {}),
+        ...(sessionToken ? { authorization: `Bearer ${sessionToken}` } : {})
+      },
+      body: hasBody ? JSON.stringify(options.body) : undefined
+    });
+  } catch {
+    // The API did not answer at all (asleep, restarting, deploying): say so instead of an unexplained 500.
+    return apiUnavailableResponse(503);
+  }
+  // A gateway in front of the API answered for it while it wakes up or restarts; its body is an HTML page, not a message.
+  if (API_UNAVAILABLE_STATUSES.has(response.status) && !(response.headers.get("content-type") ?? "").includes("application/json")) return apiUnavailableResponse(response.status);
 
   return proxyResponseBody(response, Boolean(sessionToken));
+}
+
+function apiUnavailableResponse(status: number) {
+  return Response.json({ message: API_UNAVAILABLE_MESSAGE, code: "API_UNAVAILABLE" }, { status });
 }
 
 export function buildCrmApiUrl(input: {

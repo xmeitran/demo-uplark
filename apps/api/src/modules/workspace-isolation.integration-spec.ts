@@ -240,6 +240,7 @@ describe.runIf(safeDatabase)("two-workspace isolation", () => {
     await expect(service.createProject({
       accountId: ids.accountA,
       name: "Rejected cross-workspace project",
+      projectType: "delivery",
       memberUserIds: [ids.userB],
       createStageTemplate: false
     }, principalA())).rejects.toBeInstanceOf(BadRequestException);

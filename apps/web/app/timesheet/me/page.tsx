@@ -6,7 +6,7 @@ import { PersonalTimesheet } from "@/components/timesheet/personal-timesheet";
 
 function PersonalTimesheetFallback() {
   return (
-    <div className="space-y-4" aria-busy="true" aria-label="Đang tải Giờ của tôi">
+    <div className="space-y-4" aria-busy="true" aria-label="Đang tải Timesheet của tôi">
       <div className="h-14 animate-pulse rounded-xl bg-muted" />
       <div className="h-24 animate-pulse rounded-xl bg-muted" />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -24,9 +24,9 @@ export default function PersonalTimesheetPage() {
       desktopSidebarTestId="timesheet-personal-desktop-sidebar"
       mobileHeaderTestId="timesheet-personal-mobile-shell"
       shellTestId="timesheet-personal-shell"
-      title="Giờ của tôi"
+      title="Timesheet của tôi"
     >
-      <main data-testid="timesheet-personal-main" className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-none p-4 sm:p-6">
+      <main data-testid="timesheet-personal-main" className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-none p-3 sm:p-4 xl:p-6">
         <Suspense fallback={<PersonalTimesheetFallback />}>
           <PersonalTimesheet />
         </Suspense>

@@ -16,6 +16,15 @@ describe("readApiError", () => {
   });
 });
 
+describe("gateway answers while the API restarts", () => {
+  it("explains a 502/503/504 without a message instead of the action's generic fallback", async () => {
+    for (const status of [502, 503, 504]) {
+      expect((await readApiError(new Response("<html>", { status }), "Could not create task")).message).toBe("Máy chủ đang khởi động lại, thử lại sau ít phút. Dữ liệu vừa nhập chưa được lưu.");
+    }
+    expect((await readApiError(json(503, { message: "Đang bảo trì" }))).message).toBe("Đang bảo trì");
+  });
+});
+
 describe("offline draft rule", () => {
   it("never treats an API rejection as a network failure", () => {
     expect(isNetworkFailure(new ApiResponseError("x", 400))).toBe(false);

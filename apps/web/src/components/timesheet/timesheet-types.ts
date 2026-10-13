@@ -164,8 +164,6 @@ export interface TimeLog {
   loggedWhileOnHold?: boolean;
   /** 9.2: part of a day above 8 hours dated before the effective date; kept as logged. */
   beforeEightHourRule?: boolean;
-  /** D-03: "code · name" of the contract line item the entry was written with; undefined = "Chưa có hạng mục". */
-  contractItem?: string;
 }
 
 /** Everything a Timesheet screen needs, in one bundle. */

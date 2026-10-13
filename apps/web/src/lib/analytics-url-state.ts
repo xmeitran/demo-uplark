@@ -8,7 +8,7 @@ import { ANALYTICS_BREAKDOWN_SORT_KEYS } from "@b2b-crm/contracts";
  */
 
 export type AnalyticsView = "overview" | "workforce" | "projects" | "resources";
-export type AnalyticsPreset = "7d" | "30d" | "90d" | "month" | "quarter" | "custom";
+export type AnalyticsPreset = "7d" | "30d" | "90d" | "month" | "last-month" | "quarter" | "year" | "custom";
 export type AnalyticsBillableFilter = "all" | "billable" | "non_billable";
 
 export interface AnalyticsUiState {
@@ -58,7 +58,7 @@ export const ANALYTICS_DEFAULT_STATE: AnalyticsUiState = {
 };
 
 const VIEWS: AnalyticsView[] = ["overview", "workforce", "projects", "resources"];
-const PRESETS: AnalyticsPreset[] = ["7d", "30d", "90d", "month", "quarter", "custom"];
+const PRESETS: AnalyticsPreset[] = ["7d", "30d", "90d", "month", "last-month", "quarter", "year", "custom"];
 const GRAINS: AnalyticsGrain[] = ["day", "week", "month"];
 const BREAKDOWN_BYS: AnalyticsBreakdownBy[] = ["user", "project", "department", "team"];
 const ID_PATTERN = /^[\w.:-]+$/;
@@ -191,6 +191,14 @@ export function resolvePresetRange(state: AnalyticsUiState, now = new Date()): {
       const start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
       return { from: dateKey(start), to: dateKey(tomorrow) };
     }
+    case "last-month": {
+      // The whole previous calendar month; `to` (exclusive) is the first day of this month.
+      const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+      return { from: dateKey(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1))), to: dateKey(end) };
+    }
+    case "year":
+      // 1 January to today: at most 366 days, the API's longest range.
+      return { from: dateKey(new Date(Date.UTC(today.getUTCFullYear(), 0, 1))), to: dateKey(tomorrow) };
     case "quarter": {
       const quarterMonth = Math.floor(today.getUTCMonth() / 3) * 3;
       const start = new Date(Date.UTC(today.getUTCFullYear(), quarterMonth, 1));

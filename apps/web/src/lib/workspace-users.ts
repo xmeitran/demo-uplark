@@ -1,4 +1,5 @@
 import type { AdminAccessMemberSummary, WorkspaceSystemRole } from "@b2b-crm/contracts";
+import { useEffect, useState } from "react";
 import { businessRoleFromMember, systemRoleFromCodes } from "./people-roles";
 
 const WORKSPACE_USERS_ENDPOINT = "/api/workspace/users";
@@ -68,4 +69,40 @@ function initialsFor(value: string) {
 function colorForId(id: string) {
   const hash = Array.from(id).reduce((acc, char) => acc + char.charCodeAt(0), 0);
   return USER_COLORS[hash % USER_COLORS.length];
+}
+
+export type AvatarLookup = (person: { id?: string; email?: string; name?: string }) => string | undefined;
+
+const personKey = (text?: string) => (text ?? "").trim().toLocaleLowerCase("vi");
+let avatarDirectory: Promise<Map<string, string>> | undefined;
+
+/** One directory read per page load, every status (a deactivated PIC still has a face); keyed by id, email and name. */
+function loadAvatarDirectory() {
+  avatarDirectory ??= fetch(WORKSPACE_USERS_ENDPOINT, { cache: "no-store", credentials: "same-origin" })
+    .then((response) => (response.ok ? (response.json() as Promise<{ data: WorkspaceDirectoryMember[] }>) : { data: [] }))
+    .then((payload) => {
+      const map = new Map<string, string>();
+      for (const user of payload.data ?? []) {
+        if (!user.avatarUrl) continue;
+        map.set(user.id, user.avatarUrl);
+        if (user.email) map.set(personKey(user.email), user.avatarUrl);
+        // A name shared by two people must not borrow either face.
+        const nameKey = `name:${personKey(user.displayName)}`;
+        map.set(nameKey, map.has(nameKey) ? "" : user.avatarUrl);
+      }
+      return map;
+    })
+    .catch(() => { avatarDirectory = undefined; return new Map<string, string>(); });
+  return avatarDirectory;
+}
+
+/** Avatar of a person a list only knows by id, email or name — so every person picker shows the same faces. */
+export function useWorkspaceAvatars(): AvatarLookup {
+  const [directory, setDirectory] = useState<Map<string, string>>();
+  useEffect(() => {
+    let alive = true;
+    void loadAvatarDirectory().then((map) => { if (alive) setDirectory(map); });
+    return () => { alive = false; };
+  }, []);
+  return ({ id, email, name }) => (id && directory?.get(id)) || (email && directory?.get(personKey(email))) || (name && directory?.get(`name:${personKey(name)}`)) || undefined;
 }

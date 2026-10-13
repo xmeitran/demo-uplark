@@ -3,19 +3,23 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
-import type { PnlCompanyCostDetailResponse, PnlCompanyCostLine, PnlDashboardResponse } from "@b2b-crm/contracts";
+import { FolderKanban, Percent, Receipt, TrendingUp, Wallet } from "lucide-react";
+import type { PnlCompanyCostDetailResponse, PnlCompanyCostLine, PnlDashboardResponse, PnlMeta } from "@b2b-crm/contracts";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { CrmSelect } from "@/components/crm-workspace/crm-select";
-import { FilterBar } from "@/components/filters/filter-controls";
+import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilter, SearchFilter } from "@/components/filters";
+import { HeaderLinkButton, PageHeader, pageMainClassName } from "@/components/page-header";
+import { toVietnamDateKey } from "@/lib/vietnam-time";
 import { DashboardProjectTable } from "./pnl-dashboard-table";
-import { formatExactVnd, formatHoursValue, formatMillions, formatMonth, formatPercent, formatUpdatedAt } from "./pnl-format";
+import { formatExactVnd, formatHoursValue, formatMillions, formatMonth, formatPercent, formatUpdatedAt, monthsBetween } from "./pnl-format";
+import { COST_GROUP_ONLY, STAFF_COST_PHRASE, plainPending, resultExplanation } from "./pnl-plain";
 import {
-  PNL_PERIOD_UNITS, PNL_RULES, dashboardApiQuery, dashboardSearch, parseDashboardState, patchDashboardState, pendingHoursHref, periodIndexOptions,
-  type PnlDashboardState
+  PNL_RULES, dashboardApiQuery, dashboardFilterCount, dashboardPeriodPresets, dashboardSearch, monthsToDays, parseDashboardState, patchDashboardState, pendingHoursHref,
+  resetDashboardFilters, snapToMonths, type PnlDashboardState
 } from "./pnl-query";
 import {
-  EmptyRow, MiniTile, MoneyHiddenNote, PnlLoadError, PnlPageHeader, PnlSkeleton, RESULT_TEXT_CLASS, Segmented, Tile, WarningStrip,
-  cardClass, mutedNoteClass, sectionTitleClass, tdClass, tdNumberClass, thClass, thNumberClass, usePnlLoad, warningActionClass
+  EmptyRow, MiniTile, MoneyHiddenNote, PnlLoadError, PnlSkeleton, RESULT_TEXT_CLASS, Segmented, Tile,
+  cardClass, mutedNoteClass, sectionTitleClass, tdClass, tdNumberClass, thClass, thNumberClass, useDebouncedText, usePnlLoad
 } from "./pnl-ui";
 
 type Dashboard = PnlDashboardResponse["data"];
@@ -26,90 +30,112 @@ const COST_VIEWS = [
   { value: "role", label: "Vai trò" }
 ] as const;
 
+const RULE_SENTENCE: Record<PnlDashboardState["rule"], string> = {
+  started_and_accepted: "bắt đầu trong kỳ và đến nay đã nghiệm thu",
+  accepted_in_period: "nghiệm thu trong kỳ"
+};
+
 /** Khối 1 — bộ lọc và dòng trạng thái ngay dưới. */
-function DashboardFilters({ filter, state, generatedAt, onChange }: Readonly<{
+function DashboardFilters({ filter, state, generatedAt, activeCount, onChange, onReset }: Readonly<{
   filter: Dashboard["filter"];
   state: PnlDashboardState;
   generatedAt: string;
+  activeCount: number;
   onChange: Patch;
+  onReset: () => void;
 }>) {
-  const years = [...new Set([...filter.options.years, state.year])].sort((a, b) => b - a);
-  const indexOptions = periodIndexOptions(state.unit);
+  const presets = useMemo(() => dashboardPeriodPresets(toVietnamDateKey(new Date())), []);
+  // Picked days are rounded to whole months before they reach the URL, so the control shows what is computed.
+  const pickPeriod = (days: { from: string; to: string }) => {
+    const months = snapToMonths(days);
+    if (months) onChange(months);
+  };
+  // Typing does not re-query on every key: the search goes to the URL (and the API) once the viewer pauses.
+  const [search, setSearch] = useDebouncedText(state.q, (q) => onChange({ q }));
+
   return (
     <section aria-label="Bộ lọc" className="space-y-2">
-      <FilterBar>
-        <div className="w-[8.5rem] shrink-0">
-          <CrmSelect
-            ariaLabel="Năm"
-            value={String(state.year)}
-            onChange={(year) => onChange({ year: Number(year) })}
-            options={years.map((year) => ({ value: String(year), label: `Năm ${year}` }))}
-          />
-        </div>
-        <Segmented ariaLabel="Loại kỳ" value={state.unit} options={PNL_PERIOD_UNITS} onChange={(unit) => onChange({ unit })} />
-        {indexOptions.length ? (
-          <div className="w-[8rem] shrink-0">
-            <CrmSelect ariaLabel="Kỳ trong năm" value={String(state.index)} onChange={(index) => onChange({ index: Number(index) })} options={indexOptions} />
-          </div>
-        ) : null}
-        <div className="min-w-[15rem] flex-1">
-          <CrmSelect ariaLabel="Quy tắc chọn dự án" value={state.rule} onChange={(rule) => onChange({ rule: rule as PnlDashboardState["rule"] })} options={PNL_RULES} />
-        </div>
-        <div className="w-[7.5rem] shrink-0">
-          <CrmSelect
-            ariaLabel="Loại dự án"
-            value={state.projectType}
-            onChange={(projectType) => onChange({ projectType })}
-            options={[{ value: "", label: "Loại DA" }, ...filter.options.projectTypes]}
-          />
-        </div>
-        <div className="w-[7.5rem] shrink-0">
-          <CrmSelect
-            ariaLabel="Khách hàng"
-            searchable
-            value={state.accountId}
-            onChange={(accountId) => onChange({ accountId })}
-            options={[{ value: "", label: "KH" }, ...filter.options.accounts.map((account) => ({ value: account.id, label: account.name }))]}
-          />
-        </div>
-        <div className="w-[7.5rem] shrink-0">
-          <CrmSelect
-            ariaLabel="PIC"
-            searchable
-            value={state.picUserId}
-            onChange={(picUserId) => onChange({ picUserId })}
-            options={[{ value: "", label: "PIC" }, ...filter.options.pics.map((pic) => ({ value: pic.id, label: pic.name }))]}
-          />
-        </div>
+      <FilterBar onReset={activeCount ? onReset : undefined} activeCount={activeCount}>
+        <FilterField label="Tìm kiếm" className="min-w-[200px] flex-1">
+          <SearchFilter value={search} onChange={setSearch} placeholder="Tên dự án, mã dự án hoặc khách hàng..." ariaLabel="Tìm dự án hoặc khách hàng" className="" />
+        </FilterField>
+        <FilterField label="Kỳ" className="shrink-0">
+          <DateRangeFilter ariaLabel="Kỳ" value={monthsToDays(state)} onChange={pickPeriod} presets={presets} clearable={false} />
+        </FilterField>
+        <PersonFilter label="PIC" people={filter.options.pics} values={state.picUserId} onChange={(picUserId) => onChange({ picUserId })} allLabel="Tất cả PIC" searchPlaceholder="Tìm theo tên PIC..." />
+        <FilterField label="Dự án được tính" className="min-w-[17rem] flex-1">
+          <CrmSelect ariaLabel="Dự án được tính" value={state.rule} onChange={(rule) => onChange({ rule: rule as PnlDashboardState["rule"] })} options={PNL_RULES} />
+        </FilterField>
+        <MultiSelectFilter label="Loại dự án" options={filter.options.projectTypes} values={state.projectType} onChange={(projectType) => onChange({ projectType })} allLabel="Tất cả loại dự án" />
+        <MultiSelectFilter label="Khách hàng" options={filter.options.accounts.map((account) => ({ value: account.id, label: account.name }))} values={state.accountId} onChange={(accountId) => onChange({ accountId })} allLabel="Tất cả khách hàng" searchPlaceholder="Tìm khách hàng..." />
       </FilterBar>
       <p className={mutedNoteClass}>
-        Đang tính {filter.countedProjectCount} dự án · đã loại {filter.excludedTestProjectCount} dự án thử nghiệm · số liệu cập nhật {formatUpdatedAt(generatedAt)}
+        Đang xem {filter.countedProjectCount} dự án {RULE_SENTENCE[filter.rule]} (từ {formatMonth(filter.fromPeriodKey)} đến {formatMonth(filter.toPeriodKey)}) · không tính {filter.excludedTestProjectCount} dự án thử nghiệm · số liệu cập nhật lúc {formatUpdatedAt(generatedAt)}
       </p>
-      {state.unit === "quarter" || state.unit === "month" ? <p className={mutedNoteClass}>Gợi ý: {filter.hint}</p> : null}
+      <p className={mutedNoteClass}>
+        P&amp;L tính theo tháng nên khoảng ngày được làm tròn thành các tháng trọn vẹn. Kỳ chỉ dùng để chọn dự án; số của mỗi dự án luôn là số của cả vòng đời dự án.
+        {monthsBetween(state.fromMonth, state.toMonth).length <= 3 ? ` Gợi ý: ${filter.hint}` : ""}
+      </p>
     </section>
   );
 }
 
-/** Khối 2 — năm ô tổng. */
-function DashboardTotals({ totals }: Readonly<{ totals: Dashboard["totals"] }>) {
+/** Khối 2 — năm ô tổng. Mỗi ô có một dòng nói con số là gì; ô chưa có số ghi lý do. */
+function DashboardTotals({ totals, moneyVisible }: Readonly<{ totals: Dashboard["totals"]; moneyVisible: boolean }>) {
+  const whyEmpty = !moneyVisible ? COST_GROUP_ONLY
+    : totals.projectCount === 0 ? "Chưa có dự án đã nghiệm thu nào khớp bộ lọc"
+      : totals.notComputableProjectCount >= totals.projectCount ? "Các dự án trong kỳ chưa tính được lãi lỗ (xem cột Kết quả)"
+        : "Chưa có số liệu";
+  const waiting = totals.notComputableProjectCount;
   return (
-    <section aria-label="Năm ô tổng" className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
-      <Tile label="Dự án" value={totals.projectCount} note="đã nghiệm thu" />
-      <Tile label="Doanh thu ghi nhận" value={formatMillions(totals.revenueAmount, "overview")} title={formatExactVnd(totals.revenueAmount)} note="ghi nhận tại G7" />
+    <section aria-label="Năm ô tổng" className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+      <Tile icon={FolderKanban} color="#0891b2" label="Dự án" hint="Số dự án đã nghiệm thu khớp bộ lọc" value={totals.projectCount} note={waiting ? `${waiting} dự án chưa tính được, chưa cộng vào tổng` : totals.projectCount ? "đều đã cộng vào tổng" : "chưa có dự án nào"} noteClass={waiting ? "font-medium text-amber-700" : undefined} />
+      <Tile icon={Wallet} color="#2563eb" label="Doanh thu ghi nhận" hint="Ghi nhận khi dự án qua mốc nghiệm thu G7" value={formatMillions(totals.revenueAmount, "overview")} title={formatExactVnd(totals.revenueAmount)} note="triệu đồng" whyEmpty={whyEmpty} />
       <Tile
+        icon={Receipt}
+        color="#7c3aed"
         label="Tổng chi phí"
+        hint="Chi phí nhân sự + chi phí khác của các dự án"
         value={formatMillions(totals.totalCostAmount, "overview")}
         title={formatExactVnd(totals.totalCostAmount)}
-        note={`NS ${formatMillions(totals.laborCostAmount, "overview")} · khác ${formatMillions(totals.otherCostAmount, "overview")}`}
+        note={`Nhân sự ${formatMillions(totals.laborCostAmount, "overview")} · khác ${formatMillions(totals.otherCostAmount, "overview")}`}
+        whyEmpty={whyEmpty}
       />
       <Tile
+        icon={TrendingUp}
+        color="#16a34a"
         label="EBIT"
+        hint="Lãi lỗ = doanh thu ghi nhận − tổng chi phí"
         value={formatMillions(totals.ebitAmount, "overview")}
         title={formatExactVnd(totals.ebitAmount)}
-        note={<span title={totals.result.reasons.map((reason) => reason.label).join(" · ") || undefined}>{totals.result.labelText}</span>}
+        note={<span title={resultExplanation(totals.result)} className="cursor-help">{totals.result.labelText}</span>}
         noteClass={`font-medium ${RESULT_TEXT_CLASS[totals.result.label]}`}
+        whyEmpty={whyEmpty}
       />
-      <Tile label="Biên EBIT" value={formatPercent(totals.marginPercent)} note="tổng EBIT ÷ tổng DT" />
+      <Tile icon={Percent} color="#d97706" label="Biên EBIT" hint="Tỷ lệ lãi = tổng EBIT ÷ tổng doanh thu" value={formatPercent(totals.marginPercent)} note="trên toàn bộ dự án trong ô “Dự án”" whyEmpty={whyEmpty} />
+    </section>
+  );
+}
+
+/** Khối 3 — vì sao số còn tạm tính: mỗi dòng một câu, một số đếm và một nơi sửa. Đủ dữ liệu thì gọn còn một dòng. */
+function DashboardPending({ data, meta }: Readonly<{ data: Dashboard; meta: PnlMeta }>) {
+  if (!data.pending.length) {
+    if (!data.totals.projectCount || data.totals.result.label !== "official") return null;
+    return <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-800">Mọi số liệu trong kỳ là Chính thức: đủ dữ liệu và các tháng đã khóa sổ.</p>;
+  }
+  const mayFixCosts = meta.canEdit || meta.canApprove;
+  const items = data.pending.map((item) => plainPending(item, { from: data.filter.fromPeriodKey, to: data.filter.toPeriodKey }));
+  return (
+    <section aria-labelledby="pnl-why-title" className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900">
+      <h2 id="pnl-why-title" className="!text-sm font-bold">Vì sao số liệu còn tạm tính?</h2>
+      <ul className="mt-2 list-disc space-y-1.5 pl-5 text-sm">
+        {items.map((item) => (
+          <li key={item.kind}>
+            {item.text}{" "}
+            {item.open || mayFixCosts ? <Link href={item.href} className="whitespace-nowrap font-semibold !text-amber-900 underline underline-offset-2 hover:!text-amber-700">{item.actionLabel} ›</Link> : null}
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
@@ -125,7 +151,10 @@ function DashboardCostGroups({ groups, state, onChange }: Readonly<{
   return (
     <section aria-labelledby="pnl-cost-groups-title" className={`${cardClass} space-y-3 p-4`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 id="pnl-cost-groups-title" className={sectionTitleClass}>Chi phí theo nhóm, sinh từ cây khoản mục</h2>
+        <div className="min-w-0">
+          <h2 id="pnl-cost-groups-title" className={sectionTitleClass}>Chi phí theo nhóm</h2>
+          <p className={`!mt-0.5 ${mutedNoteClass}`}>Tổng chi phí ở trên chia theo nhóm (triệu đồng · tỷ trọng). Bấm một nhóm để bảng dự án chỉ hiện dự án có chi phí nhóm đó.</p>
+        </div>
         <Segmented ariaLabel="Cách xem nhóm chi phí" value={state.view} options={COST_VIEWS} onChange={(view) => onChange({ view })} />
       </div>
       {list.length === 0 ? <p className={mutedNoteClass}>Chưa có nhóm chi phí nào trong kỳ.</p> : null}
@@ -187,8 +216,8 @@ function CompanyCostDetail({ line, from, to }: Readonly<{ line: PnlCompanyCostLi
   );
 }
 
-/** Tên ô của khối 6 như wireframe vẽ; tên đầy đủ của dòng (PL-12, `line.label`) nằm ở danh sách mở ra bên dưới. */
-const COMPANY_TILE_LABELS: Record<PnlCompanyCostLine["key"], string> = { pre_sale: "Pre-sale (deal thua)", after_close: "Sau nghiệm thu", internal: "Nội bộ", unallocated: "Chưa phân bổ" };
+/** Tên ô của khối 6; tên đầy đủ của dòng (PL-12, `line.label`) nằm ở danh sách mở ra bên dưới. */
+const COMPANY_TILE_LABELS: Record<PnlCompanyCostLine["key"], string> = { pre_sale: "Pre-sale của deal thua", after_close: "Sau nghiệm thu", internal: "Việc nội bộ", unallocated: "Chưa phân bổ" };
 
 /** Khối 6 — chi phí ngoài P&L dự án (dòng cấp công ty). Không cộng vào năm ô tổng. */
 function DashboardCompanyCosts({ companyCosts }: Readonly<{ companyCosts: Dashboard["companyCosts"] }>) {
@@ -197,7 +226,10 @@ function DashboardCompanyCosts({ companyCosts }: Readonly<{ companyCosts: Dashbo
   const months = companyCosts.periodKeys;
   return (
     <section aria-labelledby="pnl-company-costs-title" className={`${cardClass} space-y-3 p-4`}>
-      <h2 id="pnl-company-costs-title" className={sectionTitleClass}>Chi phí ngoài P&amp;L dự án · theo tháng phát sinh trong kỳ</h2>
+      <div>
+        <h2 id="pnl-company-costs-title" className={sectionTitleClass}>Chi phí nhân sự không thuộc P&amp;L dự án</h2>
+        <p className={`!mt-0.5 ${mutedNoteClass}`}>Chi phí nhân sự của các tháng trong kỳ không vào dự án nào: pre-sale của deal thua, việc sau nghiệm thu, việc nội bộ và phần chưa phân bổ. Không cộng vào các ô tổng phía trên. Bấm một ô để xem theo người và dự án.</p>
+      </div>
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         {companyCosts.lines.map((line) => (
           <MiniTile
@@ -205,7 +237,7 @@ function DashboardCompanyCosts({ companyCosts }: Readonly<{ companyCosts: Dashbo
             label={COMPANY_TILE_LABELS[line.key]}
             title={[line.label, formatExactVnd(line.amount)].filter(Boolean).join(" · ")}
             value={formatMillions(line.amount, "overview")}
-            note={line.uncostedMinutes > 0 ? `còn ${formatHoursValue(line.uncostedMinutes)} giờ chưa có cost rate` : undefined}
+            note={line.uncostedMinutes > 0 ? `còn ${formatHoursValue(line.uncostedMinutes)} giờ chưa có ${STAFF_COST_PHRASE}` : undefined}
             expanded={line.key === openKey}
             onClick={() => setOpenKey(line.key === openKey ? null : line.key)}
           />
@@ -213,7 +245,7 @@ function DashboardCompanyCosts({ companyCosts }: Readonly<{ companyCosts: Dashbo
       </div>
       {companyCosts.overAllocatedAmount ? (
         <p role="note" title={formatExactVnd(companyCosts.overAllocatedAmount)} className="text-xs font-medium text-amber-700">
-          Giờ ghi vượt giờ chuẩn tháng: chi phí đã tính vào dự án và ba dòng trên nhiều hơn tổng chi phí nhân sự {formatMillions(companyCosts.overAllocatedAmount, "overview")} · “Chưa phân bổ” dừng ở 0
+          Có người ghi giờ nhiều hơn giờ chuẩn của tháng: chi phí đã tính vào dự án và ba dòng trên lớn hơn tổng chi phí nhân sự {formatMillions(companyCosts.overAllocatedAmount, "overview")} triệu đồng, nên “Chưa phân bổ” dừng ở 0.
         </p>
       ) : null}
       {openLine && months.length ? <CompanyCostDetail line={openLine} from={months[0]} to={months[months.length - 1]} /> : null}
@@ -221,7 +253,7 @@ function DashboardCompanyCosts({ companyCosts }: Readonly<{ companyCosts: Dashbo
   );
 }
 
-/** Màn Tổng quan P&L (mục 4): chỉ báo cáo tiền của dự án đã nghiệm thu. Mọi con số là số API trả về. */
+/** Màn P&L dự án — tổng quan (mục 4): chỉ báo cáo tiền của dự án đã nghiệm thu. Mọi con số là số API trả về. */
 export function PnlDashboard() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -229,36 +261,43 @@ export function PnlDashboard() {
   const state = useMemo(() => parseDashboardState(new URLSearchParams(searchParams.toString()), currentYear), [searchParams, currentYear]);
   const { data: payload, error, loading, reload } = usePnlLoad<PnlDashboardResponse>(`/api/pnl/dashboard?${dashboardApiQuery(state)}`);
 
-  const change: Patch = (patch) => {
-    const query = dashboardSearch(patchDashboardState(state, patch), currentYear);
+  const go = (next: PnlDashboardState) => {
+    const query = dashboardSearch(next, currentYear);
     router.replace(query ? `/pnl?${query}` : "/pnl", { scroll: false });
   };
+  const change: Patch = (patch) => go(patchDashboardState(state, patch));
+  const reset = () => go(resetDashboardFilters(state, currentYear));
+  const activeCount = dashboardFilterCount(state, currentYear);
+  const ownQuery = dashboardSearch(state, currentYear);
 
   const data = payload?.data;
+  const meta = payload?.meta;
+  const mayFixCosts = Boolean(meta && (meta.canEdit || meta.canApprove));
   return (
-    <AppShell activeRoute="/pnl" title="P&L">
-      <main className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3 sm:p-4 xl:p-6">
-        <PnlPageHeader unitNote="Đơn vị: triệu đồng" />
+    <AppShell activeRoute="/pnl" title="P&L dự án">
+      <main className={pageMainClassName}>
+        <PageHeader
+          title="P&L dự án"
+          subtitle="Lãi lỗ của từng dự án đã nghiệm thu: doanh thu ghi nhận, chi phí và EBIT."
+          meta="Đơn vị: triệu đồng"
+          actions={
+            <>
+              <HeaderLinkButton href={data ? pendingHoursHref({ from: data.filter.fromPeriodKey, to: data.filter.toPeriodKey }) : "/pnl/hours"}>Giờ chờ xử lý</HeaderLinkButton>
+              {mayFixCosts ? <HeaderLinkButton href="/users/costs">Chi phí nhân sự</HeaderLinkButton> : null}
+              {mayFixCosts ? <HeaderLinkButton href="/pnl/costs">Thiết lập P&amp;L</HeaderLinkButton> : null}
+            </>
+          }
+        />
         {error ? <PnlLoadError error={error} onRetry={reload} /> : null}
         {!data && !error ? <PnlSkeleton /> : null}
-        {data && payload ? (
+        {data && meta ? (
           <div aria-busy={loading} className={`space-y-4 ${loading ? "opacity-70" : ""}`}>
-            <DashboardFilters filter={data.filter} state={state} generatedAt={payload.meta.generatedAt} onChange={change} />
-            {payload.meta.moneyVisible ? null : <MoneyHiddenNote />}
-            <DashboardTotals totals={data.totals} />
-            {data.pending.length ? (
-              <WarningStrip
-                action={
-                  <Link href={pendingHoursHref({ from: data.filter.fromPeriodKey, to: data.filter.toPeriodKey })} className={warningActionClass}>
-                    Xem danh sách ›
-                  </Link>
-                }
-              >
-                Tạm tính vì: {data.pending.map((item) => item.label).join(" · ")}
-              </WarningStrip>
-            ) : null}
+            <DashboardFilters filter={data.filter} state={state} generatedAt={meta.generatedAt} activeCount={activeCount} onChange={change} onReset={reset} />
+            {meta.moneyVisible ? null : <MoneyHiddenNote />}
+            <DashboardTotals totals={data.totals} moneyVisible={meta.moneyVisible} />
+            <DashboardPending data={data} meta={meta} />
             <DashboardCostGroups groups={data.costGroups} state={state} onChange={change} />
-            <DashboardProjectTable data={data} state={state} onChange={change} />
+            <DashboardProjectTable data={data} state={state} moneyVisible={meta.moneyVisible} returnTo={ownQuery ? `/pnl?${ownQuery}` : "/pnl"} onChange={change} onReset={activeCount ? reset : undefined} />
             <DashboardCompanyCosts companyCosts={data.companyCosts} />
           </div>
         ) : null}

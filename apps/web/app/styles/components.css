@@ -13206,13 +13206,19 @@ s-section {
 .crm-confirm-dialog {
   width: min(480px, 100%);
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
-  gap: var(--space-3);
-  padding: var(--space-4);
+  gap: 0;
+  padding: var(--space-5);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: #ffffff;
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.22);
+}
+
+.crm-confirm-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
 }
 
 .crm-confirm-icon {
@@ -13240,14 +13246,18 @@ s-section {
 
 .crm-confirm-body {
   display: grid;
-  gap: 6px;
+  gap: var(--space-3);
+  min-width: 0;
+  padding-top: var(--space-4);
 }
 
-.crm-confirm-body h3 {
+.crm-confirm-header h3 {
+  min-width: 0;
+  align-self: center;
   margin: 0;
   color: var(--text);
-  font-size: 16px;
-  line-height: 1.25;
+  font-size: 17px;
+  line-height: 1.3;
   font-weight: 800;
 }
 
@@ -13259,15 +13269,77 @@ s-section {
 }
 
 .crm-confirm-actions {
-  grid-column: 1 / -1;
   display: flex;
   justify-content: flex-end;
   gap: var(--space-2);
-  padding-top: var(--space-2);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-subtle, var(--border));
 }
 
 .crm-confirm-actions .task-button {
   min-height: 44px;
+}
+
+.framework-conversion-dialog {
+  width: min(580px, 100%);
+  max-height: min(720px, calc(100vh - 32px));
+  overflow: auto;
+}
+
+.framework-conversion-dialog .crm-confirm-body {
+  max-height: none;
+}
+
+.framework-conversion-summary {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent-soft) 58%, #ffffff);
+}
+
+.framework-conversion-summary-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.framework-conversion-summary-value {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.framework-conversion-field {
+  display: grid;
+  gap: 7px;
+}
+
+.framework-conversion-label {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.framework-conversion-help {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.framework-conversion-note {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--warning-soft);
+  color: color-mix(in srgb, var(--warning) 86%, #111827);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .task-button.danger {

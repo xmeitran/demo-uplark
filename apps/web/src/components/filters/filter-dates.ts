@@ -41,6 +41,26 @@ export function datePresets(ids: DatePresetId[], today = toVietnamDateKey(new Da
   return ids.map((id) => ({ id, label: PRESET_LABELS[id], ...ranges[id] }));
 }
 
+/** `day` moved by `delta` calendar days. */
+function shiftDay(day: string, delta: number): string {
+  const date = new Date(`${day}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + delta);
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * The preset list every tab offers unless it passes its own: rolling days ending today, then the
+ * whole calendar periods of `datePresets`, then all time.
+ */
+export function standardDatePresets(today = toVietnamDateKey(new Date())): DateRangePreset[] {
+  return [
+    { id: "today", label: "Hôm nay", from: today, to: today },
+    { id: "last-7-days", label: "7 ngày qua", from: shiftDay(today, -6), to: today },
+    { id: "last-30-days", label: "30 ngày qua", from: shiftDay(today, -29), to: today },
+    ...datePresets(["this-month", "last-month", "this-quarter", "this-year", "all"], today)
+  ];
+}
+
 /** One whole-month preset per YYYY-MM, labelled "Tháng mm/yyyy". */
 export function monthPresets(months: string[]): DateRangePreset[] {
   return months.map((month) => ({ id: month, label: periodLabel(month), ...wholeMonth(month) }));

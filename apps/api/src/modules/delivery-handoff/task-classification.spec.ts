@@ -37,27 +37,18 @@ describe("deriveTaskTypeLayer2 (table 4.2, D-04)", () => {
     ["task without a project", { projectType: null, afterPnlClose: false }],
     ["customer project stage with no known position against the gate", { projectType: "delivery", afterPnlClose: null }],
     ["customer project stage position not sent", { projectType: "delivery", afterPnlClose: undefined }],
-    // Rows 4 and 5 (internal with mandays vs. internal free of charge) differ only by the line item's type.
-    ["internal project whose line item has no type yet", { projectType: "internal", afterPnlClose: false, contractType: null }],
-    ["internal project without a line item, after the gate", { projectType: "internal", afterPnlClose: true }],
-    ["billable internal project, stage position unknown", { projectType: "internal", afterPnlClose: null, contractType: "FIXED_PRICE" }]
   ] as const)("Chờ phân loại: %s", (_row, context) => {
     expect(deriveTaskTypeLayer2(context)).toBeNull();
   });
 
-  // Every row of table 4.2 with the contract line item in play.
+  // Table 4.2 v2 (chốt 13/10): Loại dự án decides, no contract line item in play.
   it.each([
-    ["row 1: DX Internal Worklog, whatever the item", { projectType: "internal_worklog", afterPnlClose: false, contractType: "FIXED_PRICE" }, "INTERNAL_PROJECT"],
-    ["row 2: customer project, Trọn gói item, before the gate", { projectType: "delivery", afterPnlClose: false, contractType: "FIXED_PRICE" }, "CUSTOMER_PROJECT"],
-    ["row 2: customer project, Theo giờ item, before the gate", { projectType: "delivery", afterPnlClose: false, contractType: "TIME_AND_MATERIAL" }, "CUSTOMER_PROJECT"],
-    ["row 2: customer project, item type not set yet (both billable types agree)", { projectType: "delivery", afterPnlClose: false, contractType: null }, "CUSTOMER_PROJECT"],
-    ["row 3: customer project, Milestone 4 onward, Trọn gói item", { projectType: "delivery", afterPnlClose: true, contractType: "FIXED_PRICE" }, "TICKET_MAINTENANCE"],
-    ["row 3: decided by stage position, not by item type (no Retainer)", { projectType: "delivery", afterPnlClose: true, contractType: "TIME_AND_MATERIAL" }, "TICKET_MAINTENANCE"],
-    ["row 4: internal UpBase project with mandays (Trọn gói)", { projectType: "internal", afterPnlClose: false, contractType: "FIXED_PRICE" }, "CUSTOMER_PROJECT"],
-    ["row 4: internal UpBase project with mandays (Theo giờ)", { projectType: "internal", afterPnlClose: false, contractType: "TIME_AND_MATERIAL" }, "CUSTOMER_PROJECT"],
-    ["row 5: internal project free of charge (Nội bộ item)", { projectType: "internal", afterPnlClose: false, contractType: "INTERNAL" }, "INTERNAL_PROJECT"],
-    ["row 5: a Nội bộ item wins over the stage position", { projectType: "internal", afterPnlClose: true, contractType: "INTERNAL" }, "INTERNAL_PROJECT"],
-    ["row 5: a Nội bộ item inside a customer project", { projectType: "delivery", afterPnlClose: false, contractType: "INTERNAL" }, "INTERNAL_PROJECT"]
+    ["row 4: internal UpBase project with mandays is created as Loại Khách hàng", { projectType: "delivery", afterPnlClose: false }, "CUSTOMER_PROJECT"],
+    ["row 5: Loại Nội bộ (không tính phí), before the gate", { projectType: "internal", afterPnlClose: false }, "INTERNAL_PROJECT"],
+    ["row 5: Loại Nội bộ wins over the stage position", { projectType: "internal", afterPnlClose: true }, "INTERNAL_PROJECT"],
+    ["row 5: Loại Nội bộ, stage position unknown", { projectType: "internal", afterPnlClose: null }, "INTERNAL_PROJECT"],
+    ["row 5: Loại Đào tạo", { projectType: "training", afterPnlClose: false }, "INTERNAL_PROJECT"],
+    ["legacy value of a customer project (an opportunity stage)", { projectType: "Won", afterPnlClose: true }, "TICKET_MAINTENANCE"]
   ] as const)("%s", (_row, context, expected) => {
     expect(deriveTaskTypeLayer2(context)).toBe(expected);
   });

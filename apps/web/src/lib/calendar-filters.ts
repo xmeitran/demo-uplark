@@ -1,8 +1,13 @@
+import { matchesAny } from "@/components/filters/filter-values";
+
 export type CalendarFilterEvent = {
   projectId?: string;
   projectName?: string;
   userId: string;
   userDisplayName?: string;
+  /** "planned" (kế hoạch) or "actual" (giờ thực tế). */
+  kind?: string;
+  status?: string;
 };
 
 export type CalendarFilterUser = {
@@ -26,6 +31,9 @@ export type CalendarFilterOption = {
 export type CalendarFilters = {
   projectIds: string[];
   memberIds: string[];
+  kinds?: string[];
+  /** Plan statuses; logged hours carry no status, so any status selection leaves them out. */
+  statuses?: string[];
 };
 
 const vietnameseLabelCollator = new Intl.Collator("vi-VN", {
@@ -78,16 +86,21 @@ export function filterCalendarEvents<T extends CalendarFilterEvent>(
   events: T[],
   filters: CalendarFilters
 ): T[] {
-  if (filters.projectIds.length === 0 && filters.memberIds.length === 0) return events;
+  const kinds = filters.kinds ?? [];
+  const statuses = filters.statuses ?? [];
+  if (filters.projectIds.length + filters.memberIds.length + kinds.length + statuses.length === 0) return events;
 
-  const projectIds = new Set(filters.projectIds);
-  const memberIds = new Set(filters.memberIds);
+  return events.filter((event) =>
+    matchesAny(filters.projectIds, event.projectId)
+    && matchesAny(filters.memberIds, event.userId)
+    && matchesAny(kinds, event.kind)
+    && matchesAny(statuses, event.kind === "actual" ? null : event.status));
+}
 
-  return events.filter((event) => {
-    const matchesProject = projectIds.size === 0 || (Boolean(event.projectId) && projectIds.has(event.projectId!));
-    const matchesMember = memberIds.size === 0 || memberIds.has(event.userId);
-    return matchesProject && matchesMember;
-  });
+/** Statuses of the plans in view, in first-seen order, for the "Trạng thái" filter. */
+export function buildCalendarStatusOptions(events: CalendarFilterEvent[], labelFor: (status: string) => string): CalendarFilterOption[] {
+  const statuses = new Set(events.filter((event) => event.kind !== "actual" && event.status).map((event) => event.status!));
+  return [...statuses].map((status) => ({ value: status, label: labelFor(status) }));
 }
 
 export function pruneCalendarFilterIds(

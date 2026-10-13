@@ -67,7 +67,7 @@ import {
   DEFAULT_MILESTONE_REVIEWER_MODE,
   normalizeMilestoneReviewerMode
 } from "./milestone-reviewer";
-import { isAdminAccount } from "@b2b-crm/contracts";
+import { INTERNAL_WORKLOG_PROJECT_TYPE, ISSUE_LOG_TYPES, PROJECT_TYPE_LABELS, isAdminAccount } from "@b2b-crm/contracts";
 import { canSeeProject, visibleProjectWhere, withoutProjectFinancials } from "./project-visibility";
 import { buildRuleBasedProjectPlan } from "./project-plan-rules";
 import { canCloseProject, canReopenProject, isKnownProjectStatus, normalizeProjectStatus, projectStatusFilterValues, validateProjectStatusChange, PROJECT_STATUS_ALIASES, PROJECT_STATUS_CATALOGUE } from "./project-status";
@@ -79,17 +79,16 @@ import { closeProjectWarnings, isWarningSuppressed, MANUAL_CLOSE_ACTION, mapProj
 import type { IssueLogTransitionInput } from "@b2b-crm/contracts";
 import { baselineChangeBlocker } from "./baseline";
 import { isBaselineLocked, recordBaselineChange, syncEstimateNotices } from "./baseline.service";
-import { attachChangeRequestLinks, changeRequestStageRule } from "./change-request-effects";
 import { createIssueLogRecord, issueLogInclude, loadIssueLogRecord, mapIssueLogRecord, refreshProjectIssueLogWarnings, transitionIssueLogRecord, updateIssueLogRecord } from "./issue-log.service";
 import type { DecideProjectStatusProposalInput, ProjectGateActionInput, UpdateTaskTimeEntryLayer2Input } from "@b2b-crm/contracts";
 import { isStartedStageStatus } from "./gates";
 import { AUTOMATIC_PROJECT_STATUSES } from "./status-proposal";
-import { actOnProjectGate, assertStageGateOpen, createProjectGate, decideStatusProposal, listProjectGates, pendingStatusProposal, projectIdsWithPendingProposal, projectUsesStageGates, syncProjectStatus, type StatusSyncContext } from "./gates.service";
+import { actOnProjectGate, assertStageGateOpen, createProjectGate, decideStatusProposal, listProjectGates, pendingStatusProposal, projectIdsWithPendingProposal, loadProjectGatePosition, projectUsesStageGates, syncProjectStatus, type StatusSyncContext } from "./gates.service";
 import { PROJECT_HIERARCHY_EDIT_ROLE_CODES, BUILTIN_MILESTONE_TEMPLATE_KEY, TASK_PLAN_APPROVER_ROLES, workspaceDayOffMessage, taskPlanningBlockInclude, taskTimeEntryInclude, isPrismaWriteConflict, normalizeMilestoneEvidenceMode, mapMilestoneGateSummary, omitUndefined, hasInputKey, optionalEnum, validateTaskEstimateMinutes, templateTaskTypeLayer1, assertTaskTypePair, normalizeTemplateTasks, normalizeMilestoneTemplateMilestones } from "./projects.shared";
-import { ProjectPermissionsService } from "./project-permissions.service";
+import { PROJECT_MANAGE_FORBIDDEN_MESSAGE, ProjectPermissionsService } from "./project-permissions.service";
 import { TimeEntriesService } from "./time-entries.service";
 import { MilestoneGatesService } from "./milestone-gates.service";
-import { ContractItemsService } from "./contract-items.service";
+import { TaskClassificationService } from "./task-classification.service";
 import { ProjectTemplatesService } from "./project-templates.service";
 export { MAX_TASK_ESTIMATE_MINUTES } from "./projects.shared"; // kept for existing importers
 export { validateTaskEstimateMinutes } from "./projects.shared"; // kept for existing importers
@@ -255,7 +254,6 @@ function canOverrideWorkspaceDayOff(principal: PrincipalContext) {
 const taskInclude = {
   account: true,
   project: true,
-  contractItem: { select: { code: true, name: true } },
   stage: { include: { milestone: true } },
   owner: true,
   assignee: true,
@@ -339,6 +337,26 @@ function buildProjectStatusWhere(statuses: string[]): Prisma.ProjectWhereInput {
   };
 }
 
+/** One comma-joined query value as trimmed, unique, non-empty items (at most 50). */
+function csvFilter(value: unknown, fieldName: string) {
+  return Array.from(new Set((optionalString(value, fieldName) ?? "").split(",").map((item) => item.trim()).filter(Boolean))).slice(0, 50);
+}
+
+/** `from` / `to` of the project list: inclusive Asia/Ho_Chi_Minh days (YYYY-MM-DD), either may be left out. */
+function projectPeriodFilter(query: any): { from: Date | null; to: Date | null } | null {
+  const day = (value: unknown, fieldName: string, time: string) => {
+    const text = optionalString(value, fieldName)?.trim();
+    if (!text) return null;
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(text) ? new Date(`${text}T${time}+07:00`) : new Date(NaN);
+    if (Number.isNaN(date.getTime())) throw new BadRequestException(`${fieldName} phải có dạng YYYY-MM-DD.`);
+    return date;
+  };
+  const from = day(query?.from, "from", "00:00:00.000");
+  const to = day(query?.to, "to", "23:59:59.999");
+  if (from && to && to < from) throw new BadRequestException("to phải sau hoặc bằng from.");
+  return from || to ? { from, to } : null;
+}
+
 function participationPeriod(query: any) {
   const start = optionalDate(query?.startDate, "startDate");
   const end = optionalDate(query?.endDate, "endDate");
@@ -355,6 +373,21 @@ function periodEndInclusive(period: { end: Date }) {
 
 function sameInstant(left: Date | null | undefined, right: Date | null | undefined) {
   return (left?.getTime() ?? null) === (right?.getTime() ?? null);
+}
+
+/**
+ * A project that was used keeps its history (tasks, hours, issue log, activity), so it is closed, never deleted.
+ * `code` lets the UI offer "Đóng dự án" instead of a dead end.
+ */
+export const PROJECT_HAS_RECORDS_CODE = "PROJECT_HAS_RECORDS";
+function projectHasRecordsError(details?: string) {
+  return {
+    statusCode: 400,
+    error: "Bad Request",
+    code: PROJECT_HAS_RECORDS_CODE,
+    message: "Dự án đã có dữ liệu vận hành (task, giờ log, tài liệu, sổ vấn đề, lịch sử hoạt động…) nên không xóa được. Hãy đóng dự án (trạng thái Đã đóng, có lý do) thay vì xóa.",
+    ...(details ? { details } : {})
+  };
 }
 
 function formatDeleteBlockers(blockers: ProjectDeleteBlocker[]) {
@@ -534,38 +567,15 @@ export function isLegacyMilestonePlaceholder(input: {
     || activity === normalizeMilestoneKey(input.milestoneName);
 }
 
+/** The "Loại dự án" filter of the list: the stored type. Nội bộ also covers the fixed DX Internal Worklog project. */
 function buildProjectCategoryWhere(category: string): Prisma.ProjectWhereInput {
   const normalized = category.trim().toLowerCase().replace(/[_\s-]+/g, "_");
-  if (normalized === "delivery") {
-    return {
-      OR: [
-        { projectType: { equals: normalized, mode: "insensitive" } },
-        { opportunityId: null },
-        { opportunity: { is: { stage: { equals: "delivery", mode: "insensitive" } } } }
-      ]
-    };
-  }
-
-  return {
-    OR: [
-      { projectType: { equals: normalized, mode: "insensitive" } },
-      {
-        opportunity: {
-          is: {
-            stage: {
-              equals: normalized,
-              mode: "insensitive"
-            }
-          }
-        }
-      }
-    ]
-  };
+  return { projectType: { in: normalized === "internal" ? ["internal", INTERNAL_WORKLOG_PROJECT_TYPE] : [normalized] } };
 }
 
 function assertTaskDateRange(plannedStartAt?: Date | null, dueAt?: Date | null) {
   if (plannedStartAt && dueAt && plannedStartAt > dueAt) {
-    throw new BadRequestException("plannedStartAt must not be later than dueAt");
+    throw new BadRequestException("Ngày bắt đầu không được sau ngày kết thúc / hạn hoàn tất. Hãy chọn lại hai ngày.");
   }
 }
 
@@ -593,6 +603,15 @@ function normalizeProjectType(value: unknown) {
     return normalized;
   }
   return normalized.toLowerCase().replace(/[_\s-]+/g, "_");
+}
+
+/** V-01: Loại dự án is required — Khách hàng, Nội bộ or Đào tạo (the fixed worklog project keeps its own kind). */
+function requireProjectType(value: unknown) {
+  const normalized = normalizeProjectType(value);
+  if (!normalized || !(Object.prototype.hasOwnProperty.call(PROJECT_TYPE_LABELS, normalized) || normalized === INTERNAL_WORKLOG_PROJECT_TYPE)) {
+    throw new BadRequestException(`Chọn Loại dự án: ${Object.values(PROJECT_TYPE_LABELS).join(", ")}.`);
+  }
+  return normalized;
 }
 
 function normalizeProjectTags(value: unknown) {
@@ -812,7 +831,7 @@ export class ProjectsService {
   private readonly permissions: ProjectPermissionsService;
   private readonly timeEntries: TimeEntriesService;
   private readonly milestoneGates: MilestoneGatesService;
-  private readonly contractItems: ContractItemsService;
+  private readonly classification: TaskClassificationService;
   private readonly templates: ProjectTemplatesService;
 
   constructor(
@@ -823,22 +842,24 @@ export class ProjectsService {
     @Optional() @Inject(ProjectPermissionsService) permissions?: ProjectPermissionsService,
     @Optional() @Inject(TimeEntriesService) timeEntries?: TimeEntriesService,
     @Optional() @Inject(MilestoneGatesService) milestoneGates?: MilestoneGatesService,
-    @Optional() @Inject(ContractItemsService) contractItems?: ContractItemsService,
+    @Optional() @Inject(TaskClassificationService) classification?: TaskClassificationService,
     @Optional() @Inject(ProjectTemplatesService) templates?: ProjectTemplatesService
   ) {
     this.permissions = permissions ?? new ProjectPermissionsService(prisma, notifications, costPeriods);
     this.timeEntries = timeEntries ?? new TimeEntriesService(prisma, this.permissions, costPeriods);
     this.milestoneGates = milestoneGates ?? new MilestoneGatesService(prisma, this.permissions, notifications);
-    this.contractItems = contractItems ?? new ContractItemsService(prisma, this.permissions, this.timeEntries);
+    this.classification = classification ?? new TaskClassificationService(prisma, this.permissions, this.timeEntries);
     this.templates = templates ?? new ProjectTemplatesService(prisma, this.permissions);
   }
 
   async listProjects(query: any, principal: PrincipalContext) {
     const pagination = normalizePagination({ limit: query.limit, offset: query.offset });
-    const accountId = optionalString(query.accountId, "accountId");
-    const ownerUserIds = Array.from(new Set((optionalString(query.ownerUserId, "ownerUserId") ?? "").split(",").map((id) => id.trim()).filter(Boolean)));
-    const statusAliases = projectStatusFilterValues(optionalString(query.status, "status") ?? null);
-    const category = optionalString(query.category, "category");
+    // Multi-select filters arrive as one comma-joined value each; a single value still works.
+    const accountIds = csvFilter(query.accountId, "accountId");
+    const ownerUserIds = csvFilter(query.ownerUserId, "ownerUserId");
+    const statusAliases = Array.from(new Set(csvFilter(query.status, "status").flatMap((status) => projectStatusFilterValues(status) ?? [])));
+    const categories = csvFilter(query.category, "category");
+    const period = projectPeriodFilter(query);
     const search = optionalString(query.q ?? query.search, "q");
     const andFilters: Prisma.ProjectWhereInput[] = [];
 
@@ -853,12 +874,31 @@ export class ProjectsService {
       });
     }
 
-    if (category) {
-      andFilters.push(buildProjectCategoryWhere(category));
+    if (categories.length === 1) {
+      andFilters.push(buildProjectCategoryWhere(categories[0]));
+    } else if (categories.length > 1) {
+      andFilters.push({ OR: categories.map(buildProjectCategoryWhere) });
     }
 
-    if (statusAliases) {
+    if (statusAliases.length > 0) {
       andFilters.push(buildProjectStatusWhere(statusAliases));
+    }
+
+    if (period) {
+      // Project has no date columns: its period is the earliest stage start to the latest stage end, the same
+      // dates mapProjectSummary returns as plannedStartAt / plannedEndAt. A missing start or end is open-ended.
+      // Columns are UTC `timestamp`s; AT TIME ZONE 'UTC' keeps the comparison independent of the session time zone.
+      const startsBy = period.to ? Prisma.sql`(MIN(COALESCE(s."actualStartAt", s."plannedStartAt")) IS NULL OR MIN(COALESCE(s."actualStartAt", s."plannedStartAt")) AT TIME ZONE 'UTC' <= ${period.to})` : Prisma.sql`TRUE`;
+      const endsFrom = period.from ? Prisma.sql`(MAX(COALESCE(s."actualEndAt", s."plannedEndAt")) IS NULL OR MAX(COALESCE(s."actualEndAt", s."plannedEndAt")) AT TIME ZONE 'UTC' >= ${period.from})` : Prisma.sql`TRUE`;
+      const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT p."id"
+        FROM "Project" p
+        LEFT JOIN "ProjectStage" s ON s."projectId" = p."id"
+        WHERE p."workspaceId" = ${principal.workspaceId}
+        GROUP BY p."id"
+        HAVING ${startsBy} AND ${endsFrom}
+      `;
+      andFilters.push({ id: { in: rows.map((row) => row.id) } });
     }
 
     if (ownerUserIds.length > 0) {
@@ -883,7 +923,7 @@ export class ProjectsService {
 
     const where: Prisma.ProjectWhereInput = {
       workspaceId: principal.workspaceId,
-      ...(accountId ? { accountId } : {}),
+      ...(accountIds.length === 1 ? { accountId: accountIds[0] } : accountIds.length > 1 ? { accountId: { in: accountIds } } : {}),
       ...(andFilters.length > 0 ? { AND: andFilters } : {})
     };
 
@@ -1240,11 +1280,12 @@ export class ProjectsService {
     }
     const code = input.code?.trim() || `${account.code}-${randomUUID().slice(0, 8).toUpperCase()}`;
     const name = nonEmptyString(input.name, "name");
-    const projectType = normalizeProjectType(input.projectType) ?? "delivery";
+    const projectType = requireProjectType(input.projectType);
     await this.assertSingleInternalWorklog(this.prisma, principal.workspaceId, projectType);
     const scopeSummary = optionalString(input.scopeSummary, "scopeSummary") ?? undefined;
-    const ownerUserId = optionalString(input.ownerUserId, "ownerUserId") ?? undefined;
-    const memberUserIds = Array.from(new Set([...(optionalStringArray(input.memberUserIds, "memberUserIds") ?? []), principal.subjectId, ...(ownerUserId ? [ownerUserId] : [])]));
+    // No PIC chosen: the creator is the PIC (and a member), otherwise a non-Admin could not manage the project they just created.
+    const ownerUserId = optionalString(input.ownerUserId, "ownerUserId") ?? principal.subjectId;
+    const memberUserIds = Array.from(new Set([...(optionalStringArray(input.memberUserIds, "memberUserIds") ?? []), principal.subjectId, ownerUserId]));
     const budgetAmount = optionalNumber(input.budgetAmount, "budgetAmount");
     const plannedStartAt = optionalDate(input.plannedStartAt, "plannedStartAt") ?? undefined;
     const plannedEndAt = optionalDate(input.plannedEndAt, "plannedEndAt") ?? undefined;
@@ -1532,7 +1573,7 @@ export class ProjectsService {
     const ownerUserId = updatesOwner ? optionalString(input.ownerUserId, "ownerUserId") : undefined;
     const memberUserIds = updatesMembers ? optionalStringArray(input.memberUserIds, "memberUserIds") : undefined;
     const budgetAmount = updatesBudget ? optionalNumber(input.budgetAmount, "budgetAmount") : undefined;
-    const projectType = updatesProjectType ? normalizeProjectType(input.projectType) ?? "delivery" : undefined;
+    const projectType = updatesProjectType ? requireProjectType(input.projectType) : undefined;
     const priority = updatesPriority ? optionalEnum(input.priority, "priority", PROJECT_PRIORITIES) : undefined;
     const tags = updatesTags ? normalizeProjectTags(input.tags) ?? [] : undefined;
     const color = updatesColor ? normalizeProjectColor(input.color) : undefined;
@@ -1554,11 +1595,21 @@ export class ProjectsService {
       // 5.1: an Admin (PM, Leader) may also confirm a status proposal of a project they do not manage.
       const adminConfirmsProposal = Boolean(options.confirmsStatusProposal) && statusOnlyRequest && isWorkspaceAdmin(principal.roleCodes);
       if (!canManage && !adminConfirmsProposal && !((closes || reopens) && statusOnlyRequest)) {
-        throw new ForbiddenException("Only the project PIC, a project Delivery Lead, or Founder/GM can manage this project");
+        throw new ForbiddenException(PROJECT_MANAGE_FORBIDDEN_MESSAGE);
       }
       if (closes && !canCloseProject(principal.roleCodes, canManage)) throw new ForbiddenException("Chỉ PM/Admin hoặc BD mới được đóng dự án.");
       if (reopens && !canReopenProject(principal.roleCodes)) throw new ForbiddenException("Dự án đã đóng: chỉ Admin mới được mở lại và phải ghi lý do.");
       if (statusChange?.error) throw new BadRequestException(statusChange.error);
+      // Mục 2.2 "Đóng, thua deal — chỉ trước G1": after G1 the Pre-sale hours belong to the project for good.
+      const gatePosition = (closes && closeReasonCode === "lost_deal") || (projectType !== undefined && projectType !== existingProject.projectType)
+        ? await loadProjectGatePosition(tx, principal.workspaceId, projectId) : undefined;
+      if (closes && closeReasonCode === "lost_deal" && gatePosition?.g1Passed) {
+        throw new BadRequestException("Lý do “Thua deal” chỉ dùng khi dự án chưa qua G1. Dự án đã qua G1: chọn lý do đóng khác (Khách dừng hợp tác, Hủy nội bộ…).");
+      }
+      // Loại dự án decides Layer 2 of the logged hours and the P&L template: it is fixed once G1 is approved.
+      if (projectType !== undefined && projectType !== existingProject.projectType && gatePosition?.g1Passed) {
+        throw new ConflictException("Loại dự án chỉ đổi được trước khi G1 được duyệt. Dự án này đã qua G1 nên giữ nguyên Loại dự án.");
+      }
       // 5.1 "Hệ thống tự chuyển": on a G1–G8 project Đã hoàn thành / Đang bảo trì follow G7 / G8. Set by hand, the sync
       // would re-apply the gate's status in this same request and leave two history rows.
       if (statusChange?.changed && await projectUsesStageGates(tx, principal.workspaceId, projectId)) {
@@ -1604,7 +1655,7 @@ export class ProjectsService {
       // Table 4.2: the project kind decides Layer 2, so a kind change re-derives every task of the project.
       if (projectType !== undefined && projectType !== existingProject.projectType) {
         await this.permissions.auditMutation(tx, principal, "project.kind_changed", "project", projectId, { projectType: existingProject.projectType }, { projectType });
-        await this.contractItems.rederiveProjectTaskLayer2(tx, principal, projectId, "project.kind_changed");
+        await this.classification.rederiveProjectTaskLayer2(tx, principal, projectId, "project.kind_changed");
       }
 
       if (statusChange?.changed) await this.recordProjectStatusChange(tx, principal, projectId, statusChange, statusReason, closes ? closeReasonCode : undefined);
@@ -1783,7 +1834,7 @@ export class ProjectsService {
     await this.permissions.assertProjectManagerOrAdmin(this.prisma, projectId, principal);
     const blockers = await this.getProjectDeleteBlockers(projectId, principal.workspaceId);
     if (blockers.length > 0) {
-      throw new BadRequestException(`Project cannot be deleted because it has operational records: ${formatDeleteBlockers(blockers)}. Archive or remove those records first.`);
+      throw new BadRequestException(projectHasRecordsError(formatDeleteBlockers(blockers)));
     }
 
     try {
@@ -1795,7 +1846,7 @@ export class ProjectsService {
       ]);
     } catch (error) {
       if (isPrismaForeignKeyError(error)) {
-        throw new BadRequestException("Project cannot be deleted because it is linked to operational records. Archive or remove linked records first.");
+        throw new BadRequestException(projectHasRecordsError());
       }
       throw error;
     }
@@ -1848,9 +1899,10 @@ export class ProjectsService {
     };
   }
   async listProjectMilestoneGates(projectId: string, principal: PrincipalContext) { return this.milestoneGates.listProjectMilestoneGates(projectId, principal); } // kept for existing callers
-  async updateProjectMilestoneGate(projectId: string, milestoneId: string, input: Record<string, unknown>, principal: PrincipalContext) { return this.milestoneGates.updateProjectMilestoneGate(projectId, milestoneId, input, principal); } // kept for existing callers
-  async evaluateProjectMilestoneGate(projectId: string, milestoneId: string, principal: PrincipalContext) { return this.milestoneGates.evaluateProjectMilestoneGate(projectId, milestoneId, principal); } // kept for existing callers
-  async approveProjectMilestone(projectId: string, milestoneId: string, principal: PrincipalContext) { return this.milestoneGates.approveProjectMilestone(projectId, milestoneId, principal); } // kept for existing callers
+  async updateProjectMilestoneGate(projectId: string, milestoneId: string, input: Record<string, unknown>, principal: PrincipalContext) { const result = await this.milestoneGates.updateProjectMilestoneGate(projectId, milestoneId, input, principal); await this.recomputeStatusProposal(projectId, principal); return result; } // kept for existing callers
+  async evaluateProjectMilestoneGate(projectId: string, milestoneId: string, principal: PrincipalContext) { const result = await this.milestoneGates.evaluateProjectMilestoneGate(projectId, milestoneId, principal); await this.recomputeStatusProposal(projectId, principal); return result; } // kept for existing callers
+  // V-17: approving a milestone can move the project (all approved → Đã hoàn thành on a project without G1–G8).
+  async approveProjectMilestone(projectId: string, milestoneId: string, principal: PrincipalContext) { const result = await this.milestoneGates.approveProjectMilestone(projectId, milestoneId, principal); await this.recomputeStatusProposal(projectId, principal); return result; } // kept for existing callers
   async requestProjectMilestoneApproval(projectId: string, milestoneId: string, principal: PrincipalContext) { return this.milestoneGates.requestProjectMilestoneApproval(projectId, milestoneId, principal); } // kept for existing callers
 
   async reorderProjectHierarchy(
@@ -2138,9 +2190,9 @@ export class ProjectsService {
       standardMinutes: optionalInteger(input.standardMinutes, "standardMinutes"),
       progressPercent: optionalInteger(input.progressPercent, "progressPercent") ?? undefined
     });
-    // D-21: after B1 is locked the stage timeline changes only through "Gia hạn stage" (Admin approval, reason, new B1 version).
+    // D-21: after the baseline is locked the stage timeline changes only through "Gia hạn stage" (Admin approval, reason, new baseline version).
     if ((["plannedStartAt", "plannedEndAt"] as const).some((key) => data[key] !== undefined && !sameInstant(data[key] as Date | null, existingStage[key])) && await isBaselineLocked(tx, projectId)) {
-      throw new ConflictException("Baseline B1 đã khóa: ngày kế hoạch của stage chỉ đổi qua thao tác Gia hạn stage (tab Điểm chốt & Tài liệu), có lý do và người duyệt (D-21).");
+      throw new ConflictException("Baseline đã khóa: ngày kế hoạch của stage chỉ đổi qua thao tác Gia hạn stage (tab Điểm chốt & Tài liệu), có lý do và người duyệt (D-21).");
     }
     // V-11: a stage starts only after the gate before it is approved. Starting it also starts its SLA clock.
     if (typeof data.status === "string" && isStartedStageStatus(data.status) && !isStartedStageStatus(existingStage.status)) {
@@ -2729,7 +2781,8 @@ export class ProjectsService {
       workspaceId: principal.workspaceId,
       projectId,
       ...(status ? { status } : {}),
-      ...(type ? { type } : {})
+      // Rows of the retired type change_request stay stored and are never listed (chốt 13/10).
+      type: { in: ISSUE_LOG_TYPES.filter((item) => !type || item === type) }
     };
     const ctx = await this.permissions.issueLogContext(projectId, principal);
     await refreshProjectIssueLogWarnings(this.prisma, principal.workspaceId, projectId);
@@ -2746,8 +2799,7 @@ export class ProjectsService {
     ]);
 
     return {
-      // V-39 / V-30: each change request with the stage, evaluation task, line item and effort the system keeps for it.
-      data: await attachChangeRequestLinks(this.prisma, principal.workspaceId, projectId, risks, risks.map((risk) => mapIssueLogRecord(risk, ctx.actor))),
+      data: risks.map((risk) => mapIssueLogRecord(risk, ctx.actor)),
       meta: {
         principal,
         rowScope: "project",
@@ -2889,21 +2941,15 @@ export class ProjectsService {
       throw new BadRequestException("accountId is required");
     }
 
-    // D-01 / D-06: the line item is assigned by the system unless a PM (Admin) picks another one.
-    // V-39 / V-29: implementation tasks enter a change-request stage only after approval, on the request's line item.
-    const crStage = normalized.parentTaskId ? null : await changeRequestStageRule(this.prisma, principal.workspaceId, normalized.stageId);
-    // D-21 / V-03: once B1 is locked, a new task that adds planned hours is an Admin's (PM, Dx Director) call and becomes the next B1 version.
-    const b1Locked = !normalized.parentTaskId && await isBaselineLocked(this.prisma, normalized.projectId);
-    const isBaselineApprover = b1Locked && await this.permissions.canReclassifyTask(this.prisma, normalized.projectId, principal);
-    if (b1Locked && (validateTaskEstimateMinutes(input.estimateMinutes) ?? 0) > 0) {
-      const blocker = baselineChangeBlocker({ b1Locked, isApprover: isBaselineApprover });
+    // D-21 / V-03: once the baseline is locked, a new task that adds planned hours is an Admin's (PM, Dx Director) call and becomes the next baseline version.
+    const baselineLocked = !normalized.parentTaskId && await isBaselineLocked(this.prisma, normalized.projectId);
+    const isBaselineApprover = baselineLocked && await this.permissions.canReclassifyTask(this.prisma, normalized.projectId, principal);
+    if (baselineLocked && (validateTaskEstimateMinutes(input.estimateMinutes) ?? 0) > 0) {
+      const blocker = baselineChangeBlocker({ locked: baselineLocked, isApprover: isBaselineApprover });
       if (blocker) throw new ConflictException(blocker);
     }
-    const contractItem = await this.contractItems.resolveTaskContractItemFor(this.prisma, principal, {
-      projectId: normalized.projectId, parentTaskId: normalized.parentTaskId, requested: crStage?.contractItemId ?? input.contractItemId
-    });
     // D-02 / D-04: Layer 1 comes from the stage (a sub-task repeats its parent); Layer 2 is derived, whatever the client sent.
-    const classification = await this.taskClassificationContext(this.prisma, principal.workspaceId, { ...normalized, contractType: contractItem.contractType });
+    const classification = await this.taskClassificationContext(this.prisma, principal.workspaceId, normalized);
     const layer1 = await this.resolveRequestedTaskTypeLayer1(this.prisma, principal, normalized.projectId, input.taskTypeLayer1, {
       isSubtask: Boolean(normalized.parentTaskId), parentLayer1: classification.parentLayer1, stageLayer1: classification.stageLayer1
     });
@@ -2924,7 +2970,6 @@ export class ProjectsService {
       taskType: input.taskType?.trim() || "implementation",
       taskTypeLayer1: layer1.value ?? undefined,
       taskTypeLayer2: classification.taskTypeLayer2 ?? undefined,
-      contractItemId: contractItem.value ?? undefined,
       status: requestedStatus,
       priority: input.priority?.trim() || "medium",
       ownerUserId,
@@ -2975,15 +3020,13 @@ export class ProjectsService {
       return result;
     }, inHierarchy ? { isolationLevel: "Serializable" } : undefined);
     const task = taskResult;
-    // D-21: a B1 version carries its approver. A member's task without planned hours (V-03) is saved but writes no version;
+    // D-21: a baseline version carries its approver. A member's task without planned hours (V-03) is saved but writes no version;
     // it enters the next version an Admin (PM, Dx Director) writes.
     if (isBaselineApprover && taskResult.projectId) {
-      const cause = crStage
-        ? { type: "change_request" as const, id: crStage.changeRequestId, code: crStage.changeRequestCode, reason: `${crStage.changeRequestCode}: thêm task triển khai "${taskResult.title}"` }
-        : { type: "plan_edit" as const, id: taskResult.id, reason: `Thêm task "${taskResult.title}" sau khi B1 khóa` };
-      await this.prisma.$transaction((tx) => recordBaselineChange(tx, { workspaceId: principal.workspaceId, projectId: taskResult.projectId!, layers: ["B1"], cause, actor: { userId: principal.subjectId, displayName: principal.displayName } }));
+      const cause = { type: "plan_edit" as const, id: taskResult.id, reason: `Thêm task "${taskResult.title}" sau khi baseline khóa` };
+      await this.prisma.$transaction((tx) => recordBaselineChange(tx, { workspaceId: principal.workspaceId, projectId: taskResult.projectId!, cause, actor: { userId: principal.subjectId, displayName: principal.displayName } }));
     }
-    // D-19: sub-task hours against the task, task hours against the line item — recorded and flagged to the PM, never blocked.
+    // D-19: sub-task hours against the task — recorded and flagged to the PM, never blocked.
     await syncEstimateNotices(this.prisma, principal.workspaceId, taskResult.projectId, principal.subjectId);
 
     if (isCompletedTaskStatus(requestedStatus)) {
@@ -3005,7 +3048,6 @@ export class ProjectsService {
           taskType: taskResult.taskType,
           taskTypeLayer1: taskResult.taskTypeLayer1,
           taskTypeLayer2: taskResult.taskTypeLayer2,
-          contractItemId: contractItem.value,
           ...(layer1.overridden ? { taskTypeLayer1OverriddenFrom: classification.stageLayer1 } : {}),
           estimateMinutes: taskResult.estimateMinutes,
           assigneeUserIds
@@ -3043,7 +3085,7 @@ export class ProjectsService {
       || (scope.stageId !== undefined && scope.stageId !== existing.stageId)
       || (scope.parentTaskId !== undefined && scope.parentTaskId !== existing.parentTaskId)
     ) {
-      throw new BadRequestException("Task hierarchy parent changes require a dedicated move endpoint");
+      throw new BadRequestException("Không đổi stage hoặc task cha của task ở màn sửa này. Hãy kéo-thả task sang stage khác trong tab Tasks của dự án.");
     }
     const requestedStatus = optionalString(input.status, "status");
     const statusChangedAt = requestedStatus == null ? undefined : new Date();
@@ -3064,13 +3106,8 @@ export class ProjectsService {
 
     // D-04: Layer 2 is re-derived on every save and a client-sent value is ignored. D-02: a sub-task repeats its parent;
     // on a framework task an unset Layer 1 is filled from the stage, and any other change is a reclassification.
-    // D-05 / D-06: a sub-task repeats its parent's line item; moving a task is the PM's (Admin) call and needs a reason.
-    const contractItem = await this.contractItems.resolveTaskContractItemFor(this.prisma, principal, {
-      projectId: assignmentProjectId, parentTaskId: existing.parentTaskId, currentItemId: existing.contractItemId,
-      requested: input.contractItemId, reason: input.contractItemChangeReason
-    });
     const classification = await this.taskClassificationContext(this.prisma, principal.workspaceId, {
-      projectId: assignmentProjectId, stageId: existing.stageId, parentTaskId: existing.parentTaskId, contractType: contractItem.contractType
+      projectId: assignmentProjectId, stageId: existing.stageId, parentTaskId: existing.parentTaskId
     });
     let nextTaskTypeLayer1: string | undefined;
     if (existing.parentTaskId) {
@@ -3095,7 +3132,6 @@ export class ProjectsService {
         taskType: optionalString(input.taskType, "taskType") ?? undefined,
         taskTypeLayer1: nextTaskTypeLayer1,
         taskTypeLayer2: classification.taskTypeLayer2,
-        contractItemId: contractItem.value === (existing.contractItemId ?? null) ? undefined : contractItem.value,
         status: requestedStatus ?? undefined,
         priority: optionalString(input.priority, "priority") ?? undefined,
         ownerUserId,
@@ -3104,7 +3140,7 @@ export class ProjectsService {
         plannedStartAt: optionalDate(input.plannedStartAt, "plannedStartAt"),
         dueAt: optionalDate(input.dueAt, "dueAt"),
         estimateMinutes: hasInputKey(input, "estimateMinutes")
-          ? validateTaskEstimateMinutes(input.estimateMinutes)
+          ? validateTaskEstimateMinutes(input.estimateMinutes, "estimateMinutes", existing.estimateMinutes)
           : undefined,
         customerVisible: optionalBoolean(input.customerVisible, "customerVisible") ?? undefined,
         completedAt: requestedStatus == null
@@ -3161,12 +3197,12 @@ export class ProjectsService {
       const assignmentChanged = ownerChanged || (hasAssigneeList
         ? nextAssigneeUserIds.join("|") !== currentAssigneeUserIds.join("|") || nextPrimaryAssigneeUserId !== current.assigneeUserId
         : hasInputKey(input, "assigneeUserId") && assigneeUserId !== current.assigneeUserId);
-      // D-21: once baseline B1 is locked, every top-level task of the project is plan-locked exactly like an approved plan.
-      const b1Locked = !current.parentTaskId && await isBaselineLocked(tx, current.projectId);
-      if ((current.planApprovalStatus === "APPROVED" || b1Locked) && !principal.roleCodes.some((roleCode) => TASK_PLAN_APPROVER_ROLES.has(roleCode))) {
+      // D-21: once the baseline is locked, every top-level task of the project is plan-locked exactly like an approved plan.
+      const baselineLocked = !current.parentTaskId && await isBaselineLocked(tx, current.projectId);
+      if ((current.planApprovalStatus === "APPROVED" || baselineLocked) && !principal.roleCodes.some((roleCode) => TASK_PLAN_APPROVER_ROLES.has(roleCode))) {
         const nextStart = optionalDate(input.plannedStartAt, "plannedStartAt");
         const nextDue = optionalDate(input.dueAt, "dueAt");
-        const nextEstimate = validateTaskEstimateMinutes(input.estimateMinutes);
+        const nextEstimate = validateTaskEstimateMinutes(input.estimateMinutes, "estimateMinutes", current.estimateMinutes);
         // undefined means "not sent": only a value that differs from the approved plan is a change.
         const planChanged = (nextStart !== undefined && !sameInstant(nextStart, current.plannedStartAt))
           || (nextDue !== undefined && !sameInstant(nextDue, current.dueAt))
@@ -3194,7 +3230,7 @@ export class ProjectsService {
         const ownsTask = current.ownerUserId === principal.subjectId
           || current.assigneeUserId === principal.subjectId
           || currentAssigneeUserIds.includes(principal.subjectId);
-        if (!permissions.canManage && !(permissions.isMember && ownsTask)) throw new ForbiddenException("Only project managers or the current assigned task member can transfer this task");
+        if (!permissions.canManage && !(permissions.isMember && ownsTask)) throw new ForbiddenException("Chỉ người quản lý dự án hoặc thành viên đang được giao task mới được chuyển giao task này.");
         if (assignmentProjectId) await this.permissions.ensureProjectAssignmentUsers(tx, principal.workspaceId, principal.tenantKey, assignmentProjectId, assignmentUserIds);
         else await this.permissions.ensureActiveWorkspaceUsers(tx, principal.workspaceId, principal.tenantKey, assignmentUserIds);
         await this.syncTaskAssignees(tx, principal.workspaceId, taskId, nextAssigneeUserIds, nextPrimaryAssigneeUserId ?? undefined);
@@ -3207,14 +3243,8 @@ export class ProjectsService {
       }
       const updated = await tx.projectTask.update({ where: { id: taskId }, data, include: taskInclude });
       if ((updated.taskTypeLayer1 ?? null) !== (current.taskTypeLayer1 ?? null) || (updated.taskTypeLayer2 ?? null) !== (current.taskTypeLayer2 ?? null)) {
-        await this.contractItems.cascadeTaskClassification(tx, principal, updated, {
+        await this.classification.cascadeTaskClassification(tx, principal, updated, {
           taskTypeLayer1: current.taskTypeLayer1 ?? null, taskTypeLayer2: current.taskTypeLayer2 ?? null
-        });
-      }
-      if ((updated.contractItemId ?? null) !== (current.contractItemId ?? null)) {
-        await this.contractItems.cascadeTaskContractItem(tx, principal, taskId, {
-          from: current.contractItemId ?? null, to: updated.contractItemId ?? null,
-          reason: contractItem.moved ? optionalString(input.contractItemChangeReason, "contractItemChangeReason") : "Hệ thống tự gán hạng mục (D-06)"
         });
       }
       await this.syncTaskOwnerWarning(tx, principal, updated);
@@ -3294,11 +3324,11 @@ export class ProjectsService {
           }
         });
       }
-      // D-21 (Ghi nhận): an Admin's direct change of dates or estimate after B1 is locked becomes the next B1 version
+      // D-21 (Ghi nhận): an Admin's direct change of dates or estimate after the baseline is locked becomes the next baseline version
       // (before/after, who, why). Nothing is written when no baselined field changed.
-      if (b1Locked && updated.projectId) {
+      if (baselineLocked && updated.projectId) {
         await recordBaselineChange(tx, {
-          workspaceId: principal.workspaceId, projectId: updated.projectId, layers: ["B1"], actor: { userId: principal.subjectId, displayName: principal.displayName },
+          workspaceId: principal.workspaceId, projectId: updated.projectId, actor: { userId: principal.subjectId, displayName: principal.displayName },
           cause: { type: "plan_edit", id: updated.id, reason: optionalString(input.planChangeReason, "planChangeReason") ?? `Admin sửa trực tiếp kế hoạch task "${updated.title}"` }
         });
       }
@@ -3795,7 +3825,7 @@ export class ProjectsService {
   private async taskClassificationContext(
     client: Prisma.TransactionClient,
     workspaceId: string,
-    scope: { projectId?: string | null; stageId?: string | null; parentTaskId?: string | null; contractType?: string | null }
+    scope: { projectId?: string | null; stageId?: string | null; parentTaskId?: string | null }
   ) {
     const parent = scope.parentTaskId
       ? await client.projectTask.findFirst({ where: { id: scope.parentTaskId, workspaceId }, select: { stageId: true, taskTypeLayer1: true } })
@@ -3810,10 +3840,9 @@ export class ProjectsService {
     return {
       parentLayer1: parent?.taskTypeLayer1 ?? null,
       stageLayer1: stage?.taskTypeLayer1 ?? null,
-      taskTypeLayer2: deriveTaskTypeLayer2({ projectType: project?.projectType, afterPnlClose: stage?.afterPnlClose, contractType: scope.contractType })
+      taskTypeLayer2: deriveTaskTypeLayer2({ projectType: project?.projectType, afterPnlClose: stage?.afterPnlClose })
     };
   }
-  private async rederiveProjectTaskLayer2(tx: Prisma.TransactionClient, principal: PrincipalContext, projectId: string, cause: string, contractItemId?: string) { return this.contractItems.rederiveProjectTaskLayer2(tx, principal, projectId, cause, contractItemId); } // kept for existing callers
 
   /** D-08: one DX Internal Worklog project per workspace. */
   private async assertSingleInternalWorklog(client: Prisma.TransactionClient, workspaceId: string, projectType: string | null | undefined, exceptProjectId?: string) {
@@ -3821,11 +3850,10 @@ export class ProjectsService {
     const other = await client.project.findFirst({ where: { workspaceId, projectType: "internal_worklog", ...(exceptProjectId ? { id: { not: exceptProjectId } } : {}) }, select: { id: true } });
     if (other) throw new ConflictException("Workspace đã có dự án DX Internal Worklog; mỗi workspace chỉ có một dự án loại này.");
   }
-  async listProjectContractItems(projectId: string, principal: PrincipalContext) { return this.contractItems.listProjectContractItems(projectId, principal); } // kept for existing callers
-  async createProjectContractItem(projectId: string, input: any, principal: PrincipalContext) { return this.contractItems.createProjectContractItem(projectId, input, principal); } // kept for existing callers
-  async updateProjectContractItem(projectId: string, itemId: string, input: any, principal: PrincipalContext) { return this.contractItems.updateProjectContractItem(projectId, itemId, input, principal); } // kept for existing callers
-  async deleteProjectContractItem(projectId: string, itemId: string, principal: PrincipalContext) { return this.contractItems.deleteProjectContractItem(projectId, itemId, principal); } // kept for existing callers
-  async lostDealPreSaleSummary(principal: PrincipalContext) { return this.contractItems.lostDealPreSaleSummary(principal); } // kept for existing callers
+  async lostDealPreSaleSummary(principal: PrincipalContext) { return this.classification.lostDealPreSaleSummary(principal); } // kept for existing callers
+  // Called by name from the conversion hooks (framework-conversion.service.ts projectsServiceHooks, scripts/operations/convert-legacy-data.ts).
+  private async rederiveProjectTaskLayer2(tx: Prisma.TransactionClient, principal: PrincipalContext, projectId: string, cause: string) { return this.classification.rederiveProjectTaskLayer2(tx, principal, projectId, cause); }
+  private async reclassifyTaskTimeEntries(tx: Prisma.TransactionClient, workspaceId: string, taskIds: string[], classification: { taskTypeLayer1?: string | null; taskTypeLayer2?: string | null }) { return this.classification.reclassifyTaskTimeEntries(tx, workspaceId, taskIds, classification); }
 
   /**
    * D-02: validates a client-sent Layer 1 and decides whether it counts. Replacing the stage's value is an override:
@@ -3848,17 +3876,16 @@ export class ProjectsService {
     }
     return resolveTaskTypeLayer1({ requested: requested as string | null | undefined, canOverride, ...context });
   }
-  async classifyStage(projectId: string, stageId: string, input: { taskTypeLayer1?: unknown; afterPnlClose?: unknown }, principal: PrincipalContext) { return this.contractItems.classifyStage(projectId, stageId, input, principal); } // kept for existing callers
+  async classifyStage(projectId: string, stageId: string, input: { taskTypeLayer1?: unknown; afterPnlClose?: unknown }, principal: PrincipalContext) { return this.classification.classifyStage(projectId, stageId, input, principal); } // kept for existing callers
   async confirmLegacyTimeEntryGroup(entryId: string, principal: PrincipalContext) { return this.timeEntries.confirmLegacyTimeEntryGroup(entryId, principal); } // kept for existing callers
-  private async reclassifyTaskTimeEntries(tx: Prisma.TransactionClient, workspaceId: string, taskIds: string[], classification: { taskTypeLayer1?: string | null; taskTypeLayer2?: string | null; contractItemId?: string | null }) { return this.contractItems.reclassifyTaskTimeEntries(tx, workspaceId, taskIds, classification); } // kept for existing callers
   private async standardDayCapMinutes(client: Prisma.TransactionClient, workspaceId: string, userId: string, localDate: string) { return this.timeEntries.standardDayCapMinutes(client, workspaceId, userId, localDate); } // kept for existing callers
 
   /** NL-03 closes with the task; the archive is audited like any other task change. */
   private async afterTaskArchived(tx: Prisma.TransactionClient, principal: PrincipalContext, task: { id: string; projectId: string | null; stageId?: string | null; title: string; status: string; ownerUserId: string | null; assigneeUserId: string | null }, archivedAt: Date) {
     await this.syncTaskOwnerWarning(tx, principal, { ...task, status: TASK_ARCHIVE_STATUS, archivedAt });
     await this.permissions.auditMutation(tx, principal, "task.archived", "task", task.id, { status: task.status }, { status: TASK_ARCHIVE_STATUS, archivedAt: archivedAt.toISOString() });
-    // D-20 / D-21: an archived task leaves the B1 plan — the next version says so (nothing is written before B1 is locked or for a sub-task).
-    if (task.projectId) await this.permissions.recordPlanBaseline(tx, principal, task.projectId, ["B1"], task.id, `Lưu trữ task "${task.title}"`);
+    // D-20 / D-21: an archived task leaves the baselined plan — the next version says so (nothing is written before the baseline is locked or for a sub-task).
+    if (task.projectId) await this.permissions.recordPlanBaseline(tx, principal, task.projectId, task.id, `Lưu trữ task "${task.title}"`);
   }
 
   async listProjectMembers(projectId: string, query: any, principal: PrincipalContext) {
@@ -4009,7 +4036,7 @@ export class ProjectsService {
           tx.projectTask.count({ where: { workspaceId: input.workspaceId, projectId: input.projectId, archivedAt: null, status: { notIn: CLOSED_WORK_STATUSES }, OR: [{ ownerUserId: { in: removed } }, { assigneeUserId: { in: removed } }] } }),
           tx.projectStage.count({ where: { workspaceId: input.workspaceId, projectId: input.projectId, ownerUserId: { in: removed }, status: { notIn: CLOSED_WORK_STATUSES } } })
         ]);
-        if (tasks || stages) throw new ConflictException("Transfer the member's active tasks and milestones before removing them from the project");
+        if (tasks || stages) throw new ConflictException(`Chưa gỡ được thành viên khỏi dự án: người này còn phụ trách ${[tasks ? `${tasks} task đang mở` : "", stages ? `${stages} stage/milestone chưa xong` : ""].filter(Boolean).join(" và ")}. Hãy chuyển các việc đó cho thành viên khác trước.`);
         // The block above covers owner/primary assignee; co-assignees can still leave with open tasks -> NL-01.
         if (input.principal && typeof (tx as any).projectWarning?.findFirst === "function") {
           const coAssigned = await tx.projectTaskAssignee.groupBy({
@@ -4352,7 +4379,7 @@ export class ProjectsService {
   private assertCanEditProjectHierarchy(principal: PrincipalContext) {
     this.permissions.assertInternalTaskPrincipal(principal, "Project hierarchy is internal");
     if (!principal.roleCodes.some((roleCode) => PROJECT_HIERARCHY_EDIT_ROLE_CODES.has(roleCode))) {
-      throw new ForbiddenException("Founder/GM or Delivery Lead role is required to reorder project hierarchy");
+      throw new ForbiddenException("Sắp xếp lại milestone, stage, task cần quyền Founder/GM, Workspace Admin hoặc Delivery Lead.");
     }
   }
 

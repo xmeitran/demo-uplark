@@ -9,6 +9,7 @@ import {
   ISSUE_LOG_SEVERITY_LABELS,
   ISSUE_LOG_STATUS_LABELS,
   ISSUE_LOG_TYPE_LABELS,
+  ISSUE_LOG_TYPES,
   isIssueLogOpen,
   type CreateProjectRiskInput,
   type IssueLogExtension,
@@ -22,13 +23,11 @@ import {
   type UpdateProjectRiskInput
 } from "@b2b-crm/contracts";
 import { nonEmptyString, optionalDate, optionalString } from "../../shared/http/request-context";
-import { getStoredParameter } from "../../shared/system-parameters";
-import { addWorkspaceWorkingDays } from "../../shared/working-days";
 import {
   allowedActions,
   assertRequiredOnCreate,
-  canViewCommercial,
-  initialStatus,
+  INITIAL_ISSUE_LOG_STATUS,
+  isIssueLogType,
   issueLogAgeDays,
   issueLogCode,
   issueLogDueState,
@@ -77,27 +76,11 @@ export interface IssueLogContext {
 type HookInput = { ctx: IssueLogContext; record: any; project: any };
 
 /**
- * Side effects of the change-request flow. Each one is called at the right step with the committed record and may
- * not throw into the request. The V-39 / V-30 / V-26 hooks (stage and evaluation task, line item, baseline version,
- * actual effort, ordinary task, stage close) are filled in by change-request-effects.ts, which replaces the empty
- * members below when it is loaded; what is still empty here: onChangeRequestSolutionVersion and sendLarkMessage.
+ * Side effects of a saved record. Each one is called with the committed record and may not throw into the request.
+ * `sendLarkMessage` is assigned by the Lark integration (lark-hooks.ts).
  */
 export const issueLogHooks: Record<string, (input: HookInput) => Promise<void>> = {
-  /** TODO(V-39): create stage "Change Request – {code}" in the running milestone with the task "Đánh giá yêu cầu thay đổi" (Lớp 1 PM, hạng mục gốc) and link it to the record. Waits for: contract line items (D-23) to assign the root line item, and a stage↔record link. */
-  async onChangeRequestClassified() {},
-  /** TODO(V-30, D-23): unlock creating the request's contract line item (estimate = extension.estimatedEffortMd) and allow implementation tasks in the request's stage. Waits for: contract line items, the V-39 stage. */
-  async onChangeRequestApproved() {},
-  /** TODO(V-39): close the request's stage on Từ chối / Hoãn / Huỷ, keeping assessment hours on the root line item. Waits for: the V-39 stage. */
-  async onChangeRequestStageClosed() {},
-  /** TODO(CR-08A): attach the new solution document version (createProjectDocumentVersion) to the request code. Waits for: a document-version ↔ record link. */
-  async onChangeRequestSolutionVersion() {},
-  /** TODO(V-30, D-20, V-40): write baseline B0/B1 version extension.newBaselineVersion next to the old one and log the milestone timeline change with the request code. Waits for: versioned baselines B0/B1, contract line items. */
-  async onChangeRequestBaselineUpdate() {},
-  /** TODO(V-30, CR-09): set extension.actualEffortMd = logged hours of the tasks bound to the request's line item / 8. Waits for: contract line items on tasks. */
-  async computeChangeRequestActualEffort() {},
-  /** TODO(V-26): "trong phạm vi" — create the ordinary task for the request and link it. Waits for: a decision on which stage receives it. */
-  async onNotChangeRequestAsTask() {},
-  /** TODO(V-26, V-17): propose project status Tạm dừng when a customer-side Blocker stops progress. Waits for: the status proposal engine. */
+  /** V-26: a customer-side Blocker that stops progress — the Tạm dừng proposal itself comes from the status sync (status-proposal.ts). */
   async suggestProjectOnHold() {},
   /** TODO(7.5): Lark bot messages to the project's internal group (new record, severity change, escalation). Out of scope: in-app only for now. */
   async sendLarkMessage() {},
@@ -187,12 +170,6 @@ export function issueLogActor(principal: PrincipalContext, permissions: { canMan
   return { userId: principal.subjectId, isAdmin, isPm: isAdmin || permissions.canManage, isBd: permissions.isMember && principal.roleCodes.includes("SALES_OWNER"), isMember: permissions.isMember, canGrantGateException };
 }
 
-/** SLA of a change-request step in working days, as the Admin configured it (7.6); `fallback` when the parameter has no entry for the step. */
-export async function changeRequestStepSlaDays(client: any, workspaceId: string, step: string | null, fallback: number): Promise<number> {
-  const configured = (await getStoredParameter(client, workspaceId, "changeRequestStepSlaDays"))[step ?? ""];
-  return Number.isFinite(configured) ? configured : fallback;
-}
-
 /** Next code of a type in a project. The counter row is locked by the upsert until the transaction commits and never decreases. */
 export async function nextIssueLogCode(tx: any, projectId: string, type: IssueLogType): Promise<string> {
   const prefix = issueLogCode(type, 0).split("-")[0];
@@ -204,7 +181,7 @@ export async function nextIssueLogCode(tx: any, projectId: string, type: IssueLo
   return issueLogCode(type, counter.last);
 }
 
-const EVENT_LABELS: Record<string, string> = { created: "Ghi nhận bản ghi", updated: "Cập nhật thông tin", migrated: "Chuyển đổi dữ liệu", converted_from: "Tạo từ kết luận “Không phải CR”" };
+const EVENT_LABELS: Record<string, string> = { created: "Ghi nhận bản ghi", updated: "Cập nhật thông tin", migrated: "Chuyển đổi dữ liệu", converted_from: "Tạo từ kết luận “Không phải CR”" /* history of rows written before 13/10/2026 */ };
 
 function iso(value: Date | string | null | undefined) {
   return value ? new Date(value).toISOString() : undefined;
@@ -212,17 +189,14 @@ function iso(value: Date | string | null | undefined) {
 
 export function mapIssueLogRecord(risk: any, actor: IssueLogActor, now = new Date()): ProjectRiskSummary {
   const type = risk.type as IssueLogType;
-  const seeCommercial = canViewCommercial(actor);
   const stored = readExtension(risk);
   const extension: IssueLogExtension = {};
-  let commercialHidden = false;
+  // A stored row of the retired Yêu cầu thay đổi type has no field catalogue: it maps with an empty extension.
   for (const def of ISSUE_LOG_EXTENSION_FIELDS[type] ?? []) {
     const value = def.key === "likelihood" || def.key === "response" ? risk[def.key] : stored[def.key];
-    if (value === undefined || value === null || value === "") continue;
-    if (def.commercial && !seeCommercial) commercialHidden = true;
-    else extension[def.key] = value;
+    if (value !== undefined && value !== null && value !== "") extension[def.key] = value;
   }
-  const open = isIssueLogOpen(risk.status);
+  const open = isIssueLogOpen(risk.status) && isIssueLogType(type);
   const mayEdit = open && (actor.isPm || risk.ownerUserId === actor.userId || risk.createdByUserId === actor.userId);
   const history: IssueLogHistoryEntry[] = (risk.events ?? []).map((event: any) => ({
     id: event.id,
@@ -230,8 +204,6 @@ export function mapIssueLogRecord(risk: any, actor: IssueLogActor, now = new Dat
     label: EVENT_LABELS[event.action] ?? (event.changes as { label?: string } | null)?.label ?? event.action,
     fromStatus: event.fromStatus ?? undefined,
     toStatus: event.toStatus ?? undefined,
-    fromStep: event.fromStep ?? undefined,
-    toStep: event.toStep ?? undefined,
     note: event.note ?? undefined,
     actorUserId: event.actorUserId ?? undefined,
     actorDisplayName: event.actorName ?? undefined,
@@ -261,10 +233,7 @@ export function mapIssueLogRecord(risk: any, actor: IssueLogActor, now = new Dat
     resolutionProposedAt: iso(risk.resolutionProposedAt),
     cancelReason: risk.cancelReason ?? undefined,
     closedAt: iso(risk.closedAt),
-    crStep: risk.crStep ?? undefined,
-    stepDueAt: iso(risk.stepDueAt),
     extension,
-    commercialHidden,
     isOpen: open,
     ageDays: issueLogAgeDays(risk, now),
     dueState: issueLogDueState(risk, now),
@@ -289,7 +258,7 @@ export function mapIssueLogRecord(risk: any, actor: IssueLogActor, now = new Dat
   };
 }
 
-/** Opens / refreshes the warnings the record should have and closes the ones it no longer should (BRI-01…03, YC-01). */
+/** Opens / refreshes the warnings the record should have and closes the ones it no longer should (BRI-01…03). */
 export async function syncIssueLogWarnings(client: any, record: any, actorUserId: string | null, now = new Date()) {
   const wanted = issueLogWarnings(record, now);
   const wantedKeys = new Set(wanted.map((warning) => warning.dedupeKey));
@@ -301,7 +270,7 @@ export async function syncIssueLogWarnings(client: any, record: any, actorUserId
     await openOrRefreshProjectWarning(client, {
       workspaceId: record.workspaceId, projectId: record.projectId, ...warning,
       milestoneId: record.milestoneId ?? null, stageId: record.stageId ?? null, taskId: record.taskId ?? null,
-      ownerUserId: record.ownerUserId ?? null, dueAt: (record.type === "change_request" ? record.stepDueAt : record.dueAt) ?? null, actorUserId
+      ownerUserId: record.ownerUserId ?? null, dueAt: record.dueAt ?? null, actorUserId
     });
   }
 }
@@ -311,7 +280,7 @@ export async function syncIssueLogWarnings(client: any, record: any, actorUserId
  * ponytail: the API has no scheduler, so this runs when a project's log is read; call it from the daily scan (7.5 "Quét đầu ngày") once one exists.
  */
 export async function refreshProjectIssueLogWarnings(client: any, workspaceId: string, projectId: string, now = new Date()) {
-  const open = await client.projectRisk.findMany({ where: { workspaceId, projectId, closedAt: null } });
+  const open = await client.projectRisk.findMany({ where: { workspaceId, projectId, closedAt: null, type: { in: [...ISSUE_LOG_TYPES] } } });
   for (const record of open) {
     try {
       await syncIssueLogWarnings(client, record, null, now);
@@ -346,33 +315,31 @@ async function assertWorkspaceUser(tx: any, workspaceId: string, userId: string 
   if (!user) throw new BadRequestException(`${label} không thuộc workspace.`);
 }
 
-async function writeEvent(tx: any, ctx: IssueLogContext, riskId: string, event: { action: string; label?: string; fromStatus?: string | null; toStatus?: string | null; fromStep?: string | null; toStep?: string | null; note?: string; changes?: Record<string, unknown> }) {
+async function writeEvent(tx: any, ctx: IssueLogContext, riskId: string, event: { action: string; label?: string; fromStatus?: string | null; toStatus?: string | null; note?: string; changes?: Record<string, unknown> }) {
   const { label, changes, ...rest } = event;
   await tx.projectRiskEvent.create({
     data: { riskId, ...rest, changes: label || changes ? { ...(changes ?? {}), ...(label ? { label } : {}) } : undefined, actorUserId: ctx.principal.subjectId, actorName: ctx.principal.displayName, at: ctx.now ?? new Date() }
   });
   // The same change in the workspace audit trail (Admin › Lịch sử, D-35).
   await tx.auditEvent?.create({
-    data: { workspaceId: ctx.principal.workspaceId, actorUserId: ctx.principal.subjectId, action: `issue_log.${event.action}`, resource: "project_risk", resourceId: riskId, before: { status: event.fromStatus ?? null, step: event.fromStep ?? null }, after: { status: event.toStatus ?? null, step: event.toStep ?? null, note: event.note ?? null, ...(changes ?? {}) }, requestId: randomUUID() }
+    data: { workspaceId: ctx.principal.workspaceId, actorUserId: ctx.principal.subjectId, action: `issue_log.${event.action}`, resource: "project_risk", resourceId: riskId, before: { status: event.fromStatus ?? null }, after: { status: event.toStatus ?? null, note: event.note ?? null, ...(changes ?? {}) }, requestId: randomUUID() }
   });
 }
 
-export async function createIssueLogRecord(ctx: IssueLogContext, project: any, input: CreateProjectRiskInput, extra: { convertedFrom?: any; tx?: any } = {}): Promise<any> {
+export async function createIssueLogRecord(ctx: IssueLogContext, project: any, input: CreateProjectRiskInput, extra: { tx?: any } = {}): Promise<any> {
   const { actor, principal } = ctx;
   const now = ctx.now ?? new Date();
   // V-23: every project member reports; nobody outside the project does.
   if (!actor.isMember && !actor.isPm) throw new ForbiddenException("Chỉ thành viên dự án mới được báo vấn đề vào sổ.");
   if ((input as { status?: unknown }).status && !["open", "pending"].includes(String((input as { status?: unknown }).status))) {
-    throw new BadRequestException("Bản ghi mới luôn bắt đầu ở Chờ xử lý hoặc Mới ghi nhận.");
+    throw new BadRequestException("Bản ghi mới luôn bắt đầu ở Chờ xử lý.");
   }
   const type = parseIssueLogType(input.type ?? input.category ?? "issue");
-  const { extension, columns } = sanitizeExtension(type, { ...(input.likelihood ? { likelihood: input.likelihood } : {}), ...(input.response ? { response: input.response } : {}), ...(input.extension ?? {}) }, actor);
+  const { extension, columns } = sanitizeExtension(type, { ...(input.likelihood ? { likelihood: input.likelihood } : {}), ...(input.response ? { response: input.response } : {}), ...(input.extension ?? {}) });
   if (type === "risk" && !columns.likelihood) columns.likelihood = "Medium";
-  // CR-01: the person who logs the request is its first receiver unless stated otherwise.
-  if (type === "change_request" && !extension.initialReceiver) extension.initialReceiver = principal.displayName;
   const draft = {
     type,
-    ...initialStatus(type),
+    status: INITIAL_ISSUE_LOG_STATUS,
     description: nonEmptyString(input.description, "description"),
     severity: parseIssueLogSeverity(input.severity ?? "medium"),
     evidence: optionalString(input.evidence, "evidence") ?? null,
@@ -390,15 +357,11 @@ export async function createIssueLogRecord(ctx: IssueLogContext, project: any, i
     await assertWorkspaceUser(tx, principal.workspaceId, draft.ownerUserId, "Người chịu trách nhiệm");
     const location = await resolveLocation(tx, project.id, input);
     const code = await nextIssueLogCode(tx, project.id, type);
-    // V-26 / 8.2: the PM classifies within one working day of intake; that is the first deadline of a change request.
-    const stepDueAt = type === "change_request" ? await addWorkspaceWorkingDays(tx, principal.workspaceId, now, await changeRequestStepSlaDays(tx, principal.workspaceId, "CR-02", 1)) : null;
     const record = await tx.projectRisk.create({
-      data: { workspaceId: principal.workspaceId, accountId: project.accountId, projectId: project.id, code, ...draft, ...location, stepDueAt, createdByUserId: principal.subjectId },
+      data: { workspaceId: principal.workspaceId, accountId: project.accountId, projectId: project.id, code, ...draft, ...location, createdByUserId: principal.subjectId },
       include: issueLogInclude
     });
-    await writeEvent(tx, ctx, record.id, extra.convertedFrom
-      ? { action: "converted_from", toStatus: record.status, note: `Từ ${extra.convertedFrom.code}` }
-      : { action: "created", toStatus: record.status, toStep: record.crStep });
+    await writeEvent(tx, ctx, record.id, { action: "created", toStatus: record.status });
     await syncIssueLogWarnings(tx, record, principal.subjectId, now);
     return record;
   };
@@ -427,12 +390,12 @@ export async function updateIssueLogRecord(ctx: IssueLogContext, project: any, e
   if ((input as { type?: unknown }).type !== undefined && (input as { type?: unknown }).type !== existing.type) {
     throw new BadRequestException("Đổi loại bản ghi bằng thao tác Phân loại lại.");
   }
-  if (!isIssueLogOpen(existing.status)) throw new BadRequestException("Bản ghi đã kết thúc, không sửa được nữa.");
+  if (!isIssueLogOpen(existing.status) || !isIssueLogType(existing.type)) throw new BadRequestException("Bản ghi đã kết thúc, không sửa được nữa.");
   if (!actor.isPm && existing.ownerUserId !== actor.userId && existing.createdByUserId !== actor.userId) {
     throw new ForbiddenException("Chỉ PM, người chịu trách nhiệm hoặc người báo mới được sửa bản ghi.");
   }
   const type = existing.type as IssueLogType;
-  const { extension: extensionPatch, columns } = sanitizeExtension(type, { ...(input.likelihood ? { likelihood: input.likelihood } : {}), ...(input.response !== undefined ? { response: input.response } : {}), ...(input.extension ?? {}) }, actor);
+  const { extension: extensionPatch, columns } = sanitizeExtension(type, { ...(input.likelihood ? { likelihood: input.likelihood } : {}), ...(input.response !== undefined ? { response: input.response } : {}), ...(input.extension ?? {}) });
   const patch: Record<string, unknown> = { ...columns };
   if (input.description !== undefined) patch.description = nonEmptyString(input.description, "description");
   if (input.severity !== undefined) patch.severity = parseIssueLogSeverity(input.severity);
@@ -483,8 +446,6 @@ export async function transitionIssueLogRecord(ctx: IssueLogContext, project: an
   const record = await ctx.prisma.$transaction(async (tx: any) => {
     await assertWorkspaceUser(tx, principal.workspaceId, plan.data.ownerUserId as string | undefined, "Người chịu trách nhiệm");
     const data: Record<string, unknown> = { ...plan.data, extension: plan.extension };
-    // 7.6: the number of days of a step comes from the parameter `changeRequestStepSlaDays`; the catalogue only says which steps have a deadline.
-    if (plan.stepSlaDays !== undefined) data.stepDueAt = plan.stepSlaDays === null ? null : await addWorkspaceWorkingDays(tx, principal.workspaceId, now, await changeRequestStepSlaDays(tx, principal.workspaceId, plan.toStep, plan.stepSlaDays));
     let note = plan.note;
     if (plan.newType) {
       // The old code stays in the history and is never handed out again.
@@ -493,17 +454,9 @@ export async function transitionIssueLogRecord(ctx: IssueLogContext, project: an
       note = `${existing.code} → ${data.code} (${ISSUE_LOG_TYPE_LABELS[existing.type as IssueLogType]} → ${ISSUE_LOG_TYPE_LABELS[plan.newType]})${note ? `. ${note}` : ""}`;
     }
     // Guard against two people moving the same record at once: only the state we validated may be replaced.
-    const claimed = await tx.projectRisk.updateMany({ where: { id: existing.id, status: existing.status, crStep: existing.crStep ?? null }, data });
+    const claimed = await tx.projectRisk.updateMany({ where: { id: existing.id, status: existing.status }, data });
     if (claimed.count !== 1) throw new BadRequestException("Bản ghi vừa được người khác cập nhật. Tải lại và thử lại.");
-    if (plan.convertTo) {
-      const converted = await createIssueLogRecord(ctx, project, {
-        type: plan.convertTo, description: existing.description, severity: existing.severity, evidence: existing.evidence, dueAt: existing.dueAt ? new Date(existing.dueAt).toISOString() : undefined, ownerUserId: existing.ownerUserId ?? undefined,
-        milestoneId: existing.milestoneId, stageId: existing.stageId, taskId: existing.taskId,
-        extension: plan.convertTo === "issue" ? { actualImpact: plan.note ?? existing.description } : { causeSide: "customer" }
-      }, { convertedFrom: existing, tx });
-      note = `${note ?? ""} → ${converted.code}`.trim();
-    }
-    await writeEvent(tx, ctx, existing.id, { action: plan.action, label: plan.label, fromStatus: existing.status, toStatus: plan.toStatus, fromStep: existing.crStep, toStep: plan.toStep, note });
+    await writeEvent(tx, ctx, existing.id, { action: plan.action, label: plan.label, fromStatus: existing.status, toStatus: plan.toStatus, note });
     const updated = await tx.projectRisk.findFirst({ where: { id: existing.id }, include: issueLogInclude });
     await syncIssueLogWarnings(tx, updated, principal.subjectId, now);
     return updated;

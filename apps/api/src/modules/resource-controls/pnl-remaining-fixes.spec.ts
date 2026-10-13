@@ -23,12 +23,12 @@ const SIGNED_TREE: CostItemDef[] = [
 let sequence = 0;
 const hour = (dateKey: string, hours: number, userId = "u-a", roleGroup: "DELIVERY" | "PM" = "DELIVERY") => classifyEntry({
   id: `rf-${++sequence}`, projectId: "p-1", userId, dateKey, minutes: hours * 60, roleGroup,
-  taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT", selectedTaskTypeLayer2: "CUSTOMER_PROJECT", contractItemId: "hm-01", afterPnlClose: false
+  taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT", selectedTaskTypeLayer2: "CUSTOMER_PROJECT", afterPnlClose: false
 }, { monthlyAmount: 25_200_000, standardMinutes: 168 * 60 }); // 150.000 đ/giờ
 
 const project = (patch: Partial<ProjectPnlInput> = {}) => computeProjectPnl({
   entries: [hour("2026-08-03", 8), hour("2026-09-01", 4)],
-  items: [{ id: "hm-01", contractType: "FIXED_PRICE", valueAmount: 60_000_000 }],
+  projectValueAmount: 60_000_000,
   closePassed: false, g1Passed: true, lostDeal: false, consumable: false, lockedPeriods: new Set(), unallocatedFundPeriods: new Set(),
   fundShares: [{ periodKey: "2026-08", itemCode: "CP.FUNCOP.AI", amount: 1_000_000 }, { periodKey: "2026-09", itemCode: "CP.FUNCOP.TAITRO", amount: 250_000 }],
   manualLines: [
@@ -36,7 +36,7 @@ const project = (patch: Partial<ProjectPnlInput> = {}) => computeProjectPnl({
     { periodKey: "2026-08", itemCode: "CP.FUNCOP.HOANTRA", amount: 500_000 },
     { periodKey: "2026-09", itemCode: "CP.GIAMTRU.NCC", amount: 300_000 }
   ],
-  tree: SIGNED_TREE, disabledCodes: new Set(), commissionPercent: 5, sellRate: () => undefined, ...patch
+  tree: SIGNED_TREE, disabledCodes: new Set(), commissionPercent: 5, ...patch
 });
 
 /** "Toàn dự án" = the month rows + "Khoản tính cho cả dự án" — the identity every case below must keep. */

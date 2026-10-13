@@ -1,7 +1,7 @@
 import { ForbiddenException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 import type { PrincipalContext } from "@b2b-crm/contracts";
-import { AccountsService } from "./accounts.service";
+import { AccountsService, accountCodeBase, nextFreeAccountCode } from "./accounts.service";
 
 const base: PrincipalContext = {
   subjectType: "internal_user", subjectId: "usr-1", displayName: "U", tenantKey: "prod", workspaceId: "twk-1", workspaceKey: "default",
@@ -90,5 +90,17 @@ describe("AccountsService money visibility (annual value is for the cost permiss
     expect(prisma.account.create.mock.calls[0][0].data.annualValue).toBe(0);
     await service.updateAccount("acc-1", { annualValue: 7 } as any, viewers[1]);
     expect(prisma.account.update.mock.calls[1][0].data.annualValue).toBe(7);
+  });
+});
+
+describe("account code generation", () => {
+  it("derives the code from the name without diacritics", () => {
+    expect(accountCodeBase("Công ty Trí Mai Đông")).toBe("CTTMD");
+    expect(accountCodeBase("  ***  ")).toBe("KH");
+  });
+
+  it("takes the first free code so a blank code never collides", () => {
+    expect(nextFreeAccountCode("ABC", new Set())).toBe("ABC");
+    expect(nextFreeAccountCode("ABC", new Set(["ABC", "ABC-2"]))).toBe("ABC-3");
   });
 });

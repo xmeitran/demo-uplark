@@ -43,14 +43,12 @@ export function PnlSetupParameters() {
           <tbody>
             {data.rows.map((row) => {
               const active = selected ? rowKey(row) === rowKey(selected) : false;
-              // PL-26: outside the cost permission group a sell rate has no figure — "—", not "Chưa nhập".
-              const hidden = row.key === "sellRate" && !api.data?.meta.moneyVisible;
-              const empty = row.defaultValueText === null && !hidden;
+              const empty = row.defaultValueText === null;
               const cell = `${tableCellClass} ${row.derived ? "!border-b-0" : ""} ${empty && !active ? "!text-muted-foreground" : ""}`;
               return [
                 <tr key={rowKey(row)} className={active ? "bg-primary/10" : "hover:bg-muted/25"}>
                   <td className={cell}><button type="button" aria-pressed={active} aria-label={`Xem giá trị theo phạm vi của ${row.label}`} className={`rounded text-left hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${active ? "!font-bold" : ""}`} onClick={() => setSelectedKey(rowKey(row))}>{row.label}</button></td>
-                  <td className={cell}>{row.defaultValueText ?? (hidden ? "—" : "Chưa nhập")}</td>
+                  <td className={cell}>{row.defaultValueText ?? "Chưa nhập"}</td>
                   <td className={cell}>{row.scopeText}</td>
                   <td className={cell}>{empty && !row.specificValueCount ? "" : row.specificValueCount}</td>
                   <td className={cell}>{row.effectiveFrom ? formatMonth(row.effectiveFrom) : ""}</td>

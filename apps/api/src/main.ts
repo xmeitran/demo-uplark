@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { configureAppSecurity } from './bootstrap-security';
+import { PrismaExceptionFilter } from './shared/http/prisma-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -15,6 +16,7 @@ async function bootstrap() {
   });
   app.setGlobalPrefix('api');
   configureAppSecurity(app);
+  app.useGlobalFilters(new PrismaExceptionFilter());
 
   const port = process.env.API_PORT || 4000;
   await app.listen(port);

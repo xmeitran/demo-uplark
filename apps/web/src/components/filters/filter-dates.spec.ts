@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMonthList, datePresets, formatRangeLabel, hasChoice, monthPresets } from "./filter-dates";
+import { buildMonthList, datePresets, formatRangeLabel, hasChoice, monthPresets, standardDatePresets } from "./filter-dates";
 
 describe("buildMonthList", () => {
   it("lists months newest first across a year boundary", () => {
@@ -62,5 +62,20 @@ describe("hasChoice", () => {
   it("needs two real options besides the catch-all", () => {
     expect(hasChoice([{ value: "all" }, { value: "a" }])).toBe(false);
     expect(hasChoice([{ value: "" }, { value: "a" }, { value: "b" }])).toBe(true);
+  });
+});
+
+describe("standardDatePresets", () => {
+  it("lists rolling days, whole periods and all time, in order", () => {
+    expect(standardDatePresets("2026-03-02").map((preset) => `${preset.label}: ${preset.from}..${preset.to}`)).toEqual([
+      "Hôm nay: 2026-03-02..2026-03-02",
+      "7 ngày qua: 2026-02-24..2026-03-02",
+      "30 ngày qua: 2026-02-01..2026-03-02",
+      "Tháng này: 2026-03-01..2026-03-31",
+      "Tháng trước: 2026-02-01..2026-02-28",
+      "Quý này: 2026-01-01..2026-03-31",
+      "Năm nay: 2026-01-01..2026-12-31",
+      "Tất cả thời gian: .."
+    ]);
   });
 });

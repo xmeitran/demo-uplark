@@ -1,10 +1,11 @@
 /**
- * Rules of the issue log ("Sổ vấn đề và yêu cầu thay đổi": 5.4, V-23…V-32, 8.2). Pure: no database access.
+ * Rules of the issue log ("Sổ vấn đề": 5.4, V-23…V-26, V-31) — three types: Blocker, Risk, Issue. Yêu cầu thay đổi is not
+ * recorded in the system any more (chốt 13/10); rows of that retired type stay in the table, read-only and unlisted.
+ * Pure: no database access.
  * Persistence, warnings and notifications are in issue-log.service.ts.
  */
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import {
-  CHANGE_REQUEST_STEPS,
   ISSUE_LOG_CODE_PREFIX,
   ISSUE_LOG_EXTENSION_FIELDS,
   ISSUE_LOG_IMPACT_AREAS,
@@ -15,7 +16,6 @@ import {
   escalationLevelForImpactArea,
   isIssueLogOpen,
   issueLogFieldDef,
-  type ChangeRequestStepCode,
   type IssueLogAllowedAction,
   type IssueLogDueState,
   type IssueLogExtension,
@@ -49,12 +49,10 @@ export interface IssueLogRecordState {
   code?: string;
   type: string;
   status: string;
-  crStep?: string | null;
   severity?: string;
   ownerUserId?: string | null;
   createdByUserId?: string | null;
   dueAt?: Date | null;
-  stepDueAt?: Date | null;
   createdAt?: Date;
   closedAt?: Date | null;
   impactArea?: string | null;
@@ -69,12 +67,7 @@ export interface IssueLogRecordState {
 
 /** Extension keys kept in their own (pre-existing) columns instead of the JSON document. */
 const COLUMN_BACKED_KEYS = new Set(["likelihood", "response"]);
-const BRI_TYPES: readonly IssueLogType[] = ["blocker", "risk", "issue"];
 const LEGACY_RISK_CATEGORIES = new Set(["financial", "operational", "external", "strategic"]);
-
-export function canViewCommercial(actor: IssueLogActor) {
-  return actor.isPm || actor.isBd;
-}
 
 export function issueLogCode(type: IssueLogType, running: number) {
   return `${ISSUE_LOG_CODE_PREFIX[type]}-${String(running).padStart(3, "0")}`;
@@ -85,7 +78,7 @@ export function parseIssueLogType(value: unknown): IssueLogType {
   const key = String(value ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   if ((ISSUE_LOG_TYPES as readonly string[]).includes(key)) return key as IssueLogType;
   if (LEGACY_RISK_CATEGORIES.has(key)) return "risk";
-  throw new BadRequestException("Loại bản ghi phải là Blocker, Risk, Issue hoặc Yêu cầu thay đổi.");
+  throw new BadRequestException("Loại bản ghi phải là Blocker, Risk hoặc Issue.");
 }
 
 export function parseIssueLogSeverity(value: unknown): IssueLogSeverity {
@@ -121,15 +114,14 @@ function coerceField(def: IssueLogFieldDef, raw: unknown): string | number | nul
 
 /**
  * Keeps only the fields the type defines, coerced to their kind. Unknown keys are dropped; system-computed
- * fields cannot be typed in; commercial fields need the right to see them (V-32).
+ * fields cannot be typed in.
  */
-export function sanitizeExtension(type: IssueLogType, input: unknown, actor: IssueLogActor): { extension: IssueLogExtension; columns: { likelihood?: string; response?: string } } {
+export function sanitizeExtension(type: IssueLogType, input: unknown): { extension: IssueLogExtension; columns: { likelihood?: string; response?: string } } {
   const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const extension: IssueLogExtension = {};
   const columns: { likelihood?: string; response?: string } = {};
   for (const def of ISSUE_LOG_EXTENSION_FIELDS[type]) {
     if (!(def.key in source) || def.auto) continue;
-    if (def.commercial && !canViewCommercial(actor)) throw new ForbiddenException(`Chỉ PM, Admin và BD phụ trách dự án được ghi "${def.label}".`);
     const value = coerceField(def, source[def.key]);
     if (COLUMN_BACKED_KEYS.has(def.key)) columns[def.key as "likelihood" | "response"] = value === null ? (def.key === "response" ? "" : undefined) : String(value);
     else extension[def.key] = value;
@@ -157,36 +149,7 @@ export function assertRequiredOnCreate(type: IssueLogType, record: IssueLogRecor
   if (missing.length) throw new BadRequestException(`${ISSUE_LOG_TYPE_LABELS[type]} bắt buộc có: ${missing.map((def) => def.label).join(", ")}.`);
 }
 
-export function initialStatus(type: IssueLogType): { status: IssueLogStatus; crStep: ChangeRequestStepCode | null } {
-  return type === "change_request" ? { status: "new", crStep: "CR-01" } : { status: "pending", crStep: null };
-}
-
-function stepDef(code: string | null | undefined) {
-  return CHANGE_REQUEST_STEPS.find((step) => step.code === code);
-}
-
-/** 8.2: what completing each step asks for, who completes it, and where it leads. */
-type StepActor = "pm" | "member" | "pm_bd";
-const CR_ADVANCE: Partial<Record<ChangeRequestStepCode, { next: ChangeRequestStepCode | "by_case"; label: string; who: StepActor; requires: string[]; optional?: string[] }>> = {
-  "CR-01": { next: "CR-02", label: "Bắt đầu phân loại (CR-02)", who: "pm", requires: [] },
-  "CR-02": { next: "CR-03", label: "Kết luận: ngoài phạm vi, là yêu cầu thay đổi", who: "pm", requires: ["baselineRef"], optional: ["baselineVersion"] },
-  "CR-03": { next: "CR-04", label: "Hoàn tất đánh giá kỹ thuật (CR-03)", who: "member", requires: ["technicalImpact", "estimatedEffortMd", "timelineImpactDays", "resourceImpact"] },
-  "CR-04": { next: "CR-G1", label: "Hoàn tất Impact Pack (CR-04)", who: "pm", requires: ["proposedTimeline", "newAcceptanceCriteria"] },
-  "CR-G1": { next: "by_case", label: "Chọn Case 1 / Case 2 (CR-G1)", who: "pm", requires: ["commercialCase", "caseBasis"] },
-  "CR-05A": { next: "CR-06", label: "Chốt phương án chi phí, gửi khách (CR-05A)", who: "pm", requires: ["costImpact", "feeOption"] },
-  "CR-05B": { next: "CR-06", label: "Duyệt thương mại, gửi khách (CR-05B)", who: "pm_bd", requires: ["costImpact", "feeOption", "contractImpact"] },
-  "CR-06": { next: "CR-07", label: "Đã đàm phán, chờ xác nhận chính thức (CR-06)", who: "pm_bd", requires: [] },
-  "CR-07C": { next: "CR-08A", label: "Bắt đầu triển khai (CR-08A)", who: "member", requires: [] },
-  "CR-08A": { next: "CR-08B", label: "Đã có phiên bản giải pháp mới (CR-08A)", who: "member", requires: [] },
-  "CR-08B": { next: "CR-08C", label: "Đã tạo hạng mục, task và baseline mới (CR-08B)", who: "pm", requires: [] }, // "Phiên bản baseline mới" is written by the system (onChangeRequestBaselineUpdate)
-  "CR-08C": { next: "CR-09", label: "Xác nhận kết quả, đóng (CR-09)", who: "pm", requires: ["closeEvidence"], optional: ["actualTimelineImpactDays"] }
-};
-
-function stepActorAllowed(who: StepActor, actor: IssueLogActor) {
-  if (who === "member") return actor.isPm || actor.isMember;
-  if (who === "pm_bd") return actor.isPm || actor.isBd;
-  return actor.isPm;
-}
+export const INITIAL_ISSUE_LOG_STATUS: IssueLogStatus = "pending";
 
 function isOwner(record: IssueLogRecordState, actor: IssueLogActor) {
   return Boolean(record.ownerUserId) && record.ownerUserId === actor.userId;
@@ -198,24 +161,9 @@ export function allowedActions(record: IssueLogRecordState, actor: IssueLogActor
   const status = record.status;
   if (status === "cancelled") return actions;
 
-  if (record.type === "change_request") {
-    const step = record.crStep as ChangeRequestStepCode | undefined;
-    const advance = step ? CR_ADVANCE[step] : undefined;
-    if (advance && isIssueLogOpen(status) && stepActorAllowed(advance.who, actor)) {
-      actions.push({ action: "advance", label: advance.label, requires: advance.requires, optional: advance.optional, tone: "primary" });
-    }
-    if ((step === "CR-01" || step === "CR-02") && actor.isPm) {
-      actions.push({ action: "not_cr", label: "Kết luận: không phải CR", requires: ["note"], optional: ["convertTo"], tone: "neutral" });
-    }
-    if (step === "CR-07" && actor.isPm) {
-      actions.push({ action: "approve", label: "Khách duyệt (CR-07C)", requires: ["approvalEvidence", "customerApprovedAt", "customerApproverName"], tone: "primary" });
-    }
-    if ((step === "CR-06" || step === "CR-07") && (actor.isPm || actor.isBd)) {
-      actions.push({ action: "request_revision", label: "Khách yêu cầu điều chỉnh", requires: ["note", "targetStep"], tone: "neutral" });
-      actions.push({ action: "reject", label: "Khách không duyệt (Từ chối)", requires: ["note"], tone: "danger" });
-      actions.push({ action: "defer", label: "Khách dừng hoặc hoãn (Hoãn)", requires: ["note"], tone: "neutral" });
-    }
-  } else {
+  // A row of a type the log no longer has (the retired Yêu cầu thay đổi) is history: nobody acts on it.
+  if (!isIssueLogType(record.type)) return actions;
+  {
     if (status === "pending") {
       if (actor.isPm || isOwner(record, actor)) actions.push({ action: "start", label: "Bắt đầu xử lý", requires: ["ownerUserId"], tone: "primary" });
       if (actor.isPm) actions.push({ action: "reclassify", label: "Phân loại lại", requires: ["targetType"], optional: ["note"], tone: "neutral" });
@@ -246,19 +194,14 @@ export interface IssueLogTransitionPlan {
   data: Record<string, unknown>;
   extension: IssueLogExtension;
   toStatus: IssueLogStatus;
-  toStep: ChangeRequestStepCode | null;
   note?: string;
-  /** Working days of the step now in progress; null clears the deadline; undefined keeps the current one. */
-  stepSlaDays?: number | null;
   /** Set when the record gets a new type: it needs a new code. */
   newType?: IssueLogType;
-  /** "Không phải CR": also open a linked Blocker/Issue. */
-  convertTo?: "issue" | "blocker";
   /** Named side effects the service runs after commit (see issueLogHooks). */
   hooks: string[];
 }
 
-const FINAL_STATUSES: readonly string[] = ["resolved", "accepted", "closed", "not_cr", "rejected", "deferred", "cancelled"];
+const FINAL_STATUSES: readonly string[] = ["resolved", "accepted", "cancelled"];
 
 /**
  * Validates one transition (allowed from this state, by this actor, with its mandatory fields) and returns what to write.
@@ -278,7 +221,7 @@ export function planTransition(record: IssueLogRecordState, actor: IssueLogActor
   }
 
   // A reclassification carries the fields of the type the record becomes.
-  const { extension: extensionPatch, columns } = sanitizeExtension(action === "reclassify" && !isBlank(input.targetType) ? parseIssueLogType(input.targetType) : type, input.extension, actor);
+  const { extension: extensionPatch, columns } = sanitizeExtension(action === "reclassify" && !isBlank(input.targetType) ? parseIssueLogType(input.targetType) : type, input.extension);
   const extension = { ...readExtension(record), ...extensionPatch };
   const data: Record<string, unknown> = { ...columns };
   const note = isBlank(input.note) ? undefined : String(input.note).trim();
@@ -290,20 +233,13 @@ export function planTransition(record: IssueLogRecordState, actor: IssueLogActor
   const missing = allowed.requires.filter((key) => {
     if (key === "note") return !note;
     if (key === "targetType") return isBlank(input.targetType);
-    if (key === "targetStep") return isBlank(input.targetStep);
     return isBlank(fieldValue(merged, key));
   });
   if (missing.length) {
     throw new BadRequestException(`Bước "${allowed.label}" bắt buộc có: ${missing.map((key) => issueLogFieldDef(type, key)?.label ?? key).join(", ")}.`);
   }
 
-  const plan: IssueLogTransitionPlan = { action, label: allowed.label, data, extension, toStatus: record.status as IssueLogStatus, toStep: (record.crStep as ChangeRequestStepCode) ?? null, note, hooks: [] };
-  const moveToStep = (code: ChangeRequestStepCode) => {
-    const next = stepDef(code)!;
-    plan.toStep = code;
-    plan.toStatus = next.status;
-    plan.stepSlaDays = next.slaDays;
-  };
+  const plan: IssueLogTransitionPlan = { action, label: allowed.label, data, extension, toStatus: record.status as IssueLogStatus, note, hooks: [] };
 
   switch (action) {
     case "start":
@@ -336,66 +272,25 @@ export function planTransition(record: IssueLogRecordState, actor: IssueLogActor
       if (target === type) throw new BadRequestException("Bản ghi đã thuộc loại này.");
       assertRequiredOnCreate(target, merged);
       plan.newType = target;
-      // V-26/V-39: a record the PM classifies as a change request is already past intake; it enters at CR-02.
-      if (target === "change_request") moveToStep("CR-02");
-      else Object.assign(plan, { toStatus: "pending", toStep: null, stepSlaDays: null });
+      plan.toStatus = "pending";
+      // V-26: a Blocker on the customer's side proposes Tạm dừng when it stops progress.
       if (target === "blocker" && extension.causeSide === "customer") plan.hooks.push("suggestProjectOnHold");
       break;
     }
     case "cancel":
       plan.toStatus = "cancelled";
       data.cancelReason = note;
-      if (type === "change_request") plan.hooks.push("onChangeRequestStageClosed");
-      break;
-    case "advance": {
-      const step = record.crStep as ChangeRequestStepCode;
-      const rule = CR_ADVANCE[step]!;
-      // V-29: nothing is implemented before the customer's approval is on file.
-      if (step === "CR-07C" && isBlank(extension.approvalEvidence)) throw new BadRequestException("Chưa có bằng chứng khách duyệt: không được triển khai (V-29).");
-      moveToStep(rule.next === "by_case" ? (extension.commercialCase === "case_1" ? "CR-05A" : "CR-05B") : rule.next);
-      // The classification deadline set at intake keeps running while the PM works on CR-02.
-      if (step === "CR-01") plan.stepSlaDays = undefined;
-      if (step === "CR-02") plan.hooks.push("onChangeRequestClassified");
-      if (step === "CR-08A") plan.hooks.push("onChangeRequestSolutionVersion");
-      if (step === "CR-08B") plan.hooks.push("onChangeRequestBaselineUpdate");
-      if (step === "CR-08C") plan.hooks.push("computeChangeRequestActualEffort");
-      break;
-    }
-    case "approve":
-      moveToStep("CR-07C");
-      plan.hooks.push("onChangeRequestApproved");
-      break;
-    case "request_revision":
-      // 5.4: "Request Revision" is not a status; the request goes back to assessment.
-      moveToStep(input.targetStep === "CR-04" ? "CR-04" : extension.commercialCase === "case_1" ? "CR-05A" : "CR-05B");
-      break;
-    case "reject":
-      plan.toStatus = "rejected";
-      plan.hooks.push("onChangeRequestStageClosed");
-      break;
-    case "defer":
-      plan.toStatus = "deferred";
-      plan.hooks.push("onChangeRequestStageClosed");
-      break;
-    case "not_cr":
-      plan.toStatus = "not_cr";
-      if (input.convertTo === "issue" || input.convertTo === "blocker") plan.convertTo = input.convertTo;
-      else plan.hooks.push("onNotChangeRequestAsTask");
       break;
   }
 
-  if (FINAL_STATUSES.includes(plan.toStatus)) {
-    data.closedAt = now;
-    plan.stepSlaDays = null;
-  }
+  if (FINAL_STATUSES.includes(plan.toStatus)) data.closedAt = now;
   data.status = plan.toStatus;
-  data.crStep = plan.toStep;
   return plan;
 }
 
-/** "Tình trạng hạn": change requests are measured against the SLA of their current step, the others against their due date. */
+/** "Tình trạng hạn": Chưa đặt hạn, Trong hạn, Quá hạn — against the record's due date. */
 export function issueLogDueState(record: IssueLogRecordState, now = new Date()): IssueLogDueState {
-  const due = record.type === "change_request" ? record.stepDueAt ?? record.dueAt : record.dueAt;
+  const due = record.dueAt;
   if (!due) return "no_due";
   return localDateKey(record.closedAt ?? now) > localDateKey(new Date(due)) ? "overdue" : "on_time";
 }
@@ -406,14 +301,19 @@ export function issueLogAgeDays(record: IssueLogRecordState, now = new Date()): 
   return Math.max(0, Math.floor(((record.closedAt ?? now).getTime() - new Date(record.createdAt).getTime()) / 86_400_000));
 }
 
-/** 5.1: only open Blockers, Risks and Issues make a project "Có rủi ro"; change requests never do. */
+/** One of the log's three types; false for a stored row of the retired Yêu cầu thay đổi type. */
+export function isIssueLogType(value: unknown): value is IssueLogType {
+  return (ISSUE_LOG_TYPES as readonly unknown[]).includes(value);
+}
+
+/** 5.1: an open Blocker, Risk or Issue makes a project "Có rủi ro". */
 export function countsTowardProjectAtRisk(record: Pick<IssueLogRecordState, "type" | "status">): boolean {
-  return (BRI_TYPES as readonly string[]).includes(record.type) && isIssueLogOpen(record.status);
+  return isIssueLogType(record.type) && isIssueLogOpen(record.status);
 }
 
 export interface IssueLogWarning {
   dedupeKey: string;
-  typeCode: "BRI-01" | "BRI-02" | "BRI-03" | "YC-01";
+  typeCode: "BRI-01" | "BRI-02" | "BRI-03";
   title: string;
   detail?: string;
   severity: string;
@@ -421,18 +321,14 @@ export interface IssueLogWarning {
 
 /** Every warning key a record can ever hold, so the ones no longer wanted can be closed. */
 export function issueLogWarningKeys(recordId: string): string[] {
-  return [`BRI-01:${recordId}`, `BRI-02:${recordId}`, `BRI-03:${recordId}`, ...CHANGE_REQUEST_STEPS.map((step) => `YC-01:${recordId}:${step.code}`)];
+  return [`BRI-01:${recordId}`, `BRI-02:${recordId}`, `BRI-03:${recordId}`];
 }
 
-/** The warnings a record should have open right now (7.5: BRI-01, BRI-02, BRI-03, YC-01). */
+/** The warnings a record should have open right now (7.5: BRI-01, BRI-02, BRI-03). */
 export function issueLogWarnings(record: IssueLogRecordState & { id: string; code: string; description?: string }, now = new Date()): IssueLogWarning[] {
-  if (!isIssueLogOpen(record.status)) return [];
+  if (!isIssueLogOpen(record.status) || !isIssueLogType(record.type)) return [];
   const name = `${ISSUE_LOG_TYPE_LABELS[record.type as IssueLogType] ?? record.type} ${record.code}`;
   const overdue = issueLogDueState(record, now) === "overdue";
-  if (record.type === "change_request") {
-    if (!overdue || !record.stepDueAt || !record.crStep) return [];
-    return [{ dedupeKey: `YC-01:${record.id}:${record.crStep}`, typeCode: "YC-01", title: `${name} quá SLA bước ${record.crStep}`, detail: record.description, severity: "high" }];
-  }
   const warnings: IssueLogWarning[] = [{ dedupeKey: `BRI-01:${record.id}`, typeCode: "BRI-01", title: `Có ${name} đang mở`, detail: record.description, severity: record.severity === "critical" ? "high" : "medium" }];
   if (overdue) warnings.push({ dedupeKey: `BRI-02:${record.id}`, typeCode: "BRI-02", title: `${name} quá hạn xử lý`, detail: record.description, severity: "high" });
   if (record.severity === "critical" || record.impactArea === "customer_commitment") {

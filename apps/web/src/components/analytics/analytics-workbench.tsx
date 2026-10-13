@@ -39,6 +39,7 @@ import {
 import { downloadCsv } from "@/lib/csv-export";
 import { formatHours, formatPercent, SERIES_COLORS } from "./analytics-format";
 import { AnalyticsFilterControls } from "./analytics-filter-controls";
+import { PageHeader } from "@/components/page-header";
 import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-tab-bar";
 import {
   ANALYTICS_BREAKDOWN_LABELS,
@@ -264,17 +265,11 @@ export function AnalyticsWorkbench() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <header className="flex flex-col items-start justify-between gap-3 rounded-2xl border border-border bg-gradient-to-br from-card via-card to-primary/5 p-5 shadow-sm sm:flex-row sm:items-center sm:p-6" data-testid="analytics-page-header">
-        <div>
-          <h1 className="!text-xl font-bold text-foreground">Phân tích vận hành</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">Theo dõi giờ làm, mức độ sử dụng nguồn lực và hiệu suất dự án trong cùng một màn hình.</p>
-        </div>
-        {summary ? (
-          <p className="shrink-0 text-xs text-muted-foreground">
-            {summary.meta.range.from.slice(0, 10)} → {exclusiveEndDateToInclusiveEndDate(summary.meta.range.to.slice(0, 10)) ?? summary.meta.range.to.slice(0, 10)} · Giờ Việt Nam · cập nhật {new Date(summary.meta.generatedAt).toLocaleTimeString("vi-VN")}
-          </p>
-        ) : null}
-      </header>
+      <PageHeader
+        title="Phân tích vận hành"
+        subtitle="Theo dõi giờ làm, mức độ sử dụng nguồn lực và hiệu suất dự án trong cùng một màn hình."
+        meta={summary ? <>{summary.meta.range.from.slice(0, 10)} → {exclusiveEndDateToInclusiveEndDate(summary.meta.range.to.slice(0, 10)) ?? summary.meta.range.to.slice(0, 10)} · Giờ Việt Nam · cập nhật {new Date(summary.meta.generatedAt).toLocaleTimeString("vi-VN")}</> : undefined}
+      />
 
       {/* View tabs */}
       <WorkspaceTabBar

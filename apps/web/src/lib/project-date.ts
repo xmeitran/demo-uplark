@@ -1,3 +1,15 @@
+/**
+ * The calendar day a date-picker value stands for, as a local Date. A picker value is either the picker's own display
+ * text ("Oct 13, 2026"), an ISO day ("2026-10-13") or an ISO instant. `new Date("2026-10-13")` is UTC midnight, which
+ * is the previous day in a browser west of UTC, so an ISO day is read as a local day here.
+ */
+export function parsePickerDate(value?: string | null): Date | null {
+  if (!value || value === "TBD" || value === "Not set") return null;
+  const dateOnly = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const parsed = dateOnly ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])) : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 export function uiProjectDateToIso(value: string) {
   if (!value || value === "TBD") return null;
   const dateOnly = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);

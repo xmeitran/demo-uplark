@@ -4,16 +4,18 @@ import { AdminMemberControls } from "@/components/auth/admin-access-controls";
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { ArrowLeft, ClipboardList, Mail, Sparkles } from "lucide-react";
+import { ClipboardList, Mail, Sparkles } from "lucide-react";
 import type {
   AdminAccessMemberResponse,
   AdminAccessMemberSummary,
   ProjectTaskSummary,
-  ResourceListResponse,
   UserProjectParticipationResponse,
   WorkspaceSystemRole,
 } from "@b2b-crm/contracts";
-import { currentVietnamMonthRange } from "@/lib/member-participation";
+import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
+import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, SearchFilter, datePresets, dayOf, formatRangeLabel, isWithinRange, matchesAny, standardDatePresets, type DateRange } from "@/components/filters";
+import { HeaderLinkButton, PageHeader, pageMainClassName } from "@/components/page-header";
+import { fetchAllPages } from "@/lib/api-pages";
 import { PROJECT_STATUS_LABELS } from "@/lib/project-status";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { businessRoleFromMember, systemRoleLabel } from "@/lib/people-roles";
@@ -78,9 +80,15 @@ function formatDateTime(value?: string) {
   }).format(date);
 }
 
-/** EV-035: the user's Active and On Hold projects for the current month. */
+// Participation is measured over a bounded period, so "all time" is not offered.
+const PERIOD_PRESETS = standardDatePresets().filter((preset) => preset.from && preset.to);
+const THIS_MONTH: DateRange = (({ from, to }) => ({ from, to }))(datePresets(["this-month"])[0]);
+const ALL_TIME: DateRange = { from: "", to: "" };
+const NO_PROJECT = "__none__";
+
+/** EV-035: the user's Active and On Hold projects in the chosen period (this month by default). */
 function UserProjectParticipation({ userId }: { userId: string }) {
-  const [period] = useState(() => currentVietnamMonthRange());
+  const [period, setPeriod] = useState<DateRange>(THIS_MONTH);
   const [data, setData] = useState<UserProjectParticipationResponse["data"] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,7 +96,7 @@ function UserProjectParticipation({ userId }: { userId: string }) {
     let cancelled = false;
     setData(null);
     setError(null);
-    fetch(`/api/project-participation?userId=${encodeURIComponent(userId)}&startDate=${period.startDate}&endDate=${period.endDate}`, { cache: "no-store" })
+    fetch(`/api/project-participation?userId=${encodeURIComponent(userId)}&startDate=${period.from}&endDate=${period.to}`, { cache: "no-store" })
       .then(async (response) => {
         const body = await response.json().catch(() => null);
         if (!response.ok) throw new Error(typeof body?.message === "string" ? body.message : `Project participation API returned ${response.status}`);
@@ -98,15 +106,23 @@ function UserProjectParticipation({ userId }: { userId: string }) {
     return () => { cancelled = true; };
   }, [userId, period]);
 
-  if (error) return <p role="alert" className="text-xs text-rose-600">{error}</p>;
-  if (!data) return <p className="text-xs text-muted-foreground">Đang tải trạng thái tham gia tháng {period.label}…</p>;
+  const periodLabel = formatRangeLabel(period, PERIOD_PRESETS).toLocaleLowerCase("vi");
+  const filter = (
+    <FilterBar onReset={period.from !== THIS_MONTH.from || period.to !== THIS_MONTH.to ? () => setPeriod(THIS_MONTH) : undefined} activeCount={1}>
+      <FilterField label="Kỳ tham gia" className="min-w-[220px]"><DateRangeFilter value={period} onChange={(range) => setPeriod(range.from && range.to ? range : THIS_MONTH)} presets={PERIOD_PRESETS} clearable={false} ariaLabel="Kỳ xét trạng thái tham gia" /></FilterField>
+    </FilterBar>
+  );
+
+  if (error) return <div className="space-y-3">{filter}<p role="alert" className="text-xs text-rose-600">{error}</p></div>;
+  if (!data) return <div className="space-y-3">{filter}<p className="text-xs text-muted-foreground">Đang tải trạng thái tham gia {periodLabel}…</p></div>;
+
   const groups = [
     { title: `Project đang tham gia (${data.activeProjects.length})`, empty: "Không có Project đang tham gia trong kỳ.", items: data.activeProjects.map((project) => ({ ...project, note: `${Math.round(project.actualMinutes / 6) / 10}h trong kỳ` })) },
     { title: `Project ${PROJECT_STATUS_LABELS.on_hold} (${data.onHoldProjects.length})`, empty: `Không có Project ${PROJECT_STATUS_LABELS.on_hold}.`, items: data.onHoldProjects.map((project) => ({ ...project, note: "" })) }
   ];
   return (
     <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">Trạng thái tham gia tháng {period.label}</p>
+      {filter}
       <div className="grid gap-4 md:grid-cols-2">
         {groups.map((group) => (
           <div key={group.title} className="rounded-xl border border-border bg-card p-5 shadow-sm">
@@ -145,6 +161,8 @@ function EmptyPanel({ title, description }: { title: string; description: string
   );
 }
 
+const USERS_BACK = { href: "/users", label: "Nhân sự" };
+
 export default function UserProfilePage() {
   const params = useParams<{ userId: string }>();
   const searchParams = useSearchParams();
@@ -157,6 +175,10 @@ export default function UserProfilePage() {
   const [isTasksLoading, setIsTasksLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tasksError, setTasksError] = useState<string | null>(null);
+  const [taskQuery, setTaskQuery] = useState("");
+  const [taskDue, setTaskDue] = useState<DateRange>(ALL_TIME);
+  const [taskStatuses, setTaskStatuses] = useState<string[]>([]);
+  const [taskProjects, setTaskProjects] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -205,12 +227,11 @@ export default function UserProfilePage() {
       setIsTasksLoading(true);
       setTasksError(null);
       try {
-        const response = await fetch(`/api/tasks?assigneeUserId=${encodeURIComponent(user.id)}&limit=20&offset=0`, { cache: "no-store" });
-        if (!response.ok) throw new Error(`Tasks API returned ${response.status}`);
-        const payload = (await response.json()) as ResourceListResponse<ProjectTaskSummary>;
-        if (!cancelled) setTasks(payload.data);
+        // Every page: one request returns at most 100 tasks.
+        const rows = await fetchAllPages<ProjectTaskSummary>(`/api/tasks?assigneeUserId=${encodeURIComponent(user.id)}`, { errorLabel: "Không tải được task được gán" });
+        if (!cancelled) setTasks(rows);
       } catch (err) {
-        if (!cancelled) setTasksError(err instanceof Error ? err.message : "Could not load assigned tasks");
+        if (!cancelled) setTasksError(err instanceof Error ? err.message : "Không tải được task được gán");
       } finally {
         if (!cancelled) setIsTasksLoading(false);
       }
@@ -233,6 +254,19 @@ export default function UserProfilePage() {
     setActiveTab(isProfileTab(requestedTab) ? requestedTab : "Tasks");
   }, [requestedTab]);
 
+  const taskStatusOptions = useMemo(() => [...new Set(tasks.map((task) => task.status))].map((value) => ({ value, label: STATUS_LABELS[value] ?? value })), [tasks]);
+  const taskProjectOptions = useMemo(() => {
+    const options = new Map<string, string>();
+    for (const task of tasks) options.set(task.projectId ?? NO_PROJECT, task.projectId ? task.projectName ?? task.projectId : "Không thuộc dự án");
+    return [...options].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, "vi"));
+  }, [tasks]);
+  const visibleTasks = useMemo(() => tasks.filter((task) => matchesSearch(taskQuery, task.title, task.projectName, task.accountName)
+    && isWithinRange(dayOf(task.dueAt), taskDue)
+    && matchesAny(taskStatuses, task.status)
+    && matchesAny(taskProjects, task.projectId ?? NO_PROJECT)), [tasks, taskQuery, taskDue, taskStatuses, taskProjects]);
+  const taskFilterCount = [Boolean(taskQuery.trim()), Boolean(taskDue.from || taskDue.to), taskStatuses.length > 0, taskProjects.length > 0].filter(Boolean).length;
+  const resetTaskFilters = () => { setTaskQuery(""); setTaskDue(ALL_TIME); setTaskStatuses([]); setTaskProjects([]); };
+
   function handleTabChange(tab: ProfileTab) {
     setActiveTab(tab);
     const nextUrl = new URL(window.location.href);
@@ -245,57 +279,51 @@ export default function UserProfilePage() {
   }
 
   return (
-    <AppShell activeRoute="/users" title="User Profile">
-        <main className="flex-1 overflow-auto p-4 sm:p-6">
-          <Link href="/users" className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
-            <ArrowLeft className="w-3.5 h-3.5" /> Back to Users
-          </Link>
-
+    <AppShell activeRoute="/users" title="Nhân sự">
+        <main className={pageMainClassName}>
           {isLoading && (
-            <div className="mt-6 rounded-xl border border-border bg-card p-6 text-sm text-muted-foreground shadow-sm">
-              Loading real user profile...
-            </div>
+            <>
+              <PageHeader back={USERS_BACK} title="Đang tải hồ sơ…" />
+              <div className="rounded-xl border border-border bg-card p-6 text-sm text-muted-foreground shadow-sm">Đang tải hồ sơ nhân sự…</div>
+            </>
           )}
 
           {!isLoading && error && (
-            <div className="mt-6 rounded-xl border border-red-100 bg-red-50 p-6 text-sm text-red-700 shadow-sm">
-              {error}
-            </div>
+            <>
+              <PageHeader back={USERS_BACK} title="Không tải được hồ sơ" />
+              <div className="rounded-xl border border-red-100 bg-red-50 p-6 text-sm text-red-700 shadow-sm">{error}</div>
+            </>
           )}
 
           {!isLoading && !error && !user && (
-            <div className="mt-6 rounded-xl border border-border bg-card p-6 shadow-sm">
-              <h1 className="!text-xl font-bold text-foreground">User not found</h1>
-              <p className="mt-1 text-sm text-muted-foreground">This user is not present in the production identity database.</p>
-            </div>
+            <PageHeader back={USERS_BACK} title="Không tìm thấy nhân sự" subtitle="Người này không có trong danh sách thành viên của workspace." />
           )}
 
           {!isLoading && !error && user && (
-            <div className="mt-4 space-y-5">
-              <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex min-w-0 items-center gap-4">
-                  <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl">
-                    {user.avatarUrl ? (
-                      <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-base font-bold text-white" style={{ backgroundColor: roleColor }}>
-                        {initials(user.displayName || user.email)}
-                      </div>
-                    )}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h1 className="!text-xl truncate font-bold text-foreground">{user.displayName || user.email}</h1>
-                      <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${status?.className}`}>{status?.label}</span>
-                    </div>
-                    <p className="mt-0.5 truncate text-sm text-muted-foreground">{user.email}</p>
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Link href={`/timesheet?person=${encodeURIComponent(user.id)}`} className="flex items-center gap-1.5 rounded-xl border border-border px-3.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted"><ClipboardList className="h-4 w-4" /> Timesheet</Link>
-                  <a href={`mailto:${user.email}`} className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"><Mail className="h-4 w-4" /> Gửi email</a>
-                </div>
-              </header>
+            <div className="space-y-5">
+              <PageHeader
+                back={USERS_BACK}
+                title={
+                  <span className="flex min-w-0 flex-wrap items-center gap-3">
+                    <span aria-hidden className="h-12 w-12 shrink-0 overflow-hidden rounded-xl">
+                      {user.avatarUrl ? (
+                        <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <span className="flex h-full w-full items-center justify-center text-base font-bold text-white" style={{ backgroundColor: roleColor }}>
+                          {initials(user.displayName || user.email)}
+                        </span>
+                      )}
+                    </span>
+                    <span className="min-w-0 break-words">{user.displayName || user.email}</span>
+                    <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${status?.className}`}>{status?.label}</span>
+                  </span>
+                }
+                subtitle={user.email}
+                actions={<>
+                  <HeaderLinkButton href={`/timesheet?person=${encodeURIComponent(user.id)}`} icon={<ClipboardList className="h-4 w-4" />}>Timesheet</HeaderLinkButton>
+                  <a href={`mailto:${user.email}`} className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-sm font-semibold !text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"><Mail className="h-4 w-4" /> Gửi email</a>
+                </>}
+              />
 
               <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
               <div className="min-w-0 space-y-5">
@@ -356,14 +384,27 @@ export default function UserProfilePage() {
               {activeTab === "Tasks" && (
                 <section id="tasks-profile-panel" className="space-y-4">
                   {isTasksLoading && (
-                    <div className="rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground shadow-sm">Loading assigned tasks...</div>
+                    <div className="rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground shadow-sm">Đang tải task được gán…</div>
                   )}
                   {!isTasksLoading && tasksError && (
                     <div className="rounded-xl border border-amber-100 bg-amber-50 p-5 text-sm text-amber-700 shadow-sm">{tasksError}</div>
                   )}
                   {!isTasksLoading && !tasksError && tasks.length ? (
                     <div className="rounded-xl border border-border bg-card shadow-sm">
-                      {tasks.map((task) => {
+                      <FilterBar className="border-b border-border px-3 py-3 sm:px-4" onReset={taskFilterCount ? resetTaskFilters : undefined} activeCount={taskFilterCount}>
+                        <FilterField label="Tìm kiếm" className="min-w-[200px] flex-1"><SearchFilter className="" value={taskQuery} onChange={setTaskQuery} placeholder="Tên task, dự án..." ariaLabel="Tìm task được gán" /></FilterField>
+                        <FilterField label="Hạn hoàn tất"><DateRangeFilter value={taskDue} onChange={(range) => setTaskDue(range)} ariaLabel="Lọc theo hạn hoàn tất" /></FilterField>
+                        <MultiSelectFilter label="Trạng thái" options={taskStatusOptions} values={taskStatuses} onChange={setTaskStatuses} allLabel="Tất cả trạng thái" searchable={false} />
+                        <MultiSelectFilter label="Dự án" options={taskProjectOptions} values={taskProjects} onChange={setTaskProjects} allLabel="Tất cả dự án" />
+                      </FilterBar>
+                      <p className="border-b border-border px-5 py-2 text-xs text-muted-foreground">Hiển thị {visibleTasks.length} / {tasks.length} task</p>
+                      {!visibleTasks.length ? (
+                        <div className="px-5 py-10 text-center">
+                          <p className="text-sm font-medium text-foreground">Không có kết quả phù hợp bộ lọc</p>
+                          <button type="button" onClick={resetTaskFilters} className="mt-3 rounded-lg border border-border px-3 py-1.5 !text-xs !font-semibold text-primary hover:bg-muted">Đặt lại bộ lọc</button>
+                        </div>
+                      ) : null}
+                      {visibleTasks.map((task) => {
                         const taskContent = (
                           <>
                             <div className="min-w-0">

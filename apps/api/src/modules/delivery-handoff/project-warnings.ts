@@ -66,7 +66,7 @@ export async function openOrRefreshProjectWarning(client: any, input: OpenProjec
 /** Closes every open warning matching the key (or key prefix). Closed rows stay queryable. */
 export async function closeProjectWarnings(
   client: any,
-  where: { projectId: string; dedupeKey?: string | { in: string[] }; id?: string },
+  where: { projectId?: string; workspaceId?: string; typeCode?: { in: string[] }; dedupeKey?: string | { in: string[] }; id?: string },
   actorUserId: string | null,
   reason: string,
   action: "closed" | typeof MANUAL_CLOSE_ACTION = "closed"

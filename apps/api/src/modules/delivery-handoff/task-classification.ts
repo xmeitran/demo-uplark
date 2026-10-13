@@ -4,6 +4,8 @@
  * Layer 2 (bối cảnh công việc) is never chosen: deriveTaskTypeLayer2 is the only place it is decided.
  * Labels are mirrored by apps/web/src/lib/task-classification.ts — keep both tables identical.
  */
+import { INTERNAL_WORKLOG_PROJECT_TYPE, projectKindOf } from "@b2b-crm/contracts";
+
 export const TASK_TYPE_LAYER1_LABELS = { PRE_SALE: "Pre-sale", DELIVERY: "Delivery", PM: "PM" } as const;
 export type TaskTypeLayer1 = keyof typeof TASK_TYPE_LAYER1_LABELS;
 
@@ -32,46 +34,37 @@ export function taskTypeLayer2Label(value: unknown): string {
 }
 
 /** The fixed "DX Internal Worklog" project (D-08) is marked by this project type. */
-export const INTERNAL_WORKLOG_PROJECT_TYPE = "internal_worklog";
-/** An internal UpBase project: billable ("có tính mandays") or not is decided by its contract line item's type. */
-export const INTERNAL_PROJECT_TYPE = "internal";
+export { INTERNAL_WORKLOG_PROJECT_TYPE };
 
 export function isInternalWorklogProjectType(projectType: unknown): boolean {
-  return normalizeProjectKind(projectType) === INTERNAL_WORKLOG_PROJECT_TYPE;
+  return projectKindOf(projectType) === INTERNAL_WORKLOG_PROJECT_TYPE;
 }
 
-function normalizeProjectKind(projectType: unknown) {
-  return String(projectType ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+/** Loại Khách hàng: the only kind with a Giá trị dự án, payment confirmations and chargeable hours. */
+export function isCustomerProjectType(projectType: unknown): boolean {
+  return projectKindOf(projectType) === "delivery";
 }
 
 export interface TaskTypeLayer2Context {
-  /** null when the task hangs off no project. */
+  /** Project.projectType (Loại dự án); null when the task hangs off no project. */
   projectType: string | null | undefined;
   /** Stage position against the P&L close gate (G7, section 3.4): true = after, false = before, null = not known. */
   afterPnlClose: boolean | null | undefined;
-  /** Type of the task's contract line item (contract-item.ts); null/undefined = no item yet or type not set. */
-  contractType?: string | null;
 }
 
 /**
- * Table 4.2, row by row:
+ * Table 4.2 (v2, chốt 13/10): Layer 2 follows Loại dự án and the task's position, row by row —
  *  1. DX Internal Worklog project -> Nội bộ.
- *  5. Line item of type Nội bộ -> Nội bộ (an internal project that is not charged).
- *  4. Internal UpBase project with a Trọn gói / Theo giờ item ("có tính mandays") -> classified like a customer project.
- *  2. Before the P&L close gate -> Dự án tính phí.   3. From Milestone 4 on (after the gate) -> Ticket/bảo trì
- *     (by stage position, not by item type: decision 2, "Không cần Retainer").
- * Returns null ("Chờ phân loại") when a row cannot be told apart:
- *  - internal project whose line item has no type yet (charged or not is unknown);
- *  - a stage with no known position against the P&L close gate.
- * A customer project's item without a type still classifies: both billable types give the same answer.
+ *  5. Loại Nội bộ or Đào tạo (không tính phí) -> Nội bộ.
+ *  2. Loại Khách hàng, before the P&L close gate -> Dự án tính phí. An internal UpBase project that counts mandays is
+ *     created as Loại Khách hàng (row 4), so it lands here too.
+ *  3. Loại Khách hàng, from Milestone 4 on (after the gate) -> Ticket/bảo trì.
+ * Returns null ("Chờ phân loại") for a task without a project, or a stage with no known position against the gate.
  */
 export function deriveTaskTypeLayer2(context: TaskTypeLayer2Context): TaskTypeLayer2 | null {
-  const projectType = normalizeProjectKind(context.projectType);
-  if (!projectType) return null;
-  if (projectType === INTERNAL_WORKLOG_PROJECT_TYPE) return "INTERNAL_PROJECT";
-  if (context.contractType === "INTERNAL") return "INTERNAL_PROJECT";
-  const billable = context.contractType === "FIXED_PRICE" || context.contractType === "TIME_AND_MATERIAL";
-  if (projectType === INTERNAL_PROJECT_TYPE && !billable) return null;
+  const kind = projectKindOf(context.projectType);
+  if (!kind) return null;
+  if (kind !== "delivery") return "INTERNAL_PROJECT";
   if (context.afterPnlClose === true) return "TICKET_MAINTENANCE";
   if (context.afterPnlClose === false) return "CUSTOMER_PROJECT";
   return null;

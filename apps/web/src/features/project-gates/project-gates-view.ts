@@ -32,7 +32,7 @@ export function gateActionFields(action: ProjectGateAction, definition: Pick<Pro
         ...goLive
       ];
     case "confirm_payment":
-      return [{ key: "reason", label: "Ghi chú (thông tin thu đợt 1 từ BD)", kind: "textarea", required: false }];
+      return [{ key: "reason", label: "Ghi chú (thông tin thu tiền từ BD)", kind: "textarea", required: false }];
     case "confirm_customer":
       return [
         { key: "customerConfirmedBy", label: "Người xác nhận phía khách hàng", kind: "text", required: true, placeholder: "Họ tên, chức danh" },

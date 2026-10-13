@@ -15,11 +15,14 @@ import {
   type AlertTriggerDef,
   type AlertTriggerOverrides,
   type PrincipalContext,
+  type ResourceListPaginationMeta,
   type SystemParameterDef,
   type SystemParameterItem,
   type SystemParameterKey
 } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
+import { buildPaginationMeta, normalizePagination } from "../../shared/http/request-context";
+import { csvIn, csvList, vietnamDayRange } from "../../shared/http/list-filters";
 import { loadLatestParameterRows } from "../../shared/system-parameters";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PnlService } from "../resource-controls/pnl.service";
@@ -159,19 +162,32 @@ export class AlertsService {
   // Warning records for Admin › Cảnh báo
   // -------------------------------------------------------------------------
 
-  async listWarnings(query: { status?: string; typeCode?: string; projectId?: string; severity?: string }, principal: PrincipalContext): Promise<{ data: AdminWarningItem[]; meta: { total: number; open: number; byCode: Record<string, number> } }> {
+  /**
+   * Filters: `status` (open | closed | all, default open), `typeCode`, `projectId`, `severity`, `ownerUserId` — each one value
+   * or a comma-joined list; `from`/`to` inclusive Vietnam days on openedAt; `q` on title/detail/project. Paged with
+   * `limit` (default and max 100) / `offset`; `meta.total` is the filtered count.
+   */
+  async listWarnings(query: Record<string, unknown>, principal: PrincipalContext): Promise<{ data: AdminWarningItem[]; meta: { total: number; open: number; byCode: Record<string, number>; pagination: ResourceListPaginationMeta } }> {
     assertAdmin(principal);
-    const status = query.status === "closed" ? "closed" : query.status === "all" ? undefined : "open";
-    const where = {
+    const pagination = normalizePagination({ limit: (query.limit as string | undefined) ?? 100, offset: query.offset as string | undefined });
+    // No status (or an unknown one) keeps the old default: open warnings only. "all" lifts the filter.
+    const requested = csvList(query.status);
+    const known = requested.filter((value) => value === "open" || value === "closed");
+    const status = requested.includes("all") ? undefined : { in: known.length ? known : ["open"] };
+    const openedAt = vietnamDayRange(query.from, query.to);
+    const q = typeof query.q === "string" ? query.q.trim() : "";
+    const where: Prisma.ProjectWarningWhereInput = {
       workspaceId: principal.workspaceId,
       ...(status ? { status } : {}),
-      ...(query.typeCode ? { typeCode: query.typeCode } : {}),
-      ...(query.projectId ? { projectId: query.projectId } : {}),
-      ...(query.severity ? { severity: query.severity } : {})
+      ...(csvIn(query.typeCode) ? { typeCode: csvIn(query.typeCode) } : {}),
+      ...(csvIn(query.projectId) ? { projectId: csvIn(query.projectId) } : {}),
+      ...(csvIn(query.severity) ? { severity: csvIn(query.severity) } : {}),
+      ...(csvIn(query.ownerUserId) ? { ownerUserId: csvIn(query.ownerUserId) } : {}),
+      ...(openedAt ? { openedAt } : {}),
+      ...(q ? { OR: [{ title: { contains: q, mode: "insensitive" } }, { detail: { contains: q, mode: "insensitive" } }, { project: { name: { contains: q, mode: "insensitive" } } }, { project: { code: { contains: q, mode: "insensitive" } } }] } : {})
     };
     const [rows, total, openByCode] = await Promise.all([
-      // ponytail: newest 500, no paging; add a cursor when a workspace keeps more than that open.
-      this.prisma.projectWarning.findMany({ where, orderBy: [{ status: "desc" }, { openedAt: "desc" }], take: 500, include: { project: { select: { name: true, code: true } } } }),
+      this.prisma.projectWarning.findMany({ where, orderBy: [{ status: "desc" }, { openedAt: "desc" }, { id: "asc" }], take: pagination.limit, skip: pagination.offset, include: { project: { select: { name: true, code: true } } } }),
       this.prisma.projectWarning.count({ where }),
       this.prisma.projectWarning.groupBy({ by: ["typeCode"], where: { workspaceId: principal.workspaceId, status: "open" }, _count: { _all: true } })
     ]);
@@ -190,7 +206,7 @@ export class AlertsService {
           openedAt: row.openedAt.toISOString(), closedAt: row.closedAt?.toISOString(), closeReason: row.closeReason ?? undefined
         };
       }),
-      meta: { total, open: Object.values(byCode).reduce((sum, count) => sum + count, 0), byCode }
+      meta: { total, open: Object.values(byCode).reduce((sum, count) => sum + count, 0), byCode, pagination: buildPaginationMeta({ ...pagination, total, returned: rows.length }) }
     };
   }
 
@@ -199,8 +215,8 @@ export class AlertsService {
   // -------------------------------------------------------------------------
 
   /**
-   * DL-01 reads the P&L hour gate (PnlService). Hours of a trial project and Pre-sale hours waiting for the contract
-   * never count towards the deadline (PL-02, PL-05).
+   * DL-01 reads the P&L hour gate (PnlService). Hours of a trial project never count towards the deadline (PL-02);
+   * Pre-sale hours do (chốt 13/10: there is no "waiting for the contract" state any more).
    */
   private pendingHours(workspaceId: string, projectIds: string[]): Promise<ScanPendingHours[]> {
     return this.pnl.pendingHoursForAlerts(workspaceId, projectIds);

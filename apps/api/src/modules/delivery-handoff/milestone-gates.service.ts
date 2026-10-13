@@ -269,7 +269,7 @@ export class MilestoneGatesService {
             projectId: project.id,
             workspaceId: principal.workspaceId,
             archivedAt: null,
-            // V-40: the tasks of a change-request stage never hold back the milestone's gate.
+            // Stored stages of the retired change-request flow (changeRequestId set) never hold back the milestone's gate.
             stage: { milestoneId: milestone.id, changeRequestId: null }
           },
           select: { status: true }

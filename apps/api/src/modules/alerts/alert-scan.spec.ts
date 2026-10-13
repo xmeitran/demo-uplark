@@ -79,7 +79,7 @@ describe("daily scan", () => {
     const extensions: any[] = [];
     const gates: any[] = [{ projectId: "p1", milestoneId: "m1", code: "G1", customerRequestedAt: vn("2026-10-06") }];
     Object.assign(prisma, { projectStageExtension: { findMany: async () => extensions }, projectGate: { findMany: async ({ where }: any) => (where.status === "awaiting_customer" ? gates : []) } });
-    const extension = (newDueAt: Date, changeRequestId: string | null = null) => ({ id: `e${extensions.length}`, stageId: "s1", previousDueAt: null, newDueAt, reason: "Khách đổi lịch", changeRequestId, approvedByName: "PM", approvedAt: WED });
+    const extension = (newDueAt: Date) => ({ id: `e${extensions.length}`, stageId: "s1", previousDueAt: null, newDueAt, reason: "Khách đổi lịch", approvedByName: "PM", approvedAt: WED });
 
     // Started Mon 05/10 with a 2-day SLA and still open on Wed 14/10; G1 was sent on 06/10 and 3 working days passed.
     expect((await scan(prisma, WED)).opened).toEqual({ "TD-04": 1, "BRI-05": 1 });
@@ -94,7 +94,7 @@ describe("daily scan", () => {
 
     // TD-05 is an event trigger owned by stage-extension.ts: the scan neither opens it nor closes the one the event opened.
     db.warnings.push({ id: "w-td05", workspaceId: "w", projectId: "p1", typeCode: "TD-05", dedupeKey: "TD-05:stage:s1", status: "open", title: "Gia hạn stage bất thường", openedAt: WED, events: [] });
-    extensions.push(extension(vn("2026-10-21"), "cr-1"), extension(vn("2026-10-22")));
+    extensions.push(extension(vn("2026-10-21")), extension(vn("2026-10-22")));
     const third = await scan(prisma, WED);
     expect(third.opened).toEqual({});
     expect(third.closed).toEqual({});
@@ -274,5 +274,13 @@ describe("daily scan", () => {
     const { prisma } = fakePrisma({});
     const result = await runAlertScan(prisma, "w", { now: WED, deliverLark: vi.fn() });
     expect(result.skipped).toContainEqual({ code: "DL-01", reason: "Lượt quét này không được cấp nguồn giờ Chờ xử lý" });
+  });
+
+  it("closes what is still open of a retired trigger (YC-01, gone with the change-request flow), on any project of the workspace", async () => {
+    const { prisma, db } = fakePrisma({});
+    db.warnings.push({ id: "w-yc", workspaceId: "w", projectId: "p-closed", typeCode: "YC-01", dedupeKey: "YC-01:risk-1:CR-03", status: "open", title: "Yêu cầu thay đổi quá SLA", openedAt: WED, events: [] });
+    expect((await scan(prisma, WED)).closed).toEqual({ "YC-01": 1 });
+    expect(db.warnings[0]).toMatchObject({ status: "closed", closeReason: "Loại cảnh báo đã bỏ khỏi danh mục" });
+    expect((await scan(prisma, THU)).closed).toEqual({});
   });
 });

@@ -200,8 +200,8 @@ export function entriesBeforeEightHourRule(entries: readonly DayCapEntry[], effe
 
 export const PROJECT_POSITIONS = {
   before_g1: { label: "Chưa qua G1", handling: "Chuyển hẳn sang khung TPL-001" },
-  milestone_2: { label: "Đang ở Milestone 2", handling: "Ánh xạ milestone và stage hiện có sang TPL-001; tạo hạng mục hợp đồng; gán Lớp 1 và hạng mục cho task đang mở" },
-  milestone_3_4: { label: "Đang ở Milestone 3 hoặc 4", handling: "Giữ khung cũ tới khi đóng; chỉ bổ sung hạng mục hợp đồng, phân loại cho task đang mở và trạng thái theo bộ mới" },
+  milestone_2: { label: "Đang ở Milestone 2", handling: "Ánh xạ milestone và stage hiện có sang TPL-001; gán Lớp 1 cho task đang mở; PM bổ sung Loại dự án và Giá trị dự án" },
+  milestone_3_4: { label: "Đang ở Milestone 3 hoặc 4", handling: "Giữ khung cũ tới khi đóng; chỉ bổ sung phân loại cho task đang mở và trạng thái theo bộ mới; PM bổ sung Loại dự án và Giá trị dự án" },
   unknown: { label: "Không xác định", handling: "PM xác nhận vị trí của dự án, rồi áp một trong ba cách của bảng 9.1" }
 } as const;
 export type ProjectPosition = keyof typeof PROJECT_POSITIONS;

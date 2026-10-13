@@ -14,9 +14,10 @@ const bd = actor("bd", { isBd: true });
 const director = actor("director", { isAdmin: true, isPm: true });
 
 function facts(code: ProjectGateCode, overrides: Partial<GateFacts> = {}): GateFacts {
-  return { reachable: true, documents: PROJECT_GATE_CATALOGUE[code].requiredDocumentTypes.map((type) => ({ type, present: true })), openTaskCount: 0, rootContractItemReady: true, openIssuesWithoutOwnerOrDue: 0, ...overrides };
+  return { reachable: true, documents: PROJECT_GATE_CATALOGUE[code].requiredDocumentTypes.map((type) => ({ type, present: true })), openTaskCount: 0, chargeable: true, projectValueReady: true, openIssuesWithoutOwnerOrDue: 0, ...overrides };
 }
-const state = (code: ProjectGateCode, overrides: Partial<GateState> = {}): GateState => ({ code, status: "not_submitted", ...overrides });
+// G7 carries the PM's "đã thu đủ" tick (PL-16) unless a test takes it away.
+const state = (code: ProjectGateCode, overrides: Partial<GateState> = {}): GateState => ({ code, status: "not_submitted", ...(code === "G7" ? { paymentConfirmedAt: now } : {}), ...overrides });
 const plan = (code: ProjectGateCode, gate: Partial<GateState>, who: IssueLogActor, input: ProjectGateActionInput, gateFacts: Partial<GateFacts> = {}) =>
   planGateAction(PROJECT_GATE_CATALOGUE[code], state(code, gate), facts(code, gateFacts), who, input, now);
 
@@ -159,10 +160,15 @@ describe("approve, reject, conditional approval (V-13)", () => {
 });
 
 describe("customer confirmation after the internal approval (V-14) and the G1 payment confirmation", () => {
-  it("G1 is not approved before the PM confirms instalment 1 and a root contract item exists", () => {
+  it("G1 is not approved before the PM confirms instalment 1 and Giá trị dự án is entered (D-22); G7 needs the 'đã thu đủ' tick (PL-16)", () => {
     const submitted = { status: "submitted", submittedByUserId: "bd" };
     expect(() => plan("G1", submitted, pm, { action: "approve" })).toThrow(/đã thu đợt 1/);
-    expect(() => plan("G1", { ...submitted, paymentConfirmedAt: now }, pm, { action: "approve" }, { rootContractItemReady: false })).toThrow(/hạng mục gốc/);
+    expect(() => plan("G1", { ...submitted, paymentConfirmedAt: now }, pm, { action: "approve" }, { projectValueReady: false })).toThrow(/Chưa nhập Giá trị dự án/);
+    // Loại Nội bộ / Đào tạo: no Giá trị dự án, no payment tick.
+    expect(plan("G1", submitted, pm, { action: "approve" }, { chargeable: false, projectValueReady: false }).toStatus).toBe("awaiting_customer");
+    expect(() => plan("G1", {}, pm, { action: "confirm_payment" }, { chargeable: false })).toThrow(ConflictException);
+    expect(() => plan("G7", { status: "submitted", submittedByUserId: "pm", paymentConfirmedAt: null }, pm, { action: "approve" })).toThrow(/đã thu đủ/);
+    expect(plan("G7", { paymentConfirmedAt: null }, pm, { action: "confirm_payment" })).toMatchObject({ patch: { paymentConfirmedAt: now, paymentConfirmedByUserId: "pm" }, history: { note: "PM xác nhận BD đã thu đủ" } });
     expect(() => plan("G1", {}, member, { action: "confirm_payment" })).toThrow(ForbiddenException);
     expect(plan("G1", {}, pm, { action: "confirm_payment", reason: "BD báo đã thu 30%" })).toMatchObject({ toStatus: "not_submitted", patch: { paymentConfirmedAt: now, paymentConfirmedByUserId: "pm", paymentNote: "BD báo đã thu 30%" } });
     expect(() => plan("G2", {}, pm, { action: "confirm_payment" })).toThrow(ConflictException);

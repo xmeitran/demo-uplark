@@ -1,8 +1,11 @@
 /** Review finding 2: applying a conversion must leave the running milestone usable (not "locked"), with history and baseline. */
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { fakePrisma } from "./fake-prisma.testing";
 import { milestoneKey, type FrameworkConversionPlan } from "./framework-conversion";
-import { applyFrameworkConversion } from "./framework-conversion.service";
+import { applyFrameworkConversion, backupFrameworkConversion, restoreFrameworkConversion } from "./framework-conversion.service";
 import { PILOT_PROJECT_MILESTONE_TEMPLATE } from "./stage-template";
 
 const scope = { workspaceId: "w", projectId: "p1" };
@@ -19,13 +22,12 @@ function seed() {
     project: [{ id: "p1", workspaceId: "w", accountId: "acc-1", name: "Dự án A", status: "Đang chạy" }],
     projectMilestone: PILOT_PROJECT_MILESTONE_TEMPLATE.map((milestone, index) => ({ id: `m${index + 1}`, ...scope, name: milestone.name, normalizedKey: milestoneKey(milestone.name), sortOrder: milestone.sortOrder, gateStatus: index === 0 ? "open" : "locked" })),
     projectStage: ["validate", "design", "build", "deployment_preparation", "pilot"].map((stageKey, index) => ({ id: `s-${stageKey}`, ...scope, stageKey, milestoneId: `m${stageOf(stageKey) + 1}`, sortOrder: (index + 1) * 10, activity: stageKey })),
-    projectContractItem: [{ id: "i1", ...scope, code: "HM-01", name: "Gốc", kind: "ROOT", sortOrder: 10, valueAmount: 100, contractType: "FIXED_PRICE", createdAt: now }],
-    projectTask: [{ id: "t1", ...scope, stageId: "s-pilot", title: "Chạy thử", estimateMinutes: 120, contractItemId: "i1" }]
+    projectTask: [{ id: "t1", ...scope, stageId: "s-pilot", title: "Chạy thử", estimateMinutes: 120 }]
   });
 }
 
 describe("applyFrameworkConversion (table 9.1)", () => {
-  it("a project converted while Pilot is running: milestones 1–2 approved, milestone 3 open, milestone 4 locked — and G1 locks B0 / B1", async () => {
+  it("a project converted while Pilot is running: milestones 1–2 approved, milestone 3 open, milestone 4 locked — and G1 locks the plan baseline", async () => {
     const { prisma, table } = seed();
     await applyFrameworkConversion(prisma, plan([
       { type: "create_gate", stageKey: "validate", code: "G1", passed: true },
@@ -39,7 +41,7 @@ describe("applyFrameworkConversion (table 9.1)", () => {
     // Before the fix milestones 2–4 stayed "locked": every time log and new task in the running milestone answered 409.
     expect(table("projectMilestone").map((milestone) => milestone.gateStatus)).toEqual(["approved", "approved", "open", "locked"]);
     expect(table("projectMilestone")[0]).toMatchObject({ reviewerApprovedAt: now, reviewerApprovedByUserId: "usr-pm" });
-    expect(table("projectBaseline").map((row) => `${row.layer}v${row.version}:${row.causeType}:${row.causeCode}`)).toEqual(["B0v1:gate:G1", "B1v1:gate:G1"]);
+    expect(table("projectBaseline").map((row) => `${row.layer}v${row.version}:${row.causeType}:${row.causeCode}`)).toEqual(["B1v1:gate:G1"]);
     expect(table("projectBaseline")[0]).toMatchObject({ causeId: table("projectGate")[0].id, createdByUserId: "usr-pm" });
   });
 
@@ -57,5 +59,29 @@ describe("applyFrameworkConversion (table 9.1)", () => {
     expect(table("project")[0].status).toBe("active");
     expect(table("projectStatusHistory")).toMatchObject([{ workspaceId: "w", projectId: "p1", fromStatus: "Đang chạy", toStatus: "active", changedByUserId: "usr-pm" }]);
     expect(table("projectStatusHistory")[0].reason).toContain("Chuyển đổi khung");
+  });
+
+  it("undo: a new backup carries no line items; a backup from before 13/10 still puts the item column back and removes the root item it created", async () => {
+    const fresh = seed();
+    const dir = mkdtempSync(join(tmpdir(), "fw-undo-"));
+    await backupFrameworkConversion(fresh.prisma, dir, "w", plan([]));
+    fresh.table("projectTask")[0].taskTypeLayer1 = "DELIVERY";
+    fresh.table("projectContractItem").push({ id: "kept", ...scope, kind: "ROOT" });
+    expect(await restoreFrameworkConversion(fresh.prisma, dir)).toMatchObject([{ projectId: "p1", tasks: 1 }]);
+    expect(fresh.table("projectTask")[0].taskTypeLayer1 ?? null).toBeNull();
+    expect(fresh.table("projectContractItem")).toHaveLength(1); // not a legacy backup: stored items are left alone
+
+    const old = seed();
+    old.table("projectContractItem").push({ id: "root-created", ...scope, kind: "ROOT" });
+    old.table("projectTask")[0].contractItemId = "root-created";
+    const legacyDir = mkdtempSync(join(tmpdir(), "fw-undo-legacy-"));
+    writeFileSync(join(legacyDir, "p1.json"), JSON.stringify({
+      version: 1, workspaceId: "w", projectId: "p1", plan: plan([]), project: { id: "p1", code: "P-1", status: "Đang chạy", milestoneTemplateKey: null },
+      milestones: old.table("projectMilestone"), stages: old.table("projectStage"), gates: [], contractItems: [],
+      tasks: [{ id: "t1", stageId: "s-pilot", taskTypeLayer1: null, taskTypeLayer2: null, contractItemId: null }], timeEntries: []
+    }));
+    await restoreFrameworkConversion(old.prisma, legacyDir);
+    expect(old.table("projectTask")[0].contractItemId).toBeNull();
+    expect(old.table("projectContractItem")).toEqual([]);
   });
 });

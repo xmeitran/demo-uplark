@@ -1,10 +1,10 @@
 "use client";
 
 import React from "react";
-import Link from "next/link";
 import { SecuritySettings, WorkspaceSwitcher } from "@/components/auth/security-settings";
 import { CheckCircle2, LogOut, Palette, Shield, User } from "lucide-react";
 import { AppShell } from "@/components/constructor-x/app-shell";
+import { HeaderLinkButton, PageHeader, pageMainClassName } from "@/components/page-header";
 import { useTheme } from "@/lib/theme";
 import { useAuth } from "@/lib/auth";
 import { isAdminView } from "@/lib/auth-role";
@@ -25,25 +25,13 @@ export default function SettingsPage() {
   const isLocalSession = process.env.NEXT_PUBLIC_LOCAL_AUTO_AUTH === "true";
 
   return (
-    <AppShell activeRoute="/settings" title="Settings">
-        <main className="flex-1 overflow-auto p-4 sm:p-6">
-          <div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
-            <div>
-              <h1 className="!text-xl font-bold text-foreground">Cấu hình workspace</h1>
-              <p className="mt-0.5 text-sm text-muted-foreground">
-                Hồ sơ, bảo mật, phiên đăng nhập, workspace và giao diện của tài khoản bạn.
-              </p>
-            </div>
-            {isWorkspaceAdmin && (
-              <Link
-                href="/admin"
-                className="flex items-center gap-1.5 rounded-xl border border-border px-3.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted"
-              >
-                <Shield className="h-4 w-4" />
-                Admin
-              </Link>
-            )}
-          </div>
+    <AppShell activeRoute="/settings" title="Cấu hình workspace">
+        <main className={pageMainClassName}>
+          <PageHeader
+            title="Cấu hình workspace"
+            subtitle="Hồ sơ, bảo mật, phiên đăng nhập, workspace và giao diện của tài khoản bạn."
+            actions={isWorkspaceAdmin ? <HeaderLinkButton href="/admin" icon={<Shield className="h-4 w-4" />}>Admin</HeaderLinkButton> : undefined}
+          />
 
           <div className="grid items-start gap-4 lg:grid-cols-[200px_minmax(0,1fr)]">
             <nav aria-label="Mục cài đặt" className="flex gap-1 overflow-x-auto lg:sticky lg:top-0 lg:flex-col lg:overflow-visible">

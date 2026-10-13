@@ -3213,6 +3213,9 @@ model ProjectPnlRecord {
   contractStatus        String    @default("draft")
   contractSignedAt      DateTime?
   contractSignedByUserId String?
+  /// D-22 / PL-13 "Giá trị dự án" (VND): the project's one revenue figure, entered by the PM on the project P&L screen.
+  /// NULL = chưa nhập. Every change is an AuditEvent (resource "pnl_project", action "pnl.project_value_changed").
+  projectValueAmount    Decimal?
   /// Mục 6.6: "dự án đã qua G7 giữ mẫu tại thời điểm nghiệm thu" — the switched-off codes frozen at the closing point.
   frozenDisabledCodes   String[]  @default([])
   frozenAt              DateTime?

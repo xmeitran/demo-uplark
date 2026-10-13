@@ -20,6 +20,8 @@ import { assertStageGateOpen } from "./gates.service";
 import { TIME_REVIEW_ROLE_CODES, TASK_PLAN_APPROVER_ROLES } from "./projects.shared";
 
 
+export const PROJECT_MANAGE_FORBIDDEN_MESSAGE = "Chỉ PIC dự án, Delivery Lead là thành viên dự án hoặc tài khoản Admin mới được sửa dự án, milestone và stage. Hãy nhờ PIC hoặc Admin thực hiện.";
+
 type ActiveUserLookupClient = Pick<Prisma.TransactionClient, "user">;
 type ProjectAssignmentLookupClient = Pick<Prisma.TransactionClient, "projectMember" | "user">;
 
@@ -63,7 +65,7 @@ export class ProjectPermissionsService {
 
   async assertProjectManager(tx: Prisma.TransactionClient, projectId: string, principal: PrincipalContext) {
     const permissions = await this.projectPermissions(tx, projectId, principal);
-    if (!permissions.canManage) throw new ForbiddenException("Only the project PIC, a project Delivery Lead, or Founder/GM can manage this project");
+    if (!permissions.canManage) throw new ForbiddenException(PROJECT_MANAGE_FORBIDDEN_MESSAGE);
   }
 
   /** Tasks and blocks outside any project fall back to Founder/GM. */
@@ -114,8 +116,8 @@ export class ProjectPermissionsService {
   }
 
   /** Next baseline version after a direct edit of a baselined field by someone allowed to make it. */
-  recordPlanBaseline(tx: Prisma.TransactionClient, principal: PrincipalContext, projectId: string, layers: readonly ("B0" | "B1")[], causeId: string, reason: string) {
-    return recordBaselineChange(tx, { workspaceId: principal.workspaceId, projectId, layers, cause: { type: "plan_edit", id: causeId, reason }, actor: { userId: principal.subjectId, displayName: principal.displayName } });
+  recordPlanBaseline(tx: Prisma.TransactionClient, principal: PrincipalContext, projectId: string, causeId: string, reason: string) {
+    return recordBaselineChange(tx, { workspaceId: principal.workspaceId, projectId, cause: { type: "plan_edit", id: causeId, reason }, actor: { userId: principal.subjectId, displayName: principal.displayName } });
   }
 
   async ensureActiveWorkspaceUsers(
@@ -138,7 +140,7 @@ export class ProjectPermissionsService {
     const found = new Set(users.map((user) => user.id));
     const missing = uniqueIds.filter((userId) => !found.has(userId));
     if (missing.length > 0) {
-      throw new BadRequestException(`Unknown, inactive, or out-of-workspace user(s): ${missing.join(", ")}`);
+      throw new BadRequestException(`${await this.userNames(tx, missing)} không còn hoạt động hoặc không thuộc workspace này. Hãy chọn người khác.`);
     }
   }
 
@@ -165,8 +167,17 @@ export class ProjectPermissionsService {
     const memberIds = new Set(members.map((member) => member.userId));
     const missing = uniqueIds.filter((userId) => !memberIds.has(userId));
     if (missing.length > 0) {
-      throw new BadRequestException(`User(s) are not project members: ${missing.join(", ")}`);
+      throw new BadRequestException(`${await this.userNames(tx, missing)} chưa là thành viên dự án. Hãy thêm vào danh sách thành viên của dự án (nút Invite) rồi thử lại, hoặc chọn một thành viên khác.`);
     }
+  }
+
+  /** Display names for a rejection message; an id is shown only when the person cannot be read. */
+  private async userNames(tx: ActiveUserLookupClient, userIds: string[]) {
+    const rows = typeof tx.user?.findMany === "function"
+      ? await tx.user.findMany({ where: { id: { in: userIds } }, select: { id: true, displayName: true } }).catch(() => [])
+      : [];
+    const names = new Map((Array.isArray(rows) ? rows : []).map((row: any) => [row.id, row.displayName]));
+    return userIds.map((id) => names.get(id) || id).join(", ");
   }
 
   async ensureProject(projectId: string, workspaceId: string) {

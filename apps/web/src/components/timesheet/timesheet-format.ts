@@ -6,6 +6,7 @@
  */
 
 import type { WorkGroup } from "./timesheet-types";
+import { filterPeriod, type TimesheetFilters } from "./timesheet-selectors";
 
 /** Every color is a design token; no raw hex anywhere in the Timesheet UI. */
 export const WORK_GROUP_COLORS: Record<WorkGroup, string> = {
@@ -46,6 +47,13 @@ const MONTH_LABELS = [
 export function formatMonth(month: string): string {
   const [year, mon] = month.split("-").map(Number);
   return `${MONTH_LABELS[mon - 1]}/${year}`;
+}
+
+/** "Tháng 9/2026" for a whole month, otherwise "10/09/2026 – 15/09/2026". */
+export function formatFilterPeriod(filters: TimesheetFilters): string {
+  const { start, end, wholeMonth } = filterPeriod(filters);
+  const day = (iso: string) => iso.split("-").reverse().join("/");
+  return wholeMonth ? formatMonth(filters.month) : `${day(start)} – ${day(end)}`;
 }
 
 export function formatDate(iso: string | null | undefined, fallback = "Chưa đặt"): string {

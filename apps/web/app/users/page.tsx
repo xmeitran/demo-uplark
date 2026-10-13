@@ -10,8 +10,12 @@ import {
 import Link from "next/link";
 import { AdminInvitations } from "@/components/auth/admin-access-controls";
 import { AppShell } from "@/components/constructor-x/app-shell";
-import { CrmSelect } from "@/components/crm-workspace/crm-select";
-import { FilterBar, FilterField } from "@/components/filters/filter-controls";
+import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
+import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, SearchFilter, datePresets, matchesAny, standardDatePresets, type DateRange } from "@/components/filters";
+import { HeaderButton, HeaderLinkButton, PageHeader, pageMainClassName } from "@/components/page-header";
+import { fetchAllPages } from "@/lib/api-pages";
+import { splitDateRangeIntoChunks } from "@/lib/calendar-event-layout";
+import { vietnamDayEndIso, vietnamDayStartIso } from "@/lib/vietnam-time";
 import { downloadCsv } from "@/lib/csv-export";
 import { useAuth } from "@/lib/auth";
 import { isAdminView } from "@/lib/auth-role";
@@ -38,8 +42,7 @@ interface User {
   avatarColor: string;
   initials: string;
   costPermissionGroup: string;
-  /** Hours logged in the current month. */
-  loggedHours: number;
+  departmentCode?: string;
 }
 
 interface ApiUser {
@@ -109,7 +112,7 @@ function initials(name: string) {
   return lastTwo.map((part) => part[0]?.toUpperCase()).join("") || "U";
 }
 
-function mapApiUser(user: ApiUser, index: number, loggedMinutes: number): User {
+function mapApiUser(user: ApiUser, index: number): User {
   const systemRole = user.systemRole ?? systemRoleFromCodes(user.roleCodes);
   const primaryRole = businessRoleFromMember(user);
   const displayName = user.displayName || user.email;
@@ -127,23 +130,27 @@ function mapApiUser(user: ApiUser, index: number, loggedMinutes: number): User {
     avatarColor: AVATAR_COLORS[index % AVATAR_COLORS.length],
     initials: initials(displayName),
     costPermissionGroup: user.roleCodes.includes("FOUNDER_GM") ? "Toàn quyền" : (user.costPermissionCodes?.length ? user.costPermissionCodes.map((code) => code.replace("COST_", "")).join(" / ") : "Chưa cấp"),
-    loggedHours: loggedMinutes / 60
+    departmentCode: user.departmentCode || undefined
   };
 }
 
-type MonthTimeEntry = { userId?: string; minutes?: number };
+type PeriodTimeEntry = { id: string; userId?: string; minutes?: number };
 
-// The API caps a page at 100 rows, so read every page or the monthly totals undercount.
-async function loadMonthTimeEntries(startAt: string, endAt: string) {
-  const rows: MonthTimeEntry[] = [];
-  for (let offset = 0; ; offset += 100) {
-    const response = await fetch(`/api/tasks/time-entries?limit=100&offset=${offset}&startAt=${encodeURIComponent(startAt)}&endAt=${encodeURIComponent(endAt)}`, { cache: "no-store" });
-    if (!response.ok) throw new Error(`Time entries API returned ${response.status}`);
-    const payload = (await response.json()) as { data?: MonthTimeEntry[]; meta?: { pagination?: { hasNextPage?: boolean } } };
-    rows.push(...(payload.data ?? []));
-    if (!payload.meta?.pagination?.hasNextPage || !payload.data?.length) return rows;
-  }
+// The hours column needs a bounded period (the API takes at most 90 days per request), so "all time" is not offered.
+const PERIOD_PRESETS = standardDatePresets().filter((preset) => preset.from && preset.to);
+const THIS_MONTH: DateRange = (({ from, to }) => ({ from, to }))(datePresets(["this-month"])[0]);
+
+/** Minutes logged per user between two Vietnam days: every page of every ≤90-day chunk, each entry counted once. */
+async function loadLoggedMinutes(range: DateRange, signal: AbortSignal) {
+  const chunks = splitDateRangeIntoChunks(vietnamDayStartIso(range.from), vietnamDayEndIso(range.to));
+  const pages = await Promise.all(chunks.map((chunk) => fetchAllPages<PeriodTimeEntry>(`/api/tasks/time-entries?startAt=${encodeURIComponent(chunk.startAt)}&endAt=${encodeURIComponent(chunk.endAt)}`, { signal })));
+  const entries = new Map(pages.flat().map((entry) => [entry.id, entry]));
+  const minutesByUser = new Map<string, number>();
+  for (const entry of entries.values()) if (entry.userId) minutesByUser.set(entry.userId, (minutesByUser.get(entry.userId) ?? 0) + (entry.minutes ?? 0));
+  return minutesByUser;
 }
+
+const DETAIL_QUERY = `?returnTo=${encodeURIComponent("/users")}`;
 
 // ─── Sort indicator ───────────────────────────────────────────────────────────
 
@@ -165,9 +172,22 @@ export default function UsersPage() {
   const [query, setQuery]       = useState("");
   const [sortKey, setSortKey]   = useState<SortKey>("name");
   const [sortDir, setSortDir]   = useState<SortDir>("asc");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [roleFilter, setRoleFilter]     = useState<string>("all");
-  const [systemRoleFilter, setSystemRoleFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  const [roleFilter, setRoleFilter]     = useState<string[]>([]);
+  const [systemRoleFilter, setSystemRoleFilter] = useState<string[]>([]);
+  const [departmentFilter, setDepartmentFilter] = useState<string[]>([]);
+  const [period, setPeriod] = useState<DateRange>(THIS_MONTH);
+  const [minutesByUser, setMinutesByUser] = useState<Map<string, number> | null>(null);
+
+  // Logwork is a secondary column: a failed time-entry request must not hide the directory.
+  useEffect(() => {
+    const controller = new AbortController();
+    setMinutesByUser(null);
+    loadLoggedMinutes(period, controller.signal)
+      .then((minutes) => { if (!controller.signal.aborted) setMinutesByUser(minutes); })
+      .catch(() => { if (!controller.signal.aborted) setMinutesByUser(new Map()); });
+    return () => controller.abort();
+  }, [period]);
 
   useEffect(() => {
     let cancelled = false;
@@ -176,15 +196,8 @@ export default function UsersPage() {
       setIsLoading(true);
       setError(null);
       try {
-        const now = new Date();
-        const startAt = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-        const endAt = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
-        // Logwork is a secondary column: a failed time-entry request must not hide the directory.
         // The BFF route already asks the API for suspended members; repeating the param here breaks it.
-        const [response, entries] = await Promise.all([
-          fetch("/api/admin/users", { cache: "no-store" }),
-          loadMonthTimeEntries(startAt, endAt).catch(() => [])
-        ]);
+        const response = await fetch("/api/admin/users", { cache: "no-store" });
         if (response.status === 401) {
           window.location.href = `/login?returnTo=${encodeURIComponent("/users")}`;
           return;
@@ -193,10 +206,8 @@ export default function UsersPage() {
           throw new Error(`Users API returned ${response.status}`);
         }
         const payload = (await response.json()) as UsersResponse;
-        const minutesByUser = new Map<string, number>();
-        for (const entry of entries) if (entry.userId) minutesByUser.set(entry.userId, (minutesByUser.get(entry.userId) ?? 0) + (entry.minutes ?? 0));
         if (!cancelled) {
-          setUsers(payload.data.map((user, index) => mapApiUser(user, index, minutesByUser.get(user.id) ?? 0)));
+          setUsers(payload.data.map(mapApiUser));
         }
       } catch (err) {
         if (!cancelled) {
@@ -225,15 +236,11 @@ export default function UsersPage() {
   };
 
   const filtered = useMemo(() => {
-    let list = users.filter(u => {
-      const q = query.toLowerCase();
-      const systemRole = SYSTEM_ROLE_LABELS[u.systemRole].toLowerCase();
-      if (q && !u.name.toLowerCase().includes(q) && !u.email.toLowerCase().includes(q) && !u.role.toLowerCase().includes(q) && !systemRole.includes(q) && !u.larkOpenId?.toLowerCase().includes(q)) return false;
-      if (statusFilter !== "all" && u.status !== statusFilter) return false;
-      if (roleFilter   !== "all" && u.role   !== roleFilter)   return false;
-      if (systemRoleFilter !== "all" && u.systemRole !== systemRoleFilter) return false;
-      return true;
-    });
+    let list = users.filter(u => matchesSearch(query, u.name, u.email, u.role, SYSTEM_ROLE_LABELS[u.systemRole], u.larkOpenId)
+      && matchesAny(statusFilter, u.status)
+      && matchesAny(roleFilter, u.role)
+      && matchesAny(systemRoleFilter, u.systemRole)
+      && matchesAny(departmentFilter, u.departmentCode));
 
     list = [...list].sort((a, b) => {
       let va: string | number = a[sortKey];
@@ -246,22 +253,15 @@ export default function UsersPage() {
     });
 
     return list;
-  }, [query, sortKey, sortDir, statusFilter, roleFilter, systemRoleFilter, users]);
+  }, [query, sortKey, sortDir, statusFilter, roleFilter, systemRoleFilter, departmentFilter, users]);
 
-  const statusOptions = useMemo(() => [
-    { value: "all", label: "Tất cả trạng thái" },
-    ...Object.entries(STATUS_CONFIG).map(([value, config]) => ({ value, label: config.label }))
-  ], []);
-
-  const roleOptions = useMemo(() => [
-    { value: "all", label: "Tất cả vai trò" },
-    ...BUSINESS_ROLE_OPTIONS.map((role) => ({ value: role, label: role })),
-  ], []);
-
-  const systemRoleFilterOptions = useMemo(() => [
-    { value: "all", label: "Tất cả system role" },
-    ...SYSTEM_ROLE_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
-  ], []);
+  const statusOptions = useMemo(() => Object.entries(STATUS_CONFIG).map(([value, config]) => ({ value, label: config.label })), []);
+  const roleOptions = useMemo(() => BUSINESS_ROLE_OPTIONS.map((role) => ({ value: role, label: role })), []);
+  const systemRoleFilterOptions = useMemo(() => SYSTEM_ROLE_OPTIONS.map((option) => ({ value: option.value, label: option.label })), []);
+  const departmentOptions = useMemo(() => [...new Set(users.map((user) => user.departmentCode).filter((code): code is string => Boolean(code)))].sort().map((code) => ({ value: code, label: code })), [users]);
+  const periodChanged = period.from !== THIS_MONTH.from || period.to !== THIS_MONTH.to;
+  const activeFilterCount = [Boolean(query.trim()), periodChanged, statusFilter.length > 0, roleFilter.length > 0, systemRoleFilter.length > 0, departmentFilter.length > 0].filter(Boolean).length;
+  const resetFilters = () => { setQuery(""); setPeriod(THIS_MONTH); setStatusFilter([]); setRoleFilter([]); setSystemRoleFilter([]); setDepartmentFilter([]); };
   const COLS: { key: SortKey; label: string }[] = [
     { key: "name",       label: "User" },
     { key: "role",       label: "Role" },
@@ -269,56 +269,33 @@ export default function UsersPage() {
   ];
 
   return (
-    <AppShell activeRoute="/users" title="Users">
-        <main className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:p-5">
-          {/* Page header */}
-          <header className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
-            <div>
-              <h1 className="!text-xl font-bold text-foreground">Team Members</h1>
-              <p className="mt-0.5 text-sm text-muted-foreground">{canManageRoles ? "Bạn có quyền quản trị workspace này." : "Chỉ Admin mới được chỉnh quyền."}</p>
-            </div>
-            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+    <AppShell activeRoute="/users" title="Nhân sự">
+        <main className={pageMainClassName}>
+          <PageHeader
+            title="Nhân sự"
+            subtitle={canManageRoles ? "Bạn có quyền quản trị workspace này." : "Chỉ Admin mới được chỉnh quyền."}
+            actions={<>
               {/* Mục 6.7: chi phí nhân sự theo tháng của cả công ty; the API lets only the cost permission group in. */}
-              <Link href="/users/costs" className="flex items-center gap-1.5 rounded-xl border border-border px-3.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted">Chi phí theo tháng</Link>
-              <button
-                type="button"
+              <HeaderLinkButton href="/users/costs">Chi phí theo tháng</HeaderLinkButton>
+              <HeaderButton
+                icon={<Download className="w-4 h-4" />}
                 onClick={() => downloadCsv("uplark-users-filtered.csv", ["Name", "Email", "Role", "System role", "Status"], filtered.map((user) => [user.name, user.email, user.role, SYSTEM_ROLE_LABELS[user.systemRole], STATUS_CONFIG[user.status].label]))}
-                aria-label={`Export ${filtered.length} filtered users as CSV`}
-                className="flex items-center gap-1.5 rounded-xl border border-border px-3.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted">
-                <Download className="w-4 h-4" /> Export CSV
-              </button>
+                aria-label={`Xuất ${filtered.length} nhân sự đang lọc ra CSV`}>
+                Xuất CSV
+              </HeaderButton>
               <AdminInvitations />
-            </div>
-          </header>
+            </>}
+          />
 
           {/* Filters */}
           <div className="bg-card border border-border rounded-xl shadow-sm">
-            <FilterBar className="border-b border-border px-3 py-3 sm:px-4" onReset={query || statusFilter !== "all" || roleFilter !== "all" || systemRoleFilter !== "all" ? () => { setQuery(""); setStatusFilter("all"); setRoleFilter("all"); setSystemRoleFilter("all"); } : undefined}>
-              {/* Search */}
-              <div className="flex h-10 min-w-[220px] items-center gap-2.5 flex-1 bg-background border border-input rounded-[10px] px-3.5">
-                <Search className="w-4 h-4 text-muted-foreground shrink-0" />
-                <input
-                  value={query}
-                  onChange={e => setQuery(e.target.value)}
-                  placeholder="Search by name, email, Lark ID, role or system role..."
-                  className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
-                />
-              </div>
-
-              {/* Status filter */}
-              <FilterField className="w-full sm:w-48">
-                <CrmSelect ariaLabel="Lọc trạng thái" options={statusOptions} value={statusFilter} onChange={setStatusFilter} />
-              </FilterField>
-
-              {/* Role filter */}
-              <FilterField className="w-full sm:w-56">
-                <CrmSelect ariaLabel="Lọc vai trò" options={roleOptions} value={roleFilter} onChange={setRoleFilter} />
-              </FilterField>
-
-              {/* System role filter */}
-              <FilterField className="w-full sm:w-56">
-                <CrmSelect ariaLabel="Lọc system role" options={systemRoleFilterOptions} value={systemRoleFilter} onChange={setSystemRoleFilter} />
-              </FilterField>
+            <FilterBar className="border-b border-border px-3 py-3 sm:px-4" onReset={activeFilterCount ? resetFilters : undefined} activeCount={activeFilterCount}>
+              <FilterField label="Tìm kiếm" className="min-w-[220px] flex-1"><SearchFilter className="" value={query} onChange={setQuery} placeholder="Tên, email, Lark ID, vai trò..." ariaLabel="Tìm nhân sự" /></FilterField>
+              <FilterField label="Kỳ tính giờ"><DateRangeFilter value={period} onChange={(range) => setPeriod(range.from && range.to ? range : THIS_MONTH)} presets={PERIOD_PRESETS} clearable={false} ariaLabel="Kỳ tính giờ logwork" /></FilterField>
+              <MultiSelectFilter label="Trạng thái" options={statusOptions} values={statusFilter} onChange={setStatusFilter} allLabel="Tất cả trạng thái" searchable={false} />
+              <MultiSelectFilter label="Vai trò" options={roleOptions} values={roleFilter} onChange={setRoleFilter} allLabel="Tất cả vai trò" />
+              <MultiSelectFilter label="System role" options={systemRoleFilterOptions} values={systemRoleFilter} onChange={setSystemRoleFilter} allLabel="Tất cả system role" searchable={false} />
+              <MultiSelectFilter label="Phòng ban" options={departmentOptions} values={departmentFilter} onChange={setDepartmentFilter} allLabel="Tất cả phòng ban" hideWhenSingle />
             </FilterBar>
 
             {/* Table */}
@@ -339,7 +316,7 @@ export default function UsersPage() {
                     ))}
                     <th className="py-3 px-4 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">System role</th>
                     <th className="py-3 px-4 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Quyền P&amp;L</th>
-                    <th className="py-3 px-4 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Logwork tháng (h)</th>
+                    <th className="py-3 px-4 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Logwork trong kỳ (h)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -360,7 +337,7 @@ export default function UsersPage() {
 
                           {/* User */}
                           <td className="py-3.5 px-4">
-                            <Link href={`/users/${user.id}`} className="flex items-center gap-3">
+                            <Link href={`/users/${user.id}${DETAIL_QUERY}`} className="flex items-center gap-3">
                               <div className="relative shrink-0">
                                 <div className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-white text-sm shadow-sm" style={{ backgroundColor: user.avatarColor }}>
                                   {user.avatarUrl ? (
@@ -401,7 +378,7 @@ export default function UsersPage() {
                           <td className="py-3.5 px-4 text-sm text-muted-foreground">{user.costPermissionGroup}</td>
 
                           {/* Logwork */}
-                          <td className="py-3.5 px-4 text-right font-mono text-sm font-semibold tabular-nums text-foreground">{hoursFormat.format(user.loggedHours)}</td>
+                          <td className="py-3.5 px-4 text-right font-mono text-sm font-semibold tabular-nums text-foreground">{minutesByUser ? hoursFormat.format((minutesByUser.get(user.id) ?? 0) / 60) : "…"}</td>
                         </motion.tr>
                       );
                     })}
@@ -414,8 +391,9 @@ export default function UsersPage() {
                   <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
                     <Search className="w-6 h-6 text-muted-foreground" />
                   </div>
-                  <p className="text-sm font-medium text-foreground">{isLoading ? "Loading users" : error ? "Could not load users" : "No users found"}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{error ?? (isLoading ? "Please wait while the team directory loads" : "Try adjusting your search or filters")}</p>
+                  <p className="text-sm font-medium text-foreground">{isLoading ? "Đang tải nhân sự…" : error ? "Không tải được danh sách nhân sự" : users.length ? "Không có kết quả phù hợp bộ lọc" : "Chưa có nhân sự nào"}</p>
+                  {error ? <p className="text-xs text-muted-foreground mt-1">{error}</p> : null}
+                  {!isLoading && !error && activeFilterCount ? <button type="button" onClick={resetFilters} className="mt-3 rounded-lg border border-border px-3 py-1.5 !text-xs !font-semibold text-primary hover:bg-muted">Đặt lại bộ lọc</button> : null}
                 </div>
               )}
             </div>
@@ -423,7 +401,7 @@ export default function UsersPage() {
             {/* Table footer */}
           <div className="flex items-center justify-between rounded-b-xl px-4 py-3 border-t border-border bg-muted/20">
               <p className="text-xs text-muted-foreground">
-                Showing <span className="font-semibold text-foreground">{filtered.length}</span> of <span className="font-semibold text-foreground">{users.length}</span> users
+                Hiển thị <span className="font-semibold text-foreground">{filtered.length}</span> / <span className="font-semibold text-foreground">{users.length}</span> nhân sự
               </p>
             </div>
           </div>

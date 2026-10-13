@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMonthlyKpis, buildPersonMonthSummaries, buildPersonProjectRows, buildProjectMemberRows, buildProjectSummaries, filterLogs, peopleInScope } from "./timesheet-selectors";
+import { buildMonthlyKpis, buildPersonMonthSummaries, buildPersonProjectRows, buildProjectMemberRows, buildProjectSummaries, filterLogs, filterPeriod, peopleInScope, periodParamsForRange } from "./timesheet-selectors";
 import type { ProjectNode, TaskNode, TimesheetDataset } from "./timesheet-types";
 
 const dataset: TimesheetDataset = {
@@ -33,6 +33,78 @@ describe("timesheet personnel filter", () => {
 
     expect(filterLogs(dataset, filters).map((log) => log.personId)).toEqual(["p-1", "p-3"]);
     expect(peopleInScope(dataset, filters).map((person) => person.id)).toEqual(["p-1", "p-3"]);
+  });
+
+  it("filters logs and working-day totals by an inclusive custom date range", () => {
+    const rangedDataset = {
+      ...dataset,
+      logs: [
+        ...dataset.logs,
+        { ...dataset.logs[0], id: "l-4", date: "2026-09-15", minutes: 90 }
+      ]
+    };
+    const filters = {
+      month: "2026-09",
+      dateFrom: "2026-09-10",
+      dateTo: "2026-09-15",
+      departmentId: "all" as const,
+      personId: "all" as const,
+      personIds: [],
+      projectId: "all" as const,
+      workGroup: "all" as const
+    };
+
+    expect(filterLogs(rangedDataset, filters).map((log) => log.id)).toEqual(["l-4"]);
+    expect(buildPersonMonthSummaries(rangedDataset, filters, filterLogs(rangedDataset, filters))[0]?.workingDays).toBe(4);
+  });
+});
+
+describe("timesheet multi-value filters", () => {
+  const base = { month: "2026-09", departmentId: "all" as const, personId: "all" as const, projectId: "all" as const, workGroup: "all" as const };
+  const mixed: TimesheetDataset = {
+    ...dataset,
+    people: dataset.people.map((person, index) => ({ ...person, departmentId: `d-${index + 1}` })),
+    projects: [
+      { id: "pr-1", code: "ACME", name: "Triển khai Lark", accountName: "Client", status: "active", workGroup: "customer_project", picId: "p-1", startDate: null, deadline: null, members: [],
+        milestones: [{ id: "m-1", name: "M1", projectId: "pr-1", picId: null, startDate: null, dueDate: null, status: "in_progress", stages: [{ id: "s-1", name: "S1", milestoneId: "m-1", ownerId: null, startDate: null, dueDate: null, status: "in_progress", tasks: [
+          { id: "t-1", code: "t-1", name: "Khảo sát hiện trạng", stageId: "s-1", assigneeId: "p-1", estimateMinutes: 60, status: "in_progress", startDate: null, dueDate: null, completedDate: null }
+        ] }] }] }
+    ],
+    logs: [
+      dataset.logs[0],
+      { ...dataset.logs[1], projectId: "pr-2", workGroup: "internal_project", note: "Họp nội bộ" },
+      { ...dataset.logs[2], projectId: "pr-3", workGroup: "ticket_maintenance" }
+    ]
+  };
+  const ids = (filters: Parameters<typeof filterLogs>[1]) => filterLogs(mixed, filters).map((log) => log.id);
+
+  it("matches any of several projects, work groups and departments; an empty list means all", () => {
+    expect(ids({ ...base, projectIds: ["pr-1", "pr-3"] })).toEqual(["l-1", "l-3"]);
+    expect(ids({ ...base, workGroups: ["internal_project", "ticket_maintenance"] })).toEqual(["l-2", "l-3"]);
+    expect(ids({ ...base, departmentIds: ["d-1", "d-2"] })).toEqual(["l-1", "l-2"]);
+    expect(peopleInScope(mixed, { ...base, departmentIds: ["d-1", "d-2"] }).map((person) => person.id)).toEqual(["p-1", "p-2"]);
+    expect(ids({ ...base, projectIds: [], workGroups: [], departmentIds: [] })).toEqual(["l-1", "l-2", "l-3"]);
+  });
+
+  it("keeps the single legacy values working", () => {
+    expect(ids({ ...base, projectId: "pr-2" })).toEqual(["l-2"]);
+    expect(ids({ ...base, workGroup: "ticket_maintenance" })).toEqual(["l-3"]);
+    expect(ids({ ...base, departmentId: "d-3" })).toEqual(["l-3"]);
+  });
+
+  it("searches note, task name and project without accents", () => {
+    expect(ids({ ...base, search: "hop noi bo" })).toEqual(["l-2"]);
+    expect(ids({ ...base, search: "khao sat" })).toEqual(["l-1"]);
+    expect(ids({ ...base, search: "acme" })).toEqual(["l-1"]);
+    expect(ids({ ...base, search: "không có" })).toEqual([]);
+  });
+
+  it("moves the month to the range's last day, stores a whole month as the month alone, and clamps to the loaded window", () => {
+    expect(periodParamsForRange({ from: "2026-08-20", to: "2026-09-10" })).toEqual({ month: "2026-09", from: "2026-08-20", to: "2026-09-10" });
+    expect(periodParamsForRange({ from: "2026-08-01", to: "2026-08-31" })).toEqual({ month: "2026-08", from: "", to: "" });
+    expect(periodParamsForRange({ from: "2025-01-01", to: "2026-09-10" }, "2025-10-01")).toEqual({ month: "2026-09", from: "2025-10-01", to: "2026-09-10" });
+    expect(filterPeriod({ ...base, dateFrom: "2026-09-10", dateTo: "2026-09-15" })).toEqual({ start: "2026-09-10", end: "2026-09-15", wholeMonth: false });
+    expect(filterPeriod(base).wholeMonth).toBe(true);
   });
 });
 

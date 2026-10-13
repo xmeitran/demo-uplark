@@ -43,9 +43,11 @@ import {
 import { deliverLarkAlert, mergeAlerts, NOTIFIED_ACTION, notifyReason, resolveRecipients, type PendingAlert } from "./alert-notifications";
 
 export { loadAlertTriggers, TRIGGER_OVERRIDES_KEY };
-/** Trigger codes this scan decides on its own. BRI-01…03 and YC-01 are decided per issue-log record by issue-log.service. */
+/** Trigger codes this scan decides on its own. BRI-01…03 are decided per issue-log record by issue-log.service. */
 export const SCAN_OWNED_CODES = ["NL-03", "NL-04", "NL-05", "TD-01", "TD-02", "TD-03", "TD-04", "TD-06", "BRI-04", "BRI-05", "DL-01"] as const;
-const ISSUE_LOG_CODES = ["BRI-01", "BRI-02", "BRI-03", "YC-01"];
+const ISSUE_LOG_CODES = ["BRI-01", "BRI-02", "BRI-03"];
+/** Triggers that left the catalogue (group YC went with the change-request flow, chốt 13/10): the scan closes what is still open. */
+export const RETIRED_TRIGGER_CODES = ["YC-01"];
 /** Triggers that close only after N consecutive clear working days. */
 const CLEAR_STREAK_DAYS: Record<string, number> = { "TD-03": 2 };
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -238,7 +240,9 @@ export async function runAlertScan(prisma: any, workspaceId: string, options: Al
   // Warnings of a project that has since been closed are left alone: only scanned projects are reconciled.
   await reconcileWarnings(prisma, { workspaceId, codes, wanted, existing: existing.filter((warning: any) => projectIds.includes(warning.projectId)), triggers, clock }, result);
 
-  // BRI-02 (overdue) and YC-01 (step SLA) are a function of the clock: re-evaluate every open issue-log record.
+  for (const warning of before) if (RETIRED_TRIGGER_CODES.includes(warning.typeCode)) bump(result.closed, warning.typeCode);
+  await closeProjectWarnings(prisma, { workspaceId, typeCode: { in: RETIRED_TRIGGER_CODES } }, null, "Loại cảnh báo đã bỏ khỏi danh mục");
+  // BRI-02 (overdue) is a function of the clock: re-evaluate every open issue-log record.
   if (ISSUE_LOG_CODES.some(enabled)) for (const projectId of projectIds) await refreshProjectIssueLogWarnings(prisma, workspaceId, projectId, now);
   const after = await prisma.projectWarning.findMany({ where: { workspaceId, status: "open" }, select: { id: true, typeCode: true } });
   const beforeIds = new Set(before.map((warning: any) => warning.id));

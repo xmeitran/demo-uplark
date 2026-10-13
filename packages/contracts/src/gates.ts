@@ -29,7 +29,7 @@ export interface ProjectGateDefinition {
   customerResponseParameter: "customerResponseWorkingDays" | "customerResponseG4WorkingDays";
   /** What counts as the customer's confirmation. */
   customerEvidence: string;
-  /** G1 (chốt 11/10 #9): the PM records that BD collected instalment 1. */
+  /** G1: the PM confirms BD collected instalment 1; G7: collected in full (PL-16). A tick only — no amount, never in EBIT. Loại Khách hàng projects only. */
   paymentConfirmation: boolean;
   /** G8 (V-16): a Go-live date is required. */
   goLiveDate: boolean;
@@ -54,7 +54,7 @@ export const PROJECT_GATE_CATALOGUE: Record<ProjectGateCode, ProjectGateDefiniti
   G1: gate({
     code: "G1", name: "Đóng scope & kick-off", stageKey: "validate", closesMilestone: true,
     requiredDocumentTypes: ["Proposal", "Biên bản đóng scope"], preparedBy: "BD, Dx", customerConfirmation: true, paymentConfirmation: true,
-    dataConditions: ["Hạng mục gốc đã tạo với loại và giá trị", "Estimate gốc khóa thành B0 và B1", "PM xác nhận đã thu đợt 1 theo thông tin từ BD"],
+    dataConditions: ["Giá trị dự án đã nhập", "Baseline kế hoạch khóa", "PM xác nhận đã thu đợt 1 theo thông tin từ BD"],
     opensNext: "Mở Milestone 2; Đang triển khai"
   }),
   G2: gate({ code: "G2", name: "Duyệt thiết kế", stageKey: "design", requiredDocumentTypes: ["BRD", "FRD", "SRS"], preparedBy: "Dx", customerConfirmation: true, opensNext: "Mở Build" }),
@@ -69,9 +69,9 @@ export const PROJECT_GATE_CATALOGUE: Record<ProjectGateCode, ProjectGateDefiniti
   G6: gate({ code: "G6", name: "Kết thúc Onboard", stageKey: "onboard", requiredDocumentTypes: ["Log bug Onboard", "Đề xuất cải tiến Onboard"], preparedBy: "Dx", opensNext: "Mở Acceptance" }),
   G7: gate({
     code: "G7", name: "Nghiệm thu hệ thống", stageKey: "acceptance", closesMilestone: true,
-    requiredDocumentTypes: ["Biên bản nghiệm thu"], preparedBy: "PM", approvedBy: "PM, BD", preparerMayApprove: true, bdMayApprove: true, customerConfirmation: true,
+    requiredDocumentTypes: ["Biên bản nghiệm thu"], preparedBy: "PM", approvedBy: "PM, BD", preparerMayApprove: true, bdMayApprove: true, customerConfirmation: true, paymentConfirmation: true,
     customerEvidence: "Biên bản nghiệm thu khách đã ký",
-    dataConditions: ["Khách đã ký biên bản nghiệm thu", "P&L không còn giờ Chờ xử lý", "Vấn đề còn mở có người và hạn"],
+    dataConditions: ["Khách đã ký biên bản nghiệm thu", "PM xác nhận đã thu đủ theo thông tin từ BD", "P&L không còn giờ Chờ xử lý", "Vấn đề còn mở có người và hạn"],
     opensNext: "Mở Milestone 4; Đã hoàn thành; đóng P&L dự án"
   }),
   G8: gate({
@@ -105,12 +105,22 @@ export const PROJECT_GATE_STATUS_LABELS: Record<ProjectGateStatus, string> = {
 export const PROJECT_GATE_ACTIONS = ["submit", "approve", "reject", "approve_conditional", "confirm_payment", "confirm_customer", "exception"] as const;
 export type ProjectGateAction = (typeof PROJECT_GATE_ACTIONS)[number];
 
+/** What the PM's payment tick of a gate says (PL-16): G1 "đã thu đợt 1", G7 "đã thu đủ". */
+export function gatePaymentText(code: string): string {
+  return code === "G7" ? "đã thu đủ" : "đã thu đợt 1";
+}
+
+/** `confirm_payment` reads "Xác nhận đã thu đợt 1" at G1 and "Xác nhận đã thu đủ" at G7. */
+export function gateActionLabel(action: ProjectGateAction, code: string): string {
+  return action === "confirm_payment" ? `Xác nhận ${gatePaymentText(code)}` : PROJECT_GATE_ACTION_LABELS[action];
+}
+
 export const PROJECT_GATE_ACTION_LABELS: Record<ProjectGateAction, string> = {
   submit: "Nộp hồ sơ",
   approve: "Duyệt",
   reject: "Từ chối",
   approve_conditional: "Duyệt có điều kiện",
-  confirm_payment: "Xác nhận đã thu đợt 1",
+  confirm_payment: "Xác nhận đã thu tiền",
   confirm_customer: "Ghi nhận khách xác nhận",
   exception: "Ngoại lệ"
 };
@@ -156,7 +166,7 @@ export interface ProjectStageSlaSummary {
   overrunDays: number;
   /** Approved extensions of the stage's due date, oldest first (TD-04 closes on one, TD-05 counts them). */
   extensions?: import("./baseline").StageExtensionSummary[];
-  /** Extensions that count toward TD-05 (those caused by a change request do not, V-40). */
+  /** Extensions of the stage; every one counts toward TD-05. */
   extensionCount?: number;
   /** extensionCount reached `stageExtensionAbnormalCount`. */
   extensionAbnormal?: boolean;
@@ -168,8 +178,7 @@ export interface ProjectStageSlaSummary {
 
 export const G7_BLOCKING_PENDING_REASON_LABELS = {
   layer2_mismatch: "Lớp 2 không khớp",
-  missing_classification: "Thiếu phân loại",
-  missing_contract_item: "Chưa có hạng mục"
+  missing_classification: "Thiếu phân loại"
 } as const;
 export type G7BlockingPendingReason = keyof typeof G7_BLOCKING_PENDING_REASON_LABELS;
 
@@ -209,6 +218,8 @@ export interface ProjectGateSummary {
   decisionReason?: string;
   conditionIssueId?: string;
   conditionIssueCode?: string;
+  /** The gate asks for the PM's payment tick: G1 / G7 of a Loại Khách hàng project (PL-16). */
+  paymentConfirmationRequired: boolean;
   paymentConfirmedAt?: string;
   paymentConfirmedByName?: string;
   paymentNote?: string;

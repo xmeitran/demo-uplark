@@ -52,10 +52,12 @@ export class WorkspaceAdminController {
     return this.admin.alerts(principal);
   }
 
+  /** Filters: `from`/`to` (Vietnam days on createdAt), `actorUserId`, `category`, `action` (comma-joined), `q`; paged with `limit` (max 50) / `offset`. */
   @Get("history")
-  async history(@Headers("authorization") authorization?: string, @Query("principal") principalFallback?: string, @Query("limit") limit?: string, @Query("scope") scope?: string) {
-    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
-    return this.admin.history(principal, Number(limit), scope === "mine" ? "mine" : "all");
+  async history(@Headers("authorization") authorization?: string, @Query() query: Record<string, string | string[] | undefined> = {}) {
+    const one = (value?: string | string[]) => (Array.isArray(value) ? value[0] : value);
+    const principal = await this.principals.resolveFromAuthorization(authorization, one(query.principal));
+    return this.admin.history(principal, Number(one(query.limit)), one(query.scope) === "mine" ? "mine" : "all", query);
   }
 
   @Patch("reminders")

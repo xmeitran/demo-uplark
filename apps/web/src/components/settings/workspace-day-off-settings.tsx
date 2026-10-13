@@ -11,6 +11,7 @@ import type {
 } from "@b2b-crm/contracts";
 import { toVietnamDateKey } from "@/lib/vietnam-time";
 import { CrmSelect } from "@/components/crm-workspace/crm-select";
+import { FilterBar, FilterField, MultiSelectFilter, matchesAny } from "@/components/filters";
 
 const CATEGORY_OPTIONS: Array<{ value: WorkspaceDayOffCategory; label: string }> = [
   { value: "national_holiday", label: "Ngày lễ nhà nước" },
@@ -54,6 +55,14 @@ export function WorkspaceDayOffSettings() {
   const [name, setName] = useState("");
   const [category, setCategory] = useState<WorkspaceDayOffCategory>("national_holiday");
   const [note, setNote] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  const currentYear = Number(today.slice(0, 4));
+  // The picker lists the years around today plus the one being viewed; the arrows step without limit.
+  const yearOptions = [...new Set([year, ...Array.from({ length: 8 }, (_, index) => currentYear - 5 + index)])].sort((a, b) => b - a).map((value) => ({ value: String(value), label: `Năm ${value}` }));
+  const visibleItems = items.filter((item) => matchesAny(categoryFilter, item.category) && matchesAny(statusFilter, item.isActive ? "active" : "inactive"));
+  const filterCount = [year !== currentYear, categoryFilter.length > 0, statusFilter.length > 0].filter(Boolean).length;
+  const resetFilters = () => { setYear(currentYear); setCategoryFilter([]); setStatusFilter([]); };
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -161,8 +170,8 @@ export function WorkspaceDayOffSettings() {
   };
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm lg:col-span-2" aria-labelledby="workspace-day-off-title">
-      <div className="border-b border-border bg-gradient-to-r from-amber-50 via-white to-slate-50 px-5 py-5 sm:px-6">
+    <section className="rounded-2xl border border-border bg-card shadow-sm lg:col-span-2" aria-labelledby="workspace-day-off-title">
+      <div className="rounded-t-2xl border-b border-border bg-gradient-to-r from-amber-50 via-white to-slate-50 px-5 py-5 sm:px-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex items-start gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-100 text-amber-700 ring-1 ring-amber-200">
@@ -176,17 +185,20 @@ export function WorkspaceDayOffSettings() {
             </p>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <button type="button" aria-label="Năm trước" onClick={() => setYear((value) => value - 1)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-muted">
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <span className="min-w-14 text-center text-sm font-bold tabular-nums">{year}</span>
-          <button type="button" aria-label="Năm sau" onClick={() => setYear((value) => value + 1)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-muted">
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
       </div>
       </div>
+
+      <FilterBar className="border-b border-border px-5 py-4 sm:px-6" onReset={filterCount ? resetFilters : undefined} activeCount={filterCount}>
+        <FilterField label="Năm" className="shrink-0">
+          <div className="inline-flex flex-nowrap items-center gap-1">
+            <button type="button" aria-label="Năm trước" onClick={() => setYear((value) => value - 1)} className="task-select-trigger !w-9 shrink-0 !justify-center !px-0"><ChevronLeft className="h-4 w-4" aria-hidden /></button>
+            <div className="w-[8rem] shrink-0"><CrmSelect ariaLabel="Chọn năm" options={yearOptions} value={String(year)} onChange={(value) => setYear(Number(value))} /></div>
+            <button type="button" aria-label="Năm sau" onClick={() => setYear((value) => value + 1)} className="task-select-trigger !w-9 shrink-0 !justify-center !px-0"><ChevronRight className="h-4 w-4" aria-hidden /></button>
+          </div>
+        </FilterField>
+        <MultiSelectFilter label="Phân loại" options={CATEGORY_OPTIONS} values={categoryFilter} onChange={setCategoryFilter} allLabel="Tất cả phân loại" searchable={false} className="min-w-[200px] flex-1 sm:max-w-xs" />
+        <MultiSelectFilter label="Trạng thái" options={[{ value: "active", label: "Đang off" }, { value: "inactive", label: "Đã mở khóa" }]} values={statusFilter} onChange={setStatusFilter} allLabel="Tất cả trạng thái" searchable={false} className="min-w-[200px] flex-1 sm:max-w-xs" />
+      </FilterBar>
 
       <div className="grid border-b border-border sm:grid-cols-3 sm:divide-x sm:divide-border">
         <Summary label="Ngày đã cấu hình" value={items.length} />
@@ -253,7 +265,7 @@ export function WorkspaceDayOffSettings() {
             <h3 className="text-sm font-bold text-foreground">Lịch ngày nghỉ {year}</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">Ngày mở khóa vẫn được giữ lại để bảo toàn lịch sử.</p>
           </div>
-          {loading ? <span className="text-xs text-muted-foreground">Đang tải…</span> : <span className="rounded-full bg-background px-2.5 py-1 text-[11px] font-semibold text-muted-foreground">{items.length} ngày</span>}
+          {loading ? <span className="text-xs text-muted-foreground">Đang tải…</span> : <span className="rounded-full bg-background px-2.5 py-1 text-[11px] font-semibold text-muted-foreground">{visibleItems.length < items.length ? `${visibleItems.length}/${items.length}` : items.length} ngày</span>}
         </div>
         {loading && items.length === 0 ? (
           <div className="px-4 py-10 text-center text-sm text-muted-foreground">Đang tải ngày nghỉ…</div>
@@ -263,6 +275,11 @@ export function WorkspaceDayOffSettings() {
             <p className="mt-2 text-sm font-medium text-foreground">Chưa có ngày nghỉ nào cho năm {year}</p>
             <p className="mt-1 text-xs text-muted-foreground">Thêm ngày nghỉ lễ nhà nước hoặc ngày nghỉ riêng của workspace ở form phía trên.</p>
           </div>
+        ) : visibleItems.length === 0 ? (
+          <div className="px-4 py-10 text-center">
+            <p className="text-sm font-medium text-foreground">Không có kết quả phù hợp bộ lọc</p>
+            <button type="button" onClick={() => { setCategoryFilter([]); setStatusFilter([]); }} className="mt-3 rounded-lg border border-border px-3 py-1.5 !text-xs !font-semibold text-primary hover:bg-muted">Đặt lại bộ lọc</button>
+          </div>
         ) : (
           <div className="max-h-[420px] overflow-auto">
             <table className="w-full min-w-[680px] border-collapse text-left text-xs">
@@ -270,7 +287,7 @@ export function WorkspaceDayOffSettings() {
                 <tr><th className="px-4 py-2.5 font-semibold">Ngày</th><th className="px-4 py-2.5 font-semibold">Tên / loại</th><th className="px-4 py-2.5 font-semibold">Tác động</th><th className="px-4 py-2.5 font-semibold">Trạng thái</th>{canManage ? <th className="px-4 py-2.5 text-right font-semibold">Thao tác</th> : null}</tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {items.map((item) => (
+                {visibleItems.map((item) => (
                   <tr key={item.id} className={item.isActive ? "bg-background" : "bg-muted/20 text-muted-foreground"}>
                     <td className="px-4 py-3 font-medium tabular-nums text-foreground">{dateLabel(item.date)}</td>
                     <td className="px-4 py-3">

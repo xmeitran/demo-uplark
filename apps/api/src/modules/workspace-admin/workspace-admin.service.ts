@@ -17,6 +17,8 @@ import type {
   WorkspaceReminderSlotCode
 } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
+import { buildPaginationMeta } from "../../shared/http/request-context";
+import { csvIn, csvList, vietnamDayRange } from "../../shared/http/list-filters";
 import { activeMembershipWhere } from "../identity-access/active-membership";
 import { CLOSED_WORK_STATUSES } from "../delivery-handoff/task-status";
 import { getParameter, getStoredParameter, standardDayMinutes } from "../../shared/system-parameters";
@@ -727,17 +729,37 @@ export class WorkspaceAdminService {
     return { data: rows, meta: { total: rows.length, generatedAt: new Date().toISOString(), counts } };
   }
 
-  async history(principal: PrincipalContext, requestedLimit = 12, scope: "all" | "mine" = "all"): Promise<AdminHistoryResponse> {
+  /**
+   * `filters`: `from`/`to` inclusive Vietnam days on createdAt; `actorUserId`, `category`, `action` as one value or a
+   * comma-joined list; `q` on the action title, actor name and the milestone / project / template / day-off it touched;
+   * `offset` for paging (`limit` stays capped at 50).
+   */
+  async history(principal: PrincipalContext, requestedLimit = 12, scope: "all" | "mine" = "all", filters: Record<string, unknown> = {}): Promise<AdminHistoryResponse> {
     assertAdmin(principal);
     const limit = Math.min(Math.max(Math.trunc(requestedLimit) || 12, 1), 50);
-    const where: Prisma.AuditEventWhereInput = scope === "mine"
-      ? { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "project.milestone_approved" }
-      : { workspaceId: principal.workspaceId, action: { in: [...ADMIN_HISTORY_ACTIONS] } };
+    const offset = Math.max(Math.trunc(Number(filters.offset)) || 0, 0);
+    const workspaceId = principal.workspaceId;
+    const categories = csvList(filters.category);
+    const requestedActions = csvList(filters.action);
+    const actions = ADMIN_HISTORY_ACTIONS.filter((action) => (!categories.length || categories.includes(ADMIN_HISTORY_ACTION_META[action].category)) && (!requestedActions.length || requestedActions.includes(action)));
+    const createdAt = vietnamDayRange(filters.from, filters.to);
+    const actorUserId = csvIn(filters.actorUserId);
+    const q = typeof filters.q === "string" ? filters.q.trim() : "";
+    const where: Prisma.AuditEventWhereInput = {
+      ...(scope === "mine"
+        ? { workspaceId, actorUserId: principal.subjectId, action: "project.milestone_approved" }
+        : { workspaceId, action: { in: actions } }),
+      ...(createdAt ? { createdAt } : {}),
+      ...(q ? { AND: [{ OR: await this.historySearch(workspaceId, q) }] } : {}),
+      // After the scope so "mine" keeps its own actor; an actor filter can only narrow it.
+      ...(actorUserId && scope !== "mine" ? { actorUserId } : {})
+    };
     const [events, total] = await Promise.all([
       this.prisma.auditEvent.findMany({
         where,
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take: limit,
+        skip: offset,
         select: { id: true, action: true, resource: true, resourceId: true, actorUserId: true, requestId: true, before: true, after: true, createdAt: true }
       }),
       this.prisma.auditEvent.count({ where })
@@ -826,8 +848,28 @@ export class WorkspaceAdminService {
           createdAt: event.createdAt.toISOString()
         };
       }),
-      meta: { total }
+      meta: {
+        total,
+        pagination: buildPaginationMeta({ limit, offset, total, returned: events.length }),
+        actions: ADMIN_HISTORY_ACTIONS.map((action) => ({ value: action, label: ADMIN_HISTORY_ACTION_META[action].title, category: ADMIN_HISTORY_ACTION_META[action].category }))
+      }
     };
+  }
+
+  /** What `q` may match: the action title, the actor, or the record the event touched (looked up by name, then matched by id). */
+  private async historySearch(workspaceId: string, q: string): Promise<Prisma.AuditEventWhereInput[]> {
+    const contains = { contains: q, mode: "insensitive" as const };
+    const needle = q.toLocaleLowerCase("vi");
+    const actions = ADMIN_HISTORY_ACTIONS.filter((action) => ADMIN_HISTORY_ACTION_META[action].title.toLocaleLowerCase("vi").includes(needle));
+    const ids = { select: { id: true }, take: 200 } as const;
+    const [actors, milestones, templates, dayOffs] = await Promise.all([
+      this.prisma.user.findMany({ where: { displayName: contains, roleBindings: { some: { workspaceId } } }, ...ids }),
+      this.prisma.projectMilestone.findMany({ where: { workspaceId, OR: [{ name: contains }, { project: { name: contains } }, { project: { code: contains } }] }, ...ids }),
+      this.prisma.projectMilestoneTemplate.findMany({ where: { workspaceId, OR: [{ name: contains }, { key: contains }] }, ...ids }),
+      this.prisma.workspaceDayOff.findMany({ where: { workspaceId, name: contains }, ...ids })
+    ]);
+    const resourceIds = [...milestones, ...templates, ...dayOffs].map((row) => row.id);
+    return [{ action: { in: actions } }, { actorUserId: { in: actors.map((actor) => actor.id) } }, { resourceId: { in: resourceIds } }];
   }
 
   async updateReminderPolicy(input: UpdateWorkspaceReminderPolicyInput, principal: PrincipalContext) {

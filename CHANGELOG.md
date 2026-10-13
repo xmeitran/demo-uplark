@@ -1,5 +1,18 @@
 # Lịch sử thay đổi
 
+## 2026-10-13 — Nguyên tắc nền tảng v2 và Yêu cầu tab P&L v2 (chốt 13/10)
+
+- **Loại dự án** bắt buộc khi tạo dự án: Khách hàng, Nội bộ, Đào tạo. Đổi được tới khi G1 được duyệt. Lớp 2 của task và giờ log suy ra từ Loại dự án và vị trí task.
+- **Giá trị dự án** thay cho hạng mục hợp đồng: một số, PM nhập trên ô Doanh thu của màn P&L dự án (`PUT /pnl/projects/:projectId/project-value`). Sau G1 sửa phải ghi lý do; sau mốc đóng P&L thì khóa. Dự án Nội bộ, Đào tạo không có Giá trị dự án, Doanh thu, EBIT.
+- **Bỏ**: hạng mục hợp đồng (API, màn "Thiết lập P&L của dự án", ô chọn hạng mục trên task, cột Hạng mục của timesheet), đợt thanh toán, trạng thái hợp đồng, đơn giá bán, lý do chờ "chưa có hạng mục" / "thiếu đơn giá bán", trạng thái "Pre-sale chờ ký hợp đồng".
+- **Điểm chốt**: G1 cần Giá trị dự án và dấu "đã thu đợt 1"; G7 cần dấu "PM xác nhận đã thu đủ" (chỉ dự án Loại Khách hàng). Thua deal không chọn được sau khi G1 đã duyệt.
+- **Baseline**: còn một baseline kế hoạch (milestone, timeline, giờ dự kiến), khóa ở G1; không còn B0 và không có tiền. D-19 so tổng giờ sub-task với giờ của chính task.
+- **Sổ vấn đề** còn ba loại Blocker, Risk, Issue. Bỏ luồng Yêu cầu thay đổi (CR-01 → CR-09, nhập CR Log, stage CR tự tạo, gia hạn stage theo CR — mọi lần gia hạn đều tính cho TD-05), nhóm cảnh báo YC, điểm kích hoạt YC-01 và tham số "SLA các bước yêu cầu thay đổi". DL-01 tính cả giờ Pre-sale.
+- **Project detail** có nút "Xem P&L ↗" (tài khoản Admin thuộc nhóm quyền chi phí, trừ dự án DX Internal Worklog); không hiện số P&L nào.
+- **Dữ liệu cũ giữ nguyên, không xóa bảng hay cột nào**: hạng mục, đợt thanh toán, `contractStatus`, tham số `sellRate`, baseline lớp B0, bản ghi `change_request`, `contractItemId` trên task và giờ log còn trong cơ sở dữ liệu nhưng không được đọc hay hiển thị. Xuất các Yêu cầu thay đổi cũ ra CSV: `node scripts/operations/export-change-requests.mjs <file.csv>` (chỉ đọc).
+- Migration mới (chỉ thêm): `20261013120000_project_value_and_project_types` — thêm `ProjectPnlRecord.projectValueAmount`, chuẩn hóa `Project.projectType`, điền Giá trị dự án từ hạng mục cũ khi đủ dữ liệu, suy lại Lớp 2.
+- Tài liệu hướng dẫn nội bộ dạng .docx / .pdf chưa cập nhật theo các thay đổi này.
+
 ## 2026-09-07 — Đồng bộ source mới nhất ngày 06/09
 
 - Hợp nhất đầy đủ năm commit canonical tới `e94d7e8d1a0eab2e3b2bf2e327758e3de0fa0f64`, bảo toàn lịch sử của cả source gốc và repository tổ chức.

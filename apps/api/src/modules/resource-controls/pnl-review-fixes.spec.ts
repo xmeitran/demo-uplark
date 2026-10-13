@@ -31,38 +31,44 @@ async function lockedWithManualLine() {
   return s;
 }
 
-/** A second customer project, accepted on 28/09: 20.000.000 đ Trọn gói, A logs 8 giờ on 23/09. */
+/** A second customer project, accepted on 28/09: Giá trị dự án 20.000.000 đ, A logs 8 giờ on 23/09. */
 function addProjectB(s: Scenario) {
   s.db.table("project").push({ id: "p-b", workspaceId: WS, code: "DA-B", name: "Dự án B", status: "active", projectType: "delivery", isTestProject: false, accountId: "acc-a", createdAt: new Date("2026-08-05T02:00:00.000Z") });
   s.db.table("projectGate").push({ id: "g1-b", projectId: "p-b", code: "G1", status: "approved", decidedAt: new Date("2026-08-06T03:00:00.000Z") }, { id: "g7-b", projectId: "p-b", code: "G7", status: "approved", decidedAt: new Date("2026-09-28T03:00:00.000Z") });
-  s.db.table("projectContractItem").push({ id: "hm-b", workspaceId: WS, projectId: "p-b", code: "HM-01", name: "Gói B", kind: "ROOT", contractType: "FIXED_PRICE", valueAmount: 20_000_000, estimateMinutes: null, status: "active", sortOrder: 10, archivedAt: null, warnThresholdPercent: 80 });
+  s.db.table("projectPnlRecord").push({ id: "ppr_p-b", workspaceId: WS, projectId: "p-b", overrideDisabledCodes: [], overrideEnabledCodes: [], projectValueAmount: 20_000_000, frozenDisabledCodes: [], frozenAt: null });
   s.db.table("projectStage").push({ id: "st-b", projectId: "p-b", activity: "Build", sortOrder: 10, taskTypeLayer1: "DELIVERY", afterPnlClose: false, ownerUserId: "u-pm", plannedStartAt: new Date("2026-08-10T02:00:00.000Z"), plannedEndAt: null });
-  s.db.table("projectTask").push({ id: "t-b", workspaceId: WS, projectId: "p-b", stageId: "st-b", parentTaskId: null, title: "Làm B", taskTypeLayer1: "DELIVERY", contractItemId: "hm-b", estimateMinutes: 0, assigneeUserId: "u-a" });
+  s.db.table("projectTask").push({ id: "t-b", workspaceId: WS, projectId: "p-b", stageId: "st-b", parentTaskId: null, title: "Làm B", taskTypeLayer1: "DELIVERY", estimateMinutes: 0, assigneeUserId: "u-a" });
   s.log({ userId: "u-a", taskId: "t-b", dateKey: "2026-09-23", hours: 8 });
 }
 
 /** Dự án cũ: trạng thái "completed", không có dòng gate, không có lịch sử trạng thái. Kế hoạch kết thúc 18/09, giờ cuối 22/09. */
 function addLegacyProject(s: Scenario) {
   s.db.table("project").push({ id: "p-old", workspaceId: WS, code: "DA-OLD", name: "Dự án cũ", status: "completed", projectType: "delivery", isTestProject: false, accountId: "acc-a", createdAt: new Date("2026-08-05T02:00:00.000Z") });
-  s.db.table("projectContractItem").push({ id: "hm-old", workspaceId: WS, projectId: "p-old", code: "HM-01", name: "Gói cũ", kind: "ROOT", contractType: "FIXED_PRICE", valueAmount: 30_000_000, estimateMinutes: null, status: "active", sortOrder: 10, archivedAt: null, warnThresholdPercent: 80 });
+  s.db.table("projectPnlRecord").push({ id: "ppr_p-old", workspaceId: WS, projectId: "p-old", overrideDisabledCodes: [], overrideEnabledCodes: [], projectValueAmount: 30_000_000, frozenDisabledCodes: [], frozenAt: null });
   s.db.table("projectStage").push({ id: "st-old", projectId: "p-old", activity: "Build", sortOrder: 10, taskTypeLayer1: "DELIVERY", afterPnlClose: false, ownerUserId: "u-pm", plannedStartAt: new Date("2026-08-10T02:00:00.000Z"), plannedEndAt: new Date("2026-09-18T02:00:00.000Z") });
-  s.db.table("projectTask").push({ id: "t-old", workspaceId: WS, projectId: "p-old", stageId: "st-old", parentTaskId: null, title: "Làm", taskTypeLayer1: "DELIVERY", contractItemId: "hm-old", estimateMinutes: 0, assigneeUserId: "u-a" });
+  s.db.table("projectTask").push({ id: "t-old", workspaceId: WS, projectId: "p-old", stageId: "st-old", parentTaskId: null, title: "Làm", taskTypeLayer1: "DELIVERY", estimateMinutes: 0, assigneeUserId: "u-a" });
   s.log({ userId: "u-a", taskId: "t-old", dateKey: "2026-09-22", hours: 8 });
 }
 
-/** Phụ lục B ca 4: dự án mới chưa có hợp đồng, BD ghi 6 giờ Pre-sale tháng 09 — rồi tháng 09 được khóa. */
+/**
+ * Dữ liệu cũ: tháng 09 khóa TRƯỚC 13/10/2026, khi giờ Pre-sale của một dự án chưa có hạng mục còn được khóa ở
+ * "Chờ xử lý — Chưa có hạng mục" (A-1b cũ). The snapshot is rewritten to what that lock stored.
+ */
 async function lockedWithAwaitingPreSale() {
   const s = scenario();
   s.db.table("project").push({ id: "p-new", workspaceId: WS, code: "DA-NEW", name: "Dự án mới", status: "planning", projectType: "delivery", isTestProject: false, accountId: "acc-a", createdAt: new Date("2026-09-01T02:00:00.000Z") });
   s.db.table("projectGate").push({ id: "g1-new", projectId: "p-new", code: "G1", status: "not_submitted", decidedAt: null }, { id: "g7-new", projectId: "p-new", code: "G7", status: "not_submitted", decidedAt: null });
   s.db.table("projectStage").push({ id: "st-new", projectId: "p-new", activity: "Validate", sortOrder: 10, taskTypeLayer1: "PRE_SALE", afterPnlClose: false, ownerUserId: "u-bd", plannedStartAt: null, plannedEndAt: null });
-  s.db.table("projectTask").push({ id: "t-new", workspaceId: WS, projectId: "p-new", stageId: "st-new", parentTaskId: null, title: "Pre-sale deal mới", taskTypeLayer1: "PRE_SALE", contractItemId: null, estimateMinutes: 0, assigneeUserId: "u-bd" });
+  s.db.table("projectTask").push({ id: "t-new", workspaceId: WS, projectId: "p-new", stageId: "st-new", parentTaskId: null, title: "Pre-sale deal mới", taskTypeLayer1: "PRE_SALE", estimateMinutes: 0, assigneeUserId: "u-bd" });
   s.db.table("resourceMonthlyCost").push(staffCost("u-bd", "2026-09", 30_240_000));
   s.log({ userId: "u-bd", taskId: "t-new", month: "2026-09", hours: 6, createdAt: "2026-09-01T10:00:00.000Z" });
   await s.approveCost("u-b", "2026-09", 25_200_000);
   await s.pnl.confirmFund("fund-ai", "2026-09", founder);
   await s.pnl.lockPeriod("2026-08", founder);
-  await s.pnl.lockPeriod("2026-09", founder); // the lock lets "chờ ký hợp đồng" hours through (A-1b)
+  await s.pnl.lockPeriod("2026-09", founder);
+  for (const entry of row(s, "pnlPeriodSnapshot", (item) => item.periodKey === "2026-09").data.entries) {
+    if (entry.p === "p-new") Object.assign(entry, { s: "pending", r: ["missing_contract_item"], ci: null, ac: true });
+  }
   return s;
 }
 
@@ -123,18 +129,16 @@ describe("1 · tháng đã khóa không đổi theo cây khoản mục và mẫu
   });
 });
 
-describe("2 · giờ Pre-sale chờ ký hợp đồng nằm trong tháng đã khóa (A-1b)", () => {
-  it("ký hợp đồng sau khi khóa: giờ sang Được tính ở hạng mục gốc, hết giờ chờ", async () => {
+describe("2 · ảnh chụp cũ còn lý do “Chưa có hạng mục” (đã bỏ, chốt 13/10) vẫn đọc được", () => {
+  it("giờ Pre-sale khóa ở “Chưa có hạng mục”: không còn thiếu gì nên là Được tính của đúng tháng đó, hết giờ chờ", async () => {
     const s = await lockedWithAwaitingPreSale();
-    expect((await s.pnl.entries({ projectId: "p-new" }, founder)).data[0]).toMatchObject({ status: "pending", awaitingContract: true, fromSnapshot: true });
-    s.db.table("projectContractItem").push({ id: "hm-new", workspaceId: WS, projectId: "p-new", code: "HM-01", name: "Hạng mục gốc", kind: "ROOT", contractType: "FIXED_PRICE", valueAmount: 40_000_000, estimateMinutes: null, status: "active", sortOrder: 10, archivedAt: null, warnThresholdPercent: 80 });
-    expect((await s.pnl.entries({ projectId: "p-new" }, founder)).data[0]).toMatchObject({ status: "included", contractItemId: "hm-new", costAmount: 1_080_000, awaitingContract: false, fromSnapshot: true });
+    expect((await s.pnl.entries({ projectId: "p-new" }, founder)).data[0]).toMatchObject({ status: "included", reasons: [], costAmount: 1_080_000, fromSnapshot: true });
     const data = await s.project({}, "p-new");
     expect(month(data, "2026-09")).toMatchObject({ periodState: "locked", includedMinutes: hours(6), pendingMinutes: 0, laborCostAmount: 1_080_000 });
     expect(data.header.result.reasons.map((reason) => reason.code)).not.toContain("pending_classification");
   });
 
-  it("thua deal sau khi khóa: giờ sang Bị loại và vào dòng Chi phí Pre-sale của đúng tháng đó", async () => {
+  it("deal đó thua: giờ chưa từng được tính sang Bị loại và vào dòng Chi phí Pre-sale của đúng tháng đó", async () => {
     const s = await lockedWithAwaitingPreSale();
     Object.assign(row(s, "project", (item) => item.id === "p-new"), { status: "closed" });
     s.db.table("projectStatusHistory").push({ id: "psh-1", projectId: "p-new", fromStatus: "planning", toStatus: "closed", closeReasonCode: "lost_deal", changedAt: new Date("2026-10-05T03:00:00.000Z") });
@@ -142,47 +146,51 @@ describe("2 · giờ Pre-sale chờ ký hợp đồng nằm trong tháng đã kh
     const line = (await s.pnl.dashboard({ year: 2026 }, founder)).data.companyCosts.lines.find((item) => item.key === "pre_sale")!;
     expect(line.byMonth.find((item) => item.periodKey === "2026-09")).toMatchObject({ amount: 1_080_000, minutes: hours(6) });
   });
+
+  it("thua deal KHÔNG đổi tháng đã khóa: giờ Pre-sale đã Được tính trong ảnh chụp giữ nguyên, chỉ tháng còn mở chuyển sang Chi phí Pre-sale", async () => {
+    const s = scenario();
+    s.db.table("project").push({ id: "p-new", workspaceId: WS, code: "DA-NEW", name: "Dự án mới", status: "planning", projectType: "delivery", isTestProject: false, accountId: "acc-a", createdAt: new Date("2026-09-01T02:00:00.000Z") });
+    s.db.table("projectGate").push({ id: "g1-new", projectId: "p-new", code: "G1", status: "not_submitted", decidedAt: null }, { id: "g7-new", projectId: "p-new", code: "G7", status: "not_submitted", decidedAt: null });
+    s.db.table("projectStage").push({ id: "st-new", projectId: "p-new", activity: "Validate", sortOrder: 10, taskTypeLayer1: "PRE_SALE", afterPnlClose: false, ownerUserId: "u-bd", plannedStartAt: null, plannedEndAt: null });
+    s.db.table("projectTask").push({ id: "t-new", workspaceId: WS, projectId: "p-new", stageId: "st-new", parentTaskId: null, title: "Pre-sale deal mới", taskTypeLayer1: "PRE_SALE", estimateMinutes: 0, assigneeUserId: "u-bd" });
+    s.db.table("resourceMonthlyCost").push(staffCost("u-bd", "2026-09", 30_240_000), staffCost("u-bd", "2026-10", 31_680_000)); // 10/2026: 176 giờ → 180.000 đ/giờ
+    s.log({ userId: "u-bd", taskId: "t-new", month: "2026-09", hours: 6 });
+    s.log({ userId: "u-bd", taskId: "t-new", month: "2026-10", hours: 2 });
+    await s.approveCost("u-b", "2026-09", 25_200_000);
+    await s.pnl.confirmFund("fund-ai", "2026-09", founder);
+    await s.pnl.lockPeriod("2026-08", founder);
+    await s.pnl.lockPeriod("2026-09", founder);
+    Object.assign(row(s, "project", (item) => item.id === "p-new"), { status: "closed" });
+    s.db.table("projectStatusHistory").push({ id: "psh-1", projectId: "p-new", fromStatus: "planning", toStatus: "closed", closeReasonCode: "lost_deal", changedAt: new Date("2026-10-05T03:00:00.000Z") });
+    const data = await s.project({}, "p-new");
+    expect(month(data, "2026-09")).toMatchObject({ periodState: "locked", includedMinutes: hours(6), laborCostAmount: 1_080_000 });
+    expect(month(data, "2026-10")).toMatchObject({ includedMinutes: 0, excludedMinutes: hours(2), laborCostAmount: 0 });
+    const line = (await s.pnl.dashboard({ year: 2026 }, founder)).data.companyCosts.lines.find((item) => item.key === "pre_sale")!;
+    expect(line.byMonth.find((item) => item.periodKey === "2026-09")).toMatchObject({ amount: 0, minutes: 0 });
+    expect(line.byMonth.find((item) => item.periodKey === "2026-10")).toMatchObject({ amount: 360_000, minutes: hours(2) });
+  });
 });
 
 describe("3 · quyền (PL-26, mục 6.1 dòng Quyền, mục 6.7 khối 5)", () => {
-  function internalProject(s: Scenario) {
-    s.db.table("project").push({ id: "p-int", workspaceId: WS, code: "NB-01", name: "Chuẩn hóa quy trình", status: "active", projectType: "internal", isTestProject: false, accountId: "acc-a", createdAt: new Date("2026-09-01T02:00:00.000Z") });
-    s.db.table("projectContractItem").push({ id: "nb-01", workspaceId: WS, projectId: "p-int", code: "HM-01", name: "Nội bộ", kind: "ROOT", contractType: "INTERNAL", valueAmount: 10_000_000, estimateMinutes: null, status: "active", sortOrder: 10, archivedAt: null, warnThresholdPercent: 80 });
-    s.db.table("projectTask").push({ id: "t-nb", workspaceId: WS, projectId: "p-int", stageId: null, parentTaskId: null, title: "Viết quy trình", taskTypeLayer1: "DELIVERY", contractItemId: "nb-01", estimateMinutes: 600, assigneeUserId: "u-a" });
-    s.log({ userId: "u-a", taskId: "t-nb", dateKey: "2026-09-22", hours: 8, taskLayer2: "INTERNAL_PROJECT" });
-  }
-
-  it("Thiết lập P&L dự án: số suy từ cost rate chỉ hiện với nhóm quyền chi phí; giá trị hợp đồng thì mọi Admin thấy", async () => {
+  it("Giá trị dự án: PM (Admin) trong nhóm quyền chi phí nhập và sửa; Admin khác chỉ xem; ngoài nhóm quyền chi phí không thấy số", async () => {
     const s = scenario();
-    internalProject(s);
-    expect((await s.config.projectSetup("p-int", founder)).data.items[0].internal).toMatchObject({ costCapAmount: 10_000_000, costToDateAmount: 1_299_048, usedPercent: 12.9905 });
-    const outside = await s.config.projectSetup("p-int", adminNoCost);
-    expect(outside.data.items[0].internal).toMatchObject({ costCapAmount: 10_000_000, costToDateAmount: null, usedPercent: null, overThreshold: false });
-    expect(JSON.stringify(outside.data)).not.toContain("1299048");
+    const pmWithCost = { ...pm, roleCodes: [...pm.roleCodes, "COST_VIEW"] } as typeof founder;
+    await expect(s.config.setProjectValue("p-a", { amount: 68_000_000, reason: "x" }, dxDirector)).rejects.toThrow("PM");
+    await expect(s.config.setProjectValue("p-a", { amount: 68_000_000, reason: "x" }, pm)).rejects.toThrow("nhóm quyền chi phí");
+    await expect(s.config.setProjectValue("p-a", { amount: 68_000_000, reason: "Phụ lục 01" }, pmWithCost)).resolves.toMatchObject({ data: { amount: 68_000_000 } });
+    expect((await s.pnl.project("p-a", {}, pmWithCost)).data.totals.revenue).toMatchObject({ projectValueAmount: 68_000_000, canEdit: true });
+    expect((await s.pnl.project("p-a", {}, { ...dxDirector, roleCodes: [...dxDirector.roleCodes, "COST_VIEW"] } as typeof founder)).data.totals.revenue).toMatchObject({ projectValueAmount: 68_000_000, canEdit: false });
+    expect(JSON.stringify((await s.pnl.project("p-a", {}, adminNoCost)).data.totals)).not.toMatch(/68[.,]?000[.,]?000/);
   });
 
-  it("Tham số: đơn giá bán chỉ hiện với nhóm quyền chi phí", async () => {
+  it("Tham số: không còn đơn giá bán theo vai trò (chốt 13/10); dòng cũ trong bảng vẫn nằm đó nhưng không được đọc", async () => {
     const s = scenario();
-    const sellRow = (data: Awaited<ReturnType<typeof s.config.parameters>>["data"]) => data.rows.find((item) => item.key === "sellRate" && item.subKey === "DELIVERY")!;
-    expect(sellRow((await s.config.parameters(founder)).data)).toMatchObject({ defaultValue: 400_000, values: [{ value: 400_000 }] });
-    const outside = (await s.config.parameters(adminNoCost)).data;
-    expect(sellRow(outside)).toMatchObject({ defaultValue: null, defaultValueText: null, values: [{ value: null, valueText: null, effectiveFrom: "2026-08" }] });
-    expect(JSON.stringify(outside)).not.toMatch(/400[.,]?000/);
-    expect(outside.rows.find((item) => item.key === "commissionPercent")).toMatchObject({ defaultValue: 5 }); // a rate is not a price
-  });
-
-  it("mục 6.1: PM sửa, Admin khác chỉ xem (Founder/GM và Workspace Admin giữ quyền)", async () => {
-    const s = scenario();
-    const plan = { installments: [{ label: "Khi ký", percent: 50 }, { label: "Nghiệm thu", percent: 50 }] };
-    await expect(s.config.setContractStatus("p-a", { status: "draft", reason: "x" }, dxDirector)).rejects.toThrow("PM");
-    await expect(s.config.setInstallments("p-a", "hm-01", plan, dxDirector)).rejects.toThrow("PM");
-    await expect(s.config.setInstallmentStatus("p-a", "default:hm-01:1", { status: "accepted" }, dxDirector)).rejects.toThrow("PM");
-    await expect(s.config.setItemSettings("p-a", "hm-02", { warnThresholdPercent: 60 }, dxDirector)).rejects.toThrow("PM");
-    expect((await s.config.projectSetup("p-a", dxDirector)).meta.canEdit).toBe(false);
-    expect((await s.config.projectSetup("p-a", pm)).meta.canEdit).toBe(true);
-    await expect(s.config.setItemSettings("p-a", "hm-02", { warnThresholdPercent: 60 }, pm)).resolves.toBeTruthy();
-    await expect(s.config.setInstallments("p-a", "hm-01", plan, { ...dxDirector, heldRoleCodes: ["WORKSPACE_ADMIN"] } as typeof founder)).resolves.toBeTruthy();
-    await expect(s.config.setItemSettings("p-a", "hm-02", { warnThresholdPercent: 70 }, founder)).resolves.toBeTruthy();
+    s.db.table("pnlParameterValue").push({ id: "pv-old", workspaceId: WS, key: "sellRate", subKey: "DELIVERY", scopeType: "company", scopeId: null, value: 400_000, effectiveFrom: "2026-08", reason: "bảng giá chung", createdByName: "PM-1", createdAt: new Date("2026-08-01T00:00:00.000Z") });
+    const data = (await s.config.parameters(founder)).data;
+    expect(data.rows.map((item) => item.key)).toEqual(["standardDayHours", "usdRate", "pnlCloseGate", "commissionPercent"]);
+    expect(JSON.stringify(data)).not.toMatch(/400[.,]?000/);
+    await expect(s.config.addParameterValue({ key: "sellRate" as never, scopeType: "company", value: 500_000, effectiveFrom: "2026-10", reason: "x" }, founder)).rejects.toThrow("Tham số không có trong tab Tham số");
+    expect((await s.project()).totals.revenue.amount).toBe(67_200_000);
   });
 
   it("chi phí tháng Đã duyệt: xóa hoặc thay cần quyền Duyệt (COST_APPROVE); bản Nháp thì quyền Sửa là đủ", async () => {
@@ -233,19 +241,17 @@ describe("4, 5 · Tổng quan: ô tổng và dòng tổng", () => {
   });
 
   const project = (patch: Partial<ProjectPnlInput>) => computeProjectPnl({
-    entries: [], items: [{ id: "hm-01", contractType: "FIXED_PRICE", valueAmount: 60_000_000 }], closePassed: true, g1Passed: true, lostDeal: false, consumable: false, lockedPeriods: new Set(["2026-08"]),
-    fundShares: [], unallocatedFundPeriods: new Set(), manualLines: [], tree: DEFAULT_COST_TREE, disabledCodes: new Set(), commissionPercent: 5, sellRate: () => undefined, ...patch
+    entries: [], projectValueAmount: 60_000_000, closePassed: true, g1Passed: true, lostDeal: false, consumable: false, lockedPeriods: new Set(["2026-08"]),
+    fundShares: [], unallocatedFundPeriods: new Set(), manualLines: [], tree: DEFAULT_COST_TREE, disabledCodes: new Set(), commissionPercent: 5, ...patch
   });
-  const hour = (patch: Partial<Parameters<typeof classifyEntry>[0]> = {}) => classifyEntry({ id: `e-${Math.random()}`, projectId: "p-1", userId: "u-a", dateKey: "2026-08-03", minutes: 480, roleGroup: "DELIVERY", taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT", selectedTaskTypeLayer2: "CUSTOMER_PROJECT", contractItemId: "hm-01", afterPnlClose: false, ...patch }, { monthlyAmount: 25_200_000, standardMinutes: 168 * 60 });
+  const hour = (patch: Partial<Parameters<typeof classifyEntry>[0]> = {}) => classifyEntry({ id: `e-${Math.random()}`, projectId: "p-1", userId: "u-a", dateKey: "2026-08-03", minutes: 480, roleGroup: "DELIVERY", taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT", selectedTaskTypeLayer2: "CUSTOMER_PROJECT", afterPnlClose: false, ...patch }, { monthlyAmount: 25_200_000, standardMinutes: 168 * 60 });
 
   it("PL-25: dự án Không tính được không vào ô nào; EBIT = Doanh thu − Tổng chi phí trên cùng một tập dự án", () => {
     const known = project({ entries: [hour()] });
-    const noContract = project({ items: [], entries: [hour()] });
-    // Qua G7 nhưng hạng mục Theo giờ thiếu đơn giá bán: chưa có doanh thu → Không tính được.
-    const noSellRate = project({ items: [{ id: "hm-01", contractType: "TIME_AND_MATERIAL", valueAmount: 7_200_000 }], entries: [hour()] });
-    expect(noSellRate.result.label).toBe("not_computable");
-    const totals = dashboardTotals([known, noContract, noSellRate]);
-    expect(totals).toMatchObject({ projectCount: 3, notComputableProjectCount: 2, revenueAmount: known.revenue.amount, totalCostAmount: known.totalCostAmount, laborCostAmount: known.laborCostAmount, ebitAmount: known.ebit.amount, label: "provisional" });
+    const noValue = project({ projectValueAmount: undefined, entries: [hour()] });
+    expect(noValue.result.label).toBe("not_computable");
+    const totals = dashboardTotals([known, noValue]);
+    expect(totals).toMatchObject({ projectCount: 2, notComputableProjectCount: 1, revenueAmount: known.revenue.amount, totalCostAmount: known.totalCostAmount, laborCostAmount: known.laborCostAmount, ebitAmount: known.ebit.amount, label: "provisional" });
     expect((totals.revenueAmount as number) - totals.totalCostAmount).toBe(totals.ebitAmount);
   });
 
@@ -253,11 +259,11 @@ describe("4, 5 · Tổng quan: ô tổng và dòng tổng", () => {
     const s = scenario();
     addProjectB(s);
     s.approveG7("2026-09-30");
-    Object.assign(row(s, "projectContractItem", (item) => item.id === "hm-b"), { valueAmount: null }); // Dự án B: chưa có giá trị hợp đồng
+    Object.assign(row(s, "projectPnlRecord", (item) => item.projectId === "p-b"), { projectValueAmount: null }); // Dự án B: chưa có Giá trị dự án
     const { data } = await s.pnl.dashboard({ year: 2026 }, founder);
     const a = data.accepted.rows.find((item) => item.projectId === "p-a")!;
     expect(data.totals).toMatchObject({ projectCount: 2, notComputableProjectCount: 1, revenueAmount: a.revenueAmount, totalCostAmount: a.totalCostAmount, ebitAmount: a.ebitAmount });
-    expect(data.pending.find((item) => item.kind === "not_computable")).toMatchObject({ label: "1 dự án Không tính được, chưa cộng vào ô tổng", target: "project_setup" });
+    expect(data.pending.find((item) => item.kind === "not_computable")).toMatchObject({ label: "1 dự án Không tính được, chưa cộng vào ô tổng", target: "project_value" });
     expect(sum(data.costGroups.accounting.map((item) => item.amount))).toBe(data.totals.totalCostAmount);
   });
 });
@@ -280,8 +286,8 @@ describe("6 · dự án chưa có dòng gate (đã hoàn thành theo trạng th�
 
   it("mọi tháng đã khóa, hết giờ chờ: vẫn Tạm tính và hồ sơ dừng ở Đã đóng", () => {
     const pnl = computeProjectPnl({
-      entries: [], items: [{ id: "hm-01", contractType: "FIXED_PRICE", valueAmount: 60_000_000 }], closePassed: true, acceptanceDateMissing: true, g1Passed: true, lostDeal: false, consumable: false, lockedPeriods: new Set(["2026-08"]),
-      fundShares: [], unallocatedFundPeriods: new Set(), manualLines: [], tree: DEFAULT_COST_TREE, disabledCodes: new Set(), commissionPercent: 5, sellRate: () => undefined
+      entries: [], projectValueAmount: 60_000_000, closePassed: true, acceptanceDateMissing: true, g1Passed: true, lostDeal: false, consumable: false, lockedPeriods: new Set(["2026-08"]),
+      fundShares: [], unallocatedFundPeriods: new Set(), manualLines: [], tree: DEFAULT_COST_TREE, disabledCodes: new Set(), commissionPercent: 5
     });
     expect(pnl.result.label).toBe("provisional");
     expect(pnl.recordState).toBe("closed");
@@ -315,10 +321,10 @@ describe("7 · dự án qua G7 giữ mẫu tại thời điểm nghiệm thu (m�
     s.approveG7("2026-09-30");
     await s.config.setTemplate("customer", { disabledCodes: ["CP.HOAHONG"] }, founder); // after G7, before anybody read the project
     const { data } = await s.pnl.dashboard({ year: 2026 }, founder);
-    expect(data.accepted.rows[0].costByRoleGroup.COMMISSION).toBe(3_000_000); // 60.000.000 × 5%
+    expect(data.accepted.rows[0].costByRoleGroup.COMMISSION).toBe(3_360_000); // 67.200.000 × 5%
     expect(row(s, "projectPnlRecord", (item) => item.projectId === "p-a")).toMatchObject({ frozenAt: new Date("2026-09-30T03:00:00.000Z") });
     expect(row(s, "projectPnlRecord", (item) => item.projectId === "p-a").frozenDisabledCodes).not.toContain("CP.HOAHONG");
-    expect((await s.project()).months.wholeProjectItems[0]).toMatchObject({ amount: 3_000_000, expected: false });
+    expect((await s.project()).months.wholeProjectItems[0]).toMatchObject({ amount: 3_360_000, expected: false });
   });
 });
 
@@ -349,23 +355,16 @@ describe("8 · các điểm nhỏ ảnh hưởng tới số", () => {
 
   it("entryCosts: phần lẻ dồn vào dòng cuối của ô", () => {
     const rate = { monthlyAmount: 27_280_000, standardMinutes: 168 * 60 };
-    const base = { projectId: "p-1", userId: "u-a", roleGroup: "DELIVERY" as const, taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT", selectedTaskTypeLayer2: "CUSTOMER_PROJECT", contractItemId: "hm-01", afterPnlClose: false };
+    const base = { projectId: "p-1", userId: "u-a", roleGroup: "DELIVERY" as const, taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT", selectedTaskTypeLayer2: "CUSTOMER_PROJECT", afterPnlClose: false };
     const rows = [["e-1", "2026-09-01", 480], ["e-2", "2026-09-02", 480], ["e-3", "2026-09-03", 300]].map(([id, dateKey, minutes]) => classifyEntry({ ...base, id: id as string, dateKey: dateKey as string, minutes: minutes as number }, rate));
     const costs = entryCosts(rows);
     expect([...costs.values()]).toEqual([1_299_048, 1_299_048, 811_904]); // 3.410.000 đ in all, not 3.410.001
   });
 
-  it("trạng thái đợt thanh toán không lùi", async () => {
-    const s = scenario();
-    await s.config.setInstallmentStatus("p-a", "default:hm-01:1", { status: "paid" }, founder);
-    const id = s.db.table("projectContractInstallment").find((item) => item.sequence === 1)!.id;
-    await expect(s.config.setInstallmentStatus("p-a", id, { status: "invoiced" }, founder)).rejects.toThrow("không lùi");
-    expect(s.db.table("projectContractInstallment").find((item) => item.sequence === 1)!.status).toBe("paid");
-  });
 
   it("giờ vượt giờ chuẩn tháng: Chưa phân bổ dừng ở 0, phần vượt là dòng riêng, đẳng thức PL-12 vẫn đúng", () => {
     const rate = { monthlyAmount: 25_200_000, standardMinutes: 168 * 60 };
-    const over = classifyEntry({ id: "e-1", projectId: "p-1", userId: "u-a", dateKey: "2026-08-03", minutes: 200 * 60, roleGroup: "DELIVERY", taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT", selectedTaskTypeLayer2: "CUSTOMER_PROJECT", contractItemId: "hm-01", afterPnlClose: false }, rate);
+    const over = classifyEntry({ id: "e-1", projectId: "p-1", userId: "u-a", dateKey: "2026-08-03", minutes: 200 * 60, roleGroup: "DELIVERY", taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT", selectedTaskTypeLayer2: "CUSTOMER_PROJECT", afterPnlClose: false }, rate);
     const result = companyCostMonth("2026-08", 25_200_000, [over], new Set());
     expect(result.projectLaborAmount).toBe(30_000_000);
     expect(result.lines.unallocated.amount).toBe(0);
@@ -376,9 +375,8 @@ describe("8 · các điểm nhỏ ảnh hưởng tới số", () => {
 
 // Locking is in order now (pnl-remaining-fixes.spec.ts); months locked out of order before that rule still exist in the data.
 describe("9b · dữ liệu cũ khóa không theo thứ tự: tham số của tháng đã khóa đọc từ ảnh chụp", () => {
-  it("giá trị mới có hiệu lực từ một tháng còn mở phía trước không đổi hoa hồng và doanh thu Theo giờ của tháng đã khóa", async () => {
+  it("giá trị mới có hiệu lực từ một tháng còn mở phía trước không đổi hoa hồng của tháng đã khóa", async () => {
     const s = scenario();
-    s.log({ userId: "u-a", taskId: "t-cr", dateKey: "2026-09-28", hours: 10 }); // HM-02 Theo giờ: 10 giờ × 400.000 = 4.000.000
     await s.approveCost("u-b", "2026-09", 25_200_000);
     await s.pnl.confirmFund("fund-ai", "2026-09", founder);
     s.approveG7("2026-09-30");
@@ -388,12 +386,11 @@ describe("9b · dữ liệu cũ khóa không theo thứ tự: tham số của th
     row(s, "pnlPeriod", (item) => item.periodKey === "2026-08").status = "OPEN";
     row(s, "pnlPeriodSnapshot", (item) => item.periodKey === "2026-08").reopenedAt = new Date("2026-10-12T03:00:00.000Z");
     const before = await s.project();
-    expect(before.totals.revenue.amount).toBe(64_000_000);
-    expect(before.months.wholeProjectItems[0].amount).toBe(3_200_000);
+    expect(before.totals.revenue.amount).toBe(67_200_000);
+    expect(before.months.wholeProjectItems[0].amount).toBe(3_360_000);
     await s.config.addParameterValue({ key: "commissionPercent", scopeType: "company", value: 10, effectiveFrom: "2026-08", reason: "đổi chính sách" }, founder);
-    await s.config.addParameterValue({ key: "sellRate", subKey: "DELIVERY", scopeType: "company", value: 500_000, effectiveFrom: "2026-08", reason: "bảng giá mới" }, founder);
     const after = await s.project();
-    expect(after.totals.revenue.amount).toBe(64_000_000);
-    expect(after.months.wholeProjectItems[0].amount).toBe(3_200_000);
+    expect(after.totals.revenue.amount).toBe(67_200_000);
+    expect(after.months.wholeProjectItems[0].amount).toBe(3_360_000);
   });
 });

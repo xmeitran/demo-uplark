@@ -10,6 +10,8 @@ export interface ProjectStatusFacts {
   currentStatus: unknown;
   /** G1–G8 of the project; null for a project on a hand-built framework (its position is not known). */
   gates: ReadonlyArray<{ code: string; status: string }> | null;
+  /** Hand-built framework only (no G1–G8): its own milestones, so approving them still moves the project. */
+  milestones?: { total: number; approved: number; started: boolean } | null;
   /** Stage Pilot / Onboard already has a time log. */
   pilotHasTimeLog: boolean;
   onboardHasTimeLog: boolean;
@@ -50,7 +52,13 @@ export function isProgressBlockingCustomerBlocker(record: { type: string; extens
 }
 
 function positionStatus(facts: ProjectStatusFacts): { base: ProjectStatusCode | null; baseBasis: string } {
-  if (!facts.gates) return { base: null, baseBasis: "" };
+  if (!facts.gates) {
+    const own = facts.milestones;
+    if (!own?.total) return { base: null, baseBasis: "" };
+    if (own.approved >= own.total) return { base: "completed", baseBasis: `Cả ${own.total} milestone của dự án đã được duyệt` };
+    if (own.approved > 0) return { base: "active", baseBasis: `${own.approved}/${own.total} milestone đã được duyệt` };
+    return own.started ? { base: "active", baseBasis: "Dự án đã bắt đầu thực hiện" } : { base: "planning", baseBasis: "Chưa milestone nào bắt đầu" };
+  }
   const status = (code: string) => facts.gates?.find((gate) => gate.code === code)?.status;
   // One meaning of "passed" (isGatePassed): approved, or opened by the audited exception.
   if (isGatePassed(status("G8"))) return { base: "maintenance", baseBasis: status("G8") === "approved" ? "G8 đã duyệt, đã bàn giao CS" : "G8 mở theo ngoại lệ, đã bàn giao CS" };

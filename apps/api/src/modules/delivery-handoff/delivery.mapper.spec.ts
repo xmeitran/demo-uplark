@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mapProjectStageSummary, mapProjectSummary, mapTaskSummary } from "./delivery.mapper";
+import { mapProjectStageSummary, mapProjectSummary, mapTaskSummary, startIsActual } from "./delivery.mapper";
 
 describe("delivery.mapper", () => {
   it("maps project aggregates from real stages and tasks", () => {
@@ -389,5 +389,14 @@ describe("delivery.mapper", () => {
     const taskRow = { id: "t", accountId: "a", title: "T", taskType: "implementation", status: "in_progress", priority: "medium", estimateMinutes: 120, customerVisible: false, timeEntries };
     expect(mapTaskSummary(taskRow)).toMatchObject({ loggedMinutes: 90, approvedMinutes: 60 });
     expect(mapProjectSummary({ id: "p", accountId: "a", code: "P", name: "P", status: "in_progress", tasks: [taskRow, taskRow] })).toMatchObject({ loggedMinutes: 180, approvedMinutes: 120 });
+  });
+});
+
+describe("startIsActual", () => {
+  it("is true only when the earliest start of the project is an actual one", () => {
+    expect(startIsActual([{ plannedStartAt: "2026-10-14T00:00:00.000Z" }, { plannedStartAt: "2026-11-01T00:00:00.000Z" }])).toBe(false);
+    expect(startIsActual([{ plannedStartAt: "2026-10-14T00:00:00.000Z", actualStartAt: "2026-10-13T04:00:00.000Z" }, { plannedStartAt: "2026-11-01T00:00:00.000Z" }])).toBe(true);
+    expect(startIsActual([{ plannedStartAt: "2026-10-01T00:00:00.000Z" }, { actualStartAt: "2026-10-13T04:00:00.000Z" }])).toBe(false);
+    expect(startIsActual([])).toBe(false);
   });
 });

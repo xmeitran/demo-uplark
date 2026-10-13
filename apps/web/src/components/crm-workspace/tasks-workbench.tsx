@@ -8,8 +8,6 @@ import {
   defaultSelectedLayer2, layer2OptionsForTask, taskTypeLayer1Label, taskTypeLayer2Label, type TaskTypeLayer1
 } from "@/lib/task-classification";
 import { useTaskPeople } from "@/hooks/use-task-people";
-import { CONTRACT_ITEM_FIELD_LABEL } from "@/lib/contract-item";
-import { defaultContractItemId, useProjectContractItems } from "@/hooks/use-project-contract-items";
 
 import { useRouter } from "next/navigation";
 import React, { useId, useState, useEffect, useLayoutEffect, useRef } from "react";
@@ -28,6 +26,8 @@ import type {
 } from "@b2b-crm/contracts";
 import { PolarisFallbackText, ShopifyDataTable, ShopifyIcon, ShopifySection, type ShopifyIconName } from "../shopify-ui";
 import { ModalLayer } from "../modal-layer";
+import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilter, SearchFilter, dayOf, isWithinRange, matchesAny, type DateRange, type FilterPerson } from "@/components/filters";
+import { matchesSearch } from "./crm-select-search";
 import {
   buildCreateTaskTimeEntryInput,
   resolveTaskTimeEntryUserId,
@@ -38,6 +38,9 @@ import {
   type DailyActualLogFeedback
 } from "../../features/crm-tasks/daily-actual-log-feedback";
 import { shouldResetLogWorkModal, type LogWorkModalSession } from "../../features/crm-tasks/log-work-modal-session";
+import { logWorkActualCheck } from "../../features/crm-tasks/log-work-actual-check";
+import { TASK_ESTIMATE_HINT } from "../../features/crm-tasks/task-estimate";
+import { gateBlockNote, useStageGateBlocks } from "../../features/project-gates/stage-gate-lock";
 import {
   loadTaskDrafts,
   persistTaskDrafts,
@@ -946,11 +949,14 @@ export function FormField({
   step,
   inputMode,
   ariaDescribedBy,
-  ariaInvalid
+  ariaInvalid,
+  hint
 }: {
   label: string;
   value: string;
   onChange: (e: any) => void;
+  /** One line under the input, e.g. the limit of the value. */
+  hint?: string;
   type?: string;
   placeholder?: string;
   disabled?: boolean;
@@ -981,6 +987,7 @@ export function FormField({
         aria-describedby={ariaDescribedBy}
         aria-invalid={ariaInvalid}
       />
+      {hint ? <p className="mt-1 text-[11px] text-slate-500">{hint}</p> : null}
     </div>
   );
 }
@@ -1088,11 +1095,6 @@ export function CreateTaskModal({
   const [taskType, setTaskType] = useState(defaults?.taskType || "implementation");
   // "inherit" = take the stage's Layer 1 (D-02). Layer 2 is derived by the API and never chosen (D-04).
   const [taskTypeLayer1, setTaskTypeLayer1] = useState<TaskTypeLayer1 | typeof INHERIT_TASK_TYPE_LAYER1>(defaults?.taskTypeLayer1 || INHERIT_TASK_TYPE_LAYER1);
-  // D-06: the select only shows when the project has several line items; the API assigns the only / root one otherwise.
-  const [contractItemId, setContractItemId] = useState<string | undefined>(undefined);
-  const contractItems = useProjectContractItems(projectId === "none" ? "" : projectId);
-  const activeContractItems = contractItems.items.filter((item) => item.status === "active");
-  const selectedContractItemId = activeContractItems.some((item) => item.id === contractItemId) ? contractItemId : defaultContractItemId(contractItems.items);
   const [assigneeUserIds, setAssigneeUserIds] = useState<string[]>([defaultAssigneeUserId]);
   const [plannedStartAt, setPlannedStartAt] = useState("");
   const [dueAt, setDueAt] = useState("");
@@ -1201,7 +1203,6 @@ export function CreateTaskModal({
         priority,
         taskType,
         taskTypeLayer1: taskTypeLayer1 === INHERIT_TASK_TYPE_LAYER1 ? undefined : taskTypeLayer1,
-        contractItemId: activeContractItems.length > 1 ? selectedContractItemId : undefined,
         assigneeUserId,
         assigneeUserIds,
         assignees: assigneeUserIds.map((userId) => assigneeSelectOptions.find((option) => option.value === userId)).filter(Boolean).map((option) => ({ userId: option!.value, displayName: option!.label, avatarUrl: option!.avatarUrl })),
@@ -1292,15 +1293,6 @@ export function CreateTaskModal({
             onChange={() => undefined}
             disabled
           />
-          {activeContractItems.length > 1 ? (
-            <CustomDropdown
-              label={CONTRACT_ITEM_FIELD_LABEL}
-              value={selectedContractItemId ?? ""}
-              options={activeContractItems.map((item) => ({ value: item.id, label: `${item.code} · ${item.name} (${item.contractTypeLabel})` }))}
-              onChange={setContractItemId}
-              disabled={!contractItems.canManage}
-            />
-          ) : null}
           <p className="col-span-full -mt-2 text-[11px] text-slate-500">Lớp 1 mặc định theo stage; chỉ PM/Admin đổi khác stage. Lớp 2 do hệ thống suy ra từ dự án và stage, không chọn tay.</p>
         </div>
 
@@ -1333,7 +1325,7 @@ export function CreateTaskModal({
         </div>
 
         <div className="task-form-grid task-form-tail-grid">
-          <FormField label="Ước tính phút" value={estimateMinutes} onChange={e => setEstimateMinutes(e.target.value)} type="number" placeholder="VD: 120" />
+          <FormField label="Ước tính phút" value={estimateMinutes} onChange={e => setEstimateMinutes(e.target.value)} type="number" placeholder="VD: 120" min={0} hint={TASK_ESTIMATE_HINT} />
           <div className="task-checkbox-card">
             <input
               type="checkbox"
@@ -1384,13 +1376,6 @@ export function EditTaskModal({
   const [taskType, setTaskType] = useState(task?.taskType || "implementation");
   // Empty stays empty ("Chờ phân loại"): the form never invents a classification. Layer 2 is shown read-only (D-04).
   const [taskTypeLayer1, setTaskTypeLayer1] = useState<TaskTypeLayer1 | typeof INHERIT_TASK_TYPE_LAYER1>(task?.taskTypeLayer1 || INHERIT_TASK_TYPE_LAYER1);
-  // D-05: only a PM (Admin) moves a task to another line item, with a reason; a sub-task repeats its parent.
-  const [contractItemId, setContractItemId] = useState<string | undefined>(task?.contractItemId);
-  const [contractItemChangeReason, setContractItemChangeReason] = useState("");
-  const contractItems = useProjectContractItems(task?.projectId ?? "");
-  const activeContractItems = contractItems.items.filter((item) => item.status === "active" || item.id === task?.contractItemId);
-  const selectedContractItemId = contractItemId ?? task?.contractItemId ?? defaultContractItemId(contractItems.items);
-  const contractItemMoved = Boolean(task?.contractItemId) && selectedContractItemId !== task?.contractItemId;
   const [assigneeUserIds, setAssigneeUserIds] = useState<string[]>(task?.assigneeUserIds?.length ? task.assigneeUserIds : (task?.assigneeUserId ? [task.assigneeUserId] : []));
   const [plannedStartAt, setPlannedStartAt] = useState(toVietnamDateInputValue(task?.plannedStartAt));
   const [dueAt, setDueAt] = useState(toVietnamDateInputValue(task?.dueAt));
@@ -1440,8 +1425,6 @@ export function EditTaskModal({
       priority,
       taskType,
       taskTypeLayer1: taskTypeLayer1 === INHERIT_TASK_TYPE_LAYER1 ? undefined : taskTypeLayer1,
-      contractItemId: activeContractItems.length > 1 ? selectedContractItemId : undefined,
-      contractItemChangeReason: contractItemMoved ? contractItemChangeReason.trim() || undefined : undefined,
       assigneeUserId,
       assigneeUserIds,
       assignees: assigneeUserIds.map((userId) => assigneeSelectOptions.find((option) => option.value === userId)).filter(Boolean).map((option) => ({ userId: option!.value, displayName: option!.label, avatarUrl: option!.avatarUrl })),
@@ -1526,16 +1509,6 @@ export function EditTaskModal({
             onChange={() => undefined}
             disabled
           />
-          {activeContractItems.length > 1 ? (
-            <CustomDropdown
-              label={CONTRACT_ITEM_FIELD_LABEL}
-              value={selectedContractItemId ?? ""}
-              options={activeContractItems.map((item) => ({ value: item.id, label: `${item.code} · ${item.name} (${item.contractTypeLabel})` }))}
-              onChange={setContractItemId}
-              disabled={!contractItems.canManage || Boolean(task?.parentTaskId)}
-            />
-          ) : null}
-          {contractItemMoved ? <FormField label="Lý do đổi hạng mục" value={contractItemChangeReason} onChange={e => setContractItemChangeReason(e.target.value)} placeholder="Bắt buộc khi chuyển task sang hạng mục khác" required /> : null}
           <p className="col-span-full -mt-2 text-[11px] text-slate-500">{task?.parentTaskId ? "Sub-task theo Lớp 1 của task cha. " : "Chỉ PM/Admin đổi Lớp 1 của task. "}Lớp 2 do hệ thống suy ra, chỉ đọc.</p>
         </div>
 
@@ -1547,7 +1520,7 @@ export function EditTaskModal({
             options={assigneeSelectOptions}
             onChange={setAssigneeUserIds}
           />
-          <FormField label="Ước tính phút" value={estimateMinutes} onChange={e => setEstimateMinutes(e.target.value)} type="number" placeholder="VD: 120" />
+          <FormField label="Ước tính phút" value={estimateMinutes} onChange={e => setEstimateMinutes(e.target.value)} type="number" placeholder="VD: 120" min={0} hint={TASK_ESTIMATE_HINT} />
         </div>
 
         <div className="task-form-grid task-date-grid">
@@ -1820,26 +1793,18 @@ export function LogWorkModal({
   const remainingMinutes = Math.max(0, plannedMinutes - loggedMinutes);
   const selectedStartMinutes = useTimeSlot ? timeToMinutes(startTime) : null;
   const selectedEndMinutes = useTimeSlot ? timeToMinutes(endTime) : null;
-  const actualValidationMessage = step !== "actual"
-    ? null
-    : plannedMinutes <= 0
-      ? "Task chưa có giờ kế hoạch hợp lệ; hãy cập nhật Plan Hour trước khi ghi giờ."
-      : requestedMinutes > remainingMinutes
-        ? `Thời lượng ghi nhận vượt số giờ kế hoạch còn lại. Công việc chỉ còn ${formatTaskMinutes(remainingMinutes)} được phép (đã ghi ${formatTaskMinutes(loggedMinutes)} trên tổng kế hoạch ${formatTaskMinutes(plannedMinutes)}).`
-        : useTimeSlot && (
-            selectedStartMinutes === null ||
-            selectedEndMinutes === null ||
-            selectedStartMinutes < 7 * 60 ||
-            selectedEndMinutes > 19 * 60 ||
-            selectedEndMinutes <= selectedStartMinutes
-          )
-          ? "Khung giờ phải nằm trong 07:00–19:00 và thời gian kết thúc phải sau thời gian bắt đầu."
-          : null;
+  // D-19: a task without planned hours and hours beyond the plan are logged; only the time window is refused here.
+  const actualCheck = step === "actual"
+    ? logWorkActualCheck({ plannedMinutes, loggedMinutes, requestedMinutes, slot: useTimeSlot ? { startMinutes: selectedStartMinutes, endMinutes: selectedEndMinutes } : null }, formatTaskMinutes)
+    : { error: null, warning: null };
+  const actualValidationMessage = actualCheck.error;
+  // V-11: no hours in a stage whose preceding gate is not approved; planning ahead stays possible.
+  const gateBlock = useStageGateBlocks(isOpen ? task?.projectId : null)[task?.stageId ?? ""];
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (submittingRef.current) return;
-    if (people.loading || people.error || !performerOptions.some(option => option.value === userId)) { setSubmitError("Select an active project member as the performer."); return; }
+    if (people.loading || people.error || !performerOptions.some(option => option.value === userId)) { setSubmitError("Người thực hiện phải là thành viên đang hoạt động của dự án. Hãy thêm người này vào danh sách thành viên của dự án hoặc chọn người khác rồi lưu lại."); return; }
     if (!minutes || !workDate) return;
     if (useTimeSlot && (!startTime || !endTime)) return;
     if (step === "actual" && !selectedLayer2) { setSubmitError(`Chọn ${TASK_TYPE_LAYER2_FIELD_LABEL} cho giờ log này.`); return; }
@@ -1913,7 +1878,9 @@ export function LogWorkModal({
             <button
               type="button"
               onClick={() => setStep("actual")}
-              className="flex flex-col items-center text-center p-6 h-full w-full rounded-2xl border border-slate-200 bg-white hover:border-blue-500 hover:bg-blue-50/10 hover:shadow-md transition-all group cursor-pointer min-h-[190px]"
+              disabled={Boolean(gateBlock)}
+              title={gateBlock ? gateBlockNote(gateBlock, "ghi giờ") : undefined}
+              className="flex flex-col items-center text-center p-6 h-full w-full rounded-2xl border border-slate-200 bg-white hover:border-blue-500 hover:bg-blue-50/10 hover:shadow-md transition-all group cursor-pointer min-h-[190px] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-200 disabled:hover:shadow-none"
             >
               <div className="flex flex-col items-center justify-center flex-1">
                 <div className="h-12 w-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center mb-3.5 group-hover:bg-blue-100 transition-colors shrink-0">
@@ -1943,6 +1910,12 @@ export function LogWorkModal({
               </div>
             </button>
           </div>
+          {gateBlock && task?.projectId ? (
+            <p role="status" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
+              {gateBlockNote(gateBlock, "ghi giờ thực tế cho task này")} Vẫn lên kế hoạch dự kiến được.{" "}
+              <a className="underline underline-offset-2" href={`/projects/${encodeURIComponent(task.projectId)}?tab=Documents`}>Mở tab Điểm chốt &amp; Tài liệu</a>
+            </p>
+          ) : null}
           <div className="flex justify-end mt-8 border-t border-slate-100 pt-4">
             <button className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition cursor-pointer" type="button" onClick={onClose}>Hủy</button>
           </div>
@@ -1972,14 +1945,16 @@ export function LogWorkModal({
           ) : null}
 
           {step === "actual" ? (
-            <div className={`mb-4 rounded-xl border px-3 py-2.5 text-xs ${actualValidationMessage ? "border-red-200 bg-red-50 text-red-700" : "border-blue-100 bg-blue-50/60 text-blue-800"}`}>
+            <div className={`mb-4 rounded-xl border px-3 py-2.5 text-xs ${actualValidationMessage ? "border-red-200 bg-red-50 text-red-700" : actualCheck.warning ? "border-amber-200 bg-amber-50 text-amber-800" : "border-blue-100 bg-blue-50/60 text-blue-800"}`}>
               <p className="font-semibold">
-                Kế hoạch: {formatTaskMinutes(plannedMinutes)} · Đã ghi nhận: {formatTaskMinutes(loggedMinutes)} · Còn lại: {formatTaskMinutes(remainingMinutes)}
+                Kế hoạch: {plannedMinutes > 0 ? formatTaskMinutes(plannedMinutes) : "chưa đặt"} · Đã ghi nhận: {formatTaskMinutes(loggedMinutes)}{plannedMinutes > 0 ? ` · Còn lại: ${formatTaskMinutes(remainingMinutes)}` : ""}
               </p>
               {actualValidationMessage ? (
                 <p role="alert" className="mt-1 font-semibold">{actualValidationMessage}</p>
+              ) : actualCheck.warning ? (
+                <p role="status" className="mt-1 font-semibold">{actualCheck.warning}</p>
               ) : (
-                <p className="mt-1">Hệ thống tự động đối chiếu thời lượng với kế hoạch và không cho phép ghi vượt số giờ còn lại.</p>
+                <p className="mt-1">Hệ thống đối chiếu thời lượng với giờ kế hoạch của task.</p>
               )}
             </div>
           ) : null}
@@ -2125,11 +2100,13 @@ export function TasksWorkbench({
 
   // Filters state
   const [searchTerm, setSearchTerm] = useState("");
-  const [filterAccount, setFilterAccount] = useState("all");
-  const [filterProject, setFilterProject] = useState("all");
-  const [filterStatus, setFilterStatus] = useState("all");
-  const [filterPriority, setFilterPriority] = useState("all");
-  const [filterStage, setFilterStage] = useState("all");
+  const [filterDue, setFilterDue] = useState<DateRange>({ from: "", to: "" });
+  const [filterAssignees, setFilterAssignees] = useState<string[]>([]);
+  const [filterAccounts, setFilterAccounts] = useState<string[]>([]);
+  const [filterProjects, setFilterProjects] = useState<string[]>([]);
+  const [filterStatuses, setFilterStatuses] = useState<string[]>([]);
+  const [filterPriorities, setFilterPriorities] = useState<string[]>([]);
+  const [filterStages, setFilterStages] = useState<string[]>([]);
 
   // Modals state
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -2187,20 +2164,48 @@ export function TasksWorkbench({
   // Selected task detail helper
   const selectedTask = localTasks.find(t => t.id === selectedTaskId);
 
-  // Filters application
-  const filteredTasks = localTasks.filter(t => {
-    const displayTitle = formatTaskTitle(t.title);
-    const matchesSearch = displayTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          t.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          (t.description || "").toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesAccount = filterAccount === "all" || t.accountId === filterAccount;
-    const matchesProject = filterProject === "all" || t.projectId === filterProject;
-    const matchesStatus = filterStatus === "all" || t.status === filterStatus;
-    const matchesPriority = filterPriority === "all" || t.priority === filterPriority;
-    const matchesStage = filterStage === "all" || getDeploymentStageForTask(t).index === Number(filterStage);
-
-    return matchesSearch && matchesAccount && matchesProject && matchesStatus && matchesPriority && matchesStage;
-  });
+  // Filters application (client-side over the loaded rows; an empty selection means "all")
+  const taskAssigneeIds = (t: ProjectTaskSummary) => t.assigneeUserIds?.length ? t.assigneeUserIds : t.assigneeUserId ? [t.assigneeUserId] : [];
+  const filteredTasks = localTasks.filter(t =>
+    matchesSearch(searchTerm, formatTaskTitle(t.title), t.title, t.description)
+    && isWithinRange(dayOf(t.dueAt), filterDue)
+    && matchesAny(filterAssignees, taskAssigneeIds(t))
+    && matchesAny(filterAccounts, t.accountId)
+    && matchesAny(filterProjects, t.projectId)
+    && matchesAny(filterStatuses, t.status)
+    && matchesAny(filterPriorities, t.priority)
+    && matchesAny(filterStages, String(getDeploymentStageForTask(t).index)));
+  const activeFilterCount = [filterAssignees, filterAccounts, filterProjects, filterStatuses, filterPriorities, filterStages].filter(values => values.length > 0).length
+    + (searchTerm.trim() ? 1 : 0) + (filterDue.from || filterDue.to ? 1 : 0);
+  const resetFilters = () => {
+    setSearchTerm("");
+    setFilterDue({ from: "", to: "" });
+    setFilterAssignees([]);
+    setFilterAccounts([]);
+    setFilterProjects([]);
+    setFilterStatuses([]);
+    setFilterPriorities([]);
+    setFilterStages([]);
+  };
+  // People who hold at least one loaded task, with the directory's avatar and e-mail when it is available.
+  const assigneeFilterPeople: FilterPerson[] = (() => {
+    const directory = new Map(workspaceAssigneeOptions.map(option => [option.value, option]));
+    const people = new Map<string, FilterPerson>();
+    for (const t of localTasks) {
+      for (const id of taskAssigneeIds(t)) {
+        if (people.has(id)) continue;
+        const known = directory.get(id);
+        const onTask = t.assignees?.find(assignee => assignee.userId === id);
+        people.set(id, {
+          id,
+          name: known?.label ?? onTask?.displayName ?? (id === t.assigneeUserId ? t.assigneeDisplayName : undefined) ?? id,
+          subtitle: known?.subtext,
+          avatarUrl: known?.avatarUrl ?? onTask?.avatarUrl
+        });
+      }
+    }
+    return [...people.values()].sort((left, right) => left.name.localeCompare(right.name, "vi"));
+  })();
 
   // API Call: Edit Task
   const handleEditTask = async (taskInput: any) => {
@@ -2213,8 +2218,6 @@ export function TasksWorkbench({
       description: taskInput.description,
       taskType: taskInput.taskType,
       taskTypeLayer1: taskInput.taskTypeLayer1,
-      contractItemId: taskInput.contractItemId,
-      contractItemChangeReason: taskInput.contractItemChangeReason,
       priority: taskInput.priority,
       ownerUserId: taskInput.assigneeUserId,
       assigneeUserId: taskInput.assigneeUserId,
@@ -2304,7 +2307,6 @@ export function TasksWorkbench({
       description: taskInput.description,
       taskType: taskInput.taskType,
       taskTypeLayer1: taskInput.taskTypeLayer1,
-      contractItemId: taskInput.contractItemId,
       status: "todo",
       priority: taskInput.priority,
       ownerUserId: taskInput.assigneeUserId,
@@ -2339,7 +2341,6 @@ export function TasksWorkbench({
         description: taskInput.description,
         taskType: taskInput.taskType,
         taskTypeLayer1: taskInput.taskTypeLayer1,
-      contractItemId: taskInput.contractItemId,
         status: "todo",
         priority: taskInput.priority,
         ownerUserId: taskInput.assigneeUserId,
@@ -2394,7 +2395,6 @@ export function TasksWorkbench({
         description: taskInput.description,
         taskType: taskInput.taskType,
         taskTypeLayer1: taskInput.taskTypeLayer1,
-      contractItemId: taskInput.contractItemId,
         status: "todo",
         priority: taskInput.priority,
         ownerUserId: taskInput.assigneeUserId,
@@ -2720,81 +2720,50 @@ export function TasksWorkbench({
           </span>
           <span className="tasks-section-count">{filteredTasks.length} việc đang hiển thị</span>
         </div>
-        <div className="tasks-filter-grid">
-          <label className="tasks-search-field">
-            <span className="task-field-label">Tìm theo tên / mô tả</span>
-            <span className="tasks-search-control">
-              <ShopifyIcon name="search" size={15} />
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-                placeholder="VD: kickoff, khảo sát, hỗ trợ..."
-              />
-            </span>
-          </label>
-
-          <CustomDropdown
-            label="Khách hàng"
-            value={filterAccount}
-            options={[
-              { value: "all", label: "Tất cả khách hàng", icon: "person" },
-              ...accounts.data.map(a => ({ value: a.id, label: a.name, icon: "person" }))
-            ]}
-            onChange={setFilterAccount}
-          />
-
-          <CustomDropdown
-            label="Dự án"
-            value={filterProject}
-            options={[
-              { value: "all", label: "Tất cả dự án", icon: "order" },
-              ...projects.data.map(p => ({ value: p.id, label: p.name, icon: "order" }))
-            ]}
-            onChange={setFilterProject}
-          />
-
-          <CustomDropdown
+        <FilterBar onReset={activeFilterCount > 0 ? resetFilters : undefined} activeCount={activeFilterCount}>
+          <FilterField label="Tìm theo tên / mô tả" className="min-w-[220px] flex-[1.6]">
+            <SearchFilter className="" value={searchTerm} onChange={setSearchTerm} placeholder="VD: kickoff, khảo sát, hỗ trợ..." ariaLabel="Tìm công việc theo tên hoặc mô tả" />
+          </FilterField>
+          <FilterField label="Hạn hoàn tất" className="min-w-[15rem] flex-[1.2]">
+            <DateRangeFilter ariaLabel="Hạn hoàn tất" value={filterDue} onChange={setFilterDue} />
+          </FilterField>
+          <PersonFilter label="Người thực hiện" allLabel="Tất cả người thực hiện" people={assigneeFilterPeople} values={filterAssignees} onChange={setFilterAssignees} />
+          <MultiSelectFilter label="Khách hàng" allLabel="Tất cả khách hàng" options={accounts.data.map(a => ({ value: a.id, label: a.name }))} values={filterAccounts} onChange={setFilterAccounts} />
+          <MultiSelectFilter label="Dự án" allLabel="Tất cả dự án" options={projects.data.map(p => ({ value: p.id, label: p.name }))} values={filterProjects} onChange={setFilterProjects} />
+          <MultiSelectFilter
             label="Trạng thái"
-            value={filterStatus}
+            allLabel="Tất cả trạng thái"
+            searchable={false}
             options={[
-              { value: "all", label: "Tất cả trạng thái", icon: "clock" },
-              { value: "todo", label: statusLabels.todo, icon: "clock" },
-              { value: "in_progress", label: statusLabels.in_progress, icon: "star", iconTone: "info" },
-              { value: "completed", label: statusLabels.completed, icon: "checkmark", iconTone: "success" },
-              { value: "blocked", label: "Đang bị chặn", icon: "alert-circle", iconTone: "critical" },
-              { value: "cancelled", label: "Đã hủy", icon: "alert-circle", iconTone: "neutral" }
+              { value: "todo", label: statusLabels.todo },
+              { value: "in_progress", label: statusLabels.in_progress },
+              { value: "completed", label: statusLabels.completed },
+              { value: "blocked", label: "Đang bị chặn" },
+              { value: "cancelled", label: "Đã hủy" }
             ]}
-            onChange={setFilterStatus}
+            values={filterStatuses}
+            onChange={setFilterStatuses}
           />
-
-          <CustomDropdown
+          <MultiSelectFilter
             label="Ưu tiên"
-            value={filterPriority}
+            allLabel="Tất cả mức ưu tiên"
+            searchable={false}
             options={[
-              { value: "all", label: "Tất cả mức ưu tiên", icon: "star" },
-              { value: "high", label: "Cao", icon: "alert-circle", iconTone: "critical" },
-              { value: "medium", label: "Vừa", icon: "star", iconTone: "warning" },
-              { value: "low", label: "Thấp", icon: "checkmark", iconTone: "success" }
+              { value: "high", label: "Cao" },
+              { value: "medium", label: "Vừa" },
+              { value: "low", label: "Thấp" }
             ]}
-            onChange={setFilterPriority}
+            values={filterPriorities}
+            onChange={setFilterPriorities}
           />
-
-          <CustomDropdown
+          <MultiSelectFilter
             label="Stage triển khai"
-            value={filterStage}
-            options={[
-              { value: "all", label: "Tất cả stage", icon: "target" },
-              ...deploymentStagePlan.map((stage, index) => ({
-                value: String(index),
-                label: `${stage.activity} · ${stage.cumulativePercent}%`,
-                icon: stage.criteria === "Số hóa" ? "settings" : "target",
-                iconTone: stage.criteria === "Số hóa" ? "warning" : index >= 5 ? "success" : "info"
-              }))
-            ]}
-            onChange={setFilterStage}
+            allLabel="Tất cả stage"
+            options={deploymentStagePlan.map((stage, index) => ({ value: String(index), label: `${stage.activity} · ${stage.cumulativePercent}%` }))}
+            values={filterStages}
+            onChange={setFilterStages}
           />
-        </div>
+        </FilterBar>
       </section>
 
       <section className="tasks-list-card">
@@ -2986,8 +2955,9 @@ export function TasksWorkbench({
               <PolarisFallbackText>
                 {totalCount === 0
                   ? "Chưa có công việc thật. Hãy tạo khách hàng và dự án trước khi bắt đầu vận hành."
-                  : "Chưa có công việc phù hợp với bộ lọc hiện tại."}
+                  : "Không có kết quả phù hợp bộ lọc."}
               </PolarisFallbackText>
+              {totalCount > 0 && activeFilterCount > 0 ? <button type="button" onClick={resetFilters} className="mt-2 !text-[12px] !font-semibold text-primary hover:underline">Đặt lại bộ lọc</button> : null}
             </div>
           )}
       </section>

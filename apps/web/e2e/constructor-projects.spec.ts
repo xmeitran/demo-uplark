@@ -691,18 +691,6 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     if (path === "/api/project-warnings/counts") return json({ data: {} });
     if (path === "/api/project-participation") return json({ data: { userId: "", startDate: "", endDate: "", activeProjects: [], onHoldProjects: [] } });
     if (path === "/api/staff-costs") return json({ data: [], meta: { userId: "", canEdit: false, currency: "VND", standardDayHours: 8, lockedPeriodKeys: [] } });
-    if (/^\/api\/pnl\/projects\/[^/]+\/setup$/.test(path)) {
-      return json({
-        data: {
-          projectId: path.split("/")[4], projectName: "", accountName: "",
-          contract: { totalAmount: null, fixedPriceAmount: null, hourlyCeilingAmount: null, status: "draft", statusLabel: "Nháp", signedOn: null, baseValuesReadOnly: false, collectedAmount: null, collectedInstallments: 0, installmentCount: 0 },
-          items: [],
-          baseline: { g1Approved: false, g1ApprovedOn: null, firstInstallmentPaid: false, rootItemReady: false, blockers: [] },
-          template: { key: "customer", name: "Khách hàng", disabledCodes: [], override: null }
-        },
-        meta: { generatedAt: "2026-07-15T00:00:00.000Z", currency: "VND", moneyVisible: true, canEdit: true, canApprove: true, canExport: true }
-      });
-    }
     return json({ message: `Unmocked API call in e2e: ${route.request().method()} ${path}` }, 404);
   });
 
@@ -813,13 +801,12 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     const projectId = parts[parts.length - 1];
     if (url.pathname.endsWith("/members")) { await route.fallback(); return; }
 
-    // Project sub-resources added with warnings, baselines, gates, contract items and Lark groups: empty by default.
+    // Project sub-resources added with warnings, baselines, gates and Lark groups: empty by default.
     if (route.request().method() === "GET" && parts[2] === liveProject.id && parts.length === 4) {
       const emptyProjectResources: Record<string, unknown> = {
         warnings: { data: [] },
         "status-history": { data: [] },
         "member-participation": { data: [] },
-        "contract-items": { data: [], meta: { canManage: true, canViewValues: true, isInternalWorklog: false } },
         baseline: { projectId: liveProject.id, locked: false, current: {}, history: [], canCapture: false },
         gates: { projectId: liveProject.id, usesStageGates: false, data: [], stageSla: [], canException: false },
         "lark-groups": { status: "created", statusLabel: "Đã tạo", hasInternalGroup: true, hasCustomerGroup: true },
@@ -873,7 +860,8 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     }
 
     if (url.pathname === `/api/projects/${liveProject.id}/activity` && route.request().method() === "GET") {
-      expect(url.searchParams.get("limit")).toBe("10");
+      // The Activity tab loads the whole feed (fetchAllPages, 100 per page) so its filters see every event.
+      expect(url.searchParams.get("limit")).toBe("100");
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -883,7 +871,7 @@ test.beforeEach(async ({ context, page, baseURL }) => {
             principal: { subjectId: "e2e", workspaceId: "e2e-workspace" },
             rowScope: "project",
             hiddenFields: [],
-            pagination: { limit: 10, offset: 0, returned: 10, total: 12, hasNextPage: true, hasPreviousPage: false }
+            pagination: { limit: 100, offset: 0, returned: 11, total: 11, hasNextPage: false, hasPreviousPage: false }
           }
         })
       });
@@ -972,7 +960,8 @@ test.beforeEach(async ({ context, page, baseURL }) => {
       expect(input.activity).toBe("Scope confirmation renamed");
       expect(input.phase).toBeUndefined();
       expect(input.sortOrder).toBeUndefined();
-      expect(input.ownerUserId).toBe(liveUser.id);
+      // A rename sends only what changed: the stage PIC is not re-sent (and so not re-validated).
+      expect(input.ownerUserId).toBeUndefined();
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -1130,7 +1119,7 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     }
 
     if (url.pathname === "/api/tasks" && url.searchParams.get("assigneeUserId") === liveUser.id) {
-      expect(url.searchParams.get("limit")).toBe("20");
+      expect(url.searchParams.get("limit")).toBe("100");
       expect(url.searchParams.get("offset")).toBe("0");
       await route.fulfill({
         status: 200,
@@ -1392,8 +1381,25 @@ test("projects page renders real project member avatars from the API", async ({ 
 });
 
 test("project sheet presents the delivery summary and opens the project control center", async ({ page }) => {
+  await page.route("**/api/project-warnings/counts", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { "project-with-warnings": 2 } }) }));
   await page.goto("/projects");
-  await page.getByRole("tab", { name: "Project Sheet View", exact: true }).click();
+  // Warnings: no banner and no colouring on the project items; only a neutral filter-row toggle carrying a count badge.
+  const warningToggle = page.getByTestId("projects-warning-chip");
+  await expect(warningToggle).toHaveAttribute("aria-pressed", "false");
+  await expect(warningToggle).toHaveAttribute("title", "1 dự án có cảnh báo");
+  await expect(page.getByTestId("projects-warning-badge")).toHaveText("1");
+  await expect(page.getByText(/Hiện đang có .* Project có cảnh báo/)).toHaveCount(0);
+  // Restored layout: four KPI tiles, and the view switch is three icon toggles at the end of the filter row.
+  const kpiRow = page.getByTestId("projects-kpi-row");
+  for (const label of ["Total Budget", "Total Spent", "Active Loaded", "At Risk Loaded"]) {
+    await expect(kpiRow.getByText(label, { exact: true })).toBeVisible();
+  }
+  const viewSwitch = page.getByTestId("projects-control-bar").getByRole("group", { name: "Chế độ xem danh sách Project" });
+  await expect(viewSwitch.getByRole("button")).toHaveCount(3);
+  await expect(viewSwitch.getByRole("button", { name: "Grid View", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("tab", { name: "Project Sheet View", exact: true })).toHaveCount(0);
+  await viewSwitch.getByRole("button", { name: "Project Sheet View", exact: true }).click();
+  await expect(viewSwitch.getByRole("button", { name: "Project Sheet View", exact: true })).toHaveAttribute("aria-pressed", "true");
 
   const sheet = page.getByTestId("project-sheet");
   await expect(sheet).toBeVisible();
@@ -1420,11 +1426,10 @@ test("projects search is sent to the API before pagination", async ({ page }) =>
   });
 
   await page.goto("/projects");
-  const searchInput = page.getByPlaceholder("Search by name, client, description...");
+  const searchInput = page.getByPlaceholder("Tìm theo tên, mã dự án, khách hàng...");
   await searchInput.fill("Live CRM");
 
   await expect(searchInput).toBeFocused();
-  await expect(searchInput).toHaveCSS("outline-width", "2px");
 
   await expect.poll(() => projectListRequests.some((search) => {
     const params = new URLSearchParams(search);
@@ -1484,11 +1489,12 @@ test("projects search filter and pagination keep the page frame stable", async (
         project.code.toLowerCase().includes(query)
       ));
     }
+    // Multi-select filters arrive comma-joined.
     if (status) {
-      data = data.filter((project) => project.status === status);
+      data = data.filter((project) => status.split(",").includes(project.status));
     }
     if (category) {
-      data = data.filter((project) => project.opportunityStage === category.toLowerCase());
+      data = data.filter((project) => category.toLowerCase().split(",").includes(project.opportunityStage));
     }
 
     const pageData = data.slice(offset, offset + limit);
@@ -1521,7 +1527,7 @@ test("projects search filter and pagination keep the page frame stable", async (
   const stableShell = page.getByTestId("projects-stable-shell");
   const resultsFrame = page.getByTestId("projects-results-frame");
   const footer = page.getByTestId("projects-pagination-footer");
-  const searchInput = page.getByPlaceholder("Search by name, client, description...");
+  const searchInput = page.getByPlaceholder("Tìm theo tên, mã dự án, khách hàng...");
   const nextButton = page.getByRole("button", { name: "Next" });
 
   const readBox = async (locator: Locator) => {
@@ -1572,15 +1578,21 @@ test("projects search filter and pagination keep the page frame stable", async (
   await searchInput.fill("");
   await expect(nextButton).toBeEnabled();
 
-  await page.getByRole("button", { name: "All Status" }).click();
+  const statusFilter = controlBar.getByRole("button", { name: "Trạng thái", exact: true });
+  await statusFilter.click();
   await page.getByRole("option", { name: "Đang triển khai", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Đã hoàn thành", exact: true })).toBeHidden();
   await expect.poll(() => projectListRequests.some((search) => new URLSearchParams(search).get("status") === "in_progress")).toBe(true);
+  await page.getByRole("option", { name: "Lên kế hoạch", exact: true }).click();
+  await expect.poll(() => projectListRequests.some((search) => new URLSearchParams(search).get("status") === "in_progress,planning")).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("option", { name: "Đã hoàn thành", exact: true })).toBeHidden();
+  await expect(statusFilter).toContainText("2 đã chọn");
+  await expect(page).toHaveURL(/status=/);
   await expectStableFrame("after status filter", initialFrame);
 
-  await page.getByRole("button", { name: "All Status", exact: true }).click();
-  await page.getByRole("option", { name: "Tất cả trạng thái", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Đã hoàn thành", exact: true })).toBeHidden();
+  await controlBar.getByRole("button", { name: "Đặt lại (1)", exact: true }).click();
+  await expect(statusFilter).toContainText("Tất cả trạng thái");
+  await expect(page).toHaveURL(/\/projects$/);
   await expect(nextButton).toBeEnabled();
   await nextButton.click();
   await expect(page.getByRole("status")).toHaveText("Updating projects...");
@@ -1595,6 +1607,83 @@ test("projects search filter and pagination keep the page frame stable", async (
   await previousButton.click();
   await expect(footer.getByText("Showing 1-10 / 12 projects")).toBeVisible();
   await expectStableFrame("after previous page", initialFrame);
+});
+
+test("projects filters send PIC, client and project period to the API and reset in one click", async ({ page }) => {
+  const projectListRequests: URLSearchParams[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/projects") projectListRequests.push(url.searchParams);
+  });
+  const lastRequest = () => projectListRequests[projectListRequests.length - 1];
+
+  // An old single-value link still opens with its filter applied.
+  await page.goto(`/projects?pic=${workspaceUsers[0].id}`);
+  const controlBar = page.getByTestId("projects-control-bar");
+  await expect.poll(() => lastRequest()?.get("ownerUserId")).toBe(workspaceUsers[0].id);
+  for (const label of ["Tìm kiếm", "Thời gian dự án", "PIC", "Trạng thái", "Loại dự án", "Khách hàng"]) {
+    await expect(controlBar.getByText(label, { exact: true })).toBeVisible();
+  }
+
+  // PIC: type part of a name, pick a second person.
+  await controlBar.getByRole("button", { name: "PIC", exact: true }).click();
+  await page.getByPlaceholder("Tìm theo tên hoặc email...").fill(workspaceUsers[1].displayName.slice(0, 4));
+  await page.getByRole("option", { name: new RegExp(workspaceUsers[1].displayName) }).click();
+  await page.keyboard.press("Escape");
+  await expect.poll(() => lastRequest()?.get("ownerUserId")).toBe(`${workspaceUsers[0].id},${workspaceUsers[1].id}`);
+
+  // Client choices come from the account list, not from the loaded page of projects.
+  await controlBar.getByRole("button", { name: "Khách hàng", exact: true }).click();
+  await page.getByRole("option", { name: liveAccount.name, exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect.poll(() => lastRequest()?.get("accountId")).toBe(liveAccount.id);
+
+  // Period: a quick preset sends inclusive from/to days.
+  await controlBar.getByRole("button", { name: /^Thời gian dự án:/ }).click();
+  await page.getByRole("dialog", { name: "Thời gian dự án" }).getByRole("button", { name: "Năm nay", exact: true }).click();
+  await expect.poll(() => lastRequest()?.get("from") ?? "").toMatch(/^\d{4}-01-01$/);
+  expect(lastRequest()?.get("to")).toMatch(/^\d{4}-12-31$/);
+  expect(lastRequest()?.get("offset")).toBe("0");
+  await expect(page).toHaveURL(/pic=[^&]+%2C[^&]+&from=\d{4}-01-01&to=\d{4}-12-31/);
+
+  await controlBar.getByRole("button", { name: "Đặt lại (3)", exact: true }).click();
+  await expect(page).toHaveURL(/\/projects$/);
+  await expect.poll(() => ["ownerUserId", "accountId", "from", "to"].every((key) => !lastRequest()?.has(key))).toBe(true);
+  await expect(controlBar.getByRole("button", { name: /Đặt lại/ })).toHaveCount(0);
+});
+
+test("dashboard filters its project list through the same API parameters", async ({ page }) => {
+  const projectListRequests: URLSearchParams[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/projects") projectListRequests.push(url.searchParams);
+  });
+  const lastRequest = () => projectListRequests[projectListRequests.length - 1];
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { level: 1, name: /Hi, / })).toBeVisible();
+  const filters = page.getByTestId("dashboard-project-filters");
+  for (const label of ["Thời gian dự án", "PIC", "Trạng thái", "Khách hàng"]) {
+    await expect(filters.getByText(label, { exact: true })).toBeVisible();
+  }
+
+  await filters.getByRole("button", { name: "Trạng thái", exact: true }).click();
+  await page.getByRole("option", { name: "Đang triển khai", exact: true }).click();
+  await page.getByRole("option", { name: "Tạm dừng", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect.poll(() => lastRequest()?.get("status")).toBe("in_progress,on_hold");
+
+  await filters.getByRole("button", { name: "PIC", exact: true }).click();
+  await page.getByRole("option", { name: new RegExp(workspaceUsers[0].displayName) }).click();
+  await page.keyboard.press("Escape");
+  await expect.poll(() => lastRequest()?.get("ownerUserId")).toBe(workspaceUsers[0].id);
+
+  await filters.getByRole("button", { name: /^Thời gian dự án:/ }).click();
+  await page.getByRole("dialog", { name: "Thời gian dự án" }).getByRole("button", { name: "Tháng này", exact: true }).click();
+  await expect.poll(() => lastRequest()?.get("from") ?? "").toMatch(/^\d{4}-\d{2}-01$/);
+
+  await filters.getByRole("button", { name: "Đặt lại (3)", exact: true }).click();
+  await expect.poll(() => ["status", "ownerUserId", "from", "to"].every((key) => !lastRequest()?.has(key))).toBe(true);
 });
 
 test("sidebar only shows projects pinned by the current user", async ({ page }) => {
@@ -1863,7 +1952,7 @@ test("AC-PIN-010 same-project detail controls are request-free stable and active
     const isProjectTaskRequest = url.pathname === "/api/tasks" && url.searchParams.get("projectId") === liveProject.id;
     // The Overview blocks (warnings, baseline, contract items…) reload their own small resource each time the tab
     // mounts so they never show stale figures; the project itself and its tasks must not be fetched again.
-    const isOverviewBlockRequest = /\/(warnings|baseline|framework-conversion|lark-groups|contract-items|member-participation)$/.test(url.pathname);
+    const isOverviewBlockRequest = /\/(warnings|baseline|framework-conversion|lark-groups|member-participation)$/.test(url.pathname);
     if ((isProjectRequest && !isOverviewBlockRequest) || isProjectTaskRequest) projectWorkItemRequests.push(`${url.pathname}${url.search}`);
   });
 
@@ -1951,7 +2040,7 @@ test("projects page can edit and delete a project through the persisted API", as
   await page.locator('button[title="Edit project"]').first().click();
   const editDialog = page.getByRole("dialog", { name: "Chỉnh sửa dự án" });
   await expect(editDialog.getByRole("heading", { name: "Chỉnh sửa dự án" })).toBeVisible();
-  await expect(editDialog.getByText("Khách hàng", { exact: true })).toBeVisible();
+  await expect(editDialog.getByLabel("Loại dự án")).toContainText("Khách hàng");
   await page.getByLabel("Tên dự án").fill("Live CRM Project Updated");
   await page.getByLabel("Mã dự án").fill("E2E-002");
   await page.getByRole("button", { name: "Save Changes" }).click();
@@ -2109,6 +2198,9 @@ test("project detail loads live data and switches workspace tabs", async ({ page
   await expect(activityFeed).toBeVisible();
   await expect(page.getByTestId("project-activity-empty")).toHaveCount(0);
   await expect(activityFeed.getByText("Real user work stream")).toBeVisible();
+  for (const label of ["Thời điểm", "Người thực hiện", "Loại hoạt động"]) {
+    await expect(activityFeed.getByText(label, { exact: true })).toBeVisible();
+  }
   await expect(page.getByText("Live kickoff note from API")).toBeVisible();
   await expect(activityFeed.getByText("Live time entry")).toBeVisible();
   await expect(activityFeed.getByText("0.8h actual")).toBeVisible();
@@ -2824,7 +2916,7 @@ test("project detail No Stage task mutations persist Add Task dates and descript
   await selectTaskDate("Due Date (optional)", 18);
   await page.setViewportSize({ width: 1080, height: 1080 });
   await addTaskDialog.getByRole("button", { name: "Add Task", exact: true }).click();
-  await expect(addTaskDialog.getByRole("alert")).toHaveText("Start Date must be on or before Due Date.");
+  await expect(addTaskDialog.getByRole("alert")).toHaveText("Ngày bắt đầu không được sau hạn hoàn tất. Hãy chọn lại hai ngày.");
   expect(createdTaskBodies).toHaveLength(0);
 
   await selectTaskDate("Due Date (optional)", 22);
@@ -2968,7 +3060,7 @@ test("legacy workspace nonmember assignee requires an explicit current project m
           contentType: "application/json",
           body: JSON.stringify({
             statusCode: 400,
-            message: `User(s) are not project members: ${legacyNonmemberUser.id}`,
+            message: `${legacyNonmemberUser.id} chưa là thành viên dự án. Hãy thêm vào danh sách thành viên của dự án (nút Invite) rồi thử lại, hoặc chọn một thành viên khác.`,
             error: "Bad Request"
           })
         });
@@ -3007,9 +3099,10 @@ test("legacy workspace nonmember assignee requires an explicit current project m
   const saveButton = editTaskDialog.getByRole("button", { name: "Save Changes", exact: true });
 
   await expect(editTaskDialog).toBeVisible();
-  await expect(editTaskDialog.getByText(/not a current project member/i)).toBeVisible();
+  // A task whose assignee left the project can still be edited: the note explains it and Save stays available.
+  await expect(editTaskDialog.getByText(/không còn là thành viên dự án/i)).toBeVisible();
   await expect(editTaskDialog.getByText(legacyNonmemberUser.id, { exact: false })).toHaveCount(0);
-  await expect(saveButton).toBeDisabled();
+  await expect(saveButton).toBeEnabled();
   expect(patchedTaskBodies).toHaveLength(0);
 
   // The assignee picker is the shared multi-select ("Thành viên project"): it lists current project members only.
@@ -3024,7 +3117,7 @@ test("legacy workspace nonmember assignee requires an explicit current project m
 
   await expect.poll(() => patchedTaskBodies.length).toBe(1);
   await expect(editTaskDialog).toBeVisible();
-  await expect(editTaskDialog.getByRole("alert")).toContainText("not a current project member");
+  await expect(editTaskDialog.getByRole("alert")).toContainText("chưa là thành viên dự án");
   await expect(editTaskDialog.getByText(legacyNonmemberUser.id, { exact: false })).toHaveCount(0);
   await expect(saveButton).toBeEnabled();
   expect(nativeDialogMessages).toEqual([]);
@@ -3051,8 +3144,8 @@ test("legacy workspace nonmember assignee requires an explicit current project m
   await expect(initialsOnlyEditAction).toBeVisible();
   await initialsOnlyEditAction.click();
   const initialsOnlyDialog = page.getByRole("dialog", { name: "Edit Task" });
-  await expect(initialsOnlyDialog.getByText(/not a current project member/i)).toBeVisible();
-  await expect(initialsOnlyDialog.getByRole("button", { name: "Save Changes", exact: true })).toBeDisabled();
+  await expect(initialsOnlyDialog.getByText(/không còn là thành viên dự án/i)).toBeVisible();
+  await expect(initialsOnlyDialog.getByRole("button", { name: "Save Changes", exact: true })).toBeEnabled();
   await expect.poll(() => patchedTaskBodies.length).toBe(2);
 });
 
@@ -3216,18 +3309,41 @@ test("project detail does not merge different users that only share initials", a
   await expect(page.locator('main img[src="https://example.com/avatar-kha.png"]').first()).toBeVisible();
 });
 
+test("Phụ lục B ca 9 · project detail offers “Xem P&L ↗” to an Admin account in the cost permission group only, and shows no P&L figure", async ({ page }) => {
+  const signInAs = (roleCodes: string[]) => page.route("**/api/auth/me", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ subjectId: liveUser.id, displayName: liveUser.displayName, email: liveUser.email, tenantKey: "prod", workspaceId: "twk-e2e", roleCodes }) });
+  });
+  const link = page.getByRole("link", { name: "Xem P&L ↗", exact: true });
+
+  await signInAs(["FOUNDER_GM"]);
+  await page.goto(`/projects/${liveProject.id}?tab=Overview`);
+  await expect(page.getByRole("tab", { name: "Overview", exact: true })).toHaveAttribute("aria-selected", "true");
+  // Toàn dự án (no fromMonth / toMonth), and the way back to this project.
+  await expect(link).toHaveAttribute("href", `/pnl/${liveProject.id}?returnTo=${encodeURIComponent(`/projects/${liveProject.id}`)}`);
+  await expect(page.locator("main").getByText(/Doanh thu|EBIT|Giá trị dự án|Thiết lập P&L/)).toHaveCount(0);
+
+  // An Admin account outside the cost permission group, and a User account inside it: neither gets the link.
+  for (const roleCodes of [["WORKSPACE_ADMIN"], ["WORKSPACE_USER", "COST_VIEW"]]) {
+    await page.unroute("**/api/auth/me");
+    await signInAs(roleCodes);
+    await page.goto(`/projects/${liveProject.id}?tab=Overview`);
+    await expect(page.getByRole("tab", { name: "Overview", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(link).toHaveCount(0);
+  }
+});
+
 test("unknown project route never falls back to the first seed project", async ({ page }) => {
   await page.goto("/projects/not-a-real-project?tab=Overview");
 
   await expect(page.getByRole("heading", { name: "Project not found" })).toBeVisible();
   await expect(page.locator("main").getByText("CRM Platform v2.0")).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Back to projects" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Quay lại Dự án" })).toHaveAttribute("href", "/projects");
 });
 
 test("clients route uses accounts API instead of client seed data", async ({ page }) => {
   await page.goto("/clients");
 
-  await expect(page.getByRole("heading", { name: "Client Accounts" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Khách hàng", exact: true })).toBeVisible();
   await expect(page.getByText(liveAccount.name)).toBeVisible();
   await expect(page.getByText("Live Account Owner")).toBeVisible();
   await expect(page.locator("main").getByText("Apex Technologies")).toHaveCount(0);
@@ -3493,76 +3609,95 @@ test("calendar filters every view and summary by project and member on desktop a
   await expect(page.getByTestId("calendar-event-card")).toHaveCount(4);
   await expect(page.getByText(/4 mốc · 3\.5h KH · 0\.8h TT · 2 PIC/)).toBeVisible();
 
-  const projectTrigger = page.getByRole("button", { name: /^Dự án Tất cả dự án$/ });
+  // One page header like every other tab; the period title of the calendar toolbar is an h2.
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Lịch");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
+
+  // Shared FilterBar: labelled multi-selects whose menu is portalled, so the open listbox is looked up on the page.
+  const toolbar = page.getByTestId("calendar-filter-toolbar");
+  const listbox = page.getByRole("listbox");
+  const projectTrigger = toolbar.getByRole("button", { name: "Dự án", exact: true });
+  await expect(projectTrigger).toContainText("Tất cả dự án");
   await projectTrigger.click();
-  const projectListbox = page.getByRole("listbox", { name: "Dự án" });
-  await expect(projectListbox).toBeVisible();
-  await expect(projectListbox).toHaveAttribute("aria-multiselectable", "true");
-  const projectSearch = projectListbox.getByRole("textbox", { name: "Tìm kiếm..." });
+  await expect(listbox).toBeVisible();
+  await expect(listbox).toHaveAttribute("aria-multiselectable", "true");
+  const projectSearch = listbox.getByRole("textbox", { name: "Tìm kiếm..." });
   await expect(projectSearch).toBeFocused();
   await projectSearch.fill(secondProject.name);
-  await expect(projectListbox.getByRole("option", { name: secondProject.name, exact: true })).toBeVisible();
-  await expect(projectListbox.getByRole("option", { name: liveProject.name, exact: true })).toHaveCount(0);
+  await expect(listbox.getByRole("option", { name: secondProject.name, exact: true })).toBeVisible();
+  await expect(listbox.getByRole("option", { name: liveProject.name, exact: true })).toHaveCount(0);
   await projectSearch.fill("");
-  await expect(projectListbox.getByRole("option")).toHaveCount(2);
+  await expect(listbox.getByRole("option")).toHaveCount(2);
   await page.keyboard.press("Escape");
-  await expect(projectListbox).toHaveCount(0);
+  await expect(listbox).toHaveCount(0);
   await expect(projectTrigger).toBeFocused();
 
   await projectTrigger.click();
-  await projectListbox.getByRole("option", { name: liveProject.name, exact: true }).click();
+  await listbox.getByRole("option", { name: liveProject.name, exact: true }).click();
   await expect(page.getByTestId("calendar-event-card")).toHaveCount(2);
   await expect(page.getByText(/2 mốc · 1\.5h KH · 0h TT · 2 PIC/)).toBeVisible();
 
-  await projectListbox.getByRole("option", { name: secondProject.name, exact: true }).click();
-  await expect(projectListbox.getByRole("option", { name: liveProject.name, exact: true })).toHaveAttribute("aria-selected", "true");
-  await expect(projectListbox.getByRole("option", { name: secondProject.name, exact: true })).toHaveAttribute("aria-selected", "true");
+  await listbox.getByRole("option", { name: secondProject.name, exact: true }).click();
+  await expect(listbox.getByRole("option", { name: liveProject.name, exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(listbox.getByRole("option", { name: secondProject.name, exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByTestId("calendar-event-card")).toHaveCount(4);
   await expect(page.getByText(/4 mốc · 3\.5h KH · 0\.8h TT · 2 PIC/)).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("button", { name: /^Dự án 2 dự án đã chọn$/ })).toBeFocused();
+  await expect(projectTrigger).toBeFocused();
+  await expect(projectTrigger).toContainText("2 đã chọn");
 
-  const memberTrigger = page.getByRole("button", { name: /^Thành viên Tất cả thành viên$/ });
+  const memberTrigger = toolbar.getByRole("button", { name: "Thành viên", exact: true });
+  await expect(memberTrigger).toContainText("Tất cả thành viên");
   await memberTrigger.click();
-  const memberListbox = page.getByRole("listbox", { name: "Thành viên" });
-  await memberListbox.getByRole("option", { name: new RegExp(addableProjectUser.displayName) }).click();
+  await listbox.getByRole("option", { name: new RegExp(addableProjectUser.displayName) }).click();
   await expect(page.getByTestId("calendar-event-card")).toHaveCount(3);
   await expect(page.getByText(/3 mốc · 2\.5h KH · 0\.8h TT · 1 PIC/)).toBeVisible();
 
-  await memberListbox.getByRole("option", { name: new RegExp(liveUser.displayName) }).click();
+  await listbox.getByRole("option", { name: new RegExp(liveUser.displayName) }).click();
   await expect(page.getByTestId("calendar-event-card")).toHaveCount(4);
-  await expect(page.getByRole("button", { name: /^Thành viên 2 thành viên đã chọn$/ })).toBeVisible();
+  await expect(memberTrigger).toContainText("2 đã chọn");
 
-  await memberListbox.getByRole("button", { name: "Bỏ chọn" }).click();
+  await listbox.getByRole("button", { name: "Xóa lọc" }).click();
   await expect(page.getByTestId("calendar-event-card")).toHaveCount(4);
-  await expect(page.getByRole("button", { name: /^Thành viên Tất cả thành viên$/ })).toBeVisible();
+  await expect(memberTrigger).toContainText("Tất cả thành viên");
+  await page.keyboard.press("Escape");
 
-  await page.getByRole("button", { name: /^Dự án 2 dự án đã chọn$/ }).click();
-  await projectListbox.getByRole("button", { name: "Bỏ chọn" }).click();
-  await projectListbox.getByRole("option", { name: secondProject.name, exact: true }).click();
-  await page.getByRole("button", { name: /^Thành viên Tất cả thành viên$/ }).click();
-  await memberListbox.getByRole("option", { name: new RegExp(liveUser.displayName) }).click();
+  // "Loại" separates plans from logged hours.
+  const kindTrigger = toolbar.getByRole("button", { name: "Loại", exact: true });
+  await kindTrigger.click();
+  await listbox.getByRole("option", { name: "Giờ thực tế", exact: true }).click();
+  await expect(page.getByTestId("calendar-event-card")).toHaveCount(1);
+  await listbox.getByRole("button", { name: "Xóa lọc" }).click();
+  await expect(page.getByTestId("calendar-event-card")).toHaveCount(4);
+  await page.keyboard.press("Escape");
+
+  await projectTrigger.click();
+  await listbox.getByRole("button", { name: "Xóa lọc" }).click();
+  await listbox.getByRole("option", { name: secondProject.name, exact: true }).click();
+  await page.keyboard.press("Escape");
+  await memberTrigger.click();
+  await listbox.getByRole("option", { name: new RegExp(liveUser.displayName) }).click();
   await expect(page.getByTestId("calendar-filter-empty")).toBeVisible();
   await expect(page.getByTestId("calendar-event-card")).toHaveCount(0);
   await page.keyboard.press("Escape");
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByTestId("calendar-filter-toolbar").getByRole("button", { name: /^Thành viên/ }).click();
-  const mobilePopoverMetrics = await memberListbox.evaluate((listbox) => {
-    const rect = listbox.parentElement?.getBoundingClientRect();
-    return { left: rect?.left ?? -1, right: rect?.right ?? -1, viewportWidth: window.innerWidth };
+  await memberTrigger.click();
+  const mobilePopoverMetrics = await listbox.evaluate((menu) => {
+    const rect = menu.getBoundingClientRect();
+    return { left: rect.left, right: rect.right, viewportWidth: window.innerWidth };
   });
   expect(mobilePopoverMetrics.left).toBeGreaterThanOrEqual(0);
   expect(mobilePopoverMetrics.right).toBeLessThanOrEqual(mobilePopoverMetrics.viewportWidth);
   await page.keyboard.press("Escape");
-  const toolbarMetrics = await page.getByTestId("calendar-filter-toolbar").evaluate((toolbar) => {
-    const rect = toolbar.getBoundingClientRect();
+  const toolbarMetrics = await toolbar.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
     return { left: rect.left, right: rect.right, viewportWidth: window.innerWidth };
   });
   expect(toolbarMetrics.left).toBeGreaterThanOrEqual(0);
   expect(toolbarMetrics.right).toBeLessThanOrEqual(toolbarMetrics.viewportWidth);
 
-  await page.getByTestId("calendar-filter-empty").getByRole("button", { name: "Xóa bộ lọc" }).click();
+  await page.getByTestId("calendar-filter-empty").getByRole("button", { name: "Đặt lại bộ lọc" }).click();
   await expect(page.getByTestId("calendar-event-card")).toHaveCount(4);
   await expect(page.getByTestId("calendar-filter-summary")).toHaveText("4 mốc trong phạm vi");
 });
@@ -4104,8 +4239,10 @@ test("clicking a task card navigates to /tasks/[taskId] full page (not modal)", 
   const modal = page.locator('[role="dialog"]');
   await expect(modal).not.toBeVisible();
 
-  await page.locator("main nav").getByRole("link", { name: "Công việc", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/projects/${liveProject.id}\\?tab=Tasks(&principal=founder)?$`));
+  // The task was opened from the project's Tasks tab, so its back link returns there (returnTo).
+  await expect(page).toHaveURL(new RegExp(`returnTo=${encodeURIComponent(`/projects/${liveProject.id}?tab=Tasks`)}`));
+  await page.getByRole("link", { name: `Quay lại ${liveProject.name}`, exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${liveProject.id}\\?tab=Tasks$`));
 });
 
 test("direct task detail route hydrates from /api/tasks/[taskId] when the task list page is empty", async ({ page }) => {

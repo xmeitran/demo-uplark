@@ -1,12 +1,14 @@
 "use client";
 import { apiErrorMessage, isNetworkFailure, readApiError } from "@/lib/api-error";
+import { TASK_ESTIMATE_HINT } from "../../features/crm-tasks/task-estimate";
 import { isActualTimeEntry, ON_HOLD_LOG_REVIEW_LABEL, timeEntryRecordLabel } from "@/lib/time-entry-actual";
 import { LAYER2_MISMATCH_LABEL, TASK_TYPE_LAYER1_FIELD_LABEL, TASK_TYPE_LAYER2_FIELD_LABEL, isLayer2ReasonRequired, layer2OptionsForTask, taskTypeLabel, taskTypeLayer2Label } from "@/lib/task-classification";
 import { PersonLink } from "@/components/person-link";
 import { useTaskPeople } from "@/hooks/use-task-people";
 import { TaskChangeHistory } from "./task-change-history";
-import { ArrowLeft, ArrowRight } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { AppShell } from "@/components/constructor-x/app-shell";
+import { PageBackLink, resolveBackHref } from "@/components/page-header";
 
 
 import Link from "next/link";
@@ -640,7 +642,8 @@ export function TaskDetailWorkbench({
     setIsHydratingTaskDetail(true);
   }, [tasks.data, taskId]);
 
-  const workDateContext = useSearchParams().get("workDate") ?? undefined;
+  const searchParams = useSearchParams();
+  const workDateContext = searchParams.get("workDate") ?? undefined;
   const projectPeople = useTaskPeople(currentTask?.projectId, Boolean(currentTask));
   const workspaceAssigneeOptions = projectPeople.members.map(user => ({ value: user.id, label: user.name, subtext: `${user.role || "Workspace User"}${user.email ? ` · ${user.email}` : ""}`, avatarUrl: user.avatarUrl, initials: user.initials, color: user.color }));
 
@@ -929,8 +932,6 @@ export function TaskDetailWorkbench({
       description: taskInput.description,
       taskType: taskInput.taskType,
       taskTypeLayer1: taskInput.taskTypeLayer1,
-      contractItemId: taskInput.contractItemId,
-      contractItemChangeReason: taskInput.contractItemChangeReason,
       priority: taskInput.priority,
       assigneeUserId: taskInput.assigneeUserId,
       assigneeUserIds: taskInput.assigneeUserIds,
@@ -1069,7 +1070,9 @@ export function TaskDetailWorkbench({
     await handleEditTask(updatedInput);
   };
 
-  const backUrl = buildTaskListBackUrl(currentTask, principal);
+  // "Quay lại": the page the user came from (returnTo), else the project's Tasks tab, else the task list.
+  const backUrl = resolveBackHref(buildTaskListBackUrl(currentTask, principal), searchParams.get("returnTo"));
+  const backLabel = currentTask?.projectName || "Công việc";
 
   // API Call: Edit Task
   const handleEditTask = async (taskInput: any) => {
@@ -1082,8 +1085,6 @@ export function TaskDetailWorkbench({
       description: taskInput.description,
       taskType: taskInput.taskType,
       taskTypeLayer1: taskInput.taskTypeLayer1,
-      contractItemId: taskInput.contractItemId,
-      contractItemChangeReason: taskInput.contractItemChangeReason,
       priority: taskInput.priority,
       assigneeUserId: taskInput.assigneeUserId,
       assigneeUserIds: taskInput.assigneeUserIds,
@@ -1884,12 +1885,7 @@ export function TaskDetailWorkbench({
                 <p className="text-sm font-bold text-slate-800">Không tìm thấy công việc</p>
                 <p className="mt-1 text-xs text-slate-400">Công việc với ID <code className="font-mono text-xs bg-slate-100 rounded px-1">{taskId}</code> không tồn tại hoặc đã bị xóa.</p>
               </div>
-              <Link
-                href={backUrl}
-                className="mt-2 inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 px-5 py-2 text-xs font-semibold text-white transition-all active:scale-[0.98]"
-              >
-                <ArrowLeft aria-hidden="true" className="inline h-3 w-3 align-middle" /> Quay lại danh sách
-              </Link>
+              <PageBackLink href={backUrl} label={backLabel} className="mt-2" />
             </div>
           </main>
       </AppShell>
@@ -1968,23 +1964,10 @@ export function TaskDetailWorkbench({
               </div>
             ) : null}
 
+            <div><PageBackLink href={backUrl} label={backLabel} /></div>
+
             {/* ── ① Hero Header ────────────────────────────────────────────────────── */}
             <div className="flex flex-col gap-4 rounded-2xl border border-slate-100 bg-white px-4 py-4 shadow-[0_1px_4px_rgba(0,0,0,0.05)] sm:px-6 sm:py-5">
-
-              {/* Breadcrumb */}
-              <nav className="flex items-center gap-1.5 text-[11px] text-slate-400 font-medium">
-                <Link href={backUrl} className="hover:text-indigo-600 transition-colors">Công việc</Link>
-                {currentTask.projectName && (
-                  <>
-                    <svg className="h-3 w-3 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
-                    <Link href={buildTaskListBackUrl(currentTask, principal)} className="hover:text-indigo-600 transition-colors max-w-[180px] truncate">
-                      {currentTask.projectName}
-                    </Link>
-                  </>
-                )}
-                <svg className="h-3 w-3 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
-                <span className="text-slate-600 truncate max-w-[240px]">{displayTitle}</span>
-              </nav>
 
               {/* Title row */}
               <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
@@ -2852,6 +2835,9 @@ export function TaskDetailWorkbench({
                       <p className="text-[10px] font-bold text-slate-400 mb-1.5">Ước tính</p>
                       {isGlobalEditing ? (
                         <input type="number" value={draftEstimateMinutes} onChange={e => setDraftEstimateMinutes(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/15 focus:border-indigo-400 transition" />
+                      ) : null}
+                      {isGlobalEditing ? (
+                        <p className="mt-1 text-[10px] text-slate-500">Đơn vị phút. {TASK_ESTIMATE_HINT}</p>
                       ) : (
                         <p className="text-xs font-semibold text-slate-800">{currentTask.estimateMinutes ? `${currentTask.estimateMinutes} phút` : "—"}</p>
                       )}

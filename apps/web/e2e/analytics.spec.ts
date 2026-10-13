@@ -375,13 +375,13 @@ test("filter commits update the URL, reset pagination and survive Back/Forward",
   // Go to page 2 so a cursor exists, then change a filter: cursor must reset.
   await page.getByRole("button", { name: "Trang sau →" }).click();
   await expect(page).toHaveURL(/cursor=/);
-  // Shared filter controls: the extra filters open inline ("Bộ lọc nâng cao"), and a multi-select sends its ticks
-  // together after a short pause — there is no per-select "Áp dụng".
-  await page.getByRole("button", { name: "Bộ lọc nâng cao" }).click();
-  const advancedFilters = page.getByRole("group", { name: "Bộ lọc nâng cao" });
-  await advancedFilters.getByRole("button", { name: "Nhân sự", exact: true }).click();
-  await advancedFilters.getByRole("option", { name: "An Analytics" }).click();
-  await expect(advancedFilters.getByRole("button", { name: "Áp dụng" })).toHaveCount(0);
+  // Shared filter controls: "Nhân sự" sits in the main row (not under "Bộ lọc nâng cao"), and a multi-select
+  // sends its ticks together after a short pause — there is no per-select "Áp dụng".
+  await expect(page.getByRole("heading", { level: 1, name: "Phân tích vận hành" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Bộ lọc nâng cao" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Nhân sự", exact: true }).click();
+  await page.getByRole("option", { name: "An Analytics" }).click();
+  await expect(page.getByRole("listbox").getByRole("button", { name: "Áp dụng" })).toHaveCount(0);
   await expect(page).toHaveURL(/user=usr-a/);
   await expect(page).not.toHaveURL(/cursor=/);
 
@@ -398,7 +398,8 @@ test("filter commits update the URL, reset pagination and survive Back/Forward",
   await expect(page.getByRole("tab", { name: "Nhân lực" })).toHaveAttribute("aria-selected", "true");
 
   // Reset clears the URL back to defaults.
-  await page.getByRole("button", { name: "Đặt lại" }).click();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: /^Đặt lại/ }).click();
   await expect(page).toHaveURL(/view=workforce(?:&|$)/);
   await expect(page).not.toHaveURL(/user=/);
 });
@@ -464,12 +465,11 @@ test("multi-select supports keyboard draft, apply and focus restoration", async 
 
   // A filter with a single option is not offered (nothing to choose): the fixture has one customer and one project.
   await expect(page.getByRole("button", { name: "Khách hàng", exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Bộ lọc nâng cao" }).click();
-  const trigger = page.getByRole("group", { name: "Bộ lọc nâng cao" }).getByRole("button", { name: "Nhân sự", exact: true });
+  const trigger = page.getByRole("button", { name: "Nhân sự", exact: true });
   await trigger.focus();
   await page.keyboard.press("Enter");
 
-  const search = page.getByRole("textbox", { name: "Tìm nhân sự…" });
+  const search = page.getByRole("textbox", { name: "Tìm theo tên..." });
   await expect(search).toBeFocused();
   await search.fill("Bình");
   const option = page.getByRole("option", { name: "Bình Analytics" });

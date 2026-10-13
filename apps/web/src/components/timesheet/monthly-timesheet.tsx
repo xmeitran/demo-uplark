@@ -18,7 +18,7 @@ import {
 import {
   formatDate,
   formatHours,
-  formatMonth,
+  formatFilterPeriod,
   formatPercent,
   formatSignedPercent,
   nodeStatusTone,
@@ -87,7 +87,7 @@ export function MonthlyTimesheet({
 
   const pagedPeople = usePagination(summaries, PEOPLE_PAGE_SIZE);
 
-  const monthLabel = formatMonth(filters.month);
+  const monthLabel = formatFilterPeriod(filters);
   const dayDetailRow = personDayMatrix.rows.find((row) => row.person.id === dayDetailPersonId) ?? null;
 
   const openPersonLogs = (row: PersonDayRow) => {

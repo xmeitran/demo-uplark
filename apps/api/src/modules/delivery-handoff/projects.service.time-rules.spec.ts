@@ -126,7 +126,7 @@ describe("task classification on write (D-02, D-04, matrix 4.3)", () => {
     prisma.pnlPeriod.findMany.mockResolvedValue([{ periodKey: "2026-09" }]);
     await service.updateTask("task-1", { title: "Renamed", taskTypeLayer2: "INTERNAL_PROJECT" } as any, as("usr-1"));
     expect(prisma.projectTask.update.mock.calls[0][0].data).toMatchObject({ taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT" });
-    // D-03 / D-05: the task's time entries follow, except those of a locked P&L month.
+    // D-03: the task's time entries follow, except those of a locked P&L month.
     expect(prisma.taskTimeEntry.updateMany).toHaveBeenCalledWith({
       where: {
         workspaceId: "twk-1", taskId: { in: ["task-1"] },
@@ -165,7 +165,7 @@ describe("time log rules (D-03, D-09, D-13, D-14, D-16, V-07)", () => {
 
   it("a log needs a day (D-10)", async () => {
     const { prisma, service } = setup();
-    await expect(service.createTimeEntry("task-1", { minutes: 60 } as any, as("usr-1"), "usr-1")).rejects.toThrow("workDate is required");
+    await expect(service.createTimeEntry("task-1", { minutes: 60 } as any, as("usr-1"), "usr-1")).rejects.toThrow("Hãy chọn ngày làm việc");
     expect(prisma.taskTimeEntry.create).not.toHaveBeenCalled();
   });
 

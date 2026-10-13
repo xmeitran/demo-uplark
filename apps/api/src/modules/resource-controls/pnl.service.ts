@@ -41,11 +41,10 @@ import {
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { getStoredParameter } from "../../shared/system-parameters";
 import { isWorkingDay } from "../../shared/working-days";
-import { NO_CONTRACT_ITEM_LABEL } from "../delivery-handoff/contract-item";
 import { gateHooks } from "../delivery-handoff/gates";
 import { NON_ACTUAL_TIME_ENTRY_STATUSES } from "../delivery-handoff/member-participation";
 import { projectStatusLabel } from "../delivery-handoff/project-status";
-import { assertCostApprove, assertCostEdit, canApproveCost, canEditCost, canExportCost, canViewCost } from "./cost-permissions";
+import { assertCostApprove, assertCostEdit, canApproveCost, canEditCost, canEditProjectSetup, canExportCost, canViewCost } from "./cost-permissions";
 import { monthKeysBetween, nextMonthKey, reportMonthKey, reportMonthStart } from "./pnl-calc";
 import { dayKeyOf, loadPnlContext, num, type PnlContext, type ProjectCtx, type SnapshotData } from "./pnl-context";
 import {
@@ -53,7 +52,6 @@ import {
   adjustedAfterClose,
   bucketEntries,
   companyCostMonth,
-  contractValue,
   dashboardPeriod,
   dashboardTab,
   dashboardTotals,
@@ -99,6 +97,17 @@ const first = (value: unknown) => (Array.isArray(value) ? value[0] : value);
 /** A query or body value as trimmed text; numbers are accepted (a caller inside the API passes 2026, the HTTP layer "2026"). */
 const text = (value: unknown) => { const item = first(value); return (typeof item === "string" || typeof item === "number") && String(item).trim() ? String(item).trim() : undefined; };
 
+/** One value or several comma-joined ("a,b") → trimmed, unique, at most 50. Nothing given = no filter. */
+export const csvList = (value: unknown): string[] => [...new Set((text(value) ?? "").split(",").map((item) => item.trim()).filter(Boolean))].slice(0, 50);
+/** Lower case without Vietnamese accents, for name search. */
+const fold = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d").toLowerCase();
+const DAY_KEY = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+function optionalDayKey(value: unknown, field: string): string | undefined {
+  const key = text(value);
+  if (key && !DAY_KEY.test(key)) throw new BadRequestException(`${field} phải có dạng YYYY-MM-DD.`);
+  return key;
+}
+
 export function requirePeriodKey(value: unknown, field = "periodKey"): string {
   const key = text(value);
   if (!key || !PERIOD_KEY.test(key)) throw new BadRequestException(`${field} phải có dạng YYYY-MM.`);
@@ -135,7 +144,7 @@ function personStatus(missing: readonly PnlMonthMissing[]) {
   if (!missing.length) return { ok: true, label: "Đủ", missing: [] as PnlMonthMissing[] };
   const months = (kind: PnlMonthMissing["kind"]) => missing.filter((row) => row.kind === kind).map((row) => `T${row.periodKey.slice(5)}`).join(", ");
   const head = missing[0].kind;
-  const label = head === "cost_rate" ? `Chờ cost rate ${months("cost_rate")}` : head === "layer2_mismatch" ? `Lớp 2 không khớp ${months("layer2_mismatch")}` : head === "locked_period" ? `Ghi bù tháng đã khóa ${months("locked_period")}` : `Thiếu phân loại hoặc hạng mục ${months("classification")}`;
+  const label = head === "cost_rate" ? `Chờ cost rate ${months("cost_rate")}` : head === "layer2_mismatch" ? `Lớp 2 không khớp ${months("layer2_mismatch")}` : head === "locked_period" ? `Ghi bù tháng đã khóa ${months("locked_period")}` : `Thiếu phân loại ${months("classification")}`;
   return { ok: false, label, missing: [...missing] };
 }
 
@@ -196,18 +205,25 @@ export class PnlService {
     const year = Number(text(query.year) ?? ctx.currentPeriodKey.slice(0, 4));
     if (!Number.isInteger(year) || year < 2000 || year > 2100) throw new BadRequestException("year không hợp lệ.");
     const unit = (text(query.unit) ?? "year") as PnlDashboardQuery["unit"] & string;
-    if (!["year", "half", "quarter", "month"].includes(unit)) throw new BadRequestException("unit phải là year, half, quarter hoặc month.");
+    if (!["year", "half", "quarter", "month", "custom"].includes(unit)) throw new BadRequestException("unit phải là year, half, quarter, month hoặc custom.");
     const rule = (text(query.rule) ?? "started_and_accepted") as "started_and_accepted" | "accepted_in_period";
     if (!["started_and_accepted", "accepted_in_period"].includes(rule)) throw new BadRequestException("rule không hợp lệ.");
-    const index = unit === "year" ? null : Number(text(query.index) ?? 1);
-    const period = dashboardPeriod(year, unit as "year", index ?? undefined);
+    const custom = unit === "custom";
+    const index = unit === "year" || custom ? null : Number(text(query.index) ?? 1);
+    // "custom" is the same project selection over a month range the viewer picked; the figures of a project are not cut to it.
+    const period = custom ? { from: requirePeriodKey(query.fromMonth, "fromMonth"), to: requirePeriodKey(query.toMonth ?? query.fromMonth, "toMonth") } : dashboardPeriod(year, unit as "year", index ?? undefined);
     const periodKeys = monthKeysBetween(period.from, period.to);
-    const projectType = text(query.projectType);
-    const accountId = text(query.accountId);
-    const picUserId = text(query.picUserId);
+    if (period.to < period.from || periodKeys.length > 60) throw new BadRequestException("Khoảng tháng phải từ 1 đến 60 tháng, toMonth không trước fromMonth.");
+    const projectTypes = csvList(query.projectType);
+    const accountIds = csvList(query.accountId);
+    const picUserIds = csvList(query.picUserId);
+    const search = fold(text(query.q) ?? "");
 
     const all = [...ctx.projects.values()].filter((project) => !project.internalWorklog);
-    const matches = (project: ProjectCtx) => (!projectType || project.templateKey === projectType || project.projectType === projectType) && (!accountId || project.accountId === accountId) && (!picUserId || project.picUserId === picUserId);
+    const matches = (project: ProjectCtx) => (!projectTypes.length || projectTypes.includes(project.templateKey) || projectTypes.includes(project.projectType as string))
+      && (!accountIds.length || accountIds.includes(project.accountId))
+      && (!picUserIds.length || picUserIds.includes(project.picUserId as string))
+      && (!search || fold(`${project.name} ${project.code} ${project.accountName}`).includes(search));
     const tabOf = (project: ProjectCtx, asTest = project.isTest) => dashboardTab({ isTest: asTest, consumable: project.consumable, lostDeal: project.lostDeal, startedOn: project.startedOn, acceptedOn: project.closePassed ? project.acceptedOn ?? "0000-01-01" : undefined }, period, rule);
     const filtered = all.filter(matches);
     const excludedTestProjectCount = filtered.filter((project) => project.isTest && tabOf(project, false)).length;
@@ -253,7 +269,7 @@ export class PnlService {
     if (fundMonths.length) pending.push({ kind: "fund_unallocated", label: `quỹ tháng ${fundMonths.map((key) => key.slice(5)).join(", ")} chưa chia`, periodKeys: fundMonths, target: "funds" });
     const openMonths = reasonMonths("months_unlocked");
     if (openMonths.length) pending.push({ kind: "months_unlocked", label: `tháng ${openMonths.map((key) => key.slice(5)).join(", ")} chưa khóa`, periodKeys: openMonths, target: "periods" });
-    if (totals.notComputableProjectCount) pending.push({ kind: "not_computable", label: `${totals.notComputableProjectCount} dự án Không tính được, chưa cộng vào ô tổng`, projectCount: totals.notComputableProjectCount, target: "project_setup" });
+    if (totals.notComputableProjectCount) pending.push({ kind: "not_computable", label: `${totals.notComputableProjectCount} dự án Không tính được, chưa cộng vào ô tổng`, projectCount: totals.notComputableProjectCount, target: "project_value" });
 
     // Khối 4: cost by group, both groupings, generated from the tree — over every accepted project that has figures
     // (not only the group picked), so the cards add up to Tổng chi phí and another group can be picked.
@@ -417,8 +433,8 @@ export class PnlService {
       };
     };
     const consumable = project.consumable;
-    const capAmount = consumable ? sum(project.items.filter((item) => item.contractType === "INTERNAL" && item.valueAmount !== null).map((item) => item.valueAmount as number)) : 0;
-    const hasCap = consumable && project.items.some((item) => item.contractType === "INTERNAL" && item.valueAmount !== null);
+    // PL-13: Admin - PM in the cost group enters Giá trị dự án of a Loại Khách hàng project until G7 is approved.
+    const mayEditValue = meta.moneyVisible && canEditProjectSetup(principal) && !consumable;
     // "Khoản tính cho cả dự án" is added to Toàn dự án only: with a narrowed scope it is, like Doanh thu and EBIT, "Chỉ xem ở Toàn dự án".
     // Every cost line computed once for the lifecycle is listed, with the amount it enters Tổng chi phí with, so
     // Toàn dự án = the month rows + these rows whatever the tree holds.
@@ -444,8 +460,11 @@ export class PnlService {
         monthsWithHours: pnl.months.filter((row) => row.loggedMinutes > 0).length,
         revenue: {
           amount: range ? null : orNull(whole.revenue.amount), basis: whole.revenue.basis, label: consumable ? "Không có doanh thu" : revenueLabel,
-          note: range ? "Chỉ xem ở Toàn dự án" : whole.revenue.basis === "recognized" ? "ghi nhận tại G7" : whole.revenue.basis === "contract" ? "giá trị HĐ, chưa G7" : whole.revenue.missingReason ?? "",
-          wholeProjectOnly: Boolean(range), missingReason: orNull(whole.revenue.missingReason)
+          note: range ? "Chỉ xem ở Toàn dự án" : whole.revenue.basis === "recognized" ? "ghi nhận tại G7" : whole.revenue.basis === "project_value" ? "giá trị dự án, chưa G7" : whole.revenue.missingReason ?? "",
+          wholeProjectOnly: Boolean(range), missingReason: orNull(whole.revenue.missingReason),
+          projectValueAmount: orNull(project.projectValueAmount), canEdit: mayEditValue && !project.closePassed,
+          reasonRequired: project.g1Passed && project.projectValueAmount !== undefined,
+          lockedReason: mayEditValue && project.closePassed ? `Giá trị dự án đã khóa khi ${project.closeGate} được duyệt` : null
         },
         cost: { totalAmount: pnl.whole.totalCostAmount, laborAmount: pnl.whole.laborCostAmount, otherAmount: pnl.whole.otherCostAmount },
         ebit: {
@@ -453,7 +472,7 @@ export class PnlService {
           label: whole.ebit.expected ? "EBIT dự kiến" : "EBIT", wholeProjectOnly: Boolean(range),
           missingReason: consumable ? "Dự án nội bộ không có EBIT" : whole.ebit.amount === undefined ? whole.revenue.missingReason ?? "chưa có doanh thu" : null
         },
-        costVsCap: consumable ? { costAmount: whole.internalCost.amount, capAmount: hasCap ? capAmount : null, usedPercent: hasCap && capAmount > 0 ? orNull(percentOf(whole.internalCost.amount, capAmount)) : null, warnThresholdPercent: project.items.find((item) => item.contractType === "INTERNAL")?.warnThresholdPercent ?? 80 } : null
+        consumable
       },
       people,
       months: {
@@ -474,7 +493,12 @@ export class PnlService {
         reconciliation: pnl.reconciliation
       },
       items: meta.moneyVisible ? this.itemRows(ctx, project, whole) : null,
-      history: meta.moneyVisible ? await this.projectHistory(ctx, project) : null
+      history: meta.moneyVisible ? await this.projectHistory(ctx, project) : null,
+      template: {
+        key: project.templateKey, name: project.template.name, disabledCodes: [...project.disabledCodes],
+        override: project.record?.overrideAt ? { disabledCodes: project.record.overrideDisabledCodes ?? [], enabledCodes: project.record.overrideEnabledCodes ?? [], reason: project.record.overrideReason ?? "", byName: project.record.overrideByName ?? null, at: new Date(project.record.overrideAt).toISOString() } : null,
+        canOverride: isAdminAccount(principal) && !project.closePassed
+      }
     };
     return respond(body, meta);
   }
@@ -501,7 +525,7 @@ export class PnlService {
       if (row.method === "SYSTEM" && row.systemSource === "labor") {
         source = { kind: "hours", description: `Giờ tính P&L của nhóm ${ROLE_GROUP_LABELS[row.roleGroup as RoleGroup]} × cost rate của từng người trong từng tháng`, byMonth: byMonth(buckets.filter((bucket) => bucket.roleGroup === row.roleGroup).map((bucket) => ({ periodKey: bucket.periodKey, amount: costOfMinutes(project.consumable ? bucket.internalMinutes : bucket.includedMinutes, bucket.rate) ?? 0 })).filter((item) => item.amount !== 0)) };
       } else if (row.method === "SYSTEM") {
-        source = { kind: "revenue", description: pnl.revenue.basis === "recognized" ? "Doanh thu ghi nhận một lần tại G7 từ các hạng mục hợp đồng" : "Giá trị hợp đồng (chưa qua G7), cộng từ các hạng mục", byMonth: [] };
+        source = { kind: "revenue", description: pnl.revenue.basis === "recognized" ? "Giá trị dự án, ghi nhận một lần thành doanh thu tại G7" : "Giá trị dự án (chưa qua G7), PM nhập ở ô Doanh thu", byMonth: [] };
       } else if (row.method === "FUND") {
         source = { kind: "fund", description: "Phần quỹ chi phí chung được chia theo giờ tính P&L, đã xác nhận", byMonth: byMonth(ctx.fundShares.filter((share) => share.projectId === project.id && share.itemCode === row.code && counted(share))) };
       } else if (row.method === "MANUAL") {
@@ -526,7 +550,7 @@ export class PnlService {
     const labels: Record<string, string> = {
       "pnl.period_locked": "Khóa kỳ", "pnl.period_reopened": "Mở lại kỳ", "pnl.fund_confirmed": "Xác nhận phân bổ quỹ", "pnl.fund_rerun": "Chạy lại phân bổ quỹ",
       "pnl.project_cost_created": "Thêm chi phí riêng", "pnl.project_cost_changed": "Sửa chi phí riêng", "pnl.project_cost_deleted": "Xóa chi phí riêng",
-      "pnl.template_override": "Ghi đè mẫu khoản mục", "pnl.contract_status_changed": "Đổi trạng thái hợp đồng", "pnl.installments_changed": "Sửa đợt thanh toán", "pnl.installment_status_changed": "Đổi trạng thái đợt thanh toán"
+      "pnl.project_value_changed": "Sửa Giá trị dự án", "pnl.template_override": "Ghi đè mẫu khoản mục", "pnl.contract_status_changed": "Đổi trạng thái hợp đồng", "pnl.installments_changed": "Sửa đợt thanh toán", "pnl.installment_status_changed": "Đổi trạng thái đợt thanh toán"
     };
     const kept = rows.filter((row) => row.resource === "pnl_project" || months.has(String((row.after as any)?.periodKey ?? "")));
     const actorIds = [...new Set(kept.map((row) => row.actorUserId).filter((id) => id && !ctx.users.has(id)))];
@@ -547,7 +571,6 @@ export class PnlService {
     const leaves: any[] = userIds.length && periodKeys.length
       ? await this.prisma.personalLeave.findMany({ where: { workspaceId: principal.workspaceId, userId: { in: userIds }, status: "approved" }, select: { userId: true, startDate: true, endDate: true } })
       : [];
-    const itemCode = new Map(project.items.map((item) => [item.id, item.code]));
     const costOf = entryCosts(entries);
     // What the project is charged for: its counted hours — for an internal project, its Nội bộ hours.
     const charged = (entry: EngineEntry) => (project.consumable ? entry.reasons[0] === "internal" : entry.status === "included") && costOf.has(entry.id);
@@ -580,7 +603,7 @@ export class PnlService {
         // Each hour's share of its person × month bucket, so the tasks add up to the people table to the đồng.
         const costed = rows.filter(charged);
         return {
-          taskId, taskTitle: ctx.entryMeta.get(rows[0].id)?.taskTitle ?? "(task đã xóa)", contractItemId: rows[0].contractItemId, contractItemCode: rows[0].contractItemId ? itemCode.get(rows[0].contractItemId) ?? null : null, layer1: rows[0].layer1,
+          taskId, taskTitle: ctx.entryMeta.get(rows[0].id)?.taskTitle ?? "(task đã xóa)",  layer1: rows[0].layer1,
           ...split(rows), laborCostAmount: costed.length ? sum(costed.map((entry) => costOf.get(entry.id) as number)) : null,
           reasons: [...reasons.entries()].map(([reason, minutes]) => ({ reason, label: PNL_GATE_REASON_LABELS[reason], minutes }))
         };
@@ -596,47 +619,50 @@ export class PnlService {
 
   async entries(query: Record<string, unknown>, principal: PrincipalContext): Promise<PnlSourceEntriesResponse> {
     const meta = pnlMeta(principal, this.now());
-    const projectId = text(query.projectId);
-    const from = text(query.from) ?? text(query.periodKey) ?? text(query.period);
-    const to = text(query.to) ?? from;
+    const projectIds = csvList(query.projectId);
+    // Day-level scope (inclusive Vietnam days) next to the month one; the month parameters keep working.
+    const fromDay = optionalDayKey(query.fromDay, "fromDay");
+    const toDay = optionalDayKey(query.toDay, "toDay");
+    if (fromDay && toDay && toDay < fromDay) throw new BadRequestException("toDay không được trước fromDay.");
+    const month = text(query.from) ?? text(query.periodKey) ?? text(query.period);
+    const from = month ?? (fromDay && toDay ? fromDay.slice(0, 7) : undefined);
+    const to = month ? text(query.to) ?? month : toDay?.slice(0, 7);
     const periodKeys = from ? monthKeysBetween(requirePeriodKey(from, "from"), requirePeriodKey(to, "to")).slice(0, 36) : undefined;
-    const status = text(query.status);
-    const reason = text(query.reason);
-    const groupKey = text(query.group);
-    const userId = text(query.userId);
-    const contractItemId = text(query.contractItemId);
+    const statuses = csvList(query.status);
+    const reasons = csvList(query.reason);
+    const groupKeys = csvList(query.group);
+    const userIds = csvList(query.userId);
     const line = text(query.line);
-    if (status && !Object.prototype.hasOwnProperty.call(PNL_GATE_STATUS_LABELS, status)) throw new BadRequestException("status phải là included, pending hoặc excluded.");
-    if (reason && !Object.prototype.hasOwnProperty.call(PNL_GATE_REASON_LABELS, reason)) throw new BadRequestException("reason không hợp lệ.");
-    const ctx = await this.context(principal.workspaceId, { ...(projectId ? { projectIds: [projectId] } : {}), ...(periodKeys && !projectId ? { periodKeys } : {}) });
-    if (projectId && !ctx.projects.has(projectId)) throw new NotFoundException("Dự án không thuộc workspace hiện tại.");
+    if (statuses.some((status) => !Object.prototype.hasOwnProperty.call(PNL_GATE_STATUS_LABELS, status))) throw new BadRequestException("status phải là included, pending hoặc excluded.");
+    if (reasons.some((reason) => !Object.prototype.hasOwnProperty.call(PNL_GATE_REASON_LABELS, reason))) throw new BadRequestException("reason không hợp lệ.");
+    const ctx = await this.context(principal.workspaceId, { ...(projectIds.length ? { projectIds } : {}), ...(periodKeys && !projectIds.length ? { periodKeys } : {}) });
+    if (projectIds.some((projectId) => !ctx.projects.has(projectId))) throw new NotFoundException("Dự án không thuộc workspace hiện tại.");
     const lineReason: Record<string, PnlGateReason> = { pre_sale: "lost_deal_pre_sale", after_close: "after_close", internal: "internal" };
     const rows = ctx.entries.filter((entry) =>
       (!periodKeys || periodKeys.includes(entry.periodKey))
-      && (!status || entry.status === status)
-      && (!reason || entry.reasons.includes(reason as PnlGateReason))
-      && (!groupKey || (entry.status === "pending" && pendingGroupOf(entry.reasons) === groupKey))
+      && (!fromDay || entry.dateKey >= fromDay)
+      && (!toDay || entry.dateKey <= toDay)
+      && (!statuses.length || statuses.includes(entry.status))
+      && (!reasons.length || entry.reasons.some((reason) => reasons.includes(reason)))
+      && (!groupKeys.length || (entry.status === "pending" && groupKeys.includes(pendingGroupOf(entry.reasons))))
       && (!line || entry.reasons[0] === lineReason[line])
-      && (!userId || entry.userId === userId)
-      && (text(query.blocking) !== "true" || blocksG7(entry))
-      && (!contractItemId || (contractItemId === "none" ? !entry.contractItemId : entry.contractItemId === contractItemId)));
+      && (!userIds.length || userIds.includes(entry.userId))
+      && (text(query.blocking) !== "true" || blocksG7(entry)));
     const deadlineDays = await getStoredParameter(this.prisma, principal.workspaceId, "pendingHoursWorkingDays");
     const now = this.now();
-    const itemName = new Map([...ctx.projects.values()].flatMap((project) => project.items.map((item) => [item.id, item.name] as const)));
     const costOf = entryCosts(ctx.entries);
-    const targetOf = (entry: EngineEntry) => { const kind = pendingGroupOf(entry.reasons); return kind === "cost_rate" ? "staff_costs" as const : kind === "locked_period" ? "periods" as const : entry.reasons.includes("missing_contract_item") ? "project_setup" as const : "pending_hours" as const; };
+    const targetOf = (entry: EngineEntry) => { const kind = pendingGroupOf(entry.reasons); return kind === "cost_rate" ? "staff_costs" as const : kind === "locked_period" ? "periods" as const : "pending_hours" as const; };
     const data: PnlSourceEntryRow[] = rows.map((entry) => {
       const project = entry.projectId ? ctx.projects.get(entry.projectId) : undefined;
       const info = ctx.entryMeta.get(entry.id);
-      // PL-02 / A-1b: no deadline (and so no DL-01) for a trial project or a Pre-sale hour waiting for the contract.
-      const due = entry.status === "pending" && info?.pendingSince ? pendingDeadline(info.pendingSince, now, deadlineDays, ctx.dayOffKeys, entry.awaitingContract || Boolean(project?.isTest)) : undefined;
+      // PL-02 / A-1b: no deadline (and so no DL-01) for a trial project. Pre-sale hours count like any other (chốt 13/10).
+      const due = entry.status === "pending" && info?.pendingSince ? pendingDeadline(info.pendingSince, now, deadlineDays, ctx.dayOffKeys, Boolean(project?.isTest)) : undefined;
       return {
         id: entry.id, projectId: entry.projectId, projectCode: project?.code, projectName: project?.name, taskId: entry.taskId, taskTitle: info?.taskTitle,
         userId: entry.userId, userDisplayName: ctx.userName(entry.userId) as string, roleGroup: entry.roleGroup, workDate: entry.dateKey, periodKey: entry.periodKey, minutes: entry.minutes,
         taskTypeLayer1: entry.layer1, taskTypeLayer2: info?.taskTypeLayer2 ?? null, selectedTaskTypeLayer2: info?.selectedTaskTypeLayer2 ?? null,
-        contractItemId: entry.contractItemId, contractItemName: entry.contractItemId ? itemName.get(entry.contractItemId) : NO_CONTRACT_ITEM_LABEL,
         status: entry.status, statusLabel: PNL_GATE_STATUS_LABELS[entry.status], reason: entry.reasons[0], reasons: entry.reasons, reasonLabels: entry.reasons.map((code) => PNL_GATE_REASON_LABELS[code]),
-        blocksG7: blocksG7(entry), awaitingContract: entry.awaitingContract,
+        blocksG7: blocksG7(entry),
         hourlyCostRate: entry.rate ? hourlyRate(entry.rate) : null,
         // Only a cost that sits in a figure: project labor or a company line, as that hour's share of the figure. A pending hour has none yet.
         costAmount: orNull(costOf.get(entry.id)),
@@ -661,12 +687,12 @@ export class PnlService {
     return { projectId, ...g7Blockers(ctx.entriesOf(projectId)) };
   }
 
-  /** DL-01 source: pending hours past their deadline are judged by the scan; trial projects and Pre-sale hours waiting for the contract never get there. */
+  /** DL-01 source: pending hours past their deadline are judged by the scan; trial projects never get there. */
   async pendingHoursForAlerts(workspaceId: string, projectIds: string[]): Promise<Array<{ projectId: string; minutes: number; loggedAt: Date }>> {
     if (!projectIds.length) return [];
     const ctx = await this.context(workspaceId, { projectIds });
     return ctx.entries
-      .filter((entry) => entry.status === "pending" && entry.projectId && !entry.awaitingContract && !ctx.projects.get(entry.projectId)?.isTest && !ctx.projects.get(entry.projectId)?.internalWorklog)
+      .filter((entry) => entry.status === "pending" && entry.projectId && !ctx.projects.get(entry.projectId)?.isTest && !ctx.projects.get(entry.projectId)?.internalWorklog)
       .map((entry) => ({ projectId: entry.projectId as string, minutes: entry.minutes, loggedAt: ctx.entryMeta.get(entry.id)?.pendingSince ?? new Date(`${entry.dateKey}T00:00:00.000Z`) }));
   }
 
@@ -730,7 +756,7 @@ export class PnlService {
     // Khối 4: hours still pending are not in the split yet, so their projects get less than their due.
     const testIds = new Set([...ctx.projects.values()].filter((project) => project.isTest).map((project) => project.id));
     const pendingRows = ctx.entries.filter((entry) => entry.periodKey === periodKey && entry.status === "pending" && !(entry.projectId && testIds.has(entry.projectId)));
-    const reasonText: Record<PendingGroup, string> = { cost_rate: "thiếu cost rate", classification: "thiếu phân loại hoặc hạng mục", layer2_mismatch: "Lớp 2 không khớp", locked_period: "ghi bù vào tháng đã khóa" };
+    const reasonText: Record<PendingGroup, string> = { cost_rate: "thiếu cost rate", classification: "thiếu phân loại", layer2_mismatch: "Lớp 2 không khớp", locked_period: "ghi bù vào tháng đã khóa" };
     const warnings = (Object.keys(reasonText) as PendingGroup[]).map((kind) => ({ kind, minutes: sum(pendingRows.filter((entry) => pendingGroupOf(entry.reasons) === kind).map((entry) => entry.minutes)) })).filter((row) => row.minutes > 0)
       .map((row) => ({ ...row, label: `${hoursText(row.minutes)} giờ của tháng đang Chờ xử lý (${reasonText[row.kind]}), chưa vào phép chia`, target: row.kind === "cost_rate" ? "staff_costs" as const : "pending_hours" as const }));
     return respond({
@@ -860,7 +886,7 @@ export class PnlService {
       userNames: new Map(loggers.map((userId) => [userId, ctx.userName(userId) as string])),
       usersWithoutApprovedCost: loggers.filter((userId) => ctx.staffCosts.get(rateKey(userId, periodKey))?.status !== "APPROVED"),
       funds: periodRows.map((period) => ({ name: fundRows.find((fund) => fund.id === period.fundId)?.name ?? period.fundId, amount: num(period.amount), allocatedAmount: sum(allocationRows.filter((row) => row.fundPeriodId === period.id).map((row) => num(row.amount))), confirmed: period.status === "allocated" })),
-      acceptedProjects: [...ctx.projects.values()].filter((project) => !project.isTest && !project.consumable && project.closePassed && project.acceptedOn?.slice(0, 7) === periodKey).map((project) => ({ name: project.name, acceptedOn: project.acceptanceEstimated ? null : project.acceptedOn ?? null, contractAmount: contractValue(project.items).amount }))
+      acceptedProjects: [...ctx.projects.values()].filter((project) => !project.isTest && !project.consumable && project.closePassed && project.acceptedOn?.slice(0, 7) === periodKey).map((project) => ({ name: project.name, acceptedOn: project.acceptanceEstimated ? null : project.acceptedOn ?? null, projectValueAmount: project.projectValueAmount }))
     });
   }
 
@@ -966,7 +992,7 @@ export class PnlService {
       tree: ctx.tree,
       disabledCodes: Object.fromEntries([...new Set([...fundShares, ...manualLines].map((row) => row.projectId))].map((projectId) => [projectId, [...(ctx.projects.get(projectId)?.disabledCodes ?? [])]])),
       staffCosts: [...ctx.staffCosts.values()].filter((cost) => cost.periodKey === periodKey && cost.status === "APPROVED").map((cost) => ({ userId: cost.userId, totalAmount: cost.totalAmount })),
-      entries: ofMonth.map((entry) => ({ id: entry.id, p: entry.projectId, u: entry.userId, t: entry.taskId, d: entry.dateKey, m: entry.minutes, l1: entry.layer1, l2: ctx.entryMeta.get(entry.id)?.taskTypeLayer2 ?? null, s2: ctx.entryMeta.get(entry.id)?.selectedTaskTypeLayer2 ?? null, rg: entry.roleGroup, ci: entry.contractItemId, s: entry.status, r: entry.reasons, ac: entry.awaitingContract })),
+      entries: ofMonth.map((entry) => ({ id: entry.id, p: entry.projectId, u: entry.userId, t: entry.taskId, d: entry.dateKey, m: entry.minutes, l1: entry.layer1, l2: ctx.entryMeta.get(entry.id)?.taskTypeLayer2 ?? null, s2: ctx.entryMeta.get(entry.id)?.selectedTaskTypeLayer2 ?? null, rg: entry.roleGroup, s: entry.status, r: entry.reasons })),
       funds: periodRows.map((period) => ({ fundId: period.fundId, name: fundOf.get(period.id)?.name ?? period.fundId, itemCode: fundOf.get(period.id)?.targetItemCode ?? "", amount: num(period.amount) })),
       fundShares: fundShares.map((share) => ({ fundId: share.fundId, projectId: share.projectId, itemCode: share.itemCode, minutes: share.minutes, amount: share.amount })),
       manualLines: manualLines.map((line) => ({ id: line.id, projectId: line.projectId, itemCode: line.itemCode, amount: line.amount, label: line.label }))

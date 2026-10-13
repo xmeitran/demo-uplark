@@ -154,13 +154,35 @@ export function optionalEnum(value: unknown, fieldName: string, allowed: Set<str
 export type MilestoneTemplateRecord = CreateProjectMilestoneInput[];
 
 export const MAX_TASK_ESTIMATE_MINUTES = 8 * 60;
+export const TASK_ESTIMATE_CAP_MESSAGE = "Giờ kế hoạch của một task tối đa 8 giờ (480 phút). Việc dài hơn hãy tách thành nhiều task hoặc sub-task.";
 
-export function validateTaskEstimateMinutes(value: unknown, path = "estimateMinutes") {
+const hoursLabel = (minutes: number) => `${Math.round(minutes / 6) / 10} giờ`;
+
+/**
+ * Why a plan or a log does not fit the day (D-13): approved full-day leave has its own message; otherwise the day's
+ * standard hours, what the person already has on that day, and what is left.
+ */
+export function dayCapMessage(capMinutes: number, kind: "plan" | "log", usedMinutes: number) {
+  const action = kind === "plan" ? "lập kế hoạch" : "ghi giờ";
+  if (capMinutes === 0) return `Ngày này đã có đơn nghỉ phép cả ngày được duyệt nên không ${action} hành chính được.`;
+  const used = Math.max(0, usedMinutes);
+  const already = used > 0
+    ? ` Ngày này người thực hiện đã ${kind === "plan" ? "có kế hoạch" : "ghi"} ${hoursLabel(used)}, còn ${action} được tối đa ${hoursLabel(Math.max(0, capMinutes - used))}.`
+    : "";
+  return `Mỗi người chỉ ${action} tối đa ${hoursLabel(capMinutes)} hành chính một ngày.${already} Hãy giảm số giờ hoặc chọn ngày khác.`;
+}
+
+/**
+ * `unchangedValue` is the task's stored estimate on an update: an older estimate above the cap that is sent back
+ * as is (the forms resend every field) is not a change, so it never blocks saving the other fields.
+ */
+export function validateTaskEstimateMinutes(value: unknown, path = "estimateMinutes", unchangedValue?: number | null) {
   if (value === undefined || value === null) return undefined;
   const estimateMinutes = optionalInteger(value, path);
   if (estimateMinutes === undefined || estimateMinutes === null) return undefined;
+  if (unchangedValue !== undefined && unchangedValue !== null && estimateMinutes === unchangedValue) return estimateMinutes;
   if (estimateMinutes < 0 || estimateMinutes > MAX_TASK_ESTIMATE_MINUTES) {
-    throw new BadRequestException(`${path} must be between 0 and ${MAX_TASK_ESTIMATE_MINUTES} minutes (8 hours)`);
+    throw new BadRequestException(TASK_ESTIMATE_CAP_MESSAGE);
   }
   return estimateMinutes;
 }

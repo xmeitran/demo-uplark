@@ -121,7 +121,7 @@ export function ProjectSheet({ projects, returnTo, pushedIds, sortKey, sortDir, 
               const hours = projectHours(project);
               const href = `/projects/${encodeURIComponent(project.id)}?tab=Project%20Sheet&returnTo=${encodeURIComponent(returnTo)}`;
               return (
-                <tr key={project.id} className={`group transition-colors hover:bg-muted/25${(project.openWarningCount ?? 0) > 0 ? " bg-red-50/50" : ""}`}>
+                <tr key={project.id} className="group transition-colors hover:bg-muted/25">
                   <td className="border-b border-border/70 px-4 py-4">
                     <Link href={href} className="flex min-w-[250px] items-center gap-3 rounded-lg outline-none focus:ring-2 focus:ring-primary/25">
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-black text-white shadow-sm" style={{ backgroundColor: project.color }}>{project.name.slice(0, 1).toUpperCase()}</span>
@@ -131,7 +131,7 @@ export function ProjectSheet({ projects, returnTo, pushedIds, sortKey, sortDir, 
                       </span>
                     </Link>
                   </td>
-                  <td className="border-b border-border/70 px-4 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${STATUS_STYLES[project.status]}`}>{formatProjectStatusLabel(project.status)}</span>{(project.openWarningCount ?? 0) > 0 ? <span title={`${project.openWarningCount} cảnh báo đang mở`} aria-label={`${project.openWarningCount} cảnh báo đang mở`} className="ml-1.5 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{project.openWarningCount}</span> : null}</td>
+                  <td className="border-b border-border/70 px-4 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${STATUS_STYLES[project.status]}`}>{formatProjectStatusLabel(project.status)}</span></td>
                   <td className="border-b border-border/70 px-4 py-4">
                     <div className="min-w-24">
                       <div className="mb-1.5 text-xs font-bold">{project.progress}%</div>

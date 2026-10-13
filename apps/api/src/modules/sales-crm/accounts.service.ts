@@ -88,8 +88,10 @@ export class AccountsService {
 
   async createAccount(input: CreateAccountInput, principal: PrincipalContext) {
     assertInternalAccountWriter(principal);
-    const code = nonEmptyString(input.code, "code").toUpperCase();
     const name = nonEmptyString(input.name, "name");
+    // A typed code is kept (a collision answers 409 through the Prisma filter); a blank one is generated and never collides.
+    const typedCode = typeof input.code === "string" ? input.code.trim().toUpperCase() : "";
+    const code = typedCode || await this.generateAccountCode(principal.workspaceId, name);
     const annualValue = (canViewCost(principal) ? optionalNumber(input.annualValue, "annualValue") : null) ?? 0;
 
     const account = await this.prisma.account.create({
@@ -107,6 +109,12 @@ export class AccountsService {
     });
 
     return mapAccountSummary(account, canViewCost(principal));
+  }
+
+  private async generateAccountCode(workspaceId: string, name: string) {
+    const base = accountCodeBase(name);
+    const taken = await this.prisma.account.findMany({ where: { workspaceId, code: { startsWith: base } }, select: { code: true } });
+    return nextFreeAccountCode(base, new Set((taken ?? []).map((row) => row.code)));
   }
 
   async updateAccount(accountId: string, input: UpdateAccountInput, principal: PrincipalContext) {
@@ -143,7 +151,7 @@ export class AccountsService {
     ]);
 
     if (relatedCounts.some((count) => count > 0)) {
-      throw new BadRequestException("Account has operational records and cannot be deleted");
+      throw new BadRequestException("Khách hàng đã có dự án, cơ hội hoặc task nên không xóa được. Hãy chuyển trạng thái khách hàng thay vì xóa.");
     }
 
     await this.prisma.$transaction([
@@ -242,5 +250,21 @@ export class AccountsService {
     }
 
     return contact;
+  }
+}
+
+/** Initials of the name without diacritics ("Công ty Trí Mai" -> "CTTM"); "KH" when the name has no letter or digit. */
+export function accountCodeBase(name: string) {
+  const initials = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[đĐ]/g, "D")
+    .split(/[^A-Za-z0-9]+/).filter(Boolean).map((word) => word[0]).join("").toUpperCase().slice(0, 8);
+  return initials || "KH";
+}
+
+/** The base itself when free, otherwise the first free "BASE-2", "BASE-3"… */
+export function nextFreeAccountCode(base: string, taken: ReadonlySet<string>) {
+  if (!taken.has(base)) return base;
+  for (let suffix = 2; ; suffix += 1) {
+    const candidate = `${base}-${suffix}`;
+    if (!taken.has(candidate)) return candidate;
   }
 }

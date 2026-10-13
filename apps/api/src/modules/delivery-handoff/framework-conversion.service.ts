@@ -9,7 +9,7 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
-  HOLDING_STAGE_KEY, HOLDING_STAGE_NAME, RETIRED_KEY_PREFIX, RETIRED_NAME_PREFIX, ROOT_ITEM_REF, milestoneKey,
+  HOLDING_STAGE_KEY, HOLDING_STAGE_NAME, RETIRED_KEY_PREFIX, RETIRED_NAME_PREFIX, milestoneKey,
   type FrameworkConversionPlan, type FrameworkSnapshot
 } from "./framework-conversion";
 import { PROJECT_GATE_CATALOGUE, type ProjectGateCode } from "@b2b-crm/contracts";
@@ -20,7 +20,7 @@ import { PILOT_PROJECT_MILESTONE_TEMPLATE } from "./stage-template";
 
 export interface FrameworkConversionHooks {
   /** ProjectsService.reclassifyTaskTimeEntries: unlocked time entries follow their task (D-03). */
-  reclassifyTimeEntries?(tx: any, workspaceId: string, taskIds: string[], classification: { taskTypeLayer1?: string; contractItemId?: string }): Promise<number>;
+  reclassifyTimeEntries?(tx: any, workspaceId: string, taskIds: string[], classification: { taskTypeLayer1?: string }): Promise<number>;
   /** ProjectsService.rederiveProjectTaskLayer2: Layer 2 of every task of the project by table 4.2. */
   rederiveLayer2?(tx: any, projectId: string): Promise<number>;
 }
@@ -47,12 +47,11 @@ export async function loadFrameworkSnapshot(client: any, workspaceId: string, pr
   const where = { workspaceId, projectId };
   const project = await client.project.findFirst({ where: { id: projectId, workspaceId }, select: { id: true, code: true, name: true, status: true, projectType: true, milestoneTemplateKey: true } });
   if (!project) return null;
-  const [milestones, stages, gates, contractItems, tasks, minutes] = await Promise.all([
+  const [milestones, stages, gates, tasks, minutes] = await Promise.all([
     client.projectMilestone.findMany({ where, select: { id: true, name: true, normalizedKey: true, sortOrder: true } }),
     client.projectStage.findMany({ where, select: { id: true, milestoneId: true, stageKey: true, activity: true, status: true, sortOrder: true, taskTypeLayer1: true, afterPnlClose: true, slaDays: true } }),
     client.projectGate.findMany({ where, select: { stageId: true, code: true } }),
-    client.projectContractItem.findMany({ where, select: { id: true, kind: true, status: true, sortOrder: true, archivedAt: true } }),
-    client.projectTask.findMany({ where, select: { id: true, stageId: true, parentTaskId: true, status: true, archivedAt: true, taskTypeLayer1: true, contractItemId: true } }),
+    client.projectTask.findMany({ where, select: { id: true, stageId: true, parentTaskId: true, status: true, archivedAt: true, taskTypeLayer1: true } }),
     client.taskTimeEntry.groupBy({ by: ["taskId"], where: { workspaceId, task: { projectId } }, _sum: { minutes: true } })
   ]);
   const taskById = new Map<string, any>(tasks.map((task: any) => [task.id, task]));
@@ -62,7 +61,7 @@ export async function loadFrameworkSnapshot(client: any, workspaceId: string, pr
     const stageId = task?.stageId ?? taskById.get(task?.parentTaskId)?.stageId;
     if (stageId) minutesByStage.set(stageId, (minutesByStage.get(stageId) ?? 0) + (row._sum.minutes ?? 0));
   }
-  return { project, milestones, stages: stages.map((stage: any) => ({ ...stage, loggedMinutes: minutesByStage.get(stage.id) ?? 0 })), gates, contractItems, tasks };
+  return { project, milestones, stages: stages.map((stage: any) => ({ ...stage, loggedMinutes: minutesByStage.get(stage.id) ?? 0 })), gates, tasks };
 }
 
 /**
@@ -106,11 +105,9 @@ export async function applyFrameworkConversion(tx: any, plan: FrameworkConversio
     if (!milestone) throw new Error(`Dự án ${plan.projectCode} chưa có milestone ${number} của TPL-001.`);
     return milestone.id as string;
   };
-  let rootItemId: string | undefined;
   const group = (map: Map<string, string[]>, key: string, taskId: string) => map.set(key, [...(map.get(key) ?? []), taskId]);
   const moves = new Map<string, string[]>();
   const layer1 = new Map<string, string[]>();
-  const items = new Map<string, string[]>();
 
   for (const operation of plan.operations) {
     if (operation.type === "retire_milestone") {
@@ -176,20 +173,10 @@ export async function applyFrameworkConversion(tx: any, plan: FrameworkConversio
       if (typeof tx.projectStatusHistory?.create === "function") {
         await tx.projectStatusHistory.create({ data: { workspaceId: ctx.workspaceId, projectId: project.id, fromStatus: operation.from, toStatus: operation.to, reason: "Chuyển đổi khung (bảng 9.1): đổi mã trạng thái sang bộ trạng thái mới.", changedByUserId: ctx.actor?.userId ?? null } });
       }
-    } else if (operation.type === "create_root_contract_item") {
-      const existing: Array<{ code: string; sortOrder: number }> = await tx.projectContractItem.findMany({ where: scope, select: { code: true, sortOrder: true } });
-      const codes = new Set(existing.map((item) => item.code.toLowerCase()));
-      let number = existing.length + 1;
-      while (codes.has(`hm-${String(number).padStart(2, "0")}`)) number += 1;
-      rootItemId = (await tx.projectContractItem.create({
-        data: { ...scope, code: `HM-${String(number).padStart(2, "0")}`, name: project.name, kind: "ROOT", sortOrder: Math.max(0, ...existing.map((item) => item.sortOrder)) + 10, createdByUserId: ctx.actor?.userId ?? null },
-        select: { id: true }
-      })).id;
     } else if (operation.type === "move_task") {
       group(moves, operation.toStageKey, operation.taskId);
     } else if (operation.type === "classify_task") {
-      if (operation.taskTypeLayer1) group(layer1, operation.taskTypeLayer1, operation.taskId);
-      if (operation.contractItemId) group(items, operation.contractItemId, operation.taskId);
+      group(layer1, operation.taskTypeLayer1, operation.taskId);
     }
   }
 
@@ -198,23 +185,17 @@ export async function applyFrameworkConversion(tx: any, plan: FrameworkConversio
     await tx.projectTask.updateMany({ where: { ...scope, id: { in: taskIds } }, data: { taskTypeLayer1 } });
     await ctx.hooks?.reclassifyTimeEntries?.(tx, ctx.workspaceId, taskIds, { taskTypeLayer1 });
   }
-  for (const [reference, taskIds] of items) {
-    const contractItemId = reference === ROOT_ITEM_REF ? rootItemId : reference;
-    if (!contractItemId) throw new Error(`Dự án ${plan.projectCode}: chưa có hạng mục hợp đồng gốc để gán cho task.`);
-    await tx.projectTask.updateMany({ where: { ...scope, id: { in: taskIds } }, data: { contractItemId } });
-    await ctx.hooks?.reclassifyTimeEntries?.(tx, ctx.workspaceId, taskIds, { contractItemId });
-  }
-  // Table 4.2: a task that changed stage or contract item may have another Layer 2.
+  // Table 4.2: a task that changed stage may have another Layer 2.
   const layer2TaskCount = (await ctx.hooks?.rederiveLayer2?.(tx, project.id)) ?? 0;
   if (plan.operations.some((operation) => operation.type === "create_gate")) {
     await syncMilestoneGateStatus(tx, scope, now, ctx.actor?.userId ?? null);
-    // 8.1, G1: a gate recorded as passed locks the estimate as B0 / B1, exactly like an approval (after the tasks got their line items).
+    // 8.1, G1: a gate recorded as passed locks the plan baseline, exactly like an approval.
     const g1 = plan.operations.some((operation) => operation.type === "create_gate" && operation.code === "G1" && operation.passed)
       ? await tx.projectGate.findFirst({ where: { ...scope, code: "G1" }, select: { id: true } })
       : null;
     if (g1) {
       await captureBaseline(tx, { workspaceId: ctx.workspaceId, projectId: project.id, now,
-        cause: { type: "gate", id: g1.id, code: "G1", reason: "Chuyển đổi khung (bảng 9.1): G1 đã qua trước ngày áp dụng, khóa estimate gốc thành B0 và B1" },
+        cause: { type: "gate", id: g1.id, code: "G1", reason: "Chuyển đổi khung (bảng 9.1): G1 đã qua trước ngày áp dụng, khóa baseline kế hoạch" },
         actor: { userId: ctx.actor?.userId ?? null, displayName: ctx.actor?.displayName ?? null } });
     }
   }
@@ -236,20 +217,21 @@ export function frameworkBackupDirectory(root: string | undefined, now: Date) {
 
 interface FrameworkBackup {
   version: 1; takenAt: string; workspaceId: string; projectId: string; plan: FrameworkConversionPlan;
-  project: any; milestones: any[]; stages: any[]; gates: any[]; contractItems: any[]; tasks: any[]; timeEntries: any[];
+  project: any; milestones: any[]; stages: any[]; gates: any[]; tasks: any[]; timeEntries: any[];
+  /** Backups taken before 13/10/2026 only: the conversion then created a root contract line item and assigned it to tasks. */
+  contractItems?: any[];
 }
 
 /** Written BEFORE the plan is applied; one file per project. */
 export async function backupFrameworkConversion(client: any, directory: string, workspaceId: string, plan: FrameworkConversionPlan) {
   const where = { workspaceId, projectId: plan.projectId };
-  const classification = { id: true, taskTypeLayer1: true, taskTypeLayer2: true, contractItemId: true };
+  const classification = { id: true, taskTypeLayer1: true, taskTypeLayer2: true };
   const backup: FrameworkBackup = {
     version: 1, takenAt: new Date().toISOString(), workspaceId, projectId: plan.projectId, plan,
     project: await client.project.findFirst({ where: { id: plan.projectId, workspaceId }, select: { id: true, code: true, status: true, milestoneTemplateKey: true } }),
     milestones: await client.projectMilestone.findMany({ where }),
     stages: await client.projectStage.findMany({ where }),
     gates: await client.projectGate.findMany({ where }),
-    contractItems: await client.projectContractItem.findMany({ where }),
     tasks: await client.projectTask.findMany({ where, select: { ...classification, stageId: true } }),
     timeEntries: await client.taskTimeEntry.findMany({ where: { workspaceId, task: { projectId: plan.projectId } }, select: classification })
   };
@@ -261,8 +243,10 @@ export async function backupFrameworkConversion(client: any, directory: string, 
 
 /**
  * Every project file of the folder, each in its own transaction. Columns go back to their backed-up values; milestones,
- * stages, gates and contract items that are not in the backup (created by the conversion) are deleted. A task created
- * after the conversion inside a created stage loses its stage; one that points at a created contract item loses the item.
+ * stages and gates that are not in the backup (created by the conversion) are deleted. A task created after the
+ * conversion inside a created stage loses its stage.
+ * A backup taken before 13/10/2026 also carries contract line items: the read path for it is kept, so such a
+ * conversion can still be undone — its item column goes back and the root item it created is removed.
  */
 export async function restoreFrameworkConversion(prisma: any, directory: string) {
   const restored: Array<{ projectId: string; projectCode: string; tasks: number; timeEntries: number; deleted: number }> = [];
@@ -284,13 +268,15 @@ export async function restoreFrameworkConversion(prisma: any, directory: string)
         return count;
       };
       // 1. Tasks and time entries back first, so nothing hangs off what is deleted next.
-      const taskColumns = ["stageId", "taskTypeLayer1", "taskTypeLayer2", "contractItemId"];
-      const tasks = await putBack("projectTask", backup.tasks, await tx.projectTask.findMany({ where, select: { id: true, stageId: true, taskTypeLayer1: true, taskTypeLayer2: true, contractItemId: true } }), taskColumns);
-      const entryColumns = ["taskTypeLayer1", "taskTypeLayer2", "contractItemId"];
-      const timeEntries = await putBack("taskTimeEntry", backup.timeEntries, await tx.taskTimeEntry.findMany({ where: { id: { in: ids(backup.timeEntries) } }, select: { id: true, taskTypeLayer1: true, taskTypeLayer2: true, contractItemId: true } }), entryColumns);
+      const legacyItems = Array.isArray(backup.contractItems);
+      const itemColumn = legacyItems ? ["contractItemId"] : [];
+      const taskColumns = ["stageId", "taskTypeLayer1", "taskTypeLayer2", ...itemColumn];
+      const tasks = await putBack("projectTask", backup.tasks, await tx.projectTask.findMany({ where, select: { id: true, stageId: true, taskTypeLayer1: true, taskTypeLayer2: true, ...(legacyItems ? { contractItemId: true } : {}) } }), taskColumns);
+      const entryColumns = ["taskTypeLayer1", "taskTypeLayer2", ...itemColumn];
+      const timeEntries = await putBack("taskTimeEntry", backup.timeEntries, await tx.taskTimeEntry.findMany({ where: { id: { in: ids(backup.timeEntries) } }, select: { id: true, taskTypeLayer1: true, taskTypeLayer2: true, ...(legacyItems ? { contractItemId: true } : {}) } }), entryColumns);
       // 2. Rows the conversion created.
-      const createdItems = { ...where, id: { notIn: ids(backup.contractItems) } };
-      const createdItemIds = ids(await tx.projectContractItem.findMany({ where: createdItems, select: { id: true } }));
+      const createdItems = { ...where, id: { notIn: ids(backup.contractItems ?? []) } };
+      const createdItemIds = legacyItems ? ids(await tx.projectContractItem.findMany({ where: createdItems, select: { id: true } })) : [];
       if (createdItemIds.length) {
         await tx.projectTask.updateMany({ where: { contractItemId: { in: createdItemIds } }, data: { contractItemId: null } });
         await tx.taskTimeEntry.updateMany({ where: { contractItemId: { in: createdItemIds } }, data: { contractItemId: null } });
@@ -298,7 +284,7 @@ export async function restoreFrameworkConversion(prisma: any, directory: string)
       let deleted = (await tx.projectGate.deleteMany({ where: { ...where, id: { notIn: ids(backup.gates) } } })).count;
       deleted += (await tx.projectStage.deleteMany({ where: { ...where, id: { notIn: ids(backup.stages) } } })).count;
       deleted += (await tx.projectMilestone.deleteMany({ where: { ...where, id: { notIn: ids(backup.milestones) } } })).count;
-      deleted += (await tx.projectContractItem.deleteMany({ where: createdItems })).count;
+      if (legacyItems) deleted += (await tx.projectContractItem.deleteMany({ where: createdItems })).count;
       // 3. Keys, names and order of the old framework, then the project itself.
       await putBack("projectMilestone", backup.milestones, await tx.projectMilestone.findMany({ where }), ["name", "normalizedKey", "sortOrder", "gateStatus"]);
       await putBack("projectStage", backup.stages, await tx.projectStage.findMany({ where }), ["milestoneId", "stageKey", "sortOrder", "status", "taskTypeLayer1", "afterPnlClose", "slaDays"]);
