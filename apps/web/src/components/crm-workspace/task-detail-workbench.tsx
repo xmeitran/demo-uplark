@@ -51,6 +51,7 @@ import {
   MultiPersonDropdown,
   DatePickerField
 } from "./tasks-workbench";
+import { isCompletedTaskStatus, taskDetailDisplayStatus, taskDetailShowsCompleteAction } from "./task-display-helpers";
 import {
   getDailyActualLogFeedback,
   type DailyActualLogFeedback
@@ -135,7 +136,7 @@ function formatTimeEntryWindow(entry: any) {
 }
 
 function isSubtaskDone(subtask: ProjectTaskSummary) {
-  return ["done", "completed", "closed"].includes(subtask.status);
+  return isCompletedTaskStatus(subtask.status) && subtask.derivedStatus !== "overdue";
 }
 
 function getPriorityTone(priority?: string) {
@@ -1419,7 +1420,7 @@ export function TaskDetailWorkbench({
 
       let completionFailedAfterSavedHours = false;
       let transitionRequestSucceeded = false;
-      if (logInput.completeTask && currentTask.status !== "completed") {
+      if (logInput.completeTask && !isCompletedTaskStatus(currentTask.status)) {
         try {
           const changedAt = new Date().toISOString();
           const transitionBody: TransitionProjectTaskInput = {
@@ -1509,7 +1510,7 @@ export function TaskDetailWorkbench({
         createdAt: new Date().toISOString()
       };
 
-      const offlineTransitionHistoryItem = logInput.completeTask && currentTask.status !== "completed" ? {
+      const offlineTransitionHistoryItem = logInput.completeTask && !isCompletedTaskStatus(currentTask.status) ? {
           id: `hist-${Date.now()}`,
           taskId: taskId,
           accountId: currentTask.accountId,
@@ -1917,12 +1918,13 @@ export function TaskDetailWorkbench({
     const rightDate = new Date(right.startAt ?? right.workDate ?? right.createdAt).getTime();
     return rightDate - leftDate;
   });
-  const statusClass = getStatusClass(currentTask.status);
+  const detailStatus = taskDetailDisplayStatus(currentTask);
+  const statusClass = getStatusClass(detailStatus);
   const priorityClass = getPriorityTone(currentTask.priority);
   const displayTitle = formatTaskTitle(currentTask.title);
   const displayTaskType = getTaskTypeLabel(currentTask.taskType);
   const displayPriority = getPriorityLabel(currentTask.priority);
-  const displayStatus = getStatusLabel(currentTask.status);
+  const displayStatus = getStatusLabel(detailStatus);
   const assignedPeople = currentTask.assignees?.length
     ? currentTask.assignees
     : (currentTask.assigneeUserId ? [{ userId: currentTask.assigneeUserId, displayName: currentTask.assigneeDisplayName, avatarUrl: currentTask.assigneeAvatarUrl }] : []);
@@ -1948,7 +1950,7 @@ export function TaskDetailWorkbench({
     medium: { bg: "#dbeafe", color: "#2563eb" },
     low:    { bg: "#dcfce7", color: "#16a34a" },
   };
-  const sPill = STATUS_PILL[currentTask.status ?? ""] ?? { bg: "#f1f5f9", color: "#64748b" };
+  const sPill = STATUS_PILL[detailStatus ?? ""] ?? { bg: "#f1f5f9", color: "#64748b" };
   const pPill = PRIORITY_PILL[currentTask.priority ?? ""] ?? { bg: "#f1f5f9", color: "#64748b" };
 
   return (
@@ -2083,7 +2085,7 @@ export function TaskDetailWorkbench({
                         </svg>
                         Đổi trạng thái
                       </button>
-                      {currentTask.status !== "completed" ? (
+                      {taskDetailShowsCompleteAction(currentTask) ? (
                         <button
                           onClick={() => handleTransitionTask("completed", "Đánh dấu hoàn tất nhanh từ chi tiết công việc.")}
                           className="flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 px-3.5 py-2 text-xs font-semibold text-emerald-700 transition-all active:scale-[0.98] cursor-pointer"

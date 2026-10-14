@@ -141,11 +141,25 @@ describe("proposal or automatic transition (V-17, V-19)", () => {
     expect(plan).toEqual({ apply: [{ to: "maintenance", reason: "Hệ thống tự chuyển: G8 đã duyệt, đã bàn giao CS" }] });
   });
 
-  it("moves to Đã hoàn thành first and then proposes Có rủi ro when an issue is open at G7", () => {
+  it("keeps Có rủi ro as the visible outcome when an issue is open at G7", () => {
     const computed = computeProjectStatus(facts({ currentStatus: "in_review", gates: gates(approved("G1", "G2", "G3", "G4", "G5", "G6", "G7")), openIssueCodes: ["ISS-004"] }));
     const plan = planStatusSync("in_review", computed);
-    expect(plan.apply.map((step) => step.to)).toEqual(["completed"]);
+    expect(plan.apply).toEqual([]);
     expect(plan.propose).toMatchObject({ proposedStatus: "at_risk" });
+  });
+
+  it("does not auto-complete a project while overdue work keeps it at risk", () => {
+    const computed = computeProjectStatus(facts({
+      currentStatus: "in_review",
+      gates: gates(approved("G1", "G2", "G3", "G4", "G5", "G6", "G7")),
+      overdueTaskCount: 3
+    }));
+
+    expect(computed).toMatchObject({ status: "at_risk", base: "completed" });
+    expect(planStatusSync("in_review", computed)).toEqual({
+      apply: [],
+      propose: { proposedStatus: "at_risk", basis: "3 task Quá hạn" }
+    });
   });
 
   it("never moves a closed project, and never steps back from Đang bảo trì to Đã hoàn thành by itself", () => {

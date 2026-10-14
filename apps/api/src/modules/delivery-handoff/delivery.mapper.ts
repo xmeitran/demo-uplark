@@ -23,8 +23,11 @@ export function mapProjectSummary(project: any): ProjectSummary {
   const activeBudget = project.budgets?.[0];
   const completedTaskCount = tasks.filter((task: any) => deriveTaskStatus({
     rawStatus: task.status,
+    plannedStartAt: task.plannedStartAt,
+    dueAt: task.dueAt,
     estimateMinutes: task.estimateMinutes,
-    loggedMinutes: sumActualMinutes(task.timeEntries)
+    loggedMinutes: sumActualMinutes(task.timeEntries),
+    timeEntries: task.timeEntries
   }) === "completed").length;
   const plannedMinutes = tasks.reduce((sum: number, task: any) => sum + Number(task.estimateMinutes ?? 0), 0);
   const loggedMinutes = tasks.reduce((sum: number, task: any) => sum + sumActualMinutes(task.timeEntries), 0);
@@ -37,14 +40,11 @@ export function mapProjectSummary(project: any): ProjectSummary {
   const progressCandidates = stages
     .map((stage: any) => Number(stage.progressPercent || stage.cumulativePercent || 0))
     .filter((value: number) => Number.isFinite(value) && value > 0);
-  const progressPercent =
-    project.status === "completed"
-      ? 100
-      : tasks.length > 0
-        ? Math.round((completedTaskCount / tasks.length) * 100)
-        : progressCandidates.length > 0
-          ? Math.max(...progressCandidates)
-          : undefined;
+  const progressPercent = tasks.length > 0
+    ? Math.round((completedTaskCount / tasks.length) * 100)
+    : progressCandidates.length > 0
+      ? Math.max(...progressCandidates)
+      : undefined;
   const startCandidates = stages
     .map((stage: any) => stage.actualStartAt ?? stage.plannedStartAt)
     .filter(Boolean)

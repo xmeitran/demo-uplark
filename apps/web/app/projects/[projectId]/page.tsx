@@ -71,6 +71,7 @@ import {
   isSortableTopLevelTask
 } from "@/features/project-hierarchy/hierarchy-order";
 import { isMilestoneWorkLocked, selectActiveMilestone } from "@/features/project-hierarchy/milestone-gate-ui";
+import { deriveMilestoneWorkStatus } from "@/features/project-hierarchy/work-status";
 import { IssueLogPanel } from "@/features/issue-log/issue-log-panel";
 import { ApiResponseError, readApiError } from "@/lib/api-error";
 import { fetchAllPages } from "@/lib/api-pages";
@@ -229,7 +230,7 @@ async function fetchLiveProjectWorkItems(projectId: string, signal?: AbortSignal
             // first stage has not received a task yet. Do not render that
             // valid entry point as "Sắp tới"/locked just because the stage
             // is still `not_started`.
-            status: gate.gateStatus === "approved"
+            status: gate.gateStatus === "approved" && milestone.status === "upcoming"
               ? "done"
               : gate.gateStatus === "open" && milestone.status === "upcoming"
                 ? "in-progress"
@@ -865,7 +866,6 @@ function mapProjectWorkItems(stages: ProjectStageSummary[], tasks: ProjectTaskSu
   }
 
   const groupedStages = Array.from(stageGroups.values());
-  const milestones = groupedStages.map(mapStageGroupToMilestone);
   const groups = groupedStages.map((stageGroup) => ({
     milestoneId: stageGroup[0].milestoneId,
     stages: stageGroup.map((stage) => mapStageToStageItem(
@@ -878,6 +878,21 @@ function mapProjectWorkItems(stages: ProjectStageSummary[], tasks: ProjectTaskSu
       attachSubtasks
     ))
   }));
+
+  const milestoneTasks = new Map<string, TaskItem[]>();
+  for (const group of groups) {
+    milestoneTasks.set(group.milestoneId, group.stages.flatMap((stage) => stage.tasks));
+  }
+  const milestones = groupedStages.map((stageGroup) => {
+    const milestone = mapStageGroupToMilestone(stageGroup);
+    return {
+      ...milestone,
+      status: deriveMilestoneWorkStatus({
+        stageStatus: milestone.status,
+        taskStatuses: (milestoneTasks.get(milestone.id) ?? []).map((task) => task.status)
+      })
+    };
+  });
 
   if (unassignedTasks.length > 0) {
     const fallbackMilestone: Milestone = {
@@ -1810,13 +1825,20 @@ function ProjectStatusSlaBar({
   }, [historyOpen, projectId, project.status, project.statusSince]);
   const orderedMilestones = [...milestones].sort((left, right) => left.order - right.order);
   const activeMilestone = selectActiveMilestone(orderedMilestones);
-  const deliveryPlanComplete = orderedMilestones.length > 0 && orderedMilestones.every((milestone) => milestone.gateStatus === "approved" || (!milestone.gateStatus && milestone.status === "done"));
+  const deliveryPlanComplete = orderedMilestones.length > 0 && orderedMilestones.every((milestone) =>
+    milestone.status === "done" && (!milestone.gateStatus || milestone.gateStatus === "approved")
+  );
   const completedTasks = tasks.filter((task) => task.status === "done").length;
   const progress = tasks.length > 0 ? Math.round((completedTasks / tasks.length) * 100) : project.progress;
-  // Always the real Project Status; a finished delivery plan is only a secondary note next to it.
-  const statusLabel = formatProjectStatusLabel(project.status);
-  const statusUnknown = project.status === UNKNOWN_PROJECT_STATUS_LABEL;
-  const slaPaused = ["on_hold", "at_risk", "closed"].includes(normalizeProjectStatus(project.status) ?? "");
+  const hasLiveRisk = tasks.some((task) => task.status === "overdue" || task.status === "blocked")
+    || orderedMilestones.some((milestone) => milestone.status === "at-risk");
+  const displayedProjectStatus = hasLiveRisk
+    && (project.status === PROJECT_STATUS_LABELS.completed || project.status === PROJECT_STATUS_LABELS.maintenance)
+    ? PROJECT_STATUS_LABELS.at_risk
+    : project.status;
+  const statusLabel = formatProjectStatusLabel(displayedProjectStatus);
+  const statusUnknown = displayedProjectStatus === UNKNOWN_PROJECT_STATUS_LABEL;
+  const slaPaused = ["on_hold", "at_risk", "closed"].includes(normalizeProjectStatus(displayedProjectStatus) ?? "");
   return (
     <section aria-label="Trạng thái dự án và SLA" className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-sm md:grid-cols-[1.15fr_1fr_1fr_auto] md:items-center">
       <div className="min-w-0">
@@ -5646,9 +5668,6 @@ export default function ProjectDetailPage() {
   }, [projectId]);
 
 
-  const sc = STATUS_CFG[project.status];
-  const pc = PRIORITY_CFG[project.priority.toLowerCase() as keyof typeof PRIORITY_CFG];
-
   const nextMilestoneIdx = milestones.findIndex(m => m.status !== "done");
   // Adding work is allowed for completed/approved milestones. Only an
   // explicitly locked gate is skipped when choosing the default target.
@@ -6110,6 +6129,18 @@ export default function ProjectDetailPage() {
   const filteredProgress = filteredTasks.length > 0 ? Math.round((doneFiltered / filteredTasks.length) * 100) : 0;
   const openRiskCount = riskRegistry.filter((risk) => !["resolved", "closed", "done"].includes(risk.status.toLowerCase())).length;
   const overdueTaskCount = allTasks.filter((task) => task.status !== "done" && task.due && !["TBD", "Not set"].includes(task.due) && new Date(task.due).getTime() < Date.now()).length;
+  // A stale completed/maintenance label must not hide live overdue or blocked
+  // work on the detail screen. The API status proposal still remains the
+  // approval source of truth; this is the truthful live-work display guard.
+  const hasLiveRisk = overdueTaskCount > 0
+    || allTasks.some((task) => task.status === "blocked" || task.status === "overdue")
+    || milestones.some((milestone) => milestone.status === "at-risk");
+  const displayedProjectStatus = hasLiveRisk
+    && (project.status === PROJECT_STATUS_LABELS.completed || project.status === PROJECT_STATUS_LABELS.maintenance)
+    ? PROJECT_STATUS_LABELS.at_risk
+    : project.status;
+  const sc = STATUS_CFG[displayedProjectStatus];
+  const pc = PRIORITY_CFG[project.priority.toLowerCase() as keyof typeof PRIORITY_CFG];
   const pendingDocumentCount = documents.filter((doc) => doc.versions.length === 0).length;
   const coordinationCount = openRiskCount + overdueTaskCount + milestones.filter((milestone) => milestone.status === "at-risk").length;
   const projectTabItems: WorkspaceTabItem<Tab>[] = PROJECT_TAB_ITEMS.map((item) => item.id === "Issues"
@@ -6383,8 +6414,8 @@ export default function ProjectDetailPage() {
             <div className="mb-4 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1 rounded-lg" style={{ backgroundColor:sc.bg, color:sc.color }}>
-                  <sc.icon className="w-3 h-3" />{formatProjectStatusLabel(project.status)}
-                  {project.status === PROJECT_STATUS_LABELS.active ? <span className="sr-only">In progress</span> : null}
+                  <sc.icon className="w-3 h-3" />{formatProjectStatusLabel(displayedProjectStatus)}
+                  {displayedProjectStatus === PROJECT_STATUS_LABELS.active ? <span className="sr-only">In progress</span> : null}
                 </span>
                 <span className="text-[11px] font-semibold px-3 py-1 rounded-lg" style={{ backgroundColor:pc.bg, color:pc.color }}>{project.priority}</span>
                 {project.tags.slice(0, 3).map(t => (

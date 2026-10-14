@@ -59,6 +59,16 @@ export function isCompletedTaskStatus(status?: string | null) {
   return ["done", "completed", "closed"].includes(normalizeCodeKey(status));
 }
 
+/** The task board needs the derived status, while edits/actions must use the raw API status. */
+export function taskDetailDisplayStatus(task: Pick<ProjectTaskSummary, "status" | "derivedStatus">) {
+  return task.derivedStatus || task.status;
+}
+
+/** An overdue/open task is still completable; only an explicitly closed task shows "Mở lại". */
+export function taskDetailShowsCompleteAction(task: Pick<ProjectTaskSummary, "status">) {
+  return !isCompletedTaskStatus(task.status);
+}
+
 export const taskTypeLabels: Record<string, string> = {
   implementation: "Triển khai",
   blueprint: "Thiết kế giải pháp",

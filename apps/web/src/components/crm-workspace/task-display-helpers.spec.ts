@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCodeLabel, getPriorityLabel, getStatusLabel, getTaskTypeLabel, getWorkTypeLabel, isCompletedTaskStatus } from "./task-display-helpers";
+import { formatCodeLabel, getPriorityLabel, getStatusLabel, getTaskTypeLabel, getWorkTypeLabel, isCompletedTaskStatus, taskDetailDisplayStatus, taskDetailShowsCompleteAction } from "./task-display-helpers";
 
 describe("task display helpers", () => {
   it("renders imported Lark/Base codes as readable labels", () => {
@@ -22,5 +22,15 @@ describe("task display helpers", () => {
 
   it("keeps the manual waiting status in Vietnamese", () => {
     expect(getStatusLabel("waiting")).toBe("Đang chờ");
+  });
+
+  it("uses the derived overdue status for display but keeps the complete action for an open task", () => {
+    const task = { status: "todo", derivedStatus: "overdue" } as const;
+    expect(taskDetailDisplayStatus(task)).toBe("overdue");
+    expect(taskDetailShowsCompleteAction(task)).toBe(true);
+  });
+
+  it("shows reopen instead of complete only for a task explicitly closed in the API", () => {
+    expect(taskDetailShowsCompleteAction({ status: "completed" })).toBe(false);
   });
 });

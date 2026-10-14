@@ -131,8 +131,10 @@ export function planStatusSync(currentStatus: unknown, computed: ComputedProject
     current = to;
   };
 
-  // G7 / G8 approved: the status moves by itself even when a risk or a hold will be proposed on top of it.
-  if (computed.base && AUTOMATIC_PROJECT_STATUSES.includes(computed.base) && current !== "at_risk" && current !== "on_hold" && mayAutoApply(current, computed.base)) {
+  // G7 / G8 only auto-advance when no higher-precedence risk or hold is active.
+  // Otherwise an overdue/open task must remain visible as `Có rủi ro`; marking
+  // the project completed first makes the UI contradict its task board.
+  if (computed.status === computed.base && computed.base && AUTOMATIC_PROJECT_STATUSES.includes(computed.base) && mayAutoApply(current, computed.base)) {
     auto(computed.base, computed.baseBasis);
   }
   if (computed.status === current) return plan;
