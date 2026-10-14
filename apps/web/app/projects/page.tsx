@@ -59,6 +59,7 @@ import {
   type ProjectListUrlState,
   type ProjectListView as UrlProjectListView
 } from "@/lib/project-list-state";
+import { buildCreateProjectHref, buildProjectsHrefWithoutCreate } from "@/lib/project-create-navigation";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1144,7 +1145,22 @@ export default function ProjectsPage() {
 
   // Modal State
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const createDialogRef = useDialogAccessibility(isCreateOpen, () => setIsCreateOpen(false));
+  const openCreateProject = () => {
+    setIsCreateOpen(true);
+    if (searchParams.get("create") !== "1") {
+      router.replace(buildCreateProjectHref(projectListSearch), { scroll: false });
+    }
+  };
+  const closeCreateProject = () => {
+    setIsCreateOpen(false);
+    if (searchParams.get("create") === "1") {
+      router.replace(buildProjectsHrefWithoutCreate(projectListSearch), { scroll: false });
+    }
+  };
+  useEffect(() => {
+    if (searchParams.get("create") === "1") setIsCreateOpen(true);
+  }, [projectListSearch, searchParams]);
+  const createDialogRef = useDialogAccessibility(isCreateOpen, closeCreateProject);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [deletingProject, setDeletingProject] = useState<Project | null>(null);
   const [savingProjectEdit, setSavingProjectEdit] = useState(false);
@@ -1446,7 +1462,7 @@ export default function ProjectsPage() {
         };
       });
       setProjectPage(1);
-      setIsCreateOpen(false);
+      closeCreateProject();
 
       // Reset Form
       setName("");
@@ -1607,7 +1623,7 @@ export default function ProjectsPage() {
   };
 
   return (
-    <AppShell activeRoute="/projects" onCreateProjectClick={() => setIsCreateOpen(true)} title="Projects">
+    <AppShell activeRoute="/projects" onCreateProjectClick={openCreateProject} title="Projects">
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 sm:p-4 xl:p-6">
           <PageHeader
             className="mb-4 sm:mb-6"
@@ -1622,7 +1638,7 @@ export default function ProjectsPage() {
               >
                 Export loaded CSV
               </HeaderButton>
-              <HeaderButton variant="primary" icon={<Plus className="w-4 h-4" />} onClick={() => setIsCreateOpen(true)}>New Project</HeaderButton>
+              <HeaderButton variant="primary" icon={<Plus className="w-4 h-4" />} onClick={openCreateProject}>New Project</HeaderButton>
             </>}
           />
 
@@ -1882,7 +1898,7 @@ export default function ProjectsPage() {
 
         <AnimatePresence>
           {isCreateOpen && (
-            <ModalLayer onClose={() => setIsCreateOpen(false)}>
+            <ModalLayer onClose={closeCreateProject}>
             <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <motion.div
                 ref={createDialogRef} tabIndex={-1}
@@ -1907,7 +1923,7 @@ export default function ProjectsPage() {
                     <button
                       aria-label="Close create project dialog"
                       type="button"
-                      onClick={() => setIsCreateOpen(false)}
+                      onClick={closeCreateProject}
                       className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                     >
                       <X className="w-4 h-4" />
@@ -2157,7 +2173,7 @@ export default function ProjectsPage() {
                   <div className="flex items-center justify-end gap-2 pt-4 border-t border-border mt-6">
                     <button
                       type="button"
-                      onClick={() => setIsCreateOpen(false)}
+                      onClick={closeCreateProject}
                       className="px-4 py-2 rounded-xl border border-border text-sm font-semibold text-muted-foreground hover:bg-muted transition-colors"
                     >
                       Cancel

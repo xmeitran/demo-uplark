@@ -27,6 +27,7 @@ import { ModalLayer } from "@/components/modal-layer";
 import { HeaderButton, PageHeader, pageMainClassName } from "@/components/page-header";
 import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilter, type DateRange } from "@/components/filters";
 import { AnimatePresence } from "framer-motion";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { loadExcelWorkbook } from "@/lib/excel-import";
 import type { Member, Project } from "./projects/data";
@@ -46,6 +47,7 @@ import {
 } from "@/lib/workspace-users";
 import { uiProjectDateToIso } from "@/lib/project-date";
 import { PROJECT_TYPE_OPTIONS, type ProjectTaskTemplateInput, type ResourceListPaginationMeta } from "@b2b-crm/contracts";
+import { buildCreateProjectHref } from "@/lib/project-create-navigation";
 
 // ─── Live Dashboard Data ─────────────────────────────────────────────────────
 
@@ -335,6 +337,7 @@ const COLOR_OPTIONS = [
 ];
 
 export default function DashboardPage() {
+  const router = useRouter();
   const { user } = useAuth();
   const [projectsList, setProjectsList] = useState<DashboardProject[]>([]);
   const [accountOptions, setAccountOptions] = useState<LiveProjectAccountOption[]>([]);
@@ -387,11 +390,7 @@ export default function DashboardPage() {
   // Keep every "New Project" entry point on the dashboard in one flow.
   // The sidebar and the header button should never grow separate modal logic.
   const openCreateProject = () => {
-    setDashboardError(null);
-    setDashboardAiError(null);
-    setDashboardAiDraft(null);
-    setDashboardAiDraftApplied(false);
-    setIsCreateOpen(true);
+    router.push(buildCreateProjectHref());
   };
 
   const handleDashboardExcelImport = async (file: File) => {
