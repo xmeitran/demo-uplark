@@ -1,8 +1,16 @@
 import { isWorkingDay, monthBounds } from "./timesheet-dates";
-import { buildProjectSummaries, peopleInScope, selectedProjectIds, type TimesheetFilters } from "./timesheet-selectors";
+import { buildProjectSummaries, peopleInScope, projectTasks, selectedProjectIds, type TimesheetFilters } from "./timesheet-selectors";
+import { isTaskOverdue } from "./timesheet-status";
 import type { TimeLog, TimesheetDataset } from "./timesheet-types";
 
 export type TimesheetAlertTone = "danger" | "warning" | "info";
+
+export interface TimesheetAlertItem {
+  id: string;
+  title: string;
+  detail: string;
+  href: string;
+}
 
 export interface TimesheetAlert {
   id: string;
@@ -10,6 +18,7 @@ export interface TimesheetAlert {
   label: string;
   detail: string;
   count: number;
+  items: TimesheetAlertItem[];
 }
 
 /**
@@ -33,10 +42,45 @@ export function buildTimesheetAlerts(dataset: TimesheetDataset, logs: TimeLog[],
   const todayInPeriod = today >= periodStart && today <= periodEnd && isWorkingDay(today, dataset.holidays);
   const missingPeople = todayInPeriod ? peopleInScope(dataset, filters).filter((person) => !loggedToday.has(person.id)).length : 0;
 
+  const missingLogItems: TimesheetAlertItem[] = todayInPeriod
+    ? peopleInScope(dataset, filters)
+        .filter((person) => !loggedToday.has(person.id))
+        .map((person) => ({
+          id: person.id,
+          title: person.name,
+          detail: "Chưa ghi giờ hôm nay · mở Timesheet theo nhân sự",
+          href: `/timesheet?person=${encodeURIComponent(person.id)}&from=${today}&to=${today}`
+        }))
+    : [];
+  const overdueItems: TimesheetAlertItem[] = summaries.flatMap((row) => projectTasks(row.project)
+    .filter((task) => isTaskOverdue(task, row.project.status, today))
+    .map((task) => ({
+      id: `${row.project.id}:${task.id}`,
+      title: task.name,
+      detail: `${row.project.code} — ${row.project.name}`,
+      href: `/tasks/${encodeURIComponent(task.id)}`
+    })));
+  const blockedItems: TimesheetAlertItem[] = summaries.flatMap((row) => projectTasks(row.project)
+    .filter((task) => task.status === "blocked")
+    .map((task) => ({
+      id: `${row.project.id}:${task.id}`,
+      title: task.name,
+      detail: `${row.project.code} — ${row.project.name}`,
+      href: `/tasks/${encodeURIComponent(task.id)}`
+    })));
+  const overPlanItems: TimesheetAlertItem[] = summaries
+    .filter((row) => row.risk === "over")
+    .map((row) => ({
+      id: row.project.id,
+      title: row.project.name,
+      detail: `${row.project.code} · mở Project Sheet để xem chênh lệch giờ`,
+      href: `/projects/${encodeURIComponent(row.project.id)}?tab=Project%20Sheet`
+    }));
+
   const alerts: TimesheetAlert[] = [];
-  if (missingPeople > 0) alerts.push({ id: "missing-logs", tone: "warning", label: "nhân sự chưa ghi giờ hôm nay", detail: "Kiểm tra bảng giờ cá nhân", count: missingPeople });
-  if (overdueTasks > 0) alerts.push({ id: "overdue-tasks", tone: "danger", label: "task quá hạn", detail: "Mở Project Sheet để xử lý", count: overdueTasks });
-  if (blockedTasks > 0) alerts.push({ id: "blocked-tasks", tone: "danger", label: "task đang bị chặn", detail: "Cần cập nhật blocker hoặc owner", count: blockedTasks });
-  if (overPlanProjects > 0) alerts.push({ id: "over-plan", tone: "warning", label: "dự án vượt kế hoạch giờ", detail: "Xem chênh lệch kế hoạch/thực tế", count: overPlanProjects });
+  if (missingPeople > 0) alerts.push({ id: "missing-logs", tone: "warning", label: "nhân sự chưa ghi giờ hôm nay", detail: "Kiểm tra bảng giờ cá nhân", count: missingLogItems.length, items: missingLogItems });
+  if (overdueTasks > 0) alerts.push({ id: "overdue-tasks", tone: "danger", label: "task quá hạn", detail: "Mở task cụ thể để xử lý", count: overdueItems.length, items: overdueItems });
+  if (blockedTasks > 0) alerts.push({ id: "blocked-tasks", tone: "danger", label: "task đang bị chặn", detail: "Mở task cụ thể để cập nhật blocker hoặc owner", count: blockedItems.length, items: blockedItems });
+  if (overPlanProjects > 0) alerts.push({ id: "over-plan", tone: "warning", label: "dự án vượt kế hoạch giờ", detail: "Mở Project Sheet của từng dự án", count: overPlanItems.length, items: overPlanItems });
   return alerts;
 }

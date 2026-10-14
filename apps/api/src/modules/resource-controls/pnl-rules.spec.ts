@@ -62,6 +62,13 @@ describe("bước 2 — cost rate (PL-08, PL-09)", () => {
     expect(costOfMinutes(2 * 60, rate)).toBe(324_762);
     expect(costOfMinutes(60, undefined)).toBeUndefined(); // never 0 for a missing rate
   });
+
+  it("dùng đơn giá giờ nhập trực tiếp rồi nhân với số phút làm", () => {
+    const rate = costRateOf({ totalAmount: 40_000_000, hourlyCostRate: 150_000, status: "APPROVED" }, 176 * 60)!;
+    expect(hourlyRate(rate)).toBe(150_000);
+    expect(costOfMinutes(60, rate)).toBe(150_000);
+    expect(costOfMinutes(4 * 60, rate)).toBe(600_000);
+  });
 });
 
 describe("bước 3 — cổng lọc giờ (PL-04, PL-05, PL-06)", () => {

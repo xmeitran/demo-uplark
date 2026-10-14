@@ -581,7 +581,9 @@ export class PnlConfigService {
       return {
         userId: user.id, employeeCode: codeOf.get(user.id) ?? null, displayName: user.displayName || user.email, department: user.departmentCode ?? null, periodKey,
         components: cost ? this.componentsOf(cost) : null, totalAmount: total,
-        hourlyCostRate: total !== null && standardMinutes > 0 ? (total * 60) / standardMinutes : null,
+        hourlyCostRate: cost?.hourlyCostRate === null || cost?.hourlyCostRate === undefined
+          ? (total !== null && standardMinutes > 0 ? (total * 60) / standardMinutes : null)
+          : num(cost.hourlyCostRate),
         source: cost ? (cost.source ?? "manual") : null, sourceLabel: cost ? SOURCE_LABELS[cost.source ?? "manual"] ?? cost.source : null,
         status, statusLabel: STAFF_COST_STATUS_LABELS[status],
         loggedMinutes, waitingMinutes: cost?.status === "APPROVED" ? 0 : loggedMinutes,
@@ -617,13 +619,22 @@ export class PnlConfigService {
         const locked = ctx.lockedKeys.has(row.periodKey);
         const status = row.status === "APPROVED" ? (locked ? "LOCKED" as const : "APPROVED" as const) : "DRAFT" as const;
         return {
-          periodKey: row.periodKey, monthlyCostAmount: num(row.totalMonthlyIncome), hourlyCostRate: standardMinutes > 0 ? (num(row.totalMonthlyIncome) * 60) / standardMinutes : 0, standardHours: standardMinutes / 60,
+          periodKey: row.periodKey, monthlyCostAmount: num(row.totalMonthlyIncome), hourlyCostRate: row.hourlyCostRate === null || row.hourlyCostRate === undefined ? (standardMinutes > 0 ? (num(row.totalMonthlyIncome) * 60) / standardMinutes : 0) : num(row.hourlyCostRate), standardHours: standardMinutes / 60,
           role: row.role ?? undefined, level: row.level ?? undefined, source: row.source === "converted_hourly_rate" ? "converted_hourly_rate" as const : "manual" as const, locked, updatedAt: new Date(row.updatedAt).toISOString(),
           components: this.componentsOf(row), status, statusLabel: STAFF_COST_STATUS_LABELS[status], sourceLabel: SOURCE_LABELS[row.source ?? "manual"] ?? row.source
         };
       }),
       meta: { userId, canEdit: canEditCost(principal), currency: "VND", standardDayHours: ctx.standardDayMinutes(ctx.currentPeriodKey) / 60, lockedPeriodKeys: [...ctx.lockedKeys].sort() }
     };
+  }
+
+  private parseHourlyRate(input: { hourlyCostRate?: number | null }, label = ""): number {
+    const raw: unknown = input.hourlyCostRate;
+    const value = typeof raw === "string" ? Number(raw) : raw;
+    if (value === undefined || value === null || value === "" || typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > MAX_MONEY) {
+      throw new BadRequestException(`${label}Đơn giá giờ phải là số không âm.`);
+    }
+    return Math.round(value);
   }
 
   private parseComponents(input: Partial<PnlStaffCostComponents> & { monthlyCostAmount?: number | null }, label = ""): { [K in keyof PnlStaffCostComponents]: number } {
@@ -638,18 +649,19 @@ export class PnlConfigService {
     })) as { [K in keyof PnlStaffCostComponents]: number };
   }
 
-  private costData(periodKey: string, components: { [K in keyof PnlStaffCostComponents]: number }, source: string) {
+  private costData(periodKey: string, components: { [K in keyof PnlStaffCostComponents]: number }, source: string, hourlyCostRate?: number) {
     const [year, month] = periodKey.split("-").map(Number);
     const total = sum(COMPONENT_KEYS.map((key) => components[key]));
     return {
       create: { periodKey, periodStart: new Date(Date.UTC(year, month - 1, 1)), periodEnd: new Date(Date.UTC(year, month, 0)), currency: "VND" },
       // A new or changed figure is a Nháp again: only the approval makes it a cost rate (PL-08).
-      values: { ...Object.fromEntries(COMPONENT_KEYS.map((key) => [COMPONENT_COLUMNS[key].column, components[key]])), pitAmount: 0, otherAmount: 0, totalMonthlyIncome: total, hourlyCostRate: null, status: "DRAFT", source, approvedAt: null, approvedByUserId: null, approvedByName: null },
-      total
+      values: { ...Object.fromEntries(COMPONENT_KEYS.map((key) => [COMPONENT_COLUMNS[key].column, components[key]])), pitAmount: 0, otherAmount: 0, totalMonthlyIncome: total, hourlyCostRate: hourlyCostRate ?? null, status: "DRAFT", source, approvedAt: null, approvedByUserId: null, approvedByName: null },
+      total,
+      hourlyCostRate: hourlyCostRate ?? null
     };
   }
 
-  /** Nhập / sửa chi phí tháng của một người — luôn lưu Nháp. `monthlyCostAmount: null` removes an unapproved month. */
+  /** Nhập / sửa đơn giá giờ của một người — luôn lưu Nháp. `monthlyCostAmount: null` removes an unapproved month. */
   async setStaffCost(input: PnlStaffCostInput, principal: PrincipalContext) {
     assertCostEdit(principal);
     const periodKey = requirePeriodKey(input?.periodKey);
@@ -662,19 +674,22 @@ export class PnlConfigService {
     // PL-08: only the approved version feeds the P&L, so taking it away (removing it, or replacing it by a new Nháp) is the approver's call.
     if (existing?.status === "APPROVED" && !canApproveCost(principal)) throw new ForbiddenException(`Chi phí tháng ${monthLabel(periodKey)} của người này Đã duyệt: xóa hoặc thay cần quyền Duyệt chi phí (COST_APPROVE) hoặc Founder/GM.`);
     const before = existing ? { periodKey, totalAmount: num(existing.totalMonthlyIncome), status: existing.status, components: this.componentsOf(existing) } : undefined;
-    if (input.monthlyCostAmount === null && COMPONENT_KEYS.every((key) => input[key] === undefined)) {
+    if (input.monthlyCostAmount === null && input.hourlyCostRate === undefined && COMPONENT_KEYS.every((key) => input[key] === undefined)) {
       if (existing) await this.prisma.resourceMonthlyCost.delete({ where: { id: existing.id } });
       await this.audit(principal, "pnl.resource_monthly_cost_changed", "resource_monthly_cost", userId, before, { periodKey, totalAmount: null });
       return { data: { userId, periodKey, monthlyCostAmount: null, hourlyCostRate: null, status: "NONE" }, meta: { persisted: true } };
     }
-    const components = this.parseComponents(input);
-    const data = this.costData(periodKey, components, "manual");
+    const directHourlyRate = input.hourlyCostRate === undefined || input.hourlyCostRate === null ? undefined : this.parseHourlyRate(input);
+    const standardMinutes = ctx.standardMinutes(periodKey);
+    const components = directHourlyRate === undefined
+      ? this.parseComponents(input)
+      : { baseSalaryAmount: Math.round((directHourlyRate * standardMinutes) / 60), performanceBonusAmount: 0, resultBonusAmount: 0, allowanceAmount: 0, overtimeAmount: 0, socialInsuranceAmount: 0 };
+    const data = this.costData(periodKey, components, "manual", directHourlyRate);
     const extra = { role: text(input.role) ?? existing?.role ?? null, level: text(input.level) ?? existing?.level ?? null };
     if (existing) await this.prisma.resourceMonthlyCost.update({ where: { id: existing.id }, data: { ...data.values, ...extra } });
     else await this.prisma.resourceMonthlyCost.create({ data: { workspaceId: principal.workspaceId, userId, ...data.create, ...data.values, ...extra } });
-    await this.audit(principal, "pnl.resource_monthly_cost_changed", "resource_monthly_cost", userId, before, { periodKey, totalAmount: data.total, status: "DRAFT", components });
-    const standardMinutes = ctx.standardMinutes(periodKey);
-    return { data: { userId, periodKey, monthlyCostAmount: data.total, hourlyCostRate: standardMinutes > 0 ? (data.total * 60) / standardMinutes : null, status: "DRAFT" }, meta: { persisted: true } };
+    await this.audit(principal, "pnl.resource_monthly_cost_changed", "resource_monthly_cost", userId, before, { periodKey, totalAmount: data.total, hourlyCostRate: data.hourlyCostRate, status: "DRAFT", components });
+    return { data: { userId, periodKey, monthlyCostAmount: data.total, hourlyCostRate: directHourlyRate ?? (standardMinutes > 0 ? (data.total * 60) / standardMinutes : null), status: "DRAFT" }, meta: { persisted: true } };
   }
 
   /** "Duyệt bản nháp": Nháp → Đã duyệt. From here the month's hours of these people stop waiting for a cost rate. */
@@ -689,8 +704,11 @@ export class PnlConfigService {
     const now = this.pnl.now();
     await this.prisma.$transaction(async (tx: any) => {
       for (const row of drafts) {
-        // hourlyCostRate is kept for readers of the column; the P&L always divides the total by the month's standard hours itself.
-        await tx.resourceMonthlyCost.update({ where: { id: row.id }, data: { status: "APPROVED", approvedAt: now, approvedByUserId: principal.subjectId, approvedByName: principal.displayName, hourlyCostRate: standardMinutes > 0 ? Math.round(((num(row.totalMonthlyIncome) * 60) / standardMinutes) * 100) / 100 : null } });
+        // New rows already contain the direct rate. Rows from the old monthly flow have null and keep the legacy fallback.
+        const hourlyCostRate = row.hourlyCostRate === null || row.hourlyCostRate === undefined
+          ? (standardMinutes > 0 ? Math.round(((num(row.totalMonthlyIncome) * 60) / standardMinutes) * 100) / 100 : null)
+          : num(row.hourlyCostRate);
+        await tx.resourceMonthlyCost.update({ where: { id: row.id }, data: { status: "APPROVED", approvedAt: now, approvedByUserId: principal.subjectId, approvedByName: principal.displayName, hourlyCostRate } });
         await this.audit(principal, "pnl.resource_monthly_cost_approved", "resource_monthly_cost", row.userId, { periodKey, status: row.status, totalAmount: num(row.totalMonthlyIncome) }, { periodKey, status: "APPROVED", totalAmount: num(row.totalMonthlyIncome) }, tx);
       }
     });
@@ -708,7 +726,7 @@ export class PnlConfigService {
     const userOf = new Map(codes.map((row) => [String(row.employeeCode).toUpperCase(), row.userId]));
     const existing: any[] = await this.prisma.resourceMonthlyCost.findMany({ where: { workspaceId: principal.workspaceId, periodKey } });
     const errors: PnlStaffCostImportResult["errors"] = [];
-    const valid: Array<{ userId: string; components: { [K in keyof PnlStaffCostComponents]: number } }> = [];
+    const valid: Array<{ userId: string; components: { [K in keyof PnlStaffCostComponents]: number }; hourlyCostRate?: number }> = [];
     const seen = new Set<string>();
     input.rows.forEach((row, index) => {
       const employeeCode = String(row?.employeeCode ?? "").trim();
@@ -719,7 +737,11 @@ export class PnlConfigService {
       if (seen.has(userId)) return fail(`mã ${employeeCode} lặp lại trong file`);
       if (!canApproveCost(principal) && existing.some((item) => item.userId === userId && item.status === "APPROVED")) return fail("chi phí tháng Đã duyệt, cần quyền Duyệt chi phí (COST_APPROVE) để thay");
       try {
-        valid.push({ userId, components: this.parseComponents(row) });
+        const hourlyCostRate = row.hourlyCostRate === undefined || row.hourlyCostRate === null ? undefined : this.parseHourlyRate(row);
+        const components = hourlyCostRate === undefined
+          ? this.parseComponents(row)
+          : { baseSalaryAmount: Math.round((hourlyCostRate * ctx.standardMinutes(periodKey)) / 60), performanceBonusAmount: 0, resultBonusAmount: 0, allowanceAmount: 0, overtimeAmount: 0, socialInsuranceAmount: 0 };
+        valid.push({ userId, components, ...(hourlyCostRate === undefined ? {} : { hourlyCostRate }) });
         seen.add(userId);
       } catch (error) {
         fail(error instanceof BadRequestException ? String(error.message) : "dòng không hợp lệ");
@@ -728,7 +750,7 @@ export class PnlConfigService {
     const result: PnlStaffCostImportResult = { periodKey, at: this.pnl.now().toISOString(), byName: principal.displayName, validCount: valid.length, errors };
     await this.prisma.$transaction(async (tx: any) => {
       for (const row of valid) {
-        const data = this.costData(periodKey, row.components, "import");
+        const data = this.costData(periodKey, row.components, "import", row.hourlyCostRate);
         const current = existing.find((item) => item.userId === row.userId);
         if (current) await tx.resourceMonthlyCost.update({ where: { id: current.id }, data: data.values });
         else await tx.resourceMonthlyCost.create({ data: { workspaceId: principal.workspaceId, userId: row.userId, ...data.create, ...data.values } });
@@ -752,7 +774,7 @@ export class PnlConfigService {
     return {
       data: {
         periodKey,
-        columns: [{ key: "employeeCode", label: "Mã NS", required: true }, { key: "displayName", label: "Nhân sự", required: false }, ...COMPONENT_KEYS.map((key) => ({ key, label: COMPONENT_COLUMNS[key].label, required: key === "baseSalaryAmount" }))],
+        columns: [{ key: "employeeCode", label: "Mã NS", required: true }, { key: "displayName", label: "Nhân sự", required: false }, { key: "hourlyCostRate", label: "Đơn giá giờ (đồng/giờ)", required: true }],
         rows: users.map((user) => ({ employeeCode: codeOf.get(user.id) ?? null, displayName: user.displayName || user.email })).sort(byEmployeeCode)
       }
     };

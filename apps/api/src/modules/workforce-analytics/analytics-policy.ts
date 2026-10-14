@@ -39,14 +39,33 @@ export function resolveAnalyticsPolicy(principal: PrincipalContext): AnalyticsPo
   const roles = new Set(principal.roleCodes ?? []);
   const hiddenFields = [...ANALYTICS_HIDDEN_FIELDS];
 
-  if (roles.has("FOUNDER_GM")) {
+  // The account can retain Admin roles while deliberately working in User
+  // view. Keep that mode private at the API boundary; hiding the nav alone is
+  // not sufficient because a client can still call this endpoint directly.
+  if (principal.viewMode === "user") {
+    return {
+      rowScope: "self",
+      scopeKind: "self",
+      namedWorkforce: true,
+      userBreakdownAllowed: true,
+      identityDimensionsAllowed: true,
+      policyLabel: "member_user_view_self_scope",
+      hiddenFields
+    };
+  }
+
+  // Admin view is a workspace-level view. Business Admin roles (PM, Dx
+  // Director and BD Lead) carry the effective WORKSPACE_ADMIN code, so this
+  // check must run before narrower business-role policies such as
+  // DELIVERY_LEAD or SALES_OWNER.
+  if (roles.has("FOUNDER_GM") || roles.has("WORKSPACE_ADMIN")) {
     return {
       rowScope: "workspace",
       scopeKind: "workspace",
       namedWorkforce: true,
       userBreakdownAllowed: true,
       identityDimensionsAllowed: true,
-      policyLabel: "founder_gm_full_operational",
+      policyLabel: "admin_full_operational",
       hiddenFields
     };
   }

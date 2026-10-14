@@ -55,7 +55,7 @@ function PeopleOfMonth({ detail, moneyVisible }: Readonly<{ detail: PnlProjectMo
             <th scope="col" className={thClass}>Nhân sự</th>
             <th scope="col" className={thNumberClass}>Giờ đã ghi</th>
             <th scope="col" title="Phần giờ đủ điều kiện để quy ra chi phí của dự án" className={thNumberClass}>Giờ đã tính</th>
-            {moneyVisible ? <th scope="col" title="Đơn giá giờ = chi phí nhân sự tháng được duyệt ÷ giờ chuẩn của tháng (đồng mỗi giờ)" className={thNumberClass}>Đơn giá giờ</th> : null}
+            {moneyVisible ? <th scope="col" title="Đơn giá giờ đã nhập/được duyệt (đồng mỗi giờ)" className={thNumberClass}>Đơn giá giờ</th> : null}
             {moneyVisible ? <th scope="col" title="Giờ đã tính vào P&L × đơn giá giờ (triệu đồng)" className={thNumberClass}>Chi phí</th> : null}
             <th scope="col" className={`${thClass} !text-center`}>Dữ liệu</th>
           </tr>

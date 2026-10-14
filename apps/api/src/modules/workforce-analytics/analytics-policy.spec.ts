@@ -35,6 +35,26 @@ describe("resolveAnalyticsPolicy", () => {
     expect(policy.userBreakdownAllowed).toBe(true);
   });
 
+  it.each([
+    [["WORKSPACE_ADMIN"]],
+    [["PM", "WORKSPACE_ADMIN", "DELIVERY_LEAD"]],
+    [["DX_DIRECTOR", "WORKSPACE_ADMIN"]],
+    [["BD_LEAD", "WORKSPACE_ADMIN", "SALES_OWNER"]]
+  ])("gives Admin view %j full workspace scope", (roleCodes) => {
+    const policy = resolveAnalyticsPolicy(principal({ roleCodes }));
+    expect(policy.rowScope).toBe("workspace");
+    expect(policy.scopeKind).toBe("workspace");
+    expect(policy.namedWorkforce).toBe(true);
+    expect(policy.userBreakdownAllowed).toBe(true);
+    expect(policy.identityDimensionsAllowed).toBe(true);
+  });
+
+  it("keeps Admin data private after switching to User view", () => {
+    const policy = resolveAnalyticsPolicy(principal({ roleCodes: ["FOUNDER_GM"], viewMode: "user" }));
+    expect(policy.rowScope).toBe("self");
+    expect(policy.scopeKind).toBe("self");
+  });
+
   it("scopes Delivery Lead to member projects with named workforce", () => {
     const policy = resolveAnalyticsPolicy(principal({ roleCodes: ["DELIVERY_LEAD"] }));
     expect(policy.rowScope).toBe("managed_projects");

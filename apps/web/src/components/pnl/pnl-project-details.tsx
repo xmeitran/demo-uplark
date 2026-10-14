@@ -2,12 +2,14 @@
 
 import { useState, type FormEvent, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, ChevronUp } from "lucide-react";
-import type { PnlHistoryEvent, PnlManualCostInput, PnlManualLine, PnlProjectItemRow } from "@b2b-crm/contracts";
+import type { PnlHistoryEvent, PnlManualCostInput, PnlManualLine, PnlProjectItemRow, PnlProjectResponse } from "@b2b-crm/contracts";
 import { formatMoneyInput, inputClass, labelClass, parseMoneyInput, visibleTreeRows } from "./pnl-cost-shared";
 import { NO_VALUE, formatDateTime, formatExactVnd, formatMillions, formatMonth, formatPercent } from "./pnl-format";
 import {
   NoValue, PnlApiError, cardClass, mutedNoteClass, pnlRequest, primaryButtonClass, secondaryButtonClass
 } from "./pnl-ui";
+import { ProjectValueInlineForm } from "./pnl-project-edit";
+import { projectValueActionLabel } from "./pnl-project-edit-logic";
 
 const PERMISSION_NOTE = "Chỉ nhóm quyền chi phí";
 
@@ -110,7 +112,7 @@ function ManualLines({ projectId, item, months, canEdit, onChanged }: Readonly<{
   item: PnlProjectItemRow;
   months: string[];
   canEdit: boolean;
-  onChanged: () => void;
+  onChanged: () => void | Promise<void>;
 }>) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -170,14 +172,15 @@ function ManualLines({ projectId, item, months, canEdit, onChanged }: Readonly<{
 
 /**
  * Cây khoản mục theo mẫu của dự án, cộng dồn cả dự án, đọc từ trên xuống như một báo cáo lãi lỗ: tên bên trái,
- * số tiền bên phải. Nhóm gập / mở được; "Nguồn số" mở cách tính và — ở dòng Nhập tay — nơi nhập chi phí riêng.
+ * số tiền bên phải. Nhóm gập / mở được; nút bên phải mở nguồn số và nơi nhập doanh thu/chi phí trực tiếp.
  */
-export function ItemTree({ projectId, items, months, canEdit, onChanged }: Readonly<{
+export function ItemTree({ projectId, items, months, canEdit, projectRevenue, onChanged }: Readonly<{
   projectId: string;
   items: PnlProjectItemRow[];
   months: string[];
   canEdit: boolean;
-  onChanged: () => void;
+  onChanged: () => Promise<void>;
+  projectRevenue: PnlProjectResponse["data"]["totals"]["revenue"];
 }>) {
   const [openCode, setOpenCode] = useState<string | null>(null);
   // Level 1 and its direct lines show; deeper groups start folded so the statement stays short.
@@ -191,10 +194,10 @@ export function ItemTree({ projectId, items, months, canEdit, onChanged }: Reado
     <div id="pnl-items-panel">
       {visibleTreeRows(items, collapsed).map((item) => {
         const open = openCode === item.code;
-        // Revenue is technically a manual input too, but it is entered once on
-        // the project revenue tile—not as a monthly project-cost line.
+        const isRevenue = item.source.kind === "revenue";
         const manual = item.method === "MANUAL" && item.source.kind === "manual";
         const top = item.level <= 1;
+        const actionLabel = isRevenue ? projectValueActionLabel(item.amount) : manual ? "Nhập tay" : "Nguồn số";
         return (
           <div key={item.code} data-item-code={item.code} className={`border-t border-border ${top ? "bg-muted/20" : ""}`}>
             <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 px-4 py-2.5 sm:grid-cols-[minmax(0,1fr)_150px_112px] sm:px-5">
@@ -204,26 +207,27 @@ export function ItemTree({ projectId, items, months, canEdit, onChanged }: Reado
                   : <span aria-hidden className="w-5 shrink-0" />}
                 <div className="min-w-0">
                   <p className={`text-sm text-foreground ${top ? "font-bold" : manual ? "font-semibold" : ""}`}>{item.name}</p>
-                  <p className="!mt-0.5 text-xs text-muted-foreground">{item.methodLabel}{manual ? " · nhập chi phí riêng của dự án ở đây" : ""}</p>
+                  <p className="!mt-0.5 text-xs text-muted-foreground">{item.methodLabel}{isRevenue ? " · nhập trực tiếp tại đây" : manual ? " · nhập chi phí riêng của dự án ở đây" : ""}</p>
                 </div>
               </div>
               <p title={item.unit === "VND" ? formatExactVnd(item.amount) : undefined} className={`text-right font-mono text-sm tabular-nums text-foreground ${top ? "font-bold" : "font-semibold"}`}>
-                {item.amount === null ? <NoValue why="Khoản mục này chưa có số: bấm “Nguồn số” để xem vì sao" /> : itemAmount(item)}
+                {item.amount === null ? <NoValue why="Khoản mục này chưa có số: bấm nút bên phải để xem nguồn số và cách nhập" /> : itemAmount(item)}
                 {item.incomplete ? <span title="Có khoản mục con chưa có số nên tổng này chưa đủ" className="ml-1.5 font-sans text-xs font-semibold text-amber-700">chưa đủ</span> : null}
               </p>
-              <button type="button" aria-expanded={open} aria-controls={`pnl-item-${item.code}`} aria-label={`${manual ? "Nhập tay" : "Nguồn số"} của ${item.name}`} onClick={() => setOpenCode(open ? null : item.code)} className="col-span-2 inline-flex h-8 items-center justify-center gap-1 whitespace-nowrap rounded-lg border border-border px-2.5 !text-xs !font-semibold text-muted-foreground transition-colors hover:bg-muted sm:col-span-1">
-                {manual ? "Nhập tay" : "Nguồn số"} {open ? <ChevronUp className="h-3.5 w-3.5" aria-hidden /> : <ChevronDown className="h-3.5 w-3.5" aria-hidden />}
+              <button type="button" aria-expanded={open} aria-controls={`pnl-item-${item.code}`} aria-label={`${actionLabel} của ${item.name}`} onClick={() => setOpenCode(open ? null : item.code)} className={`col-span-2 inline-flex h-8 items-center justify-center gap-1 whitespace-nowrap rounded-lg border px-2.5 !text-xs !font-semibold transition-colors hover:bg-muted sm:col-span-1 ${isRevenue ? "border-primary/30 text-primary" : "border-border text-muted-foreground"}`}>
+                {actionLabel} {open ? <ChevronUp className="h-3.5 w-3.5" aria-hidden /> : <ChevronDown className="h-3.5 w-3.5" aria-hidden />}
               </button>
             </div>
             {open ? (
               <div id={`pnl-item-${item.code}`} className="space-y-3 border-t border-border bg-muted/20 px-4 py-3 sm:px-5">
                 <p className="text-sm text-foreground">Nguồn số: {item.source.description}</p>
-                {item.source.byMonth.length ? (
+                {isRevenue ? <ProjectValueInlineForm projectId={projectId} revenue={projectRevenue} reload={onChanged} canEdit={canEdit} /> : null}
+                {!isRevenue && item.source.byMonth.length ? (
                   <p className="text-xs text-muted-foreground">
                     {item.source.byMonth.map((month) => `${formatMonth(month.periodKey)}: ${formatMillions(month.amount, "table")}`).join(" · ")}
                   </p>
                 ) : null}
-                {manual ? <ManualLines projectId={projectId} item={item} months={months} canEdit={canEdit} onChanged={onChanged} /> : null}
+                {!isRevenue && manual ? <ManualLines projectId={projectId} item={item} months={months} canEdit={canEdit} onChanged={onChanged} /> : null}
               </div>
             ) : null}
           </div>

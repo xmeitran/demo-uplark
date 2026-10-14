@@ -24,6 +24,23 @@ describe("buildTimesheetAlerts", () => {
     const alerts = buildTimesheetAlerts(dataset, [], dataset.generatedAt, filters);
     expect(alerts.map((alert) => alert.id)).toEqual(["missing-logs", "overdue-tasks", "blocked-tasks"]);
     expect(alerts.find((alert) => alert.id === "overdue-tasks")?.count).toBe(1);
+    expect(alerts.find((alert) => alert.id === "missing-logs")?.items).toEqual([
+      {
+        id: "p-1",
+        title: "A",
+        detail: "Chưa ghi giờ hôm nay · mở Timesheet theo nhân sự",
+        href: "/timesheet?person=p-1&from=2026-09-29&to=2026-09-29"
+      }
+    ]);
+    expect(alerts.find((alert) => alert.id === "overdue-tasks")?.items).toEqual([
+      {
+        id: "prj-1:t-1",
+        title: "Task",
+        detail: "PRJ-1 — Project",
+        href: "/tasks/t-1"
+      }
+    ]);
+    expect(alerts.find((alert) => alert.id === "blocked-tasks")?.items[0]?.href).toBe("/tasks/t-1");
   });
 
   it("returns no alerts when the scoped data is healthy", () => {
@@ -48,6 +65,14 @@ describe("buildTimesheetAlerts", () => {
     const log = { id: "l-1", date: "2026-08-10", personId: "p-1", projectId: "prj-1", milestoneId: "m-1", stageId: "s-1", taskId: "t-1", minutes: 90, workGroup: "customer_project" as const, billable: true, note: "" };
     const withHistory = { ...dataset, logs: [log] };
     // Nothing logged in the viewed month, yet 90' all-time against a 60' estimate is over plan.
-    expect(buildTimesheetAlerts(withHistory, [], withHistory.generatedAt, filters).find((alert) => alert.id === "over-plan")?.count).toBe(1);
+    expect(buildTimesheetAlerts(withHistory, [], withHistory.generatedAt, filters).find((alert) => alert.id === "over-plan")).toMatchObject({
+      count: 1,
+      items: [{
+        id: "prj-1",
+        title: "Project",
+        detail: "PRJ-1 · mở Project Sheet để xem chênh lệch giờ",
+        href: "/projects/prj-1?tab=Project%20Sheet"
+      }]
+    });
   });
 });

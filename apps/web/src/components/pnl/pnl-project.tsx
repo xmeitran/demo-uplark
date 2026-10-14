@@ -90,7 +90,7 @@ function StatementRow({ label, hint, amount, why, strong = false, aside }: Reado
  * Khối 3 — "Báo cáo lãi lỗ", trung tâm của trang: nhãn kết quả và lý do ở trên, rồi Doanh thu → Chi phí nhân sự →
  * Chi phí khác → Tổng chi phí → EBIT đọc từ trên xuống; bên dưới là từng khoản mục (mở ra tới từng dòng, nhập tay tại chỗ).
  */
-function ProjectStatement({ data, meta, projectId, onChanged, onEditValue, onOverrideTemplate }: Readonly<{ data: Project; meta: PnlMeta; projectId: string; onChanged: () => void; onEditValue: () => void; onOverrideTemplate: () => void }>) {
+function ProjectStatement({ data, meta, projectId, onChanged, onEditValue, onOverrideTemplate }: Readonly<{ data: Project; meta: PnlMeta; projectId: string; onChanged: () => Promise<void>; onEditValue: () => void; onOverrideTemplate: () => void }>) {
   const { header, totals } = data;
   const { revenue, cost, ebit } = totals;
   const scope = header.scope;
@@ -182,7 +182,7 @@ function ProjectStatement({ data, meta, projectId, onChanged, onEditValue, onOve
           <button type="button" aria-expanded={itemsOpen} aria-controls="pnl-items-panel" onClick={() => setItemsOpen(!itemsOpen)} className={`${secondaryButtonClass} !h-9 !text-xs`}>{itemsOpen ? "Thu gọn" : "Xem khoản mục"}</button>
         ) : <span title="Bạn không thuộc nhóm quyền chi phí nên không mở được mục này." className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><Lock className="h-3.5 w-3.5" aria-hidden />Chỉ nhóm quyền chi phí</span>}
       </div>
-      {data.items && itemsOpen ? <ItemTree projectId={projectId} items={data.items} months={monthsBetween(scope.minPeriodKey, scope.maxPeriodKey)} canEdit={meta.canEdit} onChanged={onChanged} /> : null}
+      {data.items && itemsOpen ? <ItemTree projectId={projectId} items={data.items} months={monthsBetween(scope.minPeriodKey, scope.maxPeriodKey)} canEdit={meta.canEdit} projectRevenue={totals.revenue} onChanged={onChanged} /> : null}
     </section>
   );
 }

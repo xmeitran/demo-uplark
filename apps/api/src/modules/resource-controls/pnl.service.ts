@@ -1002,7 +1002,7 @@ export class PnlService {
       // PL-24: the month is read back with the tree and the on/off switches of today, whatever changes later.
       tree: ctx.tree,
       disabledCodes: Object.fromEntries([...new Set([...fundShares, ...manualLines].map((row) => row.projectId))].map((projectId) => [projectId, [...(ctx.projects.get(projectId)?.disabledCodes ?? [])]])),
-      staffCosts: [...ctx.staffCosts.values()].filter((cost) => cost.periodKey === periodKey && cost.status === "APPROVED").map((cost) => ({ userId: cost.userId, totalAmount: cost.totalAmount })),
+      staffCosts: [...ctx.staffCosts.values()].filter((cost) => cost.periodKey === periodKey && cost.status === "APPROVED").map((cost) => ({ userId: cost.userId, totalAmount: cost.totalAmount, ...(cost.hourlyCostRate === null ? {} : { hourlyCostRate: cost.hourlyCostRate }) })),
       entries: ofMonth.map((entry) => ({ id: entry.id, p: entry.projectId, u: entry.userId, t: entry.taskId, d: entry.dateKey, m: entry.minutes, l1: entry.layer1, l2: ctx.entryMeta.get(entry.id)?.taskTypeLayer2 ?? null, s2: ctx.entryMeta.get(entry.id)?.selectedTaskTypeLayer2 ?? null, rg: entry.roleGroup, s: entry.status, r: entry.reasons })),
       funds: periodRows.map((period) => ({ fundId: period.fundId, name: fundOf.get(period.id)?.name ?? period.fundId, itemCode: fundOf.get(period.id)?.targetItemCode ?? "", amount: num(period.amount) })),
       fundShares: fundShares.map((share) => ({ fundId: share.fundId, projectId: share.projectId, itemCode: share.itemCode, minutes: share.minutes, amount: share.amount })),

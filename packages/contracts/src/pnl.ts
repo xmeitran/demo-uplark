@@ -858,7 +858,7 @@ export interface PnlStaffCostRow {
   periodKey: string;
   components: { [K in keyof PnlStaffCostComponents]: number | null } | null;
   totalAmount: number | null;
-  /** Tổng ÷ giờ chuẩn của tháng, unrounded. Shown for a Nháp row too, but only "Đã duyệt" feeds the P&L. */
+  /** Đơn giá giờ nhập/được duyệt, VND/giờ. Chỉ "Đã duyệt" feeds the P&L. */
   hourlyCostRate: number | null;
   source: "manual" | "import" | "payroll" | "converted_hourly_rate" | null;
   sourceLabel: string | null;
@@ -895,6 +895,8 @@ export interface PnlStaffCostsResponse {
 export interface PnlStaffCostInput extends Partial<PnlStaffCostComponents> {
   userId: string;
   periodKey: string;
+  /** Đơn giá giờ trực tiếp, VND/giờ. Đây là số được nhân với giờ P&L đã ghi nhận. */
+  hourlyCostRate?: number | null;
   /** Legacy single-figure entry: stored as Lương tiêu chuẩn when no component is given. null removes the draft. */
   monthlyCostAmount?: number | null;
   role?: string;
@@ -904,7 +906,7 @@ export interface PnlStaffCostInput extends Partial<PnlStaffCostComponents> {
 export interface PnlStaffCostImportInput {
   periodKey: string;
   /** Rows parsed from the template by the browser. */
-  rows: Array<{ employeeCode: string } & Partial<PnlStaffCostComponents>>;
+  rows: Array<{ employeeCode: string; hourlyCostRate?: number } & Partial<PnlStaffCostComponents>>;
 }
 
 export interface PnlStaffCostImportResult {
@@ -917,14 +919,15 @@ export interface PnlStaffCostImportResult {
 
 /** GET /pnl/staff-costs/template?periodKey= — what the browser needs to build "Tải file mẫu". */
 export interface PnlStaffCostTemplateResponse {
-  data: { periodKey: string; columns: Array<{ key: "employeeCode" | "displayName" | keyof PnlStaffCostComponents; label: string; required: boolean }>; rows: Array<{ employeeCode: string | null; displayName: string }> };
+  data: { periodKey: string; columns: Array<{ key: "employeeCode" | "displayName" | "hourlyCostRate" | keyof PnlStaffCostComponents; label: string; required: boolean }>; rows: Array<{ employeeCode: string | null; displayName: string }> };
 }
 
 /** One month of one person on the profile page (GET /staff-costs?userId=) — the same row as mục 6.7, read per person. */
 export interface StaffMonthlyCostRow {
   periodKey: string;
+  /** Monthly equivalent kept for legacy/payroll display; not used to derive the hourly rate for new entries. */
   monthlyCostAmount: number;
-  /** monthlyCostAmount ÷ standardHours, derived by the API. */
+  /** Đơn giá giờ nhập/được duyệt, VND/giờ. */
   hourlyCostRate: number;
   /** Working days of the month × "Giờ chuẩn một ngày". */
   standardHours: number;

@@ -95,8 +95,8 @@ export interface SnapshotData {
   tree?: CostItemDef[];
   /** Per project with a fund share or a Nhập tay line in the month: the codes switched off for it at the lock (template + override). */
   disabledCodes?: Record<string, string[]>;
-  /** Approved monthly costs: the cost rates of the month. */
-  staffCosts: Array<{ userId: string; totalAmount: number }>;
+  /** Approved costs. New snapshots preserve the direct hourly rate; old snapshots fall back to totalAmount. */
+  staffCosts: Array<{ userId: string; totalAmount: number; hourlyCostRate?: number }>;
   /** Kết quả cổng lọc of every hour of the month. */
   entries: SnapshotEntry[];
   funds: Array<{ fundId: string; name: string; itemCode: string; amount: number }>;
@@ -158,8 +158,8 @@ export interface PnlContext {
   tree: CostItemDef[];
   usingDefaultTree: boolean;
   templates: Map<string, ItemTemplateDef>;
-  /** Approved and draft monthly costs, by rateKey(userId, periodKey). */
-  staffCosts: Map<string, { userId: string; periodKey: string; totalAmount: number; status: string }>;
+  /** Approved and draft costs, by rateKey(userId, periodKey). New rows carry a direct VND/hour rate; old rows fall back to the monthly amount. */
+  staffCosts: Map<string, { userId: string; periodKey: string; totalAmount: number; hourlyCostRate: number | null; status: string }>;
   /** Confirmed fund shares: live ones for open months, the snapshot's for locked months. */
   fundShares: Array<{ projectId: string; periodKey: string; itemCode: string; amount: number; minutes: number; fundId: string; counted?: boolean }>;
   unallocatedFundPeriods: Set<string>;
@@ -380,18 +380,18 @@ export async function loadPnlContext(prisma: any, workspaceId: string, scope: Pn
   // Without a project scope every monthly cost is needed: the company lines start from the month's whole staff cost (PL-12).
   const costWhere = { workspaceId, ...(scope.periodKeys?.length ? { periodKey: { in: scope.periodKeys } } : scope.projectIds ? { userId: { in: userIds } } : {}) };
   const [costRows, fundPeriodRows, allocationRows, manualRows] = await Promise.all([
-    prisma.resourceMonthlyCost.findMany({ where: costWhere, select: { userId: true, periodKey: true, totalMonthlyIncome: true, status: true } }),
+    prisma.resourceMonthlyCost.findMany({ where: costWhere, select: { userId: true, periodKey: true, totalMonthlyIncome: true, hourlyCostRate: true, status: true } }),
     prisma.pnlFundPeriod.findMany({ where: { workspaceId }, select: { id: true, fundId: true, periodKey: true, status: true } }),
     prisma.pnlFundAllocation.findMany({ where: { workspaceId, ...(scope.projectIds ? inProjects : {}) } }),
     prisma.projectCost.findMany({ where: { workspaceId, costType: { not: "LABOR" }, ...(scope.projectIds ? inProjects : {}) } })
   ]);
-  const staffCosts = new Map<string, { userId: string; periodKey: string; totalAmount: number; status: string }>(costRows.map((row: any) => [rateKey(row.userId, row.periodKey), { userId: row.userId, periodKey: row.periodKey, totalAmount: num(row.totalMonthlyIncome), status: String(row.status) }]));
+  const staffCosts = new Map<string, { userId: string; periodKey: string; totalAmount: number; hourlyCostRate: number | null; status: string }>(costRows.map((row: any) => [rateKey(row.userId, row.periodKey), { userId: row.userId, periodKey: row.periodKey, totalAmount: num(row.totalMonthlyIncome), hourlyCostRate: row.hourlyCostRate === null || row.hourlyCostRate === undefined ? null : num(row.hourlyCostRate), status: String(row.status) }]));
 
   const standardDayMinutes = (periodKey: string) => locked.get(periodKey)?.snapshot?.standardDayMinutes ?? Math.round((params.number("standardDayHours", null, periodKey) ?? 8) * 60);
   const workingDays = (periodKey: string) => locked.get(periodKey)?.snapshot?.workingDays ?? workingDaysOfMonth(periodKey, dayOffKeys);
   const standardMinutes = (periodKey: string) => locked.get(periodKey)?.snapshot?.standardMinutes ?? standardMonthMinutes(periodKey, dayOffKeys, standardDayMinutes(periodKey));
   const snapshotRates = new Map<string, CostRate>();
-  for (const [periodKey, lock] of locked) for (const cost of lock.snapshot?.staffCosts ?? []) snapshotRates.set(rateKey(cost.userId, periodKey), { monthlyAmount: cost.totalAmount, standardMinutes: lock.snapshot!.standardMinutes });
+  for (const [periodKey, lock] of locked) for (const cost of lock.snapshot?.staffCosts ?? []) snapshotRates.set(rateKey(cost.userId, periodKey), { monthlyAmount: cost.totalAmount, standardMinutes: lock.snapshot!.standardMinutes, hourlyAmount: cost.hourlyCostRate ?? undefined });
   const rate = (userId: string, periodKey: string) => (locked.get(periodKey)?.snapshot ? snapshotRates.get(rateKey(userId, periodKey)) : costRateOf(staffCosts.get(rateKey(userId, periodKey)), standardMinutes(periodKey)));
 
   // Step 3 for every hour.

@@ -246,7 +246,7 @@ export function DateRangeFilter({ value, onChange, presets: ownPresets, maxDays,
   }, [open, tooLong]);
 
   return (
-    <div ref={rootRef} className="relative min-w-[15rem]">
+    <div ref={rootRef} className="relative w-full min-w-0">
       <button
         ref={triggerRef}
         type="button"

@@ -24,7 +24,7 @@ export function standardMonthMinutes(periodKey: string, dayOffKeys: ReadonlySet<
 }
 
 // ---------------------------------------------------------------------------
-// Step 2 — cost rate (PL-08, PL-09): approved monthly cost ÷ standard hours of THAT month
+// Step 2 — cost rate (PL-08, PL-09): approved hourly rate × logged hours
 // ---------------------------------------------------------------------------
 
 /**
@@ -32,29 +32,31 @@ export function standardMonthMinutes(periodKey: string, dayOffKeys: ReadonlySet<
  * One per person per month; a month without an approved cost has none — never a neighbouring month's (PL-10).
  */
 export interface CostRate {
-  /** Tổng chi phí tháng of the "Đã duyệt" version, VND. */
+  /** Legacy monthly amount, kept for rows written before the direct hourly-rate flow. */
   monthlyAmount: number;
   /** Giờ chuẩn của tháng, minutes. */
   standardMinutes: number;
+  /** Direct hourly rate, VND/hour. New rows use this as the source of truth. */
+  hourlyAmount?: number;
 }
 
 export const STAFF_COST_STATUS_LABELS = { DRAFT: "Nháp", APPROVED: "Đã duyệt", LOCKED: "Đã khóa", NONE: "Chưa có" } as const;
 export type StaffCostStatus = keyof typeof STAFF_COST_STATUS_LABELS;
 
 /** Only an approved version of a month with standard hours yields a rate. */
-export function costRateOf(cost: { totalAmount: number; status: string } | undefined, standardMinutes: number): CostRate | undefined {
+export function costRateOf(cost: { totalAmount: number; hourlyCostRate?: number | null; status: string } | undefined, standardMinutes: number): CostRate | undefined {
   if (!cost || cost.status !== "APPROVED" || !(standardMinutes > 0)) return undefined;
-  return { monthlyAmount: cost.totalAmount, standardMinutes };
+  return { monthlyAmount: cost.totalAmount, standardMinutes, hourlyAmount: cost.hourlyCostRate ?? undefined };
 }
 
 /** VND per hour, unrounded. */
 export function hourlyRate(rate: CostRate): number {
-  return (rate.monthlyAmount * 60) / rate.standardMinutes;
+  return rate.hourlyAmount ?? (rate.monthlyAmount * 60) / rate.standardMinutes;
 }
 
 /** Cost of `minutes` at a rate, rounded to the đồng. The rounding unit of the engine is one person × one month × one bucket. */
 export function costOfMinutes(minutes: number, rate: CostRate | undefined): number | undefined {
-  return rate ? Math.round((minutes * rate.monthlyAmount) / rate.standardMinutes) : undefined;
+  return rate ? Math.round((minutes * hourlyRate(rate)) / 60) : undefined;
 }
 
 export const rateKey = (userId: string, periodKey: string) => `${userId}|${periodKey}`;

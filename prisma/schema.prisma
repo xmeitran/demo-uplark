@@ -2726,7 +2726,7 @@ model ResourceMonthlyCost {
   pitAmount             Decimal         @default(0)
   otherAmount           Decimal         @default(0)
   totalMonthlyIncome    Decimal         @default(0)
-  /// D-34: derived when the month's cost is saved = totalMonthlyIncome / (Mon-Fri days of the month x "Giờ chuẩn một ngày").
+  /// Direct VND/hour rate entered and approved for the month. Legacy rows may be null and use totalMonthlyIncome as fallback.
   hourlyCostRate        Decimal?
   status                String          @default("DRAFT")
   /// manual | converted_hourly_rate ("quy đổi từ đơn giá giờ", rows converted from CostRateProfile)

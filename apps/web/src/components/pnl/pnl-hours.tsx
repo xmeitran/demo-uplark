@@ -57,7 +57,7 @@ function EntryTable({ entries, moneyVisible, showDeadline, onReset }: Readonly<{
             <tr className="bg-muted/30">
               <th scope="col" title="Dự án và task của dòng giờ" className={thClass}>Dự án · Task</th>
               <th scope="col" className={thClass}>Nhân sự · Ngày ghi</th>
-              <th scope="col" title={moneyVisible ? "Số giờ; dòng dưới là đơn giá giờ = chi phí nhân sự tháng được duyệt ÷ giờ chuẩn của tháng" : "Số giờ đã ghi"} className={thNumberClass}>Giờ</th>
+              <th scope="col" title={moneyVisible ? "Số giờ được tính; chi phí P&L = đơn giá giờ đã duyệt × số giờ" : "Số giờ đã ghi"} className={thNumberClass}>Giờ</th>
               <th scope="col" title="Giờ đã tính vào P&L, đang chờ xử lý hay không tính — kèm lý do" className={thClass}>Trạng thái · Lý do</th>
               {showDeadline ? <th scope="col" title="Ngày cuối cùng nên xử lý xong giờ này và PIC chịu trách nhiệm xử lý" className={thClass}>Hạn · Người xử lý</th> : null}
               <th scope="col" title="Việc cần làm để giờ này được tính, và nơi làm" className={thClass}>Việc cần làm</th>

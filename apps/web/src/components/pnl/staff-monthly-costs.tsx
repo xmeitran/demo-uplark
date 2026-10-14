@@ -4,25 +4,16 @@ import Link from "next/link";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Pencil } from "lucide-react";
-import type { PnlStaffCostApproveInput, PnlStaffCostComponents, PnlStaffCostImportInput, PnlStaffCostImportResult, PnlStaffCostInput, PnlStaffCostRow, PnlStaffCostsResponse, PnlStaffCostTemplateResponse, StaffMonthlyCostRow, StaffMonthlyCostsResponse } from "@b2b-crm/contracts";
+import type { PnlStaffCostApproveInput, PnlStaffCostImportInput, PnlStaffCostImportResult, PnlStaffCostInput, PnlStaffCostRow, PnlStaffCostsResponse, PnlStaffCostTemplateResponse, StaffMonthlyCostRow, StaffMonthlyCostsResponse } from "@b2b-crm/contracts";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
 import { FilterBar, FilterField, MonthFilter, MultiSelectFilter, SearchFilter, matchesAny } from "@/components/filters";
 import { PageHeader, pageMainClassName } from "@/components/page-header";
 import { currentPeriodKey, formatMoneyInput, importResultText, inputClass, mapStaffCostSheet, parseMoneyInput, periodLabel, type StaffCostImportRow } from "./pnl-cost-shared";
-import { formatDay, formatDong, formatHoursValue, formatMillions, formatMonth } from "./pnl-format";
+import { formatDay, formatDong, formatHoursValue, formatMonth } from "./pnl-format";
 import { Field, linkClass, LoadingBlock, ModalActions, numberCellClass, PnlModal, ReadOnlyNote, SaveFeedback, smallButton, Strip, tableCellClass, tableHeadClass, toneClass, useSave } from "./pnl-setup-ui";
 import { cardClass, PnlLoadError, pnlRequest, usePnlLoad } from "./pnl-ui";
 
-/** The six cost components, named after the payroll system's output (mục 6.7 khối 3), in column order. */
-const COMPONENTS: Array<{ key: keyof PnlStaffCostComponents; head: string; label: string }> = [
-  { key: "baseSalaryAmount", head: "Lương TC", label: "Lương tiêu chuẩn" },
-  { key: "performanceBonusAmount", head: "Thưởng HS", label: "Thưởng hiệu suất" },
-  { key: "resultBonusAmount", head: "Thưởng HQ", label: "Thưởng hiệu quả" },
-  { key: "allowanceAmount", head: "Phụ cấp", label: "Phụ cấp" },
-  { key: "overtimeAmount", head: "OT", label: "OT" },
-  { key: "socialInsuranceAmount", head: "BHXH", label: "BHXH công ty đóng" }
-];
 const STATUS_TONE: Record<PnlStaffCostRow["status"], string> = { APPROVED: toneClass.ok, DRAFT: toneClass.info, NONE: toneClass.warn, LOCKED: "text-slate-600" };
 const PERIOD_KEY = /^\d{4}-(0[1-9]|1[0-2])$/;
 const FORBIDDEN = "Chỉ nhóm quyền chi phí xem và sửa chi phí nhân sự theo tháng. Liên hệ Admin để được cấp quyền chi phí.";
@@ -30,13 +21,13 @@ const head = `${tableHeadClass} !px-2.5 whitespace-nowrap`;
 const cell = `${tableCellClass} !px-2.5 whitespace-nowrap`;
 const num = `${numberCellClass} !px-2.5 whitespace-nowrap`;
 
-type EditTarget = Pick<PnlStaffCostRow, "userId" | "periodKey" | "components" | "status"> & { displayName?: string; employeeCode?: string | null };
+type EditTarget = Pick<PnlStaffCostRow, "userId" | "periodKey" | "components" | "hourlyCostRate" | "status"> & { displayName?: string; employeeCode?: string | null };
 
 function HourlyRateCell({ rate, status }: Readonly<{ rate: number | null; status: PnlStaffCostRow["status"] | StaffMonthlyCostRow["status"] }>) {
-  if (rate === null) return <span title="Chưa có tổng chi phí tháng để tính đơn giá giờ">—</span>;
+  if (rate === null) return <span title="Chưa nhập đơn giá giờ">—</span>;
   const draft = status === "DRAFT";
   return (
-    <span title={draft ? "Mức dự kiến. P&L chỉ dùng sau khi bản chi phí tháng được duyệt." : "Tổng chi phí tháng đã duyệt ÷ giờ chuẩn của tháng"}>
+    <span title={draft ? "Đơn giá giờ đang chờ duyệt. P&L chỉ dùng sau khi bản ghi được duyệt." : "Đơn giá giờ đã nhập/được duyệt; P&L nhân số này với số giờ được tính."}>
       {formatDong(Math.round(rate))}
       {draft ? <span className="block text-[11px] font-normal text-amber-700">chờ duyệt</span> : null}
     </span>
@@ -135,7 +126,7 @@ export function StaffCostsPage() {
 
         <Strip tone={data.counts.draft ? "warn" : "muted"}>
           <p className="font-semibold">Cách đưa chi phí vào P&amp;L</p>
-          <p className="mt-0.5 text-xs">Nhập tổng chi phí tháng → Lưu bản nháp → Duyệt bản nháp. Đơn giá giờ được hệ thống tự tính = tổng chi phí tháng đã duyệt ÷ giờ chuẩn tháng; bản Nháp chưa được dùng trong P&amp;L{data.counts.draft ? ` · hiện có ${data.counts.draft} bản nháp cần duyệt` : ""}.</p>
+          <p className="mt-0.5 text-xs">Nhập đơn giá cho 1 giờ làm việc → Lưu bản nháp → Duyệt bản nháp. P&amp;L sẽ lấy đơn giá giờ đã duyệt × số giờ được tính; bản Nháp chưa được dùng{data.counts.draft ? ` · hiện có ${data.counts.draft} bản nháp cần duyệt` : ""}.</p>
         </Strip>
 
         {/* ① Thanh kỳ và tiến độ */}
@@ -173,8 +164,7 @@ export function StaffCostsPage() {
           <table className="w-full min-w-[940px] text-sm">
             <thead><tr>
               <th scope="col" className={head}>Mã NS</th><th scope="col" className={head}>Nhân sự</th>
-              {COMPONENTS.map((component) => <th key={component.key} scope="col" title={component.label} className={`${head} !text-right`}>{component.head}</th>)}
-              <th scope="col" title="Tổng sáu cấu phần (triệu đồng)" className={`${head} !text-right`}>Tổng</th><th scope="col" title="Đơn giá giờ (cost rate) = Tổng ÷ giờ chuẩn của tháng, đồng mỗi giờ" className={`${head} !text-right`}>Đơn giá giờ</th><th scope="col" className={head}>Nguồn</th><th scope="col" className={head}>Trạng thái</th>
+              <th scope="col" title="Số tiền cho một giờ làm việc" className={`${head} !text-right`}>Đơn giá giờ</th><th scope="col" className={`${head} !text-right`}>Giờ đã ghi</th><th scope="col" className={head}>Nguồn</th><th scope="col" className={head}>Trạng thái</th>
               <th scope="col" className={head}><span className="sr-only">Thao tác</span></th>
             </tr></thead>
             <tbody>
@@ -186,8 +176,8 @@ export function StaffCostsPage() {
                     <td className={`${cell} font-mono text-xs`}>{row.employeeCode ?? <span className={toneClass.warn}>Chưa gán mã</span>}</td>
                     <td className={cell}><Link href={`/users/${encodeURIComponent(row.userId)}`} className="font-medium !text-foreground hover:!text-primary hover:underline">{row.displayName}</Link>{row.department ? <span className="block text-[11px] text-muted-foreground">{row.department}</span> : null}</td>
                     {row.components
-                      ? <>{COMPONENTS.map((component) => <td key={component.key} className={num}>{formatMillions(row.components?.[component.key], "table")}</td>)}<td className={`${num} font-bold`}>{formatMillions(row.totalAmount, "table")}</td><td className={num}><HourlyRateCell rate={row.hourlyCostRate} status={row.status} /></td></>
-                      : <td colSpan={8} className={`${cell} ${waiting ? "font-medium text-amber-700" : "text-muted-foreground"}`}>{waiting ? waitingText : "Chưa nhập chi phí tháng này"}</td>}
+                      ? <><td className={`${num} font-semibold`}><HourlyRateCell rate={row.hourlyCostRate} status={row.status} /></td><td className={num}>{formatHoursValue(row.loggedMinutes)} giờ</td></>
+                      : <td colSpan={2} className={`${cell} ${waiting ? "font-medium text-amber-700" : "text-muted-foreground"}`}>{waiting ? waitingText : "Chưa nhập đơn giá giờ tháng này"}</td>}
                     <td className={cell}>{row.sourceLabel ?? ""}</td>
                     <td className={cell}>
                       <span className={`font-medium ${STATUS_TONE[row.status]}`}>{row.statusLabel}</span>
@@ -232,8 +222,8 @@ export function StaffCostsPage() {
         <PageHeader
           back={{ href: "/users", label: "Nhân sự" }}
           title="Chi phí nhân sự theo tháng"
-          subtitle="Nhập tổng chi phí theo tháng, duyệt một lần, rồi hệ thống tự tính đơn giá giờ cho P&L."
-          meta="Chỉ nhóm quyền chi phí · các ô nhập là đồng · bảng hiển thị theo triệu đồng"
+          subtitle="Nhập đơn giá cho một giờ làm việc, duyệt một lần, rồi P&L nhân với số giờ được tính."
+          meta="Chỉ nhóm quyền chi phí · đơn vị nhập là đồng/giờ"
         />
         {body}
       </main>
@@ -241,17 +231,21 @@ export function StaffCostsPage() {
   );
 }
 
-/** Nhập / sửa một dòng: sáu cấu phần (đồng), luôn lưu ở trạng thái Nháp; gán mã nhân sự của hệ thống lương. */
+/** Nhập / sửa đơn giá giờ cho một người, luôn lưu ở trạng thái Nháp; gán mã nhân sự của hệ thống lương. */
 function StaffCostModal({ target, locked, reload, onClose }: Readonly<{ target: EditTarget; locked: boolean; reload: () => Promise<void>; onClose: () => void }>) {
   const save = useSave(reload);
-  const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(COMPONENTS.map((component) => { const value = target.components?.[component.key]; return [component.key, value === null || value === undefined ? "" : formatMoneyInput(String(value))]; })));
+  const [hourlyCostRate, setHourlyCostRate] = useState(() => target.hourlyCostRate === null || target.hourlyCostRate === undefined ? "" : formatMoneyInput(String(Math.round(target.hourlyCostRate))));
   const codeEditable = target.employeeCode !== undefined;
   const [employeeCode, setEmployeeCode] = useState(target.employeeCode ?? "");
   const month = periodLabel(target.periodKey).toLowerCase();
 
   async function submit() {
-    const input: PnlStaffCostInput = { userId: target.userId, periodKey: target.periodKey };
-    for (const component of COMPONENTS) input[component.key] = parseMoneyInput(values[component.key]) ?? 0;
+    const parsedRate = parseMoneyInput(hourlyCostRate);
+    if (parsedRate === undefined) {
+      await save.run(async () => { throw new Error("Vui lòng nhập đơn giá giờ."); });
+      return;
+    }
+    const input: PnlStaffCostInput = { userId: target.userId, periodKey: target.periodKey, hourlyCostRate: parsedRate };
     const ok = await save.run(async () => {
       if (codeEditable && employeeCode.trim() && employeeCode.trim() !== (target.employeeCode ?? "")) await pnlRequest("/api/pnl/staff-costs/employee-code", { method: "PUT", body: { userId: target.userId, employeeCode: employeeCode.trim() } }, "Không gán được mã nhân sự.");
       await pnlRequest("/api/pnl/staff-costs", { method: "PUT", body: input }, "Không lưu được chi phí tháng.");
@@ -267,17 +261,13 @@ function StaffCostModal({ target, locked, reload, onClose }: Readonly<{ target: 
   return (
     <PnlModal title={`Chi phí ${month}${target.displayName ? ` · ${target.displayName}` : ""}`} onClose={onClose} onSubmit={() => void submit()}
       footer={<>{target.status === "DRAFT" ? <button type="button" className="mr-auto text-sm font-semibold text-destructive hover:underline" disabled={save.busy} onClick={() => void removeDraft()}>Xóa bản nháp</button> : null}<ModalActions onCancel={onClose} busy={save.busy} disabled={locked} submitLabel="Lưu bản nháp" /></>}>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {COMPONENTS.map((component) => (
-          <Field key={component.key} label={`${component.label} (đồng)`} htmlFor={`staff-cost-${component.key}`}>
-            <input id={`staff-cost-${component.key}`} inputMode="numeric" autoComplete="off" disabled={locked} value={values[component.key]} placeholder="0" onChange={(event) => setValues((current) => ({ ...current, [component.key]: formatMoneyInput(event.target.value) }))} className={`${inputClass} text-right font-mono tabular-nums`} />
-          </Field>
-        ))}
-      </div>
+      <Field label="Đơn giá giờ (đồng/giờ)" htmlFor="staff-cost-hourly-rate">
+        <input id="staff-cost-hourly-rate" inputMode="numeric" autoComplete="off" disabled={locked} value={hourlyCostRate} placeholder="Ví dụ: 150.000" onChange={(event) => setHourlyCostRate(formatMoneyInput(event.target.value))} className={`${inputClass} text-right font-mono tabular-nums`} />
+      </Field>
       {codeEditable ? <Field label="Mã nhân sự (đúng mã của hệ thống lương)" htmlFor="staff-cost-code"><input id="staff-cost-code" value={employeeCode} maxLength={40} onChange={(event) => setEmployeeCode(event.target.value)} className={inputClass} placeholder="Ví dụ: NS-012" /></Field> : null}
       <Strip tone="muted">
-        <p className="font-semibold">Bạn nhập tổng chi phí, không nhập đơn giá giờ</p>
-        <p className="mt-0.5 text-xs">Các ô nhập là đồng. Ví dụ tổng 150.000đ và tháng có 176 giờ chuẩn → đơn giá giờ khoảng 852đ/giờ. Lưu xong sẽ là Nháp; cần Duyệt bản nháp thì P&amp;L mới sử dụng{target.status === "APPROVED" ? "; bản Đã duyệt hiện tại sẽ quay về Nháp và cần duyệt lại" : ""}.</p>
+        <p className="font-semibold">P&amp;L tính theo đơn giá giờ</p>
+        <p className="mt-0.5 text-xs">Ví dụ: 150.000đ/giờ × 4 giờ được tính = 600.000đ chi phí. Lưu xong sẽ là Nháp; cần Duyệt bản nháp thì P&amp;L mới sử dụng{target.status === "APPROVED" ? "; bản Đã duyệt hiện tại sẽ quay về Nháp và cần duyệt lại" : ""}.</p>
       </Strip>
       <SaveFeedback error={save.error} message={null} />
     </PnlModal>
@@ -296,14 +286,14 @@ export function StaffMonthlyCosts({ userId }: Readonly<{ userId: string; default
   const rows = api.data?.data ?? [];
   const lockedKeys = api.data?.meta.lockedPeriodKeys ?? [];
   const canEdit = Boolean(api.data?.meta.canEdit);
-  const open = (periodKey: string, row?: StaffMonthlyCostRow) => setEditing({ userId, periodKey, components: row?.components ?? null, status: row?.status ?? "NONE" });
+  const open = (periodKey: string, row?: StaffMonthlyCostRow) => setEditing({ userId, periodKey, components: row?.components ?? null, hourlyCostRate: row?.hourlyCostRate ?? null, status: row?.status ?? "NONE" });
 
   return (
     <section aria-labelledby="staff-cost-title" className={cardClass}>
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-5">
         <div className="min-w-0">
           <h2 id="staff-cost-title" className="!text-sm font-bold text-foreground">Chi phí theo tháng</h2>
-          <p className="mt-1 text-xs text-muted-foreground">Chỉ nhóm quyền chi phí xem và sửa · các ô nhập là đồng, bảng hiển thị theo triệu đồng. Đơn giá giờ là số tự tính = tổng chi phí tháng ÷ giờ chuẩn; chỉ bản Đã duyệt được dùng cho P&amp;L. Cùng bảng với <Link href="/users/costs" className={linkClass}>Chi phí nhân sự theo tháng</Link>.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Chỉ nhóm quyền chi phí xem và sửa · nhập đơn giá đồng/giờ. P&amp;L tính đơn giá giờ đã duyệt × số giờ được tính. Cùng bảng với <Link href="/users/costs" className={linkClass}>Chi phí nhân sự theo tháng</Link>.</p>
         </div>
         {canEdit ? (
           <div className="flex flex-wrap items-center gap-2">
@@ -325,8 +315,7 @@ export function StaffMonthlyCosts({ userId }: Readonly<{ userId: string; default
         <table className="w-full min-w-[900px] text-sm">
           <thead><tr>
             <th scope="col" className={head}>Tháng</th>
-            {COMPONENTS.map((component) => <th key={component.key} scope="col" title={component.label} className={`${head} !text-right`}>{component.head}</th>)}
-            <th scope="col" className={`${head} !text-right`}>Tổng</th><th scope="col" title="Đơn giá giờ (cost rate) = Tổng ÷ giờ chuẩn của tháng, đồng mỗi giờ" className={`${head} !text-right`}>Đơn giá giờ</th><th scope="col" className={head}>Nguồn</th><th scope="col" className={head}>Trạng thái</th>
+            <th scope="col" title="Số tiền cho một giờ làm việc" className={`${head} !text-right`}>Đơn giá giờ</th><th scope="col" className={`${head} !text-right`}>Giờ chuẩn</th><th scope="col" className={head}>Nguồn</th><th scope="col" className={head}>Trạng thái</th>
             <th scope="col" className={head}><span className="sr-only">Thao tác</span></th>
           </tr></thead>
           <tbody>{rows.map((row) => {
@@ -334,9 +323,8 @@ export function StaffMonthlyCosts({ userId }: Readonly<{ userId: string; default
             return (
               <tr key={row.periodKey} className="hover:bg-muted/25">
                 <td className={`${cell} font-semibold`}>{formatMonth(row.periodKey)}</td>
-                {COMPONENTS.map((component) => <td key={component.key} className={num}>{formatMillions(row.components[component.key], "table")}</td>)}
-                <td className={`${num} font-bold`}>{formatMillions(row.monthlyCostAmount, "table")}</td>
-                <td className={num}><HourlyRateCell rate={row.hourlyCostRate} status={row.status} /></td>
+                <td className={`${num} font-semibold`}><HourlyRateCell rate={row.hourlyCostRate} status={row.status} /></td>
+                <td className={num}>{formatHoursValue(row.standardHours * 60)} giờ</td>
                 <td className={cell}>{row.sourceLabel}</td>
                 <td className={`${cell} font-medium ${STATUS_TONE[status]}`}>{row.statusLabel}</td>
                 <td className={`${cell} text-right`}>{canEdit && !row.locked && status !== "LOCKED" ? <button type="button" aria-label={`Sửa chi phí ${periodLabel(row.periodKey).toLowerCase()}`} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-primary" onClick={() => open(row.periodKey, row)}><Pencil className="h-3.5 w-3.5" aria-hidden /></button> : null}</td>

@@ -488,6 +488,16 @@ describe("lớp 1 — Hồ sơ nhân sự › Chi phí theo tháng (PL-08, mục
     expect(audits[2]).toMatchObject({ actorUserId: "u-admin", before: { totalAmount: 27_280_000, status: "APPROVED" }, after: { totalAmount: 25_200_000, status: "DRAFT" } }); // giá trị trước và sau
   });
 
+  it("đơn giá giờ nhập trực tiếp được nhân với giờ đã ghi nhận", async () => {
+    const s = scenario();
+    const saved = await s.config.setStaffCost({ userId: "u-b", periodKey: "2026-09", hourlyCostRate: 150_000 }, founder);
+    expect(saved.data).toMatchObject({ hourlyCostRate: 150_000, status: "DRAFT" });
+    expect(s.db.table("resourceMonthlyCost").find((row) => row.userId === "u-b")).toMatchObject({ hourlyCostRate: 150_000, status: "DRAFT" });
+    await s.config.approveStaffCosts({ periodKey: "2026-09" }, founder);
+    const month = (await s.project()).months.rows.find((row) => row.periodKey === "2026-09")!;
+    expect(month.laborCostAmount).toBe(5_010_000 + Math.round(105.5 * 150_000));
+  });
+
   it("validation: a month key, a known person, non-negative components, Lương tiêu chuẩn required", async () => {
     const s = scenario();
     await expect(s.config.setStaffCost({ userId: "u-b", periodKey: "09/2026", baseSalaryAmount: 1 }, founder)).rejects.toThrow("YYYY-MM");
@@ -522,7 +532,7 @@ describe("lớp 1 — Hồ sơ nhân sự › Chi phí theo tháng (PL-08, mục
     const missing = (await s.config.importStaffCosts({ periodKey: "2026-09", rows: [{ employeeCode: "NS-027", allowanceAmount: 1 }] }, founder)).data;
     expect(missing).toMatchObject({ validCount: 0, errors: [{ rowNumber: 1, employeeCode: "NS-027", reason: "thiếu cấu phần bắt buộc: Lương tiêu chuẩn." }] });
     const template = (await s.config.staffCostTemplate({ periodKey: "2026-09" }, founder)).data;
-    expect(template.columns.map((column) => column.label)).toEqual(["Mã NS", "Nhân sự", "Lương tiêu chuẩn", "Thưởng hiệu suất", "Thưởng hiệu quả", "Phụ cấp", "OT", "BHXH công ty đóng"]);
+    expect(template.columns.map((column) => column.label)).toEqual(["Mã NS", "Nhân sự", "Đơn giá giờ (đồng/giờ)"]);
     expect(template.rows.slice(0, 2)).toEqual([{ employeeCode: "NS-027", displayName: "Nhân sự B" }, { employeeCode: "NS-044", displayName: "BD-1" }]);
   });
 

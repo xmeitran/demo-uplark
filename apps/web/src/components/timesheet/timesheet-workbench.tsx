@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangle, Download } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Download } from "lucide-react";
 import { CrmSelect } from "@/components/crm-workspace/crm-select";
 import { AdvancedFilters, DateRangeFilter, FilterBar, FilterField, MonthFilter, MultiSelectFilter, PersonFilter, SearchFilter, fromCsvParam, standardDatePresets, type DateRange } from "@/components/filters";
 import { HeaderButton, PageHeader } from "@/components/page-header";
@@ -346,9 +347,30 @@ export function TimesheetWorkbench() {
               <span className={`mt-0.5 inline-flex h-7 min-w-7 items-center justify-center rounded-full px-2 text-[11px] font-bold ${alert.tone === "danger" ? "bg-destructive/10 text-destructive" : alert.tone === "warning" ? "bg-warning/10 text-warning" : "bg-info/10 text-info"}`}>
                 {alert.count}
               </span>
-              <div>
+              <div className="min-w-0 flex-1">
                 <p className="text-[12.5px] font-semibold text-foreground">{alert.label}</p>
                 <p className="mt-0.5 text-[11px] text-muted-foreground">{alert.detail}</p>
+                <div className="mt-3 space-y-2">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">Chi tiết ({alert.items.length})</p>
+                  <div className="space-y-1.5" role="list">
+                    {alert.items.map((item) => (
+                      <Link
+                        key={item.id}
+                        href={item.href}
+                        onClick={() => setAlertsOpen(false)}
+                        role="listitem"
+                        aria-label={`Mở ${item.title}`}
+                        className="group flex min-w-0 items-center gap-3 rounded-lg border border-border bg-background px-3 py-2 transition-colors hover:border-primary/40 hover:bg-primary/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[12px] font-semibold text-foreground group-hover:text-primary">{item.title}</span>
+                          <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{item.detail}</span>
+                        </span>
+                        <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-primary" aria-hidden />
+                      </Link>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           ))}
