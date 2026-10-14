@@ -1470,7 +1470,7 @@ export interface CreateTaskTimeEntryInput {
   workType?: string;
   approvalStatus?: string;
   note?: string;
-  /** Required. Layer 2 chosen by the person logging (P&L spec 12/10 point 5). */
+  /** Legacy classification metadata; time logging does not require this field. */
   selectedTaskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE";
 }
 

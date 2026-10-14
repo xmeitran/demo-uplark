@@ -5,7 +5,7 @@ import { allowedPerformers } from "@/lib/task-people-policy";
 import { defaultWorkLogDate } from "@/lib/work-log-date";
 import {
   TASK_TYPE_LAYER1_FIELD_LABEL, TASK_TYPE_LAYER1_OPTIONS, TASK_TYPE_LAYER2_FIELD_LABEL, TASK_TYPE_PENDING_LABEL,
-  defaultSelectedLayer2, layer2OptionsForTask, taskTypeLayer1Label, taskTypeLayer2Label, type TaskTypeLayer1
+  layer2OptionsForTask, taskTypeLayer1Label, taskTypeLayer2Label, type TaskTypeLayer1
 } from "@/lib/task-classification";
 import { useTaskPeople } from "@/hooks/use-task-people";
 
@@ -1804,10 +1804,6 @@ export function LogWorkModal({
     if (people.loading || people.error || !performerOptions.some(option => option.value === userId)) { setSubmitError("Người thực hiện phải là thành viên đang hoạt động của dự án. Hãy thêm người này vào danh sách thành viên của dự án hoặc chọn người khác rồi lưu lại."); return; }
     if (!minutes || !workDate) return;
     if (useTimeSlot && (!startTime || !endTime)) return;
-    // The task's Layer 2 is derived by the system. The logging form keeps it out of the
-    // user's way and sends that derived value so the existing API/P&L classification stays intact.
-    const selectedTaskTypeLayer2 = step === "actual" ? defaultSelectedLayer2(task?.taskTypeLayer2) : undefined;
-    if (step === "actual" && !selectedTaskTypeLayer2) { setSubmitError("Task chưa được hệ thống phân loại bối cảnh công việc. Hãy bổ sung phân loại cho task trước khi ghi giờ."); return; }
     if (actualValidationMessage) {
       setSubmitError(actualValidationMessage);
       return;
@@ -1829,7 +1825,6 @@ export function LogWorkModal({
         workDate,
         workType,
         billable,
-        selectedTaskTypeLayer2,
         completeTask,
         userId: userId === "none" ? undefined : userId,
         startTime: useTimeSlot ? startTime : undefined,

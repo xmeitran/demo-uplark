@@ -1372,8 +1372,7 @@ export function TaskDetailWorkbench({
       minutes: logInput.minutes,
       billable: logInput.billable,
       workType: logInput.workType,
-      note: logInput.note,
-      selectedTaskTypeLayer2: logInput.selectedTaskTypeLayer2
+      note: logInput.note
     };
 
     try {

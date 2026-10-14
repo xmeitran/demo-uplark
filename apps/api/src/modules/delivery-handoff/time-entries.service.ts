@@ -632,10 +632,11 @@ export class TimeEntriesService {
   }
 
   /**
-   * P&L spec 12/10 point 5: the person logging picks Layer 2. Refused only when there is no valid choice or the pair is
-   * impossible (matrix 4.3: Pre-sale × Ticket/bảo trì). A choice that merely differs from the task's is saved and flagged.
+   * Layer 2 is legacy metadata. New time logs do not require it; when an older caller
+   * still sends a value, keep validating that value for backwards compatibility.
    */
   private parseSelectedLayer2(value: unknown, taskTypeLayer1: string | null | undefined) {
+    if (value === undefined || value === null || value === "") return null;
     if (!isTaskTypeLayer2(value)) {
       throw new BadRequestException(`Chọn Lớp 2 (bối cảnh công việc) khi ghi giờ: ${Object.values(TASK_TYPE_LAYER2_LABELS).join(", ")}.`);
     }

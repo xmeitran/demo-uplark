@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { CreateTaskTimeEntryResponse, ProjectTaskSummary, ResourceListResponse, TaskTimeEntrySummary } from "@b2b-crm/contracts";
 import { ShopifyAppShell, ShopifyBanner, ShopifyPage, ShopifySection } from "../shopify-ui";
 import { CrmSelect } from "./crm-select";
-import { LAYER2_MISMATCH_LABEL, defaultSelectedLayer2 } from "@/lib/task-classification";
+import { LAYER2_MISMATCH_LABEL } from "@/lib/task-classification";
 
 import { useAuth } from "../../lib/auth";
 import {
@@ -98,11 +98,6 @@ export function ProjectControlsFunctionPage() {
       setMutationError("Select a real task before submitting hours.");
       return;
     }
-    const selectedTaskTypeLayer2 = defaultSelectedLayer2(inputTask?.taskTypeLayer2);
-    if (!selectedTaskTypeLayer2) {
-      setMutationError("Công việc chưa được hệ thống phân loại bối cảnh. Hãy bổ sung phân loại cho task trước khi ghi giờ.");
-      return;
-    }
     setMutationPending(true);
     setMutationError(null);
     setDailyCapacityFeedback(null);
@@ -115,8 +110,7 @@ export function ProjectControlsFunctionPage() {
           minutes: Math.round(hours * 60),
           billable: inputWorkType !== "Rework" && inputWorkType !== "Internal/Admin",
           workType: inputWorkType,
-          note: inputNote,
-          selectedTaskTypeLayer2
+          note: inputNote
         })
       });
       if (!response.ok) throw new Error(`Could not submit hours: ${response.status}`);

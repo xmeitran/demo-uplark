@@ -248,17 +248,21 @@ describe("planning blocks (D-09, D-13, D-15)", () => {
   });
 });
 
-describe("Layer 2 chosen by the person logging (P&L spec 12/10 point 5)", () => {
+describe("legacy Layer 2 metadata on time logs", () => {
   const billable = { taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT" };
   const warningsOpened = (prisma: any) => prisma.projectWarning.create.mock.calls.map((call: any[]) => call[0].data);
 
-  it("refuses a log without a choice, with a value outside the catalogue, and the impossible pair Pre-sale × Ticket/bảo trì", async () => {
+  it("allows a log without Layer 2 while still rejecting invalid legacy values", async () => {
     const { prisma, service } = setup({ task: billable });
-    await expect(service.createTimeEntry("task-1", { ...log(), selectedTaskTypeLayer2: undefined }, as("usr-1"), "usr-1")).rejects.toThrow("Chọn Lớp 2");
-    await expect(service.createTimeEntry("task-1", { ...log(), selectedTaskTypeLayer2: "DAY_OFF_COMPANY" }, as("usr-1"), "usr-1")).rejects.toBeInstanceOf(BadRequestException);
+    const entry = await service.createTimeEntry("task-1", { ...log(), selectedTaskTypeLayer2: undefined }, as("usr-1"), "usr-1");
+    expect(entry.selectedTaskTypeLayer2).toBeUndefined();
+    expect(prisma.taskTimeEntry.create).toHaveBeenCalled();
+
+    const invalid = setup({ task: billable });
+    await expect(invalid.service.createTimeEntry("task-1", { ...log(), selectedTaskTypeLayer2: "DAY_OFF_COMPANY" }, as("usr-1"), "usr-1")).rejects.toBeInstanceOf(BadRequestException);
     const preSale = setup({ task: { taskTypeLayer1: "PRE_SALE", taskTypeLayer2: "CUSTOMER_PROJECT" } });
     await expect(preSale.service.createTimeEntry("task-1", { ...log(), selectedTaskTypeLayer2: "TICKET_MAINTENANCE" }, as("usr-1"), "usr-1")).rejects.toThrow("Pre-sale");
-    expect(prisma.taskTimeEntry.create).not.toHaveBeenCalled();
+    expect(invalid.prisma.taskTimeEntry.create).not.toHaveBeenCalled();
     expect(preSale.prisma.taskTimeEntry.create).not.toHaveBeenCalled();
   });
 
