@@ -556,7 +556,9 @@ interface TaskItem {
   taskTypeLayer1?: "PRE_SALE" | "DELIVERY" | "PM";
   /** Derived by the API (D-04); shown read-only, never sent back. */
   taskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE";
-  status: "todo" | "in-progress" | "done";
+  status: "todo" | "waiting" | "in-progress" | "done" | "overdue" | "blocked" | "cancelled";
+  /** Raw API status is preserved so a derived status is never accidentally written back during an unrelated edit. */
+  rawStatus?: string;
   priority: "critical" | "high" | "medium" | "low";
   assignee: string; aColor: string; due: string;
   startDate?: string;
@@ -822,6 +824,22 @@ function mapProjectWorkItems(stages: ProjectStageSummary[], tasks: ProjectTaskSu
   );
   const taskBuckets = new Map<string, ProjectTaskSummary[]>();
   const unassignedTasks: ProjectTaskSummary[] = [];
+  const mappedTasks = new Map(tasks.map((task) => [task.id, mapProjectTaskToTaskItem(task)] as const));
+  const subtasksByParent = new Map<string, TaskItem[]>();
+
+  for (const task of tasks) {
+    if (!task.parentTaskId) continue;
+    const children = subtasksByParent.get(task.parentTaskId) ?? [];
+    const mapped = mappedTasks.get(task.id);
+    if (mapped) children.push(mapped);
+    subtasksByParent.set(task.parentTaskId, children);
+  }
+
+  const attachSubtasks = (task: TaskItem): TaskItem => {
+    const children = (subtasksByParent.get(task.id) ?? []).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    const withChildren = children.length > 0 ? { ...task, subtasks: children.map(attachSubtasks) } : task;
+    return { ...withChildren, status: deriveUiTaskStatus(withChildren) };
+  };
 
   for (const task of tasks) {
     // The board orders only active top-level siblings. Subtasks keep their own
@@ -850,7 +868,15 @@ function mapProjectWorkItems(stages: ProjectStageSummary[], tasks: ProjectTaskSu
   const milestones = groupedStages.map(mapStageGroupToMilestone);
   const groups = groupedStages.map((stageGroup) => ({
     milestoneId: stageGroup[0].milestoneId,
-    stages: stageGroup.map((stage) => mapStageToStageItem(stage, taskBuckets.get(stage.id) ?? []))
+    stages: stageGroup.map((stage) => mapStageToStageItem(
+      stage,
+      (taskBuckets.get(stage.id) ?? []).map((task) => ({
+        ...task,
+        subtasks: undefined
+      })),
+      mappedTasks,
+      attachSubtasks
+    ))
   }));
 
   if (unassignedTasks.length > 0) {
@@ -872,7 +898,7 @@ function mapProjectWorkItems(stages: ProjectStageSummary[], tasks: ProjectTaskSu
       stages: [{
         id: UNASSIGNED_TASKS_STAGE_ID,
         name: "No Stage",
-        tasks: unassignedTasks.map(mapProjectTaskToTaskItem),
+        tasks: unassignedTasks.map((task) => attachSubtasks(mappedTasks.get(task.id)!)),
         status: "in-progress"
       }]
     });
@@ -901,7 +927,7 @@ function mapStageToMilestone(stage: ProjectStageSummary, order: number): Milesto
   };
 }
 
-function mapStageToStageItem(stage: ProjectStageSummary, tasks: ProjectTaskSummary[]): StageItem {
+function mapStageToStageItem(stage: ProjectStageSummary, tasks: ProjectTaskSummary[], mappedTasks?: Map<string, TaskItem>, attachSubtasks?: (task: TaskItem) => TaskItem): StageItem {
   const ownerName = stage.ownerDisplayName || stage.ownerUserId || "Unassigned";
   const isMilestonePlaceholder = tasks.length === 0
     && normalizeBoardEntityName(stage.activity) !== ""
@@ -909,7 +935,7 @@ function mapStageToStageItem(stage: ProjectStageSummary, tasks: ProjectTaskSumma
   return {
     id: stage.id,
     name: stage.activity || stage.phase || stage.stageKey,
-    tasks: tasks.map(mapProjectTaskToTaskItem),
+    tasks: tasks.map((task) => attachSubtasks && mappedTasks?.get(task.id) ? attachSubtasks(mappedTasks.get(task.id)!) : mapProjectTaskToTaskItem(task)),
     pic: initialsForDisplayName(ownerName),
     picName: ownerName,
     picColor: colorForIdentity(ownerName),
@@ -946,7 +972,8 @@ function mapProjectTaskToTaskItem(task: ProjectTaskSummary): TaskItem {
     taskType: task.taskType,
     taskTypeLayer1: task.taskTypeLayer1,
     taskTypeLayer2: task.taskTypeLayer2,
-    status: toTaskStatus(task.status),
+    status: toTaskStatus(task.status, task.derivedStatus),
+    rawStatus: task.status,
     priority: toTaskPriority(task.priority),
     assignee: initialsForDisplayName(assigneeName),
     aColor: colorForIdentity(assigneeName),
@@ -999,11 +1026,29 @@ function toStageStatus(status: string): StageItem["status"] {
   return "upcoming";
 }
 
-function toTaskStatus(status: string): TaskItem["status"] {
-  const normalized = status.toLowerCase();
+function toTaskStatus(status: string, derivedStatus?: string): TaskItem["status"] {
+  const normalized = (derivedStatus || status).toLowerCase();
   if (["done", "completed"].includes(normalized)) return "done";
+  if (normalized === "overdue") return "overdue";
+  if (["waiting", "pending"].includes(normalized)) return "waiting";
+  if (normalized === "blocked") return "blocked";
+  if (["cancelled", "canceled"].includes(normalized)) return "cancelled";
   if (["in_progress", "active", "started"].includes(normalized)) return "in-progress";
   return "todo";
+}
+
+/** Applies the parent/sub-task rule after the project task list has been loaded. */
+function deriveUiTaskStatus(task: TaskItem): TaskItem["status"] {
+  const children = task.subtasks ?? [];
+  if (children.length === 0) return task.status;
+  if (children.some((child) => child.status === "overdue")) return "overdue";
+  if (children.every((child) => child.status === "done")) {
+    return ["done", "completed", "closed"].includes((task.rawStatus ?? "").toLowerCase()) ? "done" : "in-progress";
+  }
+  if (children.some((child) => child.status === "blocked")) return "blocked";
+  if (children.some((child) => child.status === "waiting")) return "waiting";
+  if (children.some((child) => child.status === "overdue")) return "overdue";
+  return "in-progress";
 }
 
 function toTaskPriority(priority: string): TaskItem["priority"] {
@@ -1024,6 +1069,9 @@ function toApiStageStatus(status?: StageItem["status"] | Milestone["status"]) {
 function toApiTaskStatus(status: TaskItem["status"]) {
   if (status === "done") return "done";
   if (status === "in-progress") return "in_progress";
+  if (status === "waiting") return "waiting";
+  if (status === "blocked") return "blocked";
+  if (status === "cancelled") return "cancelled";
   return "todo";
 }
 
@@ -1072,9 +1120,7 @@ function formatHours(hours = 0) {
 }
 
 function isTaskOverdue(task: Pick<TaskItem, "status" | "due">) {
-  if (task.status === "done" || !task.due || ["TBD", "Not set"].includes(task.due)) return false;
-  const due = new Date(task.due);
-  return Number.isFinite(due.getTime()) && due.getTime() < Date.now();
+  return task.status === "overdue";
 }
 
 type ProjectSheetTaskRow = {
@@ -1134,7 +1180,11 @@ function ProjectSheetPanel({
   const statusLabel: Record<TaskItem["status"], string> = {
     done: TASK_STATUS.done.label,
     "in-progress": TASK_STATUS["in-progress"].label,
-    todo: TASK_STATUS.todo.label
+    todo: TASK_STATUS.todo.label,
+    waiting: TASK_STATUS.waiting.label,
+    overdue: TASK_STATUS.overdue.label,
+    blocked: TASK_STATUS.blocked.label,
+    cancelled: TASK_STATUS.cancelled.label
   };
   const milestoneLabel: Record<Milestone["status"], string> = { done: "Đã hoàn thành", "in-progress": "Đang làm", upcoming: "Sắp tới", "at-risk": "Có rủi ro" };
   const readiness = [project.client, project.ownerDisplayName, project.startDate && project.dueDate].filter(Boolean).length;
@@ -2018,9 +2068,13 @@ const TASK_STATUS = {
   done:          { color:C.success, bg:"#dcfce7", label:"Hoàn tất" },
   "in-progress": { color:C.purple,  bg:"#ede9fe", label:"Đang thực hiện" },
   todo:          { color:C.slate,   bg:"#f1f5f9", label:"Chưa bắt đầu" },
+  waiting:       { color:C.warning, bg:"#fef3c7", label:"Đang chờ" },
+  overdue:       { color:C.danger,  bg:"#fee2e2", label:"Quá hạn" },
+  blocked:       { color:C.danger,  bg:"#fee2e2", label:"Đang bị chặn" },
+  cancelled:     { color:C.slate,   bg:"#e2e8f0", label:"Đã hủy" },
 };
-const MANUAL_TASK_STATUS: Array<TaskItem["status"]> = ["todo", "done"];
-const TASK_STATUS_FILTER_OPTIONS = (["todo", "in-progress", "done"] as const).map((value) => ({ value, label: TASK_STATUS[value].label }));
+const MANUAL_TASK_STATUS: Array<TaskItem["status"]> = ["todo", "waiting", "done"];
+const TASK_STATUS_FILTER_OPTIONS = (["todo", "waiting", "in-progress", "done", "overdue", "blocked", "cancelled"] as const).map((value) => ({ value, label: TASK_STATUS[value].label }));
 const TASK_PRIORITY_FILTER_OPTIONS = [
   { value: "critical", label: "Rất khẩn cấp" },
   { value: "high", label: "Khẩn cấp" },
@@ -3881,7 +3935,7 @@ function EditMilestoneModal({ milestone, color, onClose, onSave, members = EMPTY
 // ─── Edit Task Modal ──────────────────────────────────────────────────────────
 
 /** Fields of the edit form that are validated and sent only when the user changed them. */
-interface TaskEditChanges { assigneeChanged: boolean; estimateChanged: boolean }
+interface TaskEditChanges { assigneeChanged: boolean; estimateChanged: boolean; statusChanged?: boolean }
 
 function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMBERS }: {
   task: TaskItem; color: string;
@@ -3895,6 +3949,7 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
   const taskTypeLayer2Text = taskTypeLayer2Label(task.taskTypeLayer2);
   const [priority, setPriority] = useState<TaskItem["priority"]>(task.priority);
   const [status,   setStatus]   = useState<TaskItem["status"]>(task.status);
+  const [statusTouched, setStatusTouched] = useState(false);
   const [startDate, setStartDate] = useState(task.startDate ?? "");
   const [due,      setDue]      = useState(task.due === "TBD" ? "" : task.due);
   const initPic = getSelectedTeamMember(members, task.assigneeUserId);
@@ -3956,7 +4011,7 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
                     plannedHours: estimateChanged ? plannedHours : task.plannedHours,
                     actualHours,
                     description: description.trim()
-                  }, { assigneeChanged: assigneeTouched, estimateChanged });
+                  }, { assigneeChanged: assigneeTouched, estimateChanged, statusChanged: statusTouched });
                 });
               }}
               disabled={!title.trim() || assigneeMissing || plannedHoursInvalid || submitting}
@@ -4018,14 +4073,14 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
             {MANUAL_TASK_STATUS.map((k) => {
               const cfg = TASK_STATUS[k];
               return (
-              <motion.button key={k} whileTap={{ scale:0.95 }} onClick={() => setStatus(k)}
+              <motion.button key={k} whileTap={{ scale:0.95 }} onClick={() => { setStatusTouched(true); setStatus(k); }}
                 className="px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all"
                 style={{ borderColor:status===k?cfg.color:"var(--color-border)", backgroundColor:status===k?cfg.bg:"transparent", color:status===k?cfg.color:"var(--color-muted-foreground)" }}>
                 {cfg.label}
               </motion.button>
               );
             })}
-            {status === "in-progress" && <span className="inline-flex items-center rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700">Đang thực hiện · hệ thống</span>}
+            {(["in-progress", "overdue", "blocked"] as TaskItem["status"][]).includes(status) && <span className="inline-flex items-center rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700">{TASK_STATUS[status].label} · hệ thống</span>}
           </div>
           <p className="mt-1.5 text-[11px] text-muted-foreground">Chỉ trạng thái đầu vào được chỉnh tay; trạng thái đang làm/quá hạn được suy ra tự động.</p>
         </Field>
@@ -5825,7 +5880,7 @@ export default function ProjectDetailPage() {
     setMutationError(null);
   }, [projectId, reloadCanonicalHierarchy, teamMembers, workspaceTeamMembers]);
 
-  const handleEditTask = useCallback(async (milestoneId: string, stageId: string, updated: TaskItem, changed: TaskEditChanges = { assigneeChanged: true, estimateChanged: true }) => {
+  const handleEditTask = useCallback(async (milestoneId: string, stageId: string, updated: TaskItem, changed: TaskEditChanges = { assigneeChanged: true, estimateChanged: true, statusChanged: false }) => {
     const assignee = changed.assigneeChanged ? findAssignableTeamMember(teamMembers, updated.assigneeUserId) : undefined;
     if (changed.assigneeChanged && !assignee) throw new Error(projectMemberAssignmentError(workspaceTeamMembers.find(member => member.id === updated.assigneeUserId)?.name));
     const mutationStageId = stageIdForTaskMutation(stageId);
@@ -5840,7 +5895,7 @@ export default function ProjectDetailPage() {
         description: updated.description ?? null,
         taskType: updated.taskType,
         taskTypeLayer1: updated.taskTypeLayer1,
-        status: toApiTaskStatus(updated.status),
+        ...(changed.statusChanged ? { status: toApiTaskStatus(updated.status) } : {}),
         priority: updated.priority,
         // Unchanged assignee and estimate are left out, so a stale assignee or an older estimate above 8h never blocks other edits.
         ...(assignee ? { assigneeUserId: assignee.id, assigneeUserIds: updated.assigneeUserIds ?? [assignee.id], ownerUserId: assignee.id } : {}),

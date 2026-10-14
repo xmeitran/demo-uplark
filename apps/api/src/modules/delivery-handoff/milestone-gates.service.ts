@@ -12,6 +12,7 @@ import {
   optionalString
 } from "../../shared/http/request-context";
 import { evaluateMilestoneGate } from "./milestone-gate";
+import { deriveTaskStatus } from "./task-status";
 import {
   countMilestoneEvidence,
   effectiveMilestoneRequiredDocumentCount,
@@ -281,7 +282,27 @@ export class MilestoneGatesService {
             // Stored stages of the retired change-request flow (changeRequestId set) never hold back the milestone's gate.
             stage: { milestoneId: milestone.id, changeRequestId: null }
           },
-          select: { status: true }
+          select: {
+            status: true,
+            plannedStartAt: true,
+            dueAt: true,
+            estimateMinutes: true,
+            timeEntries: {
+              select: { minutes: true, approvalStatus: true, workDate: true, startAt: true, endAt: true }
+            },
+            subtasks: {
+              where: { workspaceId: principal.workspaceId, archivedAt: null },
+              select: {
+                status: true,
+                plannedStartAt: true,
+                dueAt: true,
+                estimateMinutes: true,
+                timeEntries: {
+                  select: { minutes: true, approvalStatus: true, workDate: true, startAt: true, endAt: true }
+                }
+              }
+            }
+          }
         })
       : [];
     const evaluation = evaluateMilestoneGate({
@@ -290,7 +311,14 @@ export class MilestoneGatesService {
       missingDocumentTypes: evidenceCounts.missingRequiredTypes,
       customerConfirmationRequired: Boolean(milestone.customerConfirmationRequired),
       customerConfirmationAt: milestone.customerConfirmationAt,
-      taskStatuses: taskRows.map((task: { status: unknown }) => task.status)
+      taskStatuses: taskRows.map((task: any) => deriveTaskStatus({
+        rawStatus: task.status,
+        plannedStartAt: task.plannedStartAt,
+        dueAt: task.dueAt,
+        estimateMinutes: task.estimateMinutes,
+        timeEntries: task.timeEntries,
+        subtasks: task.subtasks
+      }))
     });
     // Evaluation only proves the visible requirements. It must never impersonate
     // the configured reviewer or unlock the next milestone by itself.

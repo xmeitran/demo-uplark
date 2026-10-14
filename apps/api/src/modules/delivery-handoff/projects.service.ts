@@ -1871,7 +1871,28 @@ export class ProjectsService {
           select: {
             tasks: {
               where: { workspaceId: principal.workspaceId, archivedAt: null, parentTaskId: null },
-              select: { status: true }
+              select: {
+                parentTaskId: true,
+                status: true,
+                plannedStartAt: true,
+                dueAt: true,
+                estimateMinutes: true,
+                timeEntries: {
+                  select: { minutes: true, approvalStatus: true, workDate: true, startAt: true, endAt: true }
+                },
+                subtasks: {
+                  where: { workspaceId: principal.workspaceId, archivedAt: null },
+                  select: {
+                    status: true,
+                    plannedStartAt: true,
+                    dueAt: true,
+                    estimateMinutes: true,
+                    timeEntries: {
+                      select: { minutes: true, approvalStatus: true, workDate: true, startAt: true, endAt: true }
+                    }
+                  }
+                }
+              }
             }
           }
         }

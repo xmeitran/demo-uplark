@@ -21,6 +21,7 @@ import {
   normalizeMilestoneReviewerMode
 } from "./milestone-reviewer";
 import { isTaskTypeLayer1, isValidTaskTypePair } from "./task-classification";
+import { deriveTaskStatus } from "./task-status";
 
 export const TIME_REVIEW_ROLE_CODES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN", "DELIVERY_LEAD"]);
 export const PROJECT_HIERARCHY_EDIT_ROLE_CODES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN", "DELIVERY_LEAD"]);
@@ -82,7 +83,14 @@ export function mapMilestoneGateSummary(
     .flatMap((stage: any) =>
       (stage.tasks ?? [])
         .filter((task: any) => !task.parentTaskId && !task.archivedAt)
-        .map((task: any) => task.status)
+        .map((task: any) => deriveTaskStatus({
+          rawStatus: task.status,
+          plannedStartAt: task.plannedStartAt,
+          dueAt: task.dueAt,
+          estimateMinutes: task.estimateMinutes,
+          timeEntries: task.timeEntries,
+          subtasks: task.subtasks
+        }))
     );
   const evaluation = evaluateMilestoneGate({
     requiredDocumentCount,

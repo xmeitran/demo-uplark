@@ -1263,6 +1263,8 @@ export interface ProjectTaskSummary {
   /** Layer 2 (bối cảnh công việc), derived by the API and read-only; undefined = "Chờ phân loại". */
   taskTypeLayer2?: "CUSTOMER_PROJECT" | "INTERNAL_PROJECT" | "TICKET_MAINTENANCE";
   status: string;
+  /** Status derived from the plan, actual logs and sub-task state. Raw status remains above for edits/history. */
+  derivedStatus?: "not_started" | "waiting" | "in_progress" | "completed" | "overdue" | "blocked" | "cancelled";
   priority: string;
   ownerUserId?: string;
   ownerDisplayName?: string;

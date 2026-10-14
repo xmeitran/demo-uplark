@@ -11,7 +11,7 @@ import type {
   TaskTimeEntrySummary
 } from "@b2b-crm/contracts";
 import { toIso, toMoneyNumber } from "../../shared/http/request-context";
-import { isClosedWorkStatus, isCompletedTaskStatus } from "./task-status";
+import { deriveTaskStatus } from "./task-status";
 import { sumActualMinutes } from "./member-participation";
 import { normalizeProjectStatus, projectStatusLabel } from "./project-status";
 import { isInternalWorklogProjectType, isLayer2Mismatch } from "./task-classification";
@@ -21,7 +21,11 @@ export function mapProjectSummary(project: any): ProjectSummary {
   const members = uniqueProjectMembers(project.members ?? []);
   const memberTaskStats = buildProjectMemberTaskStats(tasks);
   const activeBudget = project.budgets?.[0];
-  const completedTaskCount = tasks.filter((task: any) => isCompletedTaskStatus(task.status)).length;
+  const completedTaskCount = tasks.filter((task: any) => deriveTaskStatus({
+    rawStatus: task.status,
+    estimateMinutes: task.estimateMinutes,
+    loggedMinutes: sumActualMinutes(task.timeEntries)
+  }) === "completed").length;
   const plannedMinutes = tasks.reduce((sum: number, task: any) => sum + Number(task.estimateMinutes ?? 0), 0);
   const loggedMinutes = tasks.reduce((sum: number, task: any) => sum + sumActualMinutes(task.timeEntries), 0);
   const approvedMinutes = tasks.reduce((sum: number, task: any) => sum + sumMinutes(
@@ -124,7 +128,11 @@ function buildProjectMemberTaskStats(tasks: any[]) {
     for (const userId of assignedIds) {
       const current = stats.get(userId) ?? { assignedTaskCount: 0, doneTaskCount: 0 };
       current.assignedTaskCount += 1;
-      if (isCompletedTaskStatus(task.status)) {
+      if (deriveTaskStatus({
+        rawStatus: task.status,
+        estimateMinutes: task.estimateMinutes,
+        loggedMinutes: sumActualMinutes(task.timeEntries)
+      }) === "completed") {
         current.doneTaskCount += 1;
       }
       stats.set(userId, current);
@@ -327,6 +335,16 @@ export function mapProjectActivitySummary(activity: any): ProjectActivitySummary
 export function mapTaskSummary(task: any): ProjectTaskSummary {
   const loggedMinutes = sumActualMinutes(task.timeEntries);
   const approvedMinutes = sumMinutes((task.timeEntries ?? []).filter((entry: any) => normalizeTaskTimeEntryApprovalStatus(entry.approvalStatus) === "approved"));
+  const subtasks = Array.isArray(task.subtasks) ? task.subtasks.map(mapTaskSummary) : undefined;
+  const derivedStatus = deriveTaskStatus({
+    rawStatus: task.status,
+    plannedStartAt: task.plannedStartAt,
+    dueAt: task.dueAt,
+    estimateMinutes: task.estimateMinutes,
+    loggedMinutes,
+    timeEntries: task.timeEntries,
+    subtasks: subtasks?.map((subtask: ProjectTaskSummary) => ({ derivedStatus: subtask.derivedStatus, status: subtask.status }))
+  });
   const assignees: Array<{ userId: string; displayName?: string; avatarUrl?: string }> = Array.from(new Map<string, { userId: string; displayName?: string; avatarUrl?: string }>([
     ...(Array.isArray(task.taskAssignees) ? task.taskAssignees
       .filter((row: any) => row?.userId)
@@ -364,6 +382,7 @@ export function mapTaskSummary(task: any): ProjectTaskSummary {
     taskTypeLayer1: task.taskTypeLayer1 ?? undefined,
     taskTypeLayer2: task.taskTypeLayer2 ?? undefined,
     status: task.status,
+    derivedStatus,
     priority: task.priority,
     ownerUserId: task.ownerUserId ?? undefined,
     ownerDisplayName: task.owner?.displayName ?? undefined,
@@ -386,7 +405,7 @@ export function mapTaskSummary(task: any): ProjectTaskSummary {
     archivedAt: toIso(task.archivedAt),
     archivedByUserId: task.archivedByUserId ?? undefined,
     archiveReason: task.archiveReason ?? undefined,
-    overdue: Boolean(task.dueAt && !isClosedWorkStatus(task.status) && !task.archivedAt && new Date(task.dueAt) < new Date()),
+    overdue: derivedStatus === "overdue" && !task.archivedAt,
     cycleTimeDays: cycleTimeDays(task.startedAt, task.completedAt),
     customerVisible: task.customerVisible,
     createdAt: toIso(task.createdAt) ?? new Date().toISOString(),
@@ -406,7 +425,7 @@ export function mapTaskSummary(task: any): ProjectTaskSummary {
     planningBlocks: Array.isArray(task.planningBlocks)
       ? task.planningBlocks.map(mapTaskPlanningBlockSummary)
       : undefined,
-    subtasks: Array.isArray(task.subtasks) ? task.subtasks.map(mapTaskSummary) : undefined
+    subtasks
   };
 }
 
