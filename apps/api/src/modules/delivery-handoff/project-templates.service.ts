@@ -93,15 +93,15 @@ export function buildSpreadsheetTemplateDraft(fileName: string, source: string) 
     currentRows = [];
   };
   for (const rawLine of source.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line) continue;
-    const sheetMatch = line.match(/^SHEET\s*:\s*(.*)$/i);
+    // Keep leading tabs/commas: an empty first cell is meaningful hierarchy data.
+    if (!rawLine.trim()) continue;
+    const sheetMatch = rawLine.trim().match(/^SHEET\s*:\s*(.*)$/i);
     if (sheetMatch) {
       flushSheet();
       currentSheet = sheetMatch[1].trim() || "Imported sheet";
       continue;
     }
-    currentRows.push(splitSpreadsheetRow(line));
+    currentRows.push(splitSpreadsheetRow(rawLine));
   }
   flushSheet();
   if (!sheetBlocks.length) sheetBlocks.push({ name: "Imported sheet", rows: [] });
@@ -149,7 +149,10 @@ export function buildSpreadsheetTemplateDraft(fileName: string, source: string) 
       if (/^project\s*:/i.test(nonEmpty[0])) continue;
       const rowLooksLikeSection = nonEmpty.length === 1 && nonEmpty[0].length < 120 && !/\d{1,4}[\-\/]\d{1,2}/.test(nonEmpty[0]);
       const rawMilestone = milestoneColumn >= 0 ? values[milestoneColumn] : "";
-      if (rawMilestone) activeMilestone = rawMilestone;
+      if (rawMilestone) {
+        if (rawMilestone !== activeMilestone) activeStage = "General work";
+        activeMilestone = rawMilestone;
+      }
       if (rowLooksLikeSection && milestoneColumn < 0) {
         activeMilestone = nonEmpty[0];
         continue;
@@ -169,13 +172,13 @@ export function buildSpreadsheetTemplateDraft(fileName: string, source: string) 
       const current = groups.get(milestone) ?? new Map<string, { name: string; tasks: Array<{ title: string; subtasks: Array<{ title: string }> }> }>();
       const stageRecord = current.get(stage) ?? { name: stage, tasks: [] };
       if (resolvedTask && resolvedTask !== stageValue) {
-        const previousTask = stageRecord.tasks[stageRecord.tasks.length - 1];
-        const task = previousTask?.title === resolvedTask ? previousTask : { title: resolvedTask, subtasks: [] };
-        if (task !== previousTask) { stageRecord.tasks.push(task); taskCount += 1; }
-        if (subtaskValue && !task.subtasks.some((subtask) => subtask.title === subtaskValue)) { task.subtasks.push({ title: subtaskValue }); subtaskCount += 1; }
+        const taskKey = spreadsheetText(resolvedTask);
+        const task = stageRecord.tasks.find((candidate) => spreadsheetText(candidate.title) === taskKey) ?? { title: resolvedTask, subtasks: [] };
+        if (!stageRecord.tasks.includes(task)) { stageRecord.tasks.push(task); taskCount += 1; }
+        if (subtaskValue && !task.subtasks.some((subtask) => spreadsheetText(subtask.title) === spreadsheetText(subtaskValue))) { task.subtasks.push({ title: subtaskValue }); subtaskCount += 1; }
       } else if (subtaskValue) {
         const parentTask = stageRecord.tasks[stageRecord.tasks.length - 1];
-        if (parentTask && !parentTask.subtasks.some((subtask) => subtask.title === subtaskValue)) { parentTask.subtasks.push({ title: subtaskValue }); subtaskCount += 1; }
+        if (parentTask && !parentTask.subtasks.some((subtask) => spreadsheetText(subtask.title) === spreadsheetText(subtaskValue))) { parentTask.subtasks.push({ title: subtaskValue }); subtaskCount += 1; }
         else warnings.push(`Sheet “${block.name}” có Subtask nhưng chưa có Task cha ở milestone “${milestone}”, stage “${stage}”.`);
       }
       else if (!current.has(stage) && stageValue) stageRecord.tasks = [];

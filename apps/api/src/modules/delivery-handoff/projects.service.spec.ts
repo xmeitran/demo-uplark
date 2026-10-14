@@ -3220,4 +3220,58 @@ describe("ProjectsService interaction remediation", () => {
     ]);
     expect(result.data.stats?.taskCount).toBe(2);
   });
+
+  it("keeps blank leading cells aligned and builds the sample workbook hierarchy", () => {
+    const tab = "\t";
+    const source = [
+      "SHEET: Template",
+      ["Project", "Milestone", "Stage", "Task", "Subtask"].join(tab),
+      ["Tên dự án mẫu", "1. Khởi động", "Khảo sát", "Thu thập yêu cầu khách hàng", "Phỏng vấn các bộ phận"].join(tab),
+      ["", "1. Khởi động", "Khảo sát", "Thu thập yêu cầu khách hàng", "Tổng hợp biên bản khảo sát"].join(tab),
+      ["", "1. Khởi động", "Khảo sát", "Chốt phạm vi triển khai", ""].join(tab),
+      ["", "1. Khởi động", "Kick-off", "Họp kick-off với khách hàng", ""].join(tab),
+      ["", "2. Xây dựng", "Thiết kế", "Thiết kế quy trình trên Lark Base", "Sơ đồ quy trình"].join(tab),
+      ["", "2. Xây dựng", "Thiết kế", "Thiết kế quy trình trên Lark Base", "Cấu trúc bảng dữ liệu"].join(tab),
+      ["", "2. Xây dựng", "Cấu hình", "Cấu hình Base và phân quyền", ""].join(tab),
+      ["", "2. Xây dựng", "Cấu hình", "Thiết lập automation", ""].join(tab),
+      ["", "3. Vận hành thử", "Pilot", "Chạy thử với nhóm người dùng chính", ""].join(tab),
+      ["", "3. Vận hành thử", "Đào tạo", "Đào tạo người dùng cuối", "Soạn tài liệu hướng dẫn"].join(tab),
+      ["", "4. Nghiệm thu", "Nghiệm thu", "Ký biên bản nghiệm thu", ""].join(tab),
+      ["", "4. Nghiệm thu", "Bàn giao", "Bàn giao cho đội CS", ""].join(tab)
+    ].join("\n");
+
+    const result = buildSpreadsheetTemplateDraft("mau-nhap-template-milestone.xlsx", source);
+    const milestones = result.data.milestones;
+
+    expect(milestones.map((milestone) => milestone.name)).toEqual([
+      "1. Khởi động",
+      "2. Xây dựng",
+      "3. Vận hành thử",
+      "4. Nghiệm thu"
+    ]);
+    expect(milestones.map((milestone) => milestone.stages.length)).toEqual([2, 2, 2, 2]);
+    expect(result.data.stats).toMatchObject({ milestoneCount: 4, stageCount: 8, taskCount: 10, subtaskCount: 5 });
+    expect(milestones[0]?.stages[0]?.tasks).toEqual([
+      {
+        title: "Thu thập yêu cầu khách hàng",
+        subtasks: [{ title: "Phỏng vấn các bộ phận" }, { title: "Tổng hợp biên bản khảo sát" }]
+      },
+      { title: "Chốt phạm vi triển khai", subtasks: [] }
+    ]);
+  });
+
+  it("merges repeated task rows even when subtasks are separated by another task", () => {
+    const result = buildSpreadsheetTemplateDraft("roadmap.csv", [
+      "Milestone,Stage,Task,Subtask",
+      "M1,Build,Configure access,Admin account",
+      "M1,Build,Configure database,Schema",
+      "M1,Build,Configure access,Permission matrix"
+    ].join("\n"));
+
+    expect(result.data.milestones[0]?.stages[0]?.tasks).toEqual([
+      { title: "Configure access", subtasks: [{ title: "Admin account" }, { title: "Permission matrix" }] },
+      { title: "Configure database", subtasks: [{ title: "Schema" }] }
+    ]);
+    expect(result.data.stats?.taskCount).toBe(2);
+  });
 });
