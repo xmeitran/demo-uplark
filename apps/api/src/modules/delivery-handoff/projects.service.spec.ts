@@ -1483,6 +1483,36 @@ describe("ProjectsService.updateTask", () => {
     expect(Object.values(updateData)).not.toContain(undefined);
   });
 
+  it("moves a task to another stage in the same project", async () => {
+    const prisma = createTaskUpdatePrismaMock();
+    prisma.projectStage.findFirst.mockResolvedValue({
+      id: "stage-2",
+      workspaceId: "twk-1",
+      accountId: "acc-1",
+      projectId: "prj-1"
+    });
+    prisma.projectTask.update.mockImplementation(async ({ data }: any) => ({
+      ...(await prisma.projectTask.findFirst()),
+      ...data,
+      stageId: data.stageId,
+      stage: { stageKey: "implementation", activity: "New stage" }
+    }));
+    const service = new ProjectsService(withMutationDependencies(prisma) as any);
+    prisma.$queryRaw.mockResolvedValue([{ id: "prj-1", hierarchyOrderVersion: 0 }]);
+
+    await service.updateTask("task-1", {
+      projectId: "prj-1",
+      stageId: "stage-2",
+      title: "Moved task"
+    }, principal);
+
+    expect(prisma.projectTask.update).toHaveBeenCalledWith({
+      where: { id: "task-1" },
+      data: expect.objectContaining({ projectId: "prj-1", stageId: "stage-2", title: "Moved task" }),
+      include: expect.any(Object)
+    });
+  });
+
   it.each(["SALES_OWNER", "DELIVERY_LEAD", "FOUNDER_GM"])("rejects project relocation through PATCH for %s, preserving the dedicated hierarchy boundary", async (roleCode) => {
     const prisma = createTaskUpdatePrismaMock();
     const current = await prisma.projectTask.findFirst();
@@ -1492,7 +1522,7 @@ describe("ProjectsService.updateTask", () => {
 
     await expect(service.updateTask("task-1", { projectId: "prj-2", stageId: null }, {
       ...principal, roleCodes: [roleCode]
-    })).rejects.toThrow("Không đổi stage hoặc task cha của task ở màn sửa này");
+    })).rejects.toThrow("Không đổi project hoặc task cha của task ở màn sửa này");
     expect(prisma.projectTask.update).not.toHaveBeenCalled();
     expect(prisma.auditEvent.create).not.toHaveBeenCalled();
   });

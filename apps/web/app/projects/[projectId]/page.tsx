@@ -70,7 +70,7 @@ import {
   createHierarchyOrderCoordinator,
   isSortableTopLevelTask
 } from "@/features/project-hierarchy/hierarchy-order";
-import { isMilestoneWorkLocked, selectActiveMilestone } from "@/features/project-hierarchy/milestone-gate-ui";
+import { allMilestonesComplete, isMilestoneWorkLocked, selectActiveMilestone } from "@/features/project-hierarchy/milestone-gate-ui";
 import { deriveMilestoneWorkStatus } from "@/features/project-hierarchy/work-status";
 import { IssueLogPanel } from "@/features/issue-log/issue-log-panel";
 import { ApiResponseError, readApiError } from "@/lib/api-error";
@@ -327,6 +327,10 @@ function isUnassignedTasksMilestoneId(milestoneId: string) {
 
 function isUnassignedTasksStageId(stageId: string) {
   return stageId === UNASSIGNED_TASKS_STAGE_ID;
+}
+
+function isRealProjectMilestone(milestone: Pick<Milestone, "id">) {
+  return !isUnassignedTasksMilestoneId(milestone.id);
 }
 
 function stageIdForTaskMutation(stageId: string) {
@@ -913,7 +917,11 @@ function mapProjectWorkItems(stages: ProjectStageSummary[], tasks: ProjectTaskSu
       stages: [{
         id: UNASSIGNED_TASKS_STAGE_ID,
         name: "No Stage",
-        tasks: unassignedTasks.map((task) => attachSubtasks(mappedTasks.get(task.id)!)),
+        tasks: unassignedTasks.map((task) => attachSubtasks({
+          ...mappedTasks.get(task.id)!,
+          milestoneId: fallbackMilestone.id,
+          stageId: UNASSIGNED_TASKS_STAGE_ID
+        })),
         status: "in-progress"
       }]
     });
@@ -950,7 +958,11 @@ function mapStageToStageItem(stage: ProjectStageSummary, tasks: ProjectTaskSumma
   return {
     id: stage.id,
     name: stage.activity || stage.phase || stage.stageKey,
-    tasks: tasks.map((task) => attachSubtasks && mappedTasks?.get(task.id) ? attachSubtasks(mappedTasks.get(task.id)!) : mapProjectTaskToTaskItem(task)),
+    tasks: tasks.map((task) => {
+      const mapped = mappedTasks?.get(task.id) ?? mapProjectTaskToTaskItem(task);
+      const placed = { ...mapped, milestoneId: stage.milestoneId, stageId: stage.id };
+      return attachSubtasks ? attachSubtasks(placed) : placed;
+    }),
     pic: initialsForDisplayName(ownerName),
     picName: ownerName,
     picColor: colorForIdentity(ownerName),
@@ -999,6 +1011,7 @@ function mapProjectTaskToTaskItem(task: ProjectTaskSummary): TaskItem {
     due: formatApiDate(task.dueAt) || "Not set",
     plannedHours: minutesToHours(task.estimateMinutes),
     actualHours: minutesToHours(task.loggedMinutes),
+    stageId: task.stageId ?? undefined,
     description: task.description,
     timeEntries: (task.timeEntries ?? []).map(mapTimeEntryToUi),
     sortOrder: task.sortOrder,
@@ -1528,7 +1541,7 @@ function MilestoneOverviewBar({
   projectColor: string;
   onOpenProjectSheet: () => void;
 }) {
-  const orderedMilestones = [...milestones].sort((left, right) => left.order - right.order);
+  const orderedMilestones = [...milestones].filter(isRealProjectMilestone).sort((left, right) => left.order - right.order);
   return (
     <section aria-label="Tổng quan milestone" className="rounded-2xl border border-border bg-card p-4 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1823,11 +1836,9 @@ function ProjectStatusSlaBar({
       .catch((error) => { if (!controller.signal.aborted) setHistoryError(error instanceof Error ? error.message : "Không tải được lịch sử trạng thái"); });
     return () => controller.abort();
   }, [historyOpen, projectId, project.status, project.statusSince]);
-  const orderedMilestones = [...milestones].sort((left, right) => left.order - right.order);
+  const orderedMilestones = [...milestones].filter(isRealProjectMilestone).sort((left, right) => left.order - right.order);
   const activeMilestone = selectActiveMilestone(orderedMilestones);
-  const deliveryPlanComplete = orderedMilestones.length > 0 && orderedMilestones.every((milestone) =>
-    milestone.status === "done" && (!milestone.gateStatus || milestone.gateStatus === "approved")
-  );
+  const deliveryPlanComplete = allMilestonesComplete(orderedMilestones);
   const completedTasks = tasks.filter((task) => task.status === "done").length;
   const progress = tasks.length > 0 ? Math.round((completedTasks / tasks.length) * 100) : project.progress;
   const hasLiveRisk = tasks.some((task) => task.status === "overdue" || task.status === "blocked")
@@ -1927,10 +1938,10 @@ function ProjectDeliveryWireframePanels({
   // The gate is the source of truth for which milestone is currently actionable.
   // Legacy stage rows can still say `not_started` after the gate has opened, and
   // conversely a locked milestone must never be presented as a ready handoff.
-  const orderedMilestones = [...milestones].sort((left, right) => left.order - right.order);
+  const orderedMilestones = [...milestones].filter(isRealProjectMilestone).sort((left, right) => left.order - right.order);
   const activeMilestone = selectActiveMilestone(orderedMilestones);
-  const allMilestonesComplete = orderedMilestones.length > 0 && orderedMilestones.every((milestone) => milestone.gateStatus === "approved" || (!milestone.gateStatus && milestone.status === "done"));
-  const handoffDisplayMilestone = activeMilestone ?? (allMilestonesComplete ? orderedMilestones.at(-1) : undefined);
+  const milestonesComplete = allMilestonesComplete(orderedMilestones);
+  const handoffDisplayMilestone = activeMilestone ?? (milestonesComplete ? orderedMilestones.at(-1) : undefined);
   const activeGroup = activeMilestone ? milestoneGroups.find((group) => group.milestoneId === activeMilestone.id) : undefined;
   const requiredDocuments = activeMilestone?.requiredDocumentCount ?? 0;
   const submittedDocuments = activeMilestone?.submittedDocumentCount ?? 0;
@@ -2009,17 +2020,17 @@ function ProjectDeliveryWireframePanels({
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Handoff dossier</p>
               <h3 className="mt-1 text-base font-black text-foreground">Hồ sơ chuyển tiếp</h3>
-              <p className="mt-1 text-xs text-muted-foreground">{allMilestonesComplete ? "Delivery plan đã hoàn tất." : "Theo dõi điều kiện để chuyển sang milestone tiếp theo."}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{milestonesComplete ? "Delivery plan đã hoàn tất." : "Theo dõi điều kiện để chuyển sang milestone tiếp theo."}</p>
             </div>
-            <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${allMilestonesComplete || (handoffReady && !reviewPending) ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-              {allMilestonesComplete ? "Đã hoàn tất" : reviewPending ? "Chờ duyệt" : handoffReady ? "Đủ điều kiện" : "Đang chờ"}
+            <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${milestonesComplete || (handoffReady && !reviewPending) ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+              {milestonesComplete ? "Đã hoàn tất" : reviewPending ? "Chờ duyệt" : handoffReady ? "Đủ điều kiện" : "Đang chờ"}
             </span>
           </div>
           <div className="mt-4 rounded-xl border border-border bg-muted/20 p-3">
             <p className="text-xs font-bold text-foreground">{handoffDisplayMilestone?.name ?? "Chưa có milestone đang chạy"}</p>
-            <p className="mt-1 text-[11px] text-muted-foreground">{allMilestonesComplete ? "Milestone cuối cùng đã được duyệt — không còn bước chuyển tiếp cần xử lý." : handoffDisplayMilestone ? `${handoffDisplayMilestone.startDate || "TBD"} → ${handoffDisplayMilestone.dueDate || "TBD"}` : "Bổ sung delivery plan để tạo hồ sơ"}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">{milestonesComplete ? "Milestone cuối cùng đã được duyệt — không còn bước chuyển tiếp cần xử lý." : handoffDisplayMilestone ? `${handoffDisplayMilestone.startDate || "TBD"} → ${handoffDisplayMilestone.dueDate || "TBD"}` : "Bổ sung delivery plan để tạo hồ sơ"}</p>
           </div>
-          {!allMilestonesComplete ? <div className="mt-4 space-y-2.5">
+          {!milestonesComplete ? <div className="mt-4 space-y-2.5">
             {[
               { label: "Tài liệu bắt buộc", detail: documentsConfigured ? `${submittedDocuments}/${requiredDocuments} hồ sơ` : "Không yêu cầu", ready: documentsReady, action: onOpenDocuments },
               { label: "Xác nhận khách hàng", detail: activeMilestone?.customerConfirmationRequired ? confirmationReady ? "Đã ghi nhận" : "Chưa ghi nhận" : "Không yêu cầu", ready: confirmationReady, confirmation: activeMilestone?.customerConfirmationRequired ? { checked: confirmationReady } : undefined },
@@ -2037,9 +2048,9 @@ function ProjectDeliveryWireframePanels({
               </div>
             ))}
           </div> : <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2.5 text-[11px] text-emerald-800"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /><p>Hồ sơ chuyển tiếp đã hoàn tất. Các milestone trong kế hoạch đều đã được hoàn thành.</p></div>}
-          {!allMilestonesComplete && !handoffReady && missingRequirements.length > 0 ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2.5 text-[11px] text-amber-800"><p className="font-semibold">Cần hoàn tất:</p><ul className="mt-1 list-disc space-y-0.5 pl-4">{missingRequirements.map((requirement) => <li key={requirement}>{requirement}</li>)}</ul></div> : null}
-          {!allMilestonesComplete && handoffError ? <p role="alert" className="mt-3 text-xs text-rose-600">{handoffError}</p> : null}
-          {!allMilestonesComplete ? <button type="button" onClick={() => void onAdvanceMilestone()} disabled={!handoffReady || handoffBusy || (reviewPending && !activeMilestone?.canApprove)} className={`mt-4 inline-flex min-h-9 w-full items-center justify-center rounded-lg border px-3 text-xs font-semibold transition ${handoffReady && (!reviewPending || activeMilestone?.canApprove) ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90" : "border-border text-muted-foreground disabled:cursor-not-allowed disabled:opacity-70"}`}>
+          {!milestonesComplete && !handoffReady && missingRequirements.length > 0 ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2.5 text-[11px] text-amber-800"><p className="font-semibold">Cần hoàn tất:</p><ul className="mt-1 list-disc space-y-0.5 pl-4">{missingRequirements.map((requirement) => <li key={requirement}>{requirement}</li>)}</ul></div> : null}
+          {!milestonesComplete && handoffError ? <p role="alert" className="mt-3 text-xs text-rose-600">{handoffError}</p> : null}
+          {!milestonesComplete ? <button type="button" onClick={() => void onAdvanceMilestone()} disabled={!handoffReady || handoffBusy || (reviewPending && !activeMilestone?.canApprove)} className={`mt-4 inline-flex min-h-9 w-full items-center justify-center rounded-lg border px-3 text-xs font-semibold transition ${handoffReady && (!reviewPending || activeMilestone?.canApprove) ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90" : "border-border text-muted-foreground disabled:cursor-not-allowed disabled:opacity-70"}`}>
             {handoffBusy ? "Đang xử lý…" : reviewPending && activeMilestone?.canApprove ? "Duyệt & chuyển milestone" : reviewPending ? `Chờ ${reviewerName} duyệt` : handoffReady ? "Gửi hồ sơ chờ duyệt" : activeMilestone ? "Chưa đủ điều kiện chuyển milestone" : "Chưa có milestone đang mở"}
           </button> : null}
         </div>
@@ -3958,11 +3969,13 @@ function EditMilestoneModal({ milestone, color, onClose, onSave, members = EMPTY
 
 /** Fields of the edit form that are validated and sent only when the user changed them. */
 interface TaskEditChanges { assigneeChanged: boolean; estimateChanged: boolean; statusChanged?: boolean }
+interface TaskPlacementOption { value: string; label: string; milestoneId?: string }
 
-function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMBERS }: {
+function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMBERS, placementOptions = [] }: {
   task: TaskItem; color: string;
   onClose: () => void; onSave: (t: TaskItem, changed: TaskEditChanges) => Promise<void>;
   members?: ProjectTeamMember[];
+  placementOptions?: TaskPlacementOption[];
 }) {
   const [title,    setTitle]    = useState(task.title);
   const [taskType, setTaskType] = useState(task.taskType || "implementation");
@@ -3972,6 +3985,7 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
   const [priority, setPriority] = useState<TaskItem["priority"]>(task.priority);
   const [status,   setStatus]   = useState<TaskItem["status"]>(task.status);
   const [statusTouched, setStatusTouched] = useState(false);
+  const [selectedStageId, setSelectedStageId] = useState(task.stageId ?? UNASSIGNED_TASKS_STAGE_ID);
   const [startDate, setStartDate] = useState(task.startDate ?? "");
   const [due,      setDue]      = useState(task.due === "TBD" ? "" : task.due);
   const initPic = getSelectedTeamMember(members, task.assigneeUserId);
@@ -4004,6 +4018,10 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
     });
   }, [members, task.assignee, task.assigneeUserId, task.assigneeUserIds]);
 
+  useEffect(() => {
+    setSelectedStageId(task.stageId ?? UNASSIGNED_TASKS_STAGE_ID);
+  }, [task.id, task.stageId]);
+
   return (
     <AnimatePresence>
       <ModalShell title="Edit Task" icon={Pencil} iconColor={color} onClose={onClose}
@@ -4032,7 +4050,9 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
                     due:due||"TBD",
                     plannedHours: estimateChanged ? plannedHours : task.plannedHours,
                     actualHours,
-                    description: description.trim()
+                    description: description.trim(),
+                    stageId: selectedStageId,
+                    milestoneId: placementOptions.find((option) => option.value === selectedStageId)?.milestoneId
                   }, { assigneeChanged: assigneeTouched, estimateChanged, statusChanged: statusTouched });
                 });
               }}
@@ -4078,6 +4098,15 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
             ]}
             onChange={setTaskType}
           />
+        </Field>
+        <Field label="Milestone / Stage">
+          <CustomDropdown
+            ariaLabel="Milestone / Stage của task"
+            value={selectedStageId}
+            options={placementOptions}
+            onChange={setSelectedStageId}
+          />
+          <p className="mt-1.5 text-[11px] text-muted-foreground">Chọn nơi đặt task. Có thể chọn “Chưa gắn Stage” để đưa task về nhóm tạm.</p>
         </Field>
         <Field label="Priority">
           <div className="flex gap-2 flex-wrap">
@@ -4232,9 +4261,11 @@ function TaskRow({ task, projectColor, onEdit, onDelete, onViewDetails, onAddSub
           <button
             ref={menuButtonRef}
             aria-label={`Task actions for ${task.title}`}
+            aria-expanded={menuOpen}
+            aria-haspopup="menu"
             disabled={disabled}
             onClick={() => setMenuOpen(v => !v)}
-            className="p-1 rounded hover:bg-muted text-muted-foreground opacity-0 group-hover:opacity-100 transition-all disabled:pointer-events-none">
+            className="p-1 rounded hover:bg-muted text-muted-foreground opacity-100 transition-all disabled:pointer-events-none">
             <MoreHorizontal className="w-3.5 h-3.5" />
           </button>
           {menuOpen && !disabled && <ActionMenu items={menuItems} anchorRef={menuButtonRef} onClose={() => setMenuOpen(false)} />}
@@ -5144,7 +5175,7 @@ export default function ProjectDetailPage() {
 
   const handleAdvanceMilestone = useCallback(async () => {
     if (handoffBusy) return;
-    const activeMilestone = selectActiveMilestone(milestones);
+    const activeMilestone = selectActiveMilestone(milestones, isRealProjectMilestone);
     if (!activeMilestone) return;
 
     setHandoffBusy(true);
@@ -5181,7 +5212,7 @@ export default function ProjectDetailPage() {
 
   const handleCustomerConfirmationChange = useCallback(async (confirmed: boolean) => {
     if (handoffBusy) return;
-    const activeMilestone = selectActiveMilestone(milestones);
+    const activeMilestone = selectActiveMilestone(milestones, isRealProjectMilestone);
     if (!activeMilestone?.customerConfirmationRequired) return;
 
     setHandoffBusy(true);
@@ -5668,12 +5699,30 @@ export default function ProjectDetailPage() {
   }, [projectId]);
 
 
-  const nextMilestoneIdx = milestones.findIndex(m => m.status !== "done");
+  const nextMilestoneIdx = milestones.findIndex(m => isRealProjectMilestone(m) && m.status !== "done");
   // Adding work is allowed for completed/approved milestones. Only an
   // explicitly locked gate is skipped when choosing the default target.
   const firstWritableMilestone = milestones.find((milestone) =>
     !isUnassignedTasksMilestoneId(milestone.id) && !isMilestoneWorkLocked(milestone)
   );
+  const taskPlacementOptions = useMemo<TaskPlacementOption[]>(() => {
+    const options: TaskPlacementOption[] = [{
+      value: UNASSIGNED_TASKS_STAGE_ID,
+      label: "Chưa gắn Milestone / Stage"
+    }];
+    for (const milestone of milestones.filter(isRealProjectMilestone).sort((left, right) => left.order - right.order)) {
+      const group = milestoneGroups.find((item) => item.milestoneId === milestone.id);
+      for (const stage of (group ? visibleStagesForMilestone(group, milestone) : [])) {
+        if (isUnassignedTasksStageId(stage.id)) continue;
+        options.push({
+          value: stage.id,
+          milestoneId: milestone.id,
+          label: `${milestone.order}. ${milestone.name} · ${stage.name}`
+        });
+      }
+    }
+    return options;
+  }, [milestoneGroups, milestones]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
@@ -5902,7 +5951,7 @@ export default function ProjectDetailPage() {
   const handleEditTask = useCallback(async (milestoneId: string, stageId: string, updated: TaskItem, changed: TaskEditChanges = { assigneeChanged: true, estimateChanged: true, statusChanged: false }) => {
     const assignee = changed.assigneeChanged ? findAssignableTeamMember(teamMembers, updated.assigneeUserId) : undefined;
     if (changed.assigneeChanged && !assignee) throw new Error(projectMemberAssignmentError(workspaceTeamMembers.find(member => member.id === updated.assigneeUserId)?.name));
-    const mutationStageId = stageIdForTaskMutation(stageId);
+    const mutationStageId = stageIdForTaskMutation(updated.stageId ?? stageId);
     const response = await fetch(`/api/tasks/${encodeURIComponent(updated.id)}`, {
       method: "PATCH",
       credentials: "same-origin",
@@ -5943,8 +5992,9 @@ export default function ProjectDetailPage() {
           )}
         : mg
     ));
+    await reloadCanonicalHierarchy();
     setMutationError(null);
-  }, [projectId, teamMembers, workspaceTeamMembers]);
+  }, [projectId, reloadCanonicalHierarchy, teamMembers, workspaceTeamMembers]);
 
   const handleDeleteTask = useCallback(async (milestoneId: string, stageId: string, taskId: string) => {
     setMutatingDelete(true);
@@ -6279,6 +6329,7 @@ export default function ProjectDetailPage() {
           onClose={() => setEditTaskFor(null)}
           onSave={(updated, changed) => handleEditTask(editTaskFor.milestoneId, editTaskFor.stageId, updated, changed)}
           members={assignmentTeamMembers}
+          placementOptions={taskPlacementOptions}
         />
       )}
       {deleteTaskFor && (

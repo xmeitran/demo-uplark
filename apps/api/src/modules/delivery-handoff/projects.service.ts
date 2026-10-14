@@ -3105,12 +3105,19 @@ export class ProjectsService {
     this.permissions.assertInternalTaskPrincipal(principal, "Task changes are internal");
     const scope = await this.normalizeTaskScope(input, principal.workspaceId, true);
     const existing = await this.permissions.ensureTaskForPrincipal(taskId, principal);
+    const stageChanged = scope.stageId !== undefined && scope.stageId !== existing.stageId;
     if (
       (scope.projectId !== undefined && scope.projectId !== existing.projectId)
-      || (scope.stageId !== undefined && scope.stageId !== existing.stageId)
       || (scope.parentTaskId !== undefined && scope.parentTaskId !== existing.parentTaskId)
     ) {
-      throw new BadRequestException("Không đổi stage hoặc task cha của task ở màn sửa này. Hãy kéo-thả task sang stage khác trong tab Tasks của dự án.");
+      throw new BadRequestException("Không đổi project hoặc task cha của task ở màn sửa này. Có thể chuyển task giữa các stage trong cùng project.");
+    }
+    if (stageChanged) {
+      if (!existing.projectId || existing.parentTaskId) {
+        throw new BadRequestException("Chỉ task cấp cao nhất trong project mới được chuyển stage.");
+      }
+      await this.permissions.assertProjectManager(this.prisma, existing.projectId, principal);
+      await this.permissions.assertMilestoneUnlocked(this.prisma, principal.workspaceId, scope.stageId, "chuyển task");
     }
     const requestedStatus = optionalString(input.status, "status");
     const statusChangedAt = requestedStatus == null ? undefined : new Date();
@@ -3132,7 +3139,9 @@ export class ProjectsService {
     // D-04: Layer 2 is re-derived on every save and a client-sent value is ignored. D-02: a sub-task repeats its parent;
     // on a framework task an unset Layer 1 is filled from the stage, and any other change is a reclassification.
     const classification = await this.taskClassificationContext(this.prisma, principal.workspaceId, {
-      projectId: assignmentProjectId, stageId: existing.stageId, parentTaskId: existing.parentTaskId
+      projectId: assignmentProjectId,
+      stageId: scope.stageId !== undefined ? scope.stageId : existing.stageId,
+      parentTaskId: existing.parentTaskId
     });
     let nextTaskTypeLayer1: string | undefined;
     if (existing.parentTaskId) {
@@ -3266,7 +3275,31 @@ export class ProjectsService {
       if (requestedStatus !== undefined && requestedStatus !== null && requestedStatus !== current.status) {
         await tx.taskStatusHistory.create({ data: { workspaceId: principal.workspaceId, taskId: current.id, accountId: current.accountId, projectId: current.projectId, fromStatus: current.status, toStatus: requestedStatus, changedByUserId: principal.subjectId, changedAt: new Date(), reason: "Task updated" } });
       }
-      const updated = await tx.projectTask.update({ where: { id: taskId }, data, include: taskInclude });
+      let updateData = data;
+      const hierarchyMembershipChanged = stageChanged && !current.parentTaskId && Boolean(current.projectId);
+      const movesIntoHierarchy = hierarchyMembershipChanged && Boolean(scope.stageId);
+      if (hierarchyMembershipChanged) {
+        await this.lockProjectHierarchy(tx, current.projectId!, principal.workspaceId);
+      }
+      if (movesIntoHierarchy) {
+        const lastTask = await tx.projectTask.findFirst({
+          where: {
+            workspaceId: principal.workspaceId,
+            projectId: current.projectId,
+            stageId: scope.stageId,
+            parentTaskId: null,
+            archivedAt: null,
+            id: { not: taskId }
+          },
+          orderBy: [{ sortOrder: "desc" }, { id: "desc" }],
+          select: { sortOrder: true }
+        });
+        updateData = { ...data, sortOrder: (lastTask?.sortOrder ?? 0) + 10 };
+      }
+      const updated = await tx.projectTask.update({ where: { id: taskId }, data: updateData, include: taskInclude });
+      if (hierarchyMembershipChanged) {
+        await tx.project.update({ where: { id: current.projectId! }, data: { hierarchyOrderVersion: { increment: 1 } } });
+      }
       if ((updated.taskTypeLayer1 ?? null) !== (current.taskTypeLayer1 ?? null) || (updated.taskTypeLayer2 ?? null) !== (current.taskTypeLayer2 ?? null)) {
         await this.classification.cascadeTaskClassification(tx, principal, updated, {
           taskTypeLayer1: current.taskTypeLayer1 ?? null, taskTypeLayer2: current.taskTypeLayer2 ?? null
@@ -3290,6 +3323,7 @@ export class ProjectsService {
           ownerUserId: current.ownerUserId,
           assigneeUserId: current.assigneeUserId,
           assigneeUserIds: currentAssigneeUserIds,
+          stageId: current.stageId,
           plannedStartAt: current.plannedStartAt?.toISOString() ?? null,
           dueAt: current.dueAt?.toISOString() ?? null,
           estimateMinutes: current.estimateMinutes
@@ -3305,6 +3339,7 @@ export class ProjectsService {
           ownerUserId: updated.ownerUserId,
           assigneeUserId: updated.assigneeUserId,
           assigneeUserIds: nextAssigneeUserIds,
+          stageId: updated.stageId,
           plannedStartAt: updated.plannedStartAt?.toISOString() ?? null,
           dueAt: updated.dueAt?.toISOString() ?? null,
           estimateMinutes: updated.estimateMinutes
@@ -3317,6 +3352,7 @@ export class ProjectsService {
           ["taskType", current.taskType, updated.taskType],
           ["taskTypeLayer1", current.taskTypeLayer1, updated.taskTypeLayer1],
           ["taskTypeLayer2", current.taskTypeLayer2, updated.taskTypeLayer2],
+          ["stageId", current.stageId, updated.stageId],
           ["status", current.status, updated.status],
           ["priority", current.priority, updated.priority],
           ["ownerUserId", current.ownerUserId, updated.ownerUserId],
@@ -3328,7 +3364,7 @@ export class ProjectsService {
         ].filter(([, before, after]) => before !== after).map(([field]) => String(field));
         const fieldLabels: Record<string, string> = {
           title: "tên", description: "mô tả", taskType: "loại công việc", taskTypeLayer1: "Lớp 1 (vai trò đóng góp)",
-          taskTypeLayer2: "Lớp 2 (bối cảnh công việc)", status: "trạng thái", priority: "ưu tiên", ownerUserId: "owner",
+          taskTypeLayer2: "Lớp 2 (bối cảnh công việc)", stageId: "stage", status: "trạng thái", priority: "ưu tiên", ownerUserId: "owner",
           assigneeUserId: "người phụ trách", plannedStartAt: "ngày bắt đầu", dueAt: "deadline", estimateMinutes: "estimate"
           ,assigneeUserIds: "người đồng phụ trách"
         };
@@ -3360,7 +3396,7 @@ export class ProjectsService {
       return updated;
     });
     await syncEstimateNotices(this.prisma, principal.workspaceId, task.projectId, principal.subjectId); // D-19
-    if (requestedStatus !== undefined && task.projectId && task.stageId) {
+    if ((requestedStatus !== undefined || stageChanged) && task.projectId && task.stageId) {
       await this.milestoneGates.evaluateMilestoneGateForTask(task, principal);
     }
     return mapTaskSummary(task);

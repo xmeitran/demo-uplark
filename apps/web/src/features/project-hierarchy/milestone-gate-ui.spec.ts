@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isMilestoneWorkLocked, selectActiveMilestone } from "./milestone-gate-ui";
+import { allMilestonesComplete, isMilestoneWorkLocked, selectActiveMilestone } from "./milestone-gate-ui";
 
 describe("isMilestoneWorkLocked", () => {
   it("locks only an explicitly locked gate", () => {
@@ -44,5 +44,21 @@ describe("selectActiveMilestone", () => {
       { id: "m1", status: "done" },
       { id: "m2", status: "done" }
     ])).toBeUndefined();
+  });
+
+  it("ignores non-milestone buckets when selecting the active milestone", () => {
+    expect(selectActiveMilestone([
+      { id: "__unassigned_tasks__", status: "in-progress" },
+      { id: "m1", status: "done", gateStatus: "approved" }
+    ], (milestone) => milestone.id !== "__unassigned_tasks__")).toBeUndefined();
+  });
+});
+
+describe("allMilestonesComplete", () => {
+  it("does not let a synthetic unassigned bucket keep a project incomplete", () => {
+    expect(allMilestonesComplete([
+      { id: "__unassigned_tasks__", status: "in-progress" },
+      { id: "m1", status: "done", gateStatus: "approved" }
+    ], (milestone) => milestone.id !== "__unassigned_tasks__")).toBe(true);
   });
 });
