@@ -129,9 +129,12 @@ export function DashboardProjectTable({ data, state, moneyVisible, returnTo, onC
   const totalWhy = whyNoValue(moneyVisible, total.result);
 
   return (
-    <section id="pnl-projects" aria-labelledby="pnl-projects-title" className={cardClass}>
-      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 px-4 pt-4">
-        <h2 id="pnl-projects-title" className={sectionTitleClass}>Bảng dự án</h2>
+    <section id="pnl-projects" aria-labelledby="pnl-projects-title" className={`${cardClass} overflow-hidden`}>
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 px-4 pt-4 sm:px-5">
+        <div>
+          <h2 id="pnl-projects-title" className={sectionTitleClass}>Danh sách dự án</h2>
+          <p className={`!mt-0.5 ${mutedNoteClass}`}>Bấm vào một dòng để xem chi tiết P&amp;L của dự án.</p>
+        </div>
         <HelpToggle label="Cách đọc bảng này" storageKey="pnl-help-dashboard-table">
           <li>Mỗi dòng là một dự án. Số tiền (triệu đồng) là số của cả vòng đời dự án, không riêng kỳ đang lọc. Bấm tên dự án để xem chi tiết theo tháng.</li>
           <li>Doanh thu dự án do Admin/PM nhập tay theo từng dự án. Dự án đang triển khai vẫn hiện trong bảng; EBIT chỉ tính khi đủ dữ liệu theo kỳ.</li>
@@ -146,9 +149,9 @@ export function DashboardProjectTable({ data, state, moneyVisible, returnTo, onC
         value={state.tab}
         onChange={(tab) => onChange({ tab })}
         tabs={[
-          { value: "all", label: "Tất cả dự án (" + data.all.total + ")" },
-          { value: "accepted", label: `Đã nghiệm thu (${data.accepted.total})` },
-          { value: "in_progress", label: `Đang triển khai (${data.inProgress.total}) · chưa cộng vào tổng` }
+          { value: "all", label: <span className="inline-flex items-center gap-2">Tất cả dự án <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px]">{data.all.total}</span></span> },
+          { value: "accepted", label: <span className="inline-flex items-center gap-2">Đã nghiệm thu <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">{data.accepted.total}</span></span> },
+          { value: "in_progress", label: <span className="inline-flex items-center gap-2">Đang triển khai <span className="rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-700">{data.inProgress.total}</span></span> }
         ]}
       />
       <div id="pnl-projects-panel" role="tabpanel" aria-labelledby={`pnl-projects-tab-${state.tab}`}>

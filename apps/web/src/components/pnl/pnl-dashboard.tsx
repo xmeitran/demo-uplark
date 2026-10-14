@@ -7,7 +7,7 @@ import { FolderKanban, Percent, Receipt, TrendingUp, Wallet } from "lucide-react
 import type { PnlCompanyCostDetailResponse, PnlCompanyCostLine, PnlDashboardResponse, PnlMeta } from "@b2b-crm/contracts";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { CrmSelect } from "@/components/crm-workspace/crm-select";
-import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilter, SearchFilter } from "@/components/filters";
+import { DateRangeFilter, FilterField, MultiSelectFilter, PersonFilter, SearchFilter } from "@/components/filters";
 import { HeaderLinkButton, PageHeader, pageMainClassName } from "@/components/page-header";
 import { toVietnamDateKey } from "@/lib/vietnam-time";
 import { DashboardProjectTable } from "./pnl-dashboard-table";
@@ -35,7 +35,7 @@ const RULE_SENTENCE: Record<PnlDashboardState["rule"], string> = {
   accepted_in_period: "nghiệm thu trong kỳ"
 };
 
-/** Khối 1 — bộ lọc và dòng trạng thái ngay dưới. */
+/** Khối 1 — bộ lọc và dòng trạng thái ngay dưới. Dàn theo grid để nhãn không bị dính khi màn hình rộng vừa. */
 function DashboardFilters({ filter, allProjectCount, state, generatedAt, activeCount, onChange, onReset }: Readonly<{
   filter: Dashboard["filter"];
   allProjectCount: number;
@@ -55,28 +55,45 @@ function DashboardFilters({ filter, allProjectCount, state, generatedAt, activeC
   const [search, setSearch] = useDebouncedText(state.q, (q) => onChange({ q }));
 
   return (
-    <section aria-label="Bộ lọc" className="space-y-2">
-      <FilterBar onReset={activeCount ? onReset : undefined} activeCount={activeCount}>
-        <FilterField label="Tìm kiếm" className="min-w-[200px] flex-1">
-          <SearchFilter value={search} onChange={setSearch} placeholder="Tên dự án, mã dự án hoặc khách hàng..." ariaLabel="Tìm dự án hoặc khách hàng" className="" />
+    <section aria-label="Bộ lọc P&L" className={`${cardClass} overflow-visible`}>
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border/70 px-4 py-3.5 sm:px-5">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-primary">Báo cáo P&amp;L</p>
+          <h2 className="!mt-1 text-sm font-bold text-foreground">Lọc danh sách dự án</h2>
+          <p className="!mt-0.5 text-xs text-muted-foreground">Chọn phạm vi cần xem. Các bộ lọc sẽ được lưu trên đường dẫn.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="rounded-full bg-muted px-2.5 py-1 font-semibold text-muted-foreground">{allProjectCount} dự án</span>
+          {activeCount ? (
+            <button type="button" onClick={onReset} className="rounded-full border border-primary/30 bg-primary/5 px-2.5 py-1 font-semibold text-primary transition-colors hover:bg-primary/10">
+              Xóa bộ lọc · {activeCount}
+            </button>
+          ) : null}
+        </div>
+      </div>
+      <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:px-5 xl:grid-cols-12">
+        <FilterField label="Tìm kiếm" className="min-w-0 sm:col-span-2 xl:col-span-4">
+          <SearchFilter value={search} onChange={setSearch} placeholder="Tên dự án, mã dự án hoặc khách hàng..." ariaLabel="Tìm dự án hoặc khách hàng" className="w-full" />
         </FilterField>
-        <FilterField label="Kỳ" className="shrink-0">
-          <DateRangeFilter ariaLabel="Kỳ" value={monthsToDays(state)} onChange={pickPeriod} presets={presets} clearable={false} />
+        <FilterField label="Kỳ báo cáo" className="min-w-0 xl:col-span-2">
+          <DateRangeFilter ariaLabel="Kỳ báo cáo" value={monthsToDays(state)} onChange={pickPeriod} presets={presets} clearable={false} />
         </FilterField>
-        <PersonFilter label="PIC" people={filter.options.pics} values={state.picUserId} onChange={(picUserId) => onChange({ picUserId })} allLabel="Tất cả PIC" searchPlaceholder="Tìm theo tên PIC..." />
-        <FilterField label="Dự án được tính" className="min-w-[17rem] flex-1">
-          <CrmSelect ariaLabel="Dự án được tính" value={state.rule} onChange={(rule) => onChange({ rule: rule as PnlDashboardState["rule"] })} options={PNL_RULES} />
+        <PersonFilter label="PIC" people={filter.options.pics} values={state.picUserId} onChange={(picUserId) => onChange({ picUserId })} allLabel="Tất cả PIC" searchPlaceholder="Tìm theo tên PIC..." className="min-w-0 xl:col-span-2" />
+        <FilterField label="Phạm vi tính P&L" className="min-w-0 xl:col-span-4">
+          <CrmSelect ariaLabel="Phạm vi tính P&L" value={state.rule} onChange={(rule) => onChange({ rule: rule as PnlDashboardState["rule"] })} options={PNL_RULES} />
         </FilterField>
-        <MultiSelectFilter label="Loại dự án" options={filter.options.projectTypes} values={state.projectType} onChange={(projectType) => onChange({ projectType })} allLabel="Tất cả loại dự án" />
-        <MultiSelectFilter label="Khách hàng" options={filter.options.accounts.map((account) => ({ value: account.id, label: account.name }))} values={state.accountId} onChange={(accountId) => onChange({ accountId })} allLabel="Tất cả khách hàng" searchPlaceholder="Tìm khách hàng..." />
-      </FilterBar>
-      <p className={mutedNoteClass}>
-        Đang hiển thị {allProjectCount} dự án. Tổng P&amp;L tính cho {filter.countedProjectCount} dự án {RULE_SENTENCE[filter.rule]} (từ {formatMonth(filter.fromPeriodKey)} đến {formatMonth(filter.toPeriodKey)}) · không tính {filter.excludedTestProjectCount} dự án thử nghiệm · số liệu cập nhật lúc {formatUpdatedAt(generatedAt)}
-      </p>
-      <p className={mutedNoteClass}>
-        P&amp;L tính theo tháng nên khoảng ngày được làm tròn thành các tháng trọn vẹn. Kỳ chỉ dùng để chọn dự án; số của mỗi dự án luôn là số của cả vòng đời dự án.
-        {monthsBetween(state.fromMonth, state.toMonth).length <= 3 ? ` Gợi ý: ${filter.hint}` : ""}
-      </p>
+        <MultiSelectFilter label="Loại dự án" options={filter.options.projectTypes} values={state.projectType} onChange={(projectType) => onChange({ projectType })} allLabel="Tất cả loại dự án" className="min-w-0 sm:col-span-1 xl:col-span-3" />
+        <MultiSelectFilter label="Khách hàng" options={filter.options.accounts.map((account) => ({ value: account.id, label: account.name }))} values={state.accountId} onChange={(accountId) => onChange({ accountId })} allLabel="Tất cả khách hàng" searchPlaceholder="Tìm khách hàng..." className="min-w-0 sm:col-span-1 xl:col-span-3" />
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/70 bg-muted/20 px-4 py-2.5 text-xs text-muted-foreground sm:px-5">
+        <span>Đang hiển thị <strong className="text-foreground">{allProjectCount}</strong> dự án</span>
+        <span aria-hidden className="text-border">•</span>
+        <span>Tính P&amp;L cho <strong className="text-foreground">{filter.countedProjectCount}</strong> dự án {RULE_SENTENCE[filter.rule]}</span>
+        <span aria-hidden className="text-border">•</span>
+        <span>Cập nhật {formatUpdatedAt(generatedAt)}</span>
+        {filter.excludedTestProjectCount ? <><span aria-hidden className="text-border">•</span><span>{filter.excludedTestProjectCount} dự án thử nghiệm không tính</span></> : null}
+        {monthsBetween(state.fromMonth, state.toMonth).length <= 3 ? <span className="basis-full text-[11px] text-muted-foreground">Gợi ý: {filter.hint}</span> : null}
+      </div>
     </section>
   );
 }
@@ -282,11 +299,11 @@ export function PnlDashboard() {
           subtitle="Theo dõi doanh thu, chi phí và EBIT của toàn bộ dự án trong workspace."
           meta="Đơn vị: triệu đồng"
           actions={
-            <>
-              <HeaderLinkButton href={data ? pendingHoursHref({ from: data.filter.fromPeriodKey, to: data.filter.toPeriodKey }) : "/pnl/hours"}>Giờ chờ xử lý</HeaderLinkButton>
-              {mayFixCosts ? <HeaderLinkButton href="/users/costs">Chi phí nhân sự</HeaderLinkButton> : null}
-              {mayFixCosts ? <HeaderLinkButton href="/pnl/costs">Thiết lập P&amp;L</HeaderLinkButton> : null}
-            </>
+            <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-border/70 bg-card p-1">
+              <HeaderLinkButton className="!h-9 !rounded-lg !px-3 !py-0 !text-xs" href={data ? pendingHoursHref({ from: data.filter.fromPeriodKey, to: data.filter.toPeriodKey }) : "/pnl/hours"}>Giờ chờ xử lý</HeaderLinkButton>
+              {mayFixCosts ? <HeaderLinkButton className="!h-9 !rounded-lg !px-3 !py-0 !text-xs" href="/users/costs">Chi phí nhân sự</HeaderLinkButton> : null}
+              {mayFixCosts ? <HeaderLinkButton className="!h-9 !rounded-lg !bg-primary/5 !px-3 !py-0 !text-xs !text-primary hover:!bg-primary/10" href="/pnl/costs">Thiết lập P&amp;L</HeaderLinkButton> : null}
+            </div>
           }
         />
         {error ? <PnlLoadError error={error} onRetry={reload} /> : null}
