@@ -107,6 +107,19 @@ describe("task status semantics", () => {
       ).toBe("overdue");
     });
 
+    it("treats explicit completion as final for a normal task even when its work was late", () => {
+      expect(
+        deriveTaskStatus({
+          rawStatus: "completed",
+          plannedStartAt: "2026-10-10T00:00:00.000Z",
+          dueAt: "2026-10-12T23:59:00.000Z",
+          loggedMinutes: 30,
+          timeEntries: [{ minutes: 30, startAt: "2026-10-13T02:00:00.000Z", endAt: "2026-10-13T02:30:00.000Z", approvalStatus: "approved" }],
+          now,
+        }),
+      ).toBe("completed");
+    });
+
     it("propagates an overdue child to its parent", () => {
       expect(
         deriveTaskStatus({

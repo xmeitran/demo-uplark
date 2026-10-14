@@ -114,10 +114,11 @@ export function deriveTaskStatus(input: DeriveTaskStatusInput): DerivedTaskStatu
 
   if (isCancelledTaskStatus(rawStatus)) return "cancelled";
   if (rawStatus === "archived") return "completed";
-  if (hasActualTimeOutsidePlan(input) || childIsOverdue) return "overdue";
 
   const isExplicitlyCompleted = isCompletedTaskStatus(rawStatus);
   if (hasChildren) {
+    // A parent still reflects an overdue child until every child is resolved.
+    if (childIsOverdue) return "overdue";
     // A parent is only complete after its children are complete and the parent itself
     // has been confirmed. A raw "done" status is that confirmation in the current model.
     if (allChildrenCompleted && isExplicitlyCompleted) return "completed";
@@ -128,7 +129,11 @@ export function deriveTaskStatus(input: DeriveTaskStatusInput): DerivedTaskStatu
     return "not_started";
   }
 
+  // For a normal task, an explicit completion is the user's final confirmation.
+  // Late actual work remains visible in history but must not turn the completed task
+  // back into an overdue task.
   if (isExplicitlyCompleted) return "completed";
+  if (hasActualTimeOutsidePlan(input)) return "overdue";
   if (dueKey && todayKey && dueKey < todayKey) return "overdue";
   if (rawStatus === "blocked") return "blocked";
   if (rawStatus === "waiting" || rawStatus === "pending") return "waiting";
