@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { LarkRequest } from "./lark-client";
-import { GROUP_WARNING_CODE, LarkIntegrationService } from "./lark-integration.service";
+import { LarkIntegrationService } from "./lark-integration.service";
 
 type Handler = (request: LarkRequest) => { status: "sent" | "disabled" | "failed"; detail: string; data?: any };
 
@@ -76,70 +76,6 @@ function build(handler: Handler, overrides: Parameters<typeof fakePrisma>[0] = {
 
 const sent = (data?: unknown) => ({ status: "sent" as const, detail: "đã gửi Lark", data });
 const messages = (lark: ReturnType<typeof fakeLark>) => lark.calls.filter((call) => call.action === "send_message").map((call) => ({ to: (call.body as any).receive_id, bot: call.bot, title: JSON.parse((call.body as any).content).header.title.content }));
-
-describe("project Lark groups (V-02)", () => {
-  it("creates both groups with the document's members and posts \"Khởi tạo dự án\" to the internal group", async () => {
-    const { service, lark, project, warnings } = build((request) => (request.action === "create_chat" ? sent({ chat_id: (request.body as any).name.startsWith("[Nội bộ]") ? "oc_internal" : "oc_customer" }) : sent()));
-    const result = await service.ensureProjectGroups("prj-1", { actorUserId: "usr-bd", actorName: "Lan BD" });
-    const chats = lark.calls.filter((call) => call.action === "create_chat").map((call) => call.body as any);
-    expect(chats.map((chat) => chat.name)).toEqual(["[Nội bộ] ACME - HRM Suite", "[Khách hàng] ACME - HRM Suite"]);
-    expect(chats[0].user_id_list).toEqual(["ou_pm", "ou_bd", "ou_dev"]); // every project member with a linked Lark account
-    expect(chats[1].user_id_list).toEqual(["ou_pm", "ou_bd"]); // PIC, creator and BD only
-    expect(project).toMatchObject({ larkInternalChatId: "oc_internal", larkCustomerChatId: "oc_customer", larkGroupStatus: "created", larkGroupError: null });
-    expect(messages(lark)).toEqual([{ to: "oc_internal", bot: "Khởi tạo dự án", title: "Khởi tạo dự án: HRM Suite" }]);
-    expect(warnings).toHaveLength(0);
-    expect(result).toMatchObject({ status: "created", statusLabel: "Đã tạo nhóm", canRecreate: false });
-  });
-
-  it("channel disabled: the project is kept, marked \"Chưa tạo được nhóm\" and ONE warning is raised however often it is retried", async () => {
-    const { service, lark, project, warnings } = build(() => ({ status: "disabled", detail: "chưa bật kênh Lark" }));
-    const result = await service.ensureProjectGroups("prj-1", { actorUserId: "usr-bd" });
-    expect(result).toMatchObject({ status: "failed", statusLabel: "Chưa tạo được nhóm", hasInternalGroup: false, canRecreate: true });
-    expect(project).toMatchObject({ larkGroupStatus: "failed", larkGroupError: "Nhóm nội bộ: chưa bật kênh Lark; Nhóm khách hàng: chưa bật kênh Lark" });
-    expect(warnings).toEqual([expect.objectContaining({ typeCode: GROUP_WARNING_CODE, dedupeKey: GROUP_WARNING_CODE, projectId: "prj-1", title: "Chưa tạo được nhóm Lark", ownerUserId: "usr-pm", status: "open" })]);
-    expect(warnings[0].detail).toContain("Tạo lại nhóm");
-    await service.ensureProjectGroups("prj-1", { actorUserId: "usr-bd" });
-    expect(warnings).toHaveLength(1);
-    expect(messages(lark)).toEqual([]);
-  });
-
-  it("partial failure, then \"Tạo lại nhóm\": only the missing group is created, the warning closes, the opening message is not repeated", async () => {
-    let customerFails = true;
-    const { service, lark, project, warnings } = build((request) => {
-      if (request.action !== "create_chat") return sent();
-      if ((request.body as any).name.startsWith("[Nội bộ]")) return sent({ chat_id: "oc_internal" });
-      return customerFails ? { status: "failed", detail: "Lark lỗi: no permission (code 99991672)" } : sent({ chat_id: "oc_customer" });
-    });
-    await service.ensureProjectGroups("prj-1", { actorUserId: "usr-pm" });
-    expect(project).toMatchObject({ larkInternalChatId: "oc_internal", larkCustomerChatId: null, larkGroupStatus: "failed", larkGroupError: "Nhóm khách hàng: Lark lỗi: no permission (code 99991672)" });
-    expect(warnings.filter((row) => row.status === "open")).toHaveLength(1);
-    expect(messages(lark)).toHaveLength(1);
-
-    customerFails = false;
-    const pm = { subjectType: "internal_user", subjectId: "usr-pm", displayName: "Minh PM", workspaceId: "ws", roleCodes: ["DELIVERY_LEAD"] } as any;
-    const result = await service.recreateProjectGroups("prj-1", pm);
-    expect(lark.calls.filter((call) => call.action === "create_chat")).toHaveLength(3);
-    expect(project).toMatchObject({ larkCustomerChatId: "oc_customer", larkGroupStatus: "created", larkGroupError: null });
-    expect(warnings.filter((row) => row.status === "open")).toHaveLength(0);
-    expect(messages(lark)).toHaveLength(1);
-    expect(result.status).toBe("created");
-  });
-
-  it("\"Tạo lại nhóm\" is for Admin or the project's PM", async () => {
-    const { service } = build(() => sent({ chat_id: "oc_x" }));
-    const member = { subjectType: "internal_user", subjectId: "usr-dev", displayName: "Huy", workspaceId: "ws", roleCodes: ["WORKSPACE_USER"] } as any;
-    await expect(service.recreateProjectGroups("prj-1", member)).rejects.toThrow("Chỉ Admin hoặc PM");
-    expect((await service.getProjectGroups("prj-1", member)).canRecreate).toBe(false);
-    expect((await service.getProjectGroups("prj-1", { ...member, subjectId: "usr-admin", roleCodes: ["WORKSPACE_ADMIN"] })).canRecreate).toBe(true);
-  });
-
-  it("member sync adds missing members and removes only people the system knows who left the project", async () => {
-    const { service, lark } = build((request) => (request.action === "list_members" ? sent({ items: [{ member_id: "ou_pm" }, { member_id: "ou_admin" }, { member_id: "ou_customer_guest" }] }) : sent()), { project: { larkInternalChatId: "oc_internal" } });
-    await service.syncProjectGroupMembers("prj-1");
-    expect((lark.calls.find((call) => call.action === "add_members")!.body as any).id_list).toEqual(["ou_bd", "ou_dev"]);
-    expect((lark.calls.find((call) => call.action === "remove_members")!.body as any).id_list).toEqual(["ou_admin"]);
-  });
-});
 
 describe("bot sweep: Hồ sơ chuyển tiếp, Xác nhận khách hàng, Trạng thái dự án", () => {
   const groups = { larkInternalChatId: "oc_internal", larkCustomerChatId: "oc_customer", larkGroupStatus: "created" };

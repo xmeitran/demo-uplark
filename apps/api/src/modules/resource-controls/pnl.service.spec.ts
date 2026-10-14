@@ -70,14 +70,14 @@ describe("quyền (PL-26)", () => {
 });
 
 describe("lớp 4 — Tổng quan P&L", () => {
-  it("trạng thái gốc: Dự án A chưa qua G7 nên ở tab Đang triển khai — chỉ chi phí, không doanh thu hay EBIT dự kiến, không cộng vào ô tổng", async () => {
+  it("trạng thái gốc: Dự án A chưa qua G7 nên ở tab Đang triển khai — vẫn hiện doanh thu nhập tay, chưa có EBIT và không cộng vào ô tổng", async () => {
     const { data } = await scenario().pnl.dashboard({ year: 2026 }, founder);
     expect(data.filter).toMatchObject({ year: 2026, unit: "year", rule: "started_and_accepted", fromPeriodKey: "2026-01", toPeriodKey: "2026-12", countedProjectCount: 0, excludedTestProjectCount: 0 });
     expect(data.totals).toMatchObject({ projectCount: 0, revenueAmount: null, totalCostAmount: 0, ebitAmount: null, marginPercent: null });
     expect(data.accepted.rows).toEqual([]);
     expect(data.pending).toEqual([]); // nothing accepted, nothing to explain
     expect(data.inProgress).toMatchObject({ total: 1 });
-    expect(data.inProgress.rows[0]).toMatchObject({ projectId: "p-a", projectName: "Dự án A", accountName: "Khách A", picName: "BD-1", startedOn: "2026-08-03", acceptedOn: null, revenueAmount: null, ebitAmount: null, marginPercent: null, laborCostAmount: 26_350_000, otherCostAmount: 4_620_000, totalCostAmount: 30_970_000, result: { label: "provisional" } });
+    expect(data.inProgress.rows[0]).toMatchObject({ projectId: "p-a", projectName: "Dự án A", accountName: "Khách A", picName: "BD-1", startedOn: "2026-08-03", acceptedOn: null, revenueAmount: 67_200_000, ebitAmount: null, marginPercent: null, laborCostAmount: 26_350_000, otherCostAmount: 4_620_000, totalCostAmount: 30_970_000, result: { label: "provisional" } });
   });
 
   it("đã nghiệm thu, đủ dữ liệu, mọi tháng khóa: năm ô tổng, dòng tổng, đối soát, nhãn Chính thức, chi phí theo hai cách nhóm", async () => {
@@ -149,6 +149,19 @@ describe("lớp 4 — Tổng quan P&L", () => {
       ["months_unlocked", "tháng 08, 09 chưa khóa", "periods"]
     ]);
     expect(data.pending[0]).toMatchObject({ minutes: hours(105.5), userCount: 1 });
+  });
+
+  it("bảng tất cả dự án không loại dự án chưa nghiệm thu", async () => {
+    const s = await closedScenario();
+    s.db.table("project").push({
+      id: "p-open", workspaceId: WS, code: "DA-OPEN", name: "Dự án đang triển khai", status: "active", projectType: "delivery",
+      isTestProject: false, accountId: "acc-a", createdAt: new Date("2026-10-01T02:00:00.000Z")
+    });
+
+    const { data } = await s.pnl.dashboard({ year: 2026 }, founder);
+    expect((data as any).all.rows.map((row: { projectId: string }) => row.projectId)).toEqual(["p-a", "p-open"]);
+    expect((data as any).all.rows.find((row: { projectId: string }) => row.projectId === "p-open")).toMatchObject({ acceptedOn: null, revenueAmount: null, ebitAmount: null });
+    expect(data.totals.projectCount).toBe(1);
   });
 
   it("A-3: nghiệm thu sau khi mọi tháng của kỳ lọc đã khóa → “điều chỉnh sau chốt”", async () => {
@@ -229,7 +242,7 @@ describe("lớp 4 — P&L dự án", () => {
     expect(item("CP.FUNCOP.RIENG").manualLines).toEqual([{ id: created.data.id, itemCode: "CP.FUNCOP.RIENG", periodKey: "2026-09", occurredOn: "2026-09-01", label: "Thuê ngoài thiết kế", amount: 2_000_000, note: undefined, locked: false }]);
     expect(item("CP.NS.DELIVERY").source).toMatchObject({ kind: "hours", byMonth: [{ periodKey: "2026-08", amount: 19_200_000 }, { periodKey: "2026-09", amount: 3_410_000 }] });
     expect(item("CP.FUNCOP.AI").source).toMatchObject({ kind: "fund", byMonth: [{ periodKey: "2026-08", amount: 1_260_000 }] });
-    expect(item("CP.HOAHONG").source).toMatchObject({ kind: "formula", description: "[Doanh thu ghi nhận] × [Tỷ lệ hoa hồng]" });
+    expect(item("CP.HOAHONG").source).toMatchObject({ kind: "formula", description: "[Doanh thu dự án] × [Tỷ lệ hoa hồng]" });
     expect(item("CHIPHI")).toMatchObject({ method: "GROUP", methodLabel: "Tổng nhóm", level: 1, amount: 32_970_000 });
     expect(data.months.rows.find((row) => row.periodKey === "2026-09")).toMatchObject({ directCostAmount: 2_000_000, otherCostAmount: 2_000_000, totalCostAmount: 7_010_000 });
     expect(data.totals.ebit.amount).toBe(34_230_000);
@@ -249,24 +262,24 @@ describe("lớp 4 — P&L dự án", () => {
     expect(data.history!.find((event) => event.action === "pnl.period_locked")).toMatchObject({ periodKey: "2026-08", actorName: null });
   });
 
-  it("dự án nội bộ (Loại Nội bộ, Đào tạo): cùng bố cục, không có Doanh thu và EBIT, không có Giá trị dự án; Đang ghi nhận từ khi tạo; không lên Tổng quan", async () => {
+  it("dự án nội bộ (Loại Nội bộ, Đào tạo): có Doanh thu/EBIT nhập tay, nhưng giờ vẫn tính theo chi phí tiêu hao", async () => {
     const s = scenario();
     s.db.table("project").push({ id: "p-int", workspaceId: WS, code: "NB-01", name: "Chuẩn hóa quy trình", status: "active", projectType: "internal", isTestProject: false, accountId: "acc-a", createdAt: new Date("2026-09-01T02:00:00.000Z") });
-    // A value stored on the record of an internal project (e.g. typed before the project type was corrected) is never read.
+    // Doanh thu nhập tay được đọc cho cả project Nội bộ.
     s.db.table("projectPnlRecord").push({ id: "ppr_p-int", workspaceId: WS, projectId: "p-int", overrideDisabledCodes: [], overrideEnabledCodes: [], projectValueAmount: 10_000_000, frozenDisabledCodes: [], frozenAt: null });
     s.db.table("projectTask").push({ id: "t-nb", workspaceId: WS, projectId: "p-int", stageId: null, parentTaskId: null, title: "Viết quy trình", taskTypeLayer1: "DELIVERY", estimateMinutes: 600, assigneeUserId: "u-a" });
     s.log({ userId: "u-a", taskId: "t-nb", dateKey: "2026-09-22", hours: 8, taskLayer2: "INTERNAL_PROJECT" });
     const data = await s.project({}, "p-int");
     expect(data.header).toMatchObject({ templateKey: "internal", templateName: "Nội bộ", recordState: "recognizing", recordStateLabel: "Đang ghi nhận" });
-    expect(data.totals.revenue).toMatchObject({ amount: null, basis: "none", label: "Không có doanh thu", projectValueAmount: null, canEdit: false });
-    expect(data.totals.ebit).toMatchObject({ amount: null, missingReason: "Dự án nội bộ không có EBIT" });
+    expect(data.totals.revenue).toMatchObject({ amount: 10_000_000, basis: "project_value", label: "Doanh thu dự án", projectValueAmount: 10_000_000, canEdit: true });
+    expect(data.totals.ebit).toMatchObject({ amount: 8_700_952, missingReason: null });
     expect(data.totals.consumable).toBe(true);
     expect(data.totals.cost).toMatchObject({ totalAmount: 1_299_048, laborAmount: 1_299_048 }); // 8 × 27.280.000 ÷ 168
     expect(data.months.whole).toMatchObject({ includedMinutes: 0, excludedMinutes: hours(8), excludedByReason: [{ reason: "internal", label: "Nội bộ", minutes: hours(8) }], laborCostAmount: 1_299_048 });
     expect(data.months.wholeProjectItems).toEqual([]);
-    expect(data.items!.map((row) => row.code)).not.toEqual(expect.arrayContaining(["DOANHTHU", "CP.HOAHONG", "KQ.EBIT"]));
+    expect(data.items!.map((row) => row.code)).toEqual(expect.arrayContaining(["DOANHTHU", "DOANHTHU.GHINHAN", "KQ.EBIT"]));
     const dashboard = (await s.pnl.dashboard({ year: 2026 }, founder)).data;
-    expect([...dashboard.accepted.rows, ...dashboard.inProgress.rows].map((row) => row.projectId)).not.toContain("p-int");
+    expect([...dashboard.accepted.rows, ...dashboard.inProgress.rows].map((row) => row.projectId)).toContain("p-int");
     expect(dashboard.companyCosts.lines.find((line) => line.key === "internal")!.amount).toBe(1_299_048); // cộng vào dòng Chi phí nội bộ
   });
 
@@ -298,7 +311,7 @@ describe("lớp 3 — Kỳ và khóa kỳ (PL-23, PL-24)", () => {
       [false, "Không còn giờ Chờ xử lý của tháng", "còn 105,5 giờ", "Danh sách"],
       [false, "Mọi người có giờ log có chi phí tháng Đã duyệt", "thiếu: Nhân sự B", "Hồ sơ nhân sự"],
       [false, "Mọi quỹ của tháng đã chia đủ và xác nhận", "còn: Công cụ AI", "Quỹ chi phí chung"],
-      [true, "Dự án qua G7 trong tháng có ngày nghiệm thu và Giá trị dự án", null, null]
+      [true, "Dự án qua G7 trong tháng có ngày nghiệm thu và doanh thu dự án", null, null]
     ]);
   });
 
@@ -579,13 +592,13 @@ describe("lớp 0 — Khoản mục và Mẫu khoản mục (mục 6.2, 6.6)", (
     // Kỳ 10/2026 has no hours yet: the required items that take their number from hours have none.
     expect(data.check.requiredWithoutValue).toEqual([{ code: "CP.NS.DELIVERY", name: "Chi phí nhân sự Delivery/DX" }]);
     const commission = data.items.find((item) => item.code === "CP.HOAHONG")!;
-    expect(commission).toMatchObject({ name: "Hoa hồng", parentCode: "CHIPHI", level: 2, sign: 1, roleGroup: "BD", method: "FORMULA", methodLabel: "Công thức", formulaText: "[Doanh thu ghi nhận] × [Tỷ lệ hoa hồng]", required: true, status: "active", statusLabel: "Đang dùng", sourceNote: "Khung I.10", codeLocked: false });
-    expect(commission.dependsOn).toEqual([{ code: "DOANHTHU.GHINHAN", name: "Doanh thu ghi nhận" }]);
+    expect(commission).toMatchObject({ name: "Hoa hồng", parentCode: "CHIPHI", level: 2, sign: 1, roleGroup: "BD", method: "FORMULA", methodLabel: "Công thức", formulaText: "[Doanh thu dự án] × [Tỷ lệ hoa hồng]", required: true, status: "active", statusLabel: "Đang dùng", sourceNote: "Khung I.10", codeLocked: false });
+    expect(commission.dependsOn).toEqual([{ code: "DOANHTHU.GHINHAN", name: "Doanh thu dự án" }]);
     expect(commission.usedBy).toEqual([{ code: "CHIPHI", name: "Tổng chi phí" }]);
     expect(commission.lockedMethods.map((row) => row.method)).toEqual(["MANUAL", "SYSTEM", "FUND", "GROUP"]); // cách lấy số không hợp lệ bị khóa, có lý do
     expect(data.items.find((item) => item.code === "CHIPHI")).toMatchObject({ method: "GROUP", methodLabel: "Tổng nhóm", formulaText: null });
     expect(data.items.find((item) => item.code === "CP.FUNCOP.AI")).toMatchObject({ parentCode: "CP.FUNCOP", level: 3, methodLabel: "Phân bổ quỹ" });
-    expect(data.formulaOperands.map((operand) => operand.label)).toEqual(expect.arrayContaining(["Doanh thu ghi nhận", "Tổng chi phí", "Tỷ lệ hoa hồng"]));
+    expect(data.formulaOperands.map((operand) => operand.label)).toEqual(expect.arrayContaining(["Doanh thu dự án", "Tổng chi phí", "Tỷ lệ hoa hồng"]));
   });
 
   it("sửa là bản nháp: nothing reaches the P&L until “Áp dụng bản nháp từ kỳ…”, which only takes an open period", async () => {
@@ -628,19 +641,14 @@ describe("lớp 0 — Khoản mục và Mẫu khoản mục (mục 6.2, 6.6)", (
     const { data } = await scenario().config.templates(founder);
     expect(data.templates.map((template) => [template.name, template.description, template.projectCount])).toEqual([
       ["Khách hàng", "Bộ mặc định, không tắt gì", 1],
-      ["Nội bộ", "Tắt: Doanh thu, Rebate License, Hoa hồng, EBIT, Biên EBIT, % Chi phí / Doanh thu · chi phí tiêu hao", 0],
-      ["Đào tạo", "Tắt: Doanh thu, Rebate License, Hoa hồng, EBIT, Biên EBIT, % Chi phí / Doanh thu · chi phí tiêu hao", 0]
+      ["Nội bộ", "Tắt: Rebate License, Hoa hồng · chi phí tiêu hao", 0],
+      ["Đào tạo", "Tắt: Rebate License, Hoa hồng · chi phí tiêu hao", 0]
     ]);
     expect(data.templates[0].enabledItemCount).toBe(22);
-    expect(data.templates[1].enabledItemCount).toBe(15);
+    expect(data.templates[1].enabledItemCount).toBe(20);
     expect(data.comparison.map((row) => [row.label, row.cells.customer, row.cells.internal, row.cells.training])).toEqual([
-      ["Doanh thu", { enabled: true }, { enabled: false }, { enabled: false }],
-      ["Doanh thu ghi nhận", { enabled: true }, { enabled: false }, { enabled: false }],
       ["Rebate License", { enabled: true }, { enabled: false }, { enabled: false }],
       ["Hoa hồng", { enabled: true }, { enabled: false }, { enabled: false }],
-      ["EBIT", { enabled: true }, { enabled: false }, { enabled: false }],
-      ["Biên EBIT", { enabled: true }, { enabled: false }, { enabled: false }],
-      ["% Chi phí / Doanh thu", { enabled: true }, { enabled: false }, { enabled: false }],
       ["Tỷ lệ hoa hồng (tham số, nhập tay)", { text: "5%" }, { text: "—" }, { text: "—" }]
     ]);
     expect(data.overrides).toEqual([]);

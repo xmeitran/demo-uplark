@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { CreateTaskTimeEntryResponse, ProjectTaskSummary, ResourceListResponse, TaskTimeEntrySummary } from "@b2b-crm/contracts";
 import { ShopifyAppShell, ShopifyBanner, ShopifyPage, ShopifySection } from "../shopify-ui";
 import { CrmSelect } from "./crm-select";
-import { LAYER2_MISMATCH_LABEL, TASK_TYPE_LAYER2_FIELD_LABEL, defaultSelectedLayer2, layer2OptionsForTask } from "@/lib/task-classification";
+import { LAYER2_MISMATCH_LABEL, defaultSelectedLayer2 } from "@/lib/task-classification";
 
 import { useAuth } from "../../lib/auth";
 import {
@@ -47,10 +47,7 @@ export function ProjectControlsFunctionPage() {
   const [inputTaskId, setInputTaskId] = useState("");
   const [inputHours, setInputHours] = useState("8");
   const [inputWorkType, setInputWorkType] = useState("Billable Delivery");
-  // P&L spec 12/10 point 5: Layer 2 is chosen per time log, pre-selected to the task's derived value.
-  const [inputLayer2, setInputLayer2] = useState("");
   const inputTask = tasks.find((task) => task.id === inputTaskId);
-  useEffect(() => { setInputLayer2(defaultSelectedLayer2(inputTask?.taskTypeLayer2)); }, [inputTask?.id, inputTask?.taskTypeLayer2]);
   const [inputNote, setInputNote] = useState("");
   const [mutationPending, setMutationPending] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
@@ -101,8 +98,9 @@ export function ProjectControlsFunctionPage() {
       setMutationError("Select a real task before submitting hours.");
       return;
     }
-    if (!inputLayer2) {
-      setMutationError(`Chọn ${TASK_TYPE_LAYER2_FIELD_LABEL} cho giờ log này.`);
+    const selectedTaskTypeLayer2 = defaultSelectedLayer2(inputTask?.taskTypeLayer2);
+    if (!selectedTaskTypeLayer2) {
+      setMutationError("Công việc chưa được hệ thống phân loại bối cảnh. Hãy bổ sung phân loại cho task trước khi ghi giờ.");
       return;
     }
     setMutationPending(true);
@@ -118,7 +116,7 @@ export function ProjectControlsFunctionPage() {
           billable: inputWorkType !== "Rework" && inputWorkType !== "Internal/Admin",
           workType: inputWorkType,
           note: inputNote,
-          selectedTaskTypeLayer2: inputLayer2
+          selectedTaskTypeLayer2
         })
       });
       if (!response.ok) throw new Error(`Could not submit hours: ${response.status}`);
@@ -180,10 +178,6 @@ export function ProjectControlsFunctionPage() {
                   <div>
                     <label htmlFor="time-entry-work-type" style={fieldLabelStyle}>Loại công việc</label>
                     <CrmSelect id="time-entry-work-type" options={[{ value: "Billable Delivery", label: "Triển khai tính phí" }, { value: "Non-billable Delivery", label: "Triển khai không tính phí" }, { value: "Rework", label: "Làm lại" }, { value: "Support", label: "Hỗ trợ" }, { value: "Change Request", label: "Yêu cầu thay đổi" }, { value: "Internal/Admin", label: "Nội bộ / hành chính" }]} value={inputWorkType} onChange={setInputWorkType} />
-                  </div>
-                  <div>
-                    <label htmlFor="time-entry-layer2" style={fieldLabelStyle}>{TASK_TYPE_LAYER2_FIELD_LABEL} *</label>
-                    <CrmSelect id="time-entry-layer2" options={[...(inputLayer2 ? [] : [{ value: "", label: "Chọn Lớp 2" }]), ...layer2OptionsForTask(inputTask?.taskTypeLayer1)]} value={inputLayer2} onChange={setInputLayer2} />
                   </div>
                   <div>
                     <label htmlFor="time-entry-note" style={fieldLabelStyle}>Ghi chú công việc</label>

@@ -20,19 +20,30 @@ const RESULT: Column = { label: "Kết quả", title: "Chính thức, Tạm tín
 const ACCEPTED_COLUMNS: Column[] = [
   PROJECT,
   { label: "Bắt đầu → Nghiệm thu", title: "Tháng bắt đầu và tháng nghiệm thu (mốc G7)", sort: "start", width: "w-[128px]" },
-  { label: "Doanh thu ghi nhận", title: "Doanh thu ghi nhận tại mốc nghiệm thu G7 (triệu đồng)", sort: "revenue", numeric: true, width: "w-[112px]" },
+  { label: "Doanh thu dự án", title: "Doanh thu nhập tay theo từng dự án (triệu đồng)", sort: "revenue", numeric: true, width: "w-[112px]" },
   LABOR,
   OTHER,
-  { label: "EBIT · Biên", title: "EBIT = doanh thu ghi nhận − chi phí nhân sự − chi phí khác (triệu đồng); dòng dưới là biên EBIT = EBIT ÷ doanh thu", sort: "ebit", numeric: true, width: "w-[112px]" },
+  { label: "EBIT · Biên", title: "EBIT = doanh thu dự án − chi phí nhân sự − chi phí khác (triệu đồng); dòng dưới là biên EBIT = EBIT ÷ doanh thu dự án", sort: "ebit", numeric: true, width: "w-[112px]" },
   RESULT
 ];
 
 const IN_PROGRESS_COLUMNS: Column[] = [
   PROJECT,
   { label: "Bắt đầu", title: "Tháng bắt đầu dự án", sort: "start", width: "w-[128px]" },
+  { label: "Doanh thu dự án", title: "Doanh thu nhập tay theo từng dự án (triệu đồng)", sort: "revenue", numeric: true, width: "w-[112px]" },
   LABOR,
   OTHER,
-  { label: "Tổng chi phí đến nay", title: "Chi phí nhân sự + chi phí khác đã phát sinh; dự án chưa nghiệm thu nên chưa có doanh thu và EBIT", numeric: true, width: "w-[128px]" },
+  { label: "Tổng chi phí đến nay", title: "Chi phí nhân sự + chi phí khác đã phát sinh; dự án chưa nghiệm thu nên chưa có EBIT", numeric: true, width: "w-[128px]" },
+  RESULT
+];
+
+const ALL_COLUMNS: Column[] = [
+  PROJECT,
+  { label: "Trạng thái P&L", title: "Dự án đã nghiệm thu hoặc đang triển khai", center: true, width: "w-[132px]" },
+  { label: "Bắt đầu → Nghiệm thu", title: "Tháng bắt đầu và tháng nghiệm thu (mốc G7), nếu đã có", sort: "start", width: "w-[148px]" },
+  { label: "Doanh thu dự án", title: "Doanh thu nhập tay theo từng dự án (triệu đồng)", sort: "revenue", numeric: true, width: "w-[112px]" },
+  { label: "Tổng chi phí", title: "Chi phí nhân sự + chi phí khác (triệu đồng)", sort: "laborCost", numeric: true, width: "w-[112px]" },
+  { label: "EBIT", title: "EBIT của dự án đã nghiệm thu; dự án đang triển khai chưa có EBIT", sort: "ebit", numeric: true, width: "w-[112px]" },
   RESULT
 ];
 
@@ -41,7 +52,7 @@ function Money({ amount, bold = false, why, percent }: Readonly<{ amount: number
   return (
     <td title={formatExactVnd(amount)} className={`${tdNumberClass} !px-3 ${bold ? "font-bold" : ""}`}>
       {amount === null ? <NoValue why={why} /> : formatMillions(amount, "overview")}
-      {percent === undefined || percent === null ? null : <span title="Biên EBIT = EBIT ÷ doanh thu ghi nhận" className="block text-xs font-medium text-muted-foreground">{formatPercent(percent)}</span>}
+      {percent === undefined || percent === null ? null : <span title="Biên EBIT = EBIT ÷ doanh thu dự án" className="block text-xs font-medium text-muted-foreground">{formatPercent(percent)}</span>}
     </td>
   );
 }
@@ -106,9 +117,10 @@ export function DashboardProjectTable({ data, state, moneyVisible, returnTo, onC
   onReset?: () => void;
 }>) {
   const router = useRouter();
+  const all = state.tab === "all";
   const accepted = state.tab === "accepted";
-  const list = accepted ? data.accepted : data.inProgress;
-  const columns = accepted ? ACCEPTED_COLUMNS : IN_PROGRESS_COLUMNS;
+  const list = all ? data.all : accepted ? data.accepted : data.inProgress;
+  const columns = all ? ALL_COLUMNS : accepted ? ACCEPTED_COLUMNS : IN_PROGRESS_COLUMNS;
   const pageCount = Math.max(1, Math.ceil(list.total / Math.max(1, list.pageSize)));
   const check = data.accepted.reconciliation;
   const total = data.accepted.totalRow;
@@ -122,8 +134,8 @@ export function DashboardProjectTable({ data, state, moneyVisible, returnTo, onC
         <h2 id="pnl-projects-title" className={sectionTitleClass}>Bảng dự án</h2>
         <HelpToggle label="Cách đọc bảng này" storageKey="pnl-help-dashboard-table">
           <li>Mỗi dòng là một dự án. Số tiền (triệu đồng) là số của cả vòng đời dự án, không riêng kỳ đang lọc. Bấm tên dự án để xem chi tiết theo tháng.</li>
-          <li>Doanh thu chỉ được ghi nhận khi dự án qua mốc nghiệm thu G7. Dự án đang triển khai chỉ hiện chi phí và không cộng vào các ô tổng.</li>
-          <li>EBIT = doanh thu ghi nhận − chi phí nhân sự − chi phí khác. Dòng nhỏ dưới EBIT là biên EBIT = EBIT ÷ doanh thu ghi nhận.</li>
+          <li>Doanh thu dự án do Admin/PM nhập tay theo từng dự án. Dự án đang triển khai vẫn hiện trong bảng; EBIT chỉ tính khi đủ dữ liệu theo kỳ.</li>
+          <li>EBIT = doanh thu dự án − chi phí nhân sự − chi phí khác. Dòng nhỏ dưới EBIT là biên EBIT = EBIT ÷ doanh thu dự án.</li>
           <li>{RESULT_MEANING.official} {RESULT_MEANING.provisional}</li>
           <li>{RESULT_MEANING.not_computable} Lý do ghi ngay dưới tên dự án; rê chuột vào nhãn ở cột Kết quả để xem đủ.</li>
         </HelpToggle>
@@ -134,8 +146,9 @@ export function DashboardProjectTable({ data, state, moneyVisible, returnTo, onC
         value={state.tab}
         onChange={(tab) => onChange({ tab })}
         tabs={[
+          { value: "all", label: "Tất cả dự án (" + data.all.total + ")" },
           { value: "accepted", label: `Đã nghiệm thu (${data.accepted.total})` },
-          { value: "in_progress", label: `Đang triển khai (${data.inProgress.total}) · chỉ chi phí, không cộng vào tổng` }
+          { value: "in_progress", label: `Đang triển khai (${data.inProgress.total}) · chưa cộng vào tổng` }
         ]}
       />
       <div id="pnl-projects-panel" role="tabpanel" aria-labelledby={`pnl-projects-tab-${state.tab}`}>
@@ -150,7 +163,7 @@ export function DashboardProjectTable({ data, state, moneyVisible, returnTo, onC
                 <EmptyRow colSpan={columns.length}>
                   {onReset ? (
                     <>Không có kết quả phù hợp bộ lọc. <button type="button" onClick={onReset} className="font-semibold text-primary hover:underline">Đặt lại bộ lọc</button></>
-                  ) : accepted ? "Chưa có dự án đã nghiệm thu nào trong kỳ. Thử xem kỳ dài hơn hoặc đổi “Dự án được tính”." : "Không có dự án đang triển khai nào bắt đầu trong kỳ."}
+                  ) : all ? "Chưa có dự án nào phù hợp bộ lọc." : accepted ? "Chưa có dự án đã nghiệm thu nào trong kỳ. Thử xem kỳ dài hơn hoặc đổi “Dự án được tính”." : "Không có dự án đang triển khai nào bắt đầu trong kỳ."}
                 </EmptyRow>
               ) : null}
               {list.rows.map((row) => {
@@ -158,15 +171,31 @@ export function DashboardProjectTable({ data, state, moneyVisible, returnTo, onC
                 return (
                   <tr key={row.projectId} onClick={() => router.push(hrefOf(row))} className="cursor-pointer align-top transition-colors hover:bg-muted/25">
                     <ProjectCell row={row} href={hrefOf(row)} />
-                    <td className={`${tdClass} !px-3 whitespace-nowrap font-mono tabular-nums`}>
-                      {formatMonthShort(row.startedOn)}
-                      {accepted ? ` → ${formatMonthShort(row.acceptedOn)}` : ""}
-                      {accepted && row.acceptedOnEstimated ? <span title="Dự án chưa có ngày nghiệm thu G7: tháng nghiệm thu chỉ là ước lượng từ giờ ghi cuối và ngày kết thúc kế hoạch" className="block font-sans text-[11px] font-medium text-amber-700">ngày nghiệm thu chưa xác định</span> : null}
-                    </td>
-                    {accepted ? <Money amount={row.revenueAmount} why={why} /> : null}
-                    <Money amount={row.laborCostAmount} why={why} />
-                    <Money amount={row.otherCostAmount} why={why} />
-                    {accepted ? <Money amount={row.ebitAmount} why={why} percent={row.marginPercent} /> : <Money amount={row.totalCostAmount} why={why} />}
+                    {all ? (
+                      <>
+                        <td className={`${tdClass} !px-3 text-center`}><span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${row.acceptedOn ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"}`}>{row.acceptedOn ? "Đã nghiệm thu" : "Đang triển khai"}</span></td>
+                        <td className={`${tdClass} !px-3 whitespace-nowrap font-mono tabular-nums`}>
+                          {formatMonthShort(row.startedOn)}{row.acceptedOn ? ` → ${formatMonthShort(row.acceptedOn)}` : " → chưa nghiệm thu"}
+                          {row.acceptedOnEstimated ? <span title="Dự án chưa có ngày nghiệm thu G7: tháng nghiệm thu chỉ là ước lượng từ giờ ghi cuối và ngày kết thúc kế hoạch" className="block font-sans text-[11px] font-medium text-amber-700">ngày nghiệm thu chưa xác định</span> : null}
+                        </td>
+                        <Money amount={row.revenueAmount} why={why} />
+                        <Money amount={row.totalCostAmount} why={why} />
+                        <Money amount={row.ebitAmount} why={why} percent={row.marginPercent} />
+                      </>
+                    ) : (
+                      <>
+                        <td className={`${tdClass} !px-3 whitespace-nowrap font-mono tabular-nums`}>
+                          {formatMonthShort(row.startedOn)}
+                          {accepted ? ` → ${formatMonthShort(row.acceptedOn)}` : ""}
+                          {accepted && row.acceptedOnEstimated ? <span title="Dự án chưa có ngày nghiệm thu G7: tháng nghiệm thu chỉ là ước lượng từ giờ ghi cuối và ngày kết thúc kế hoạch" className="block font-sans text-[11px] font-medium text-amber-700">ngày nghiệm thu chưa xác định</span> : null}
+                        </td>
+                        {accepted ? <Money amount={row.revenueAmount} why={why} /> : null}
+                        {!accepted ? <Money amount={row.revenueAmount} why={why} /> : null}
+                        <Money amount={row.laborCostAmount} why={why} />
+                        <Money amount={row.otherCostAmount} why={why} />
+                        {accepted ? <Money amount={row.ebitAmount} why={why} percent={row.marginPercent} /> : <Money amount={row.totalCostAmount} why={why} />}
+                      </>
+                    )}
                     <td className={`${tdClass} !px-3 text-center`}><ResultBadge result={row.result} /></td>
                   </tr>
                 );
@@ -199,7 +228,7 @@ export function DashboardProjectTable({ data, state, moneyVisible, returnTo, onC
             </span>
           ) : null}
           <p className={mutedNoteClass}>
-            Trang {list.page}/{pageCount} · {accepted ? "các ô tổng và thứ tự sắp xếp tính trên toàn bộ danh sách, không riêng trang này" : "sắp xếp trên toàn bộ danh sách; không cộng vào các ô tổng"}
+            Trang {list.page}/{pageCount} · {all ? "hiển thị mọi dự án; các ô tổng chỉ tính dự án đủ điều kiện P&L" : accepted ? "các ô tổng và thứ tự sắp xếp tính trên toàn bộ danh sách, không riêng trang này" : "sắp xếp trên toàn bộ danh sách; không cộng vào các ô tổng"}
           </p>
         </div>
       </div>

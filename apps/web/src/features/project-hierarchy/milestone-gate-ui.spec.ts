@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { selectActiveMilestone } from "./milestone-gate-ui";
+import { isMilestoneWorkLocked, selectActiveMilestone } from "./milestone-gate-ui";
+
+describe("isMilestoneWorkLocked", () => {
+  it("locks only an explicitly locked gate", () => {
+    expect(isMilestoneWorkLocked({ id: "m1", status: "upcoming" })).toBe(false);
+    expect(isMilestoneWorkLocked({ id: "m2", status: "upcoming", gateStatus: "open" })).toBe(false);
+    expect(isMilestoneWorkLocked({ id: "m3", status: "done", gateStatus: "approved" })).toBe(false);
+    expect(isMilestoneWorkLocked({ id: "m4", status: "upcoming", gateStatus: "locked" })).toBe(true);
+  });
+});
 
 describe("selectActiveMilestone", () => {
   it("uses the open gate even when the legacy stage status is stale", () => {

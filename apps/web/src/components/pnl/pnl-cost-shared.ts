@@ -89,7 +89,7 @@ type FormulaToken = { item: string } | { param: string } | { value: number } | {
 const OP_SIGNS = { "+": "+", "-": "−", "*": "×", "/": "÷" } as const;
 const tokenKey = (token: FormulaToken) => "item" in token ? `item:${token.item}` : "param" in token ? `param:${token.param}` : "value" in token ? `value:${token.value}` : `op:${token.op}`;
 
-/** "[Doanh thu ghi nhận] × [Tỷ lệ hoa hồng]" from tokens and the API's operand list. */
+/** "[Doanh thu dự án] × [Tỷ lệ hoa hồng]" from tokens and the API's operand list. */
 export function formulaText(tokens: readonly FormulaToken[], operands: ReadonlyArray<{ token: FormulaToken; label: string }>): string {
   const labels = new Map(operands.map((operand) => [tokenKey(operand.token), operand.label]));
   return tokens.map((token) => "op" in token ? OP_SIGNS[token.op] : "value" in token ? formulaNumber.format(token.value) : `[${labels.get(tokenKey(token)) ?? ("item" in token ? token.item : token.param)}]`).join(" ");
@@ -159,18 +159,15 @@ export function importResultText(result: { periodKey: string; validCount: number
   return `${head} · ${result.errors.length} dòng lỗi: ${first.employeeCode ? `mã ${first.employeeCode} ` : ""}${first.reason}${result.errors.length > 1 ? "…" : ""}`;
 }
 
-// --- Admin › Thiết lập P&L: năm tab ---------------------------------------------
+// --- Admin › Thiết lập P&L: hai tab cấu hình cốt lõi ----------------------------
 
-export type SetupTab = "items" | "parameters" | "funds" | "periods" | "templates";
+export type SetupTab = "items" | "parameters";
 export const SETUP_TABS: Array<{ id: SetupTab; label: string }> = [
   { id: "items", label: "Khoản mục" },
-  { id: "parameters", label: "Tham số" },
-  { id: "funds", label: "Quỹ chi phí chung" },
-  { id: "periods", label: "Kỳ và khóa kỳ" },
-  { id: "templates", label: "Mẫu khoản mục" }
+  { id: "parameters", label: "Tham số" }
 ];
 
-/** `?tab=` of the URL → tab. Anything else (the old "Khoản mục chi phí" default, a typo) lands on Khoản mục. */
+/** `?tab=` of the URL → one of the two supported Admin tabs. Legacy tabs land on Khoản mục. */
 export function setupTabOf(value: string | null): SetupTab {
   return SETUP_TABS.some((tab) => tab.id === value) ? value as SetupTab : "items";
 }

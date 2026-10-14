@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { activeMembershipWhere } from "../identity-access/active-membership";
 import { Prisma, SubjectStatus } from "@prisma/client";
 import type {
@@ -31,6 +31,8 @@ import { ProjectPermissionsService } from "./project-permissions.service";
 /** The legacy per-milestone gate: configure, evaluate, request approval, approve (split out of ProjectsService). */
 @Injectable()
 export class MilestoneGatesService {
+  private readonly logger = new Logger(MilestoneGatesService.name);
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(ProjectPermissionsService) private readonly permissions: ProjectPermissionsService,
@@ -103,9 +105,15 @@ export class MilestoneGatesService {
       include: {
         ownerTeam: { select: { id: true, name: true } },
         stages: {
+          // Change-request stages are tracked separately and must not hold back
+          // the ordinary milestone handoff.
+          where: { changeRequestId: null },
           select: {
             tasks: {
-              where: { workspaceId: principal.workspaceId, archivedAt: null },
+              // A subtask is execution detail under its parent Task. It is not
+              // a second milestone deliverable and is therefore not counted by
+              // the handoff gate.
+              where: { workspaceId: principal.workspaceId, archivedAt: null, parentTaskId: null },
               select: { status: true }
             }
           }
@@ -269,6 +277,7 @@ export class MilestoneGatesService {
             projectId: project.id,
             workspaceId: principal.workspaceId,
             archivedAt: null,
+            parentTaskId: null,
             // Stored stages of the retired change-request flow (changeRequestId set) never hold back the milestone's gate.
             stage: { milestoneId: milestone.id, changeRequestId: null }
           },
@@ -285,11 +294,26 @@ export class MilestoneGatesService {
     });
     // Evaluation only proves the visible requirements. It must never impersonate
     // the configured reviewer or unlock the next milestone by itself.
+    const reopeningApprovedGate = !evaluation.satisfied && ["approved", "pending_review"].includes(milestone.gateStatus);
     const nextStatus = evaluation.satisfied && milestone.gateStatus !== "approved"
       ? "pending_review"
-      : milestone.gateStatus;
+      : reopeningApprovedGate
+        ? "open"
+        : milestone.gateStatus;
     const updated = await this.prisma.$transaction(async (tx) => {
-      const result = await tx.projectMilestone.update({ where: { id: milestone.id }, data: { gateStatus: nextStatus } });
+      const result = await tx.projectMilestone.update({
+        where: { id: milestone.id },
+        data: {
+          gateStatus: nextStatus,
+          ...(reopeningApprovedGate ? {
+            reviewerApprovedAt: null,
+            reviewerApprovedByUserId: null,
+            approvalRequestedAt: null,
+            approvalRequestedByUserId: null,
+            approvalRequestedByName: null
+          } : {})
+        }
+      });
       return result;
     });
     return {
@@ -300,7 +324,9 @@ export class MilestoneGatesService {
       reviewerMode: normalizeMilestoneReviewerMode(updated.reviewerMode ?? milestone.reviewerMode),
       reviewerUserId: updated.reviewerUserId ?? milestone.reviewerUserId ?? undefined,
       reviewerApprovedAt: updated.reviewerApprovedAt?.toISOString?.() ?? updated.reviewerApprovedAt,
-      reviewerApprovedByUserId: updated.reviewerApprovedByUserId ?? milestone.reviewerApprovedByUserId ?? undefined,
+      // A reopened gate explicitly clears the previous approval. Do not fall back
+      // to the stale reviewer from the pre-update row in the response.
+      reviewerApprovedByUserId: updated.reviewerApprovedByUserId ?? (reopeningApprovedGate ? undefined : milestone.reviewerApprovedByUserId ?? undefined),
       reviewerApprovalRequired: updated.gateStatus !== "approved",
       canApprove: canApproveMilestoneReviewer({
         reviewerMode: normalizeMilestoneReviewerMode(updated.reviewerMode ?? milestone.reviewerMode),
@@ -415,9 +441,10 @@ export class MilestoneGatesService {
       if (stage?.milestoneId) {
         await this.evaluateProjectMilestoneGate(task.projectId, stage.milestoneId, principal);
       }
-    } catch {
+    } catch (error) {
       // Task completion is durable even if a stale/legacy hierarchy record
       // cannot be re-evaluated. The handoff endpoint remains retryable.
+      this.logger.warn(`Milestone gate re-evaluation failed for task ${task.projectId}/${task.stageId}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

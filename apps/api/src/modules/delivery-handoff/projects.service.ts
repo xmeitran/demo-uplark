@@ -1530,7 +1530,7 @@ export class ProjectsService {
       throw error;
     });
 
-    projectLifecycleHooks.onProjectCreated(response, principal); // V-02: Lark groups + "Khởi tạo dự án"; never fails the request
+    projectLifecycleHooks.onProjectCreated(response, principal); // Kept as a no-op extension point; project creation does not create Lark groups.
     return response;
   }
 
@@ -1731,7 +1731,7 @@ export class ProjectsService {
     });
 
     if (nextStatus) await this.recomputeStatusProposal(projectId, principal);
-    projectLifecycleHooks.onProjectChanged(projectId); // V-02: Lark group members follow the project members
+    projectLifecycleHooks.onProjectChanged(projectId); // Kept as a no-op extension point; project changes do not sync Lark groups.
     return withoutProjectFinancials(mapProjectSummary(project), principal);
   }
 
@@ -1865,9 +1865,12 @@ export class ProjectsService {
       include: {
         ownerTeam: { select: { id: true, name: true } },
         stages: {
+          // Keep hierarchy gate counts aligned with the milestone handoff:
+          // change-request stages and subtasks are not ordinary deliverables.
+          where: { changeRequestId: null },
           select: {
             tasks: {
-              where: { workspaceId: principal.workspaceId, archivedAt: null },
+              where: { workspaceId: principal.workspaceId, archivedAt: null, parentTaskId: null },
               select: { status: true }
             }
           }
@@ -2104,6 +2107,7 @@ export class ProjectsService {
           }
         });
       }
+      await this.permissions.assertMilestoneUnlockedById(tx, principal.workspaceId, milestone.id, "thêm stage");
       const lastStage = await tx.projectStage.findFirst({
         where: {
           projectId: project.id,
@@ -3029,7 +3033,7 @@ export class ProjectsService {
     // D-19: sub-task hours against the task — recorded and flagged to the PM, never blocked.
     await syncEstimateNotices(this.prisma, principal.workspaceId, taskResult.projectId, principal.subjectId);
 
-    if (isCompletedTaskStatus(requestedStatus)) {
+    if (taskResult.projectId && taskResult.stageId) {
       await this.milestoneGates.evaluateMilestoneGateForTask(taskResult, principal);
     }
 
@@ -3335,7 +3339,7 @@ export class ProjectsService {
       return updated;
     });
     await syncEstimateNotices(this.prisma, principal.workspaceId, task.projectId, principal.subjectId); // D-19
-    if (requestedStatus && isCompletedTaskStatus(requestedStatus)) {
+    if (requestedStatus !== undefined && task.projectId && task.stageId) {
       await this.milestoneGates.evaluateMilestoneGateForTask(task, principal);
     }
     return mapTaskSummary(task);
@@ -3546,7 +3550,7 @@ export class ProjectsService {
       return updated;
     });
 
-    if (isCompletedTaskStatus(toStatus)) {
+    if (task.projectId && task.stageId) {
       await this.milestoneGates.evaluateMilestoneGateForTask(task, principal);
     }
     return mapTaskSummary(task);

@@ -42,13 +42,15 @@ import { monthKeysBetween, reportDayStart, reportMonthKey } from "./pnl-calc";
 import { PNL_CLOSE_GATES, PNL_PARAMETER_CATALOGUE, PNL_PARAMETER_KEYS, dayKeyOf, num, type ParameterRow, type PnlContext, type ProjectCtx } from "./pnl-context";
 import { ROLE_GROUPS, ROLE_GROUP_LABELS, STAFF_COST_STATUS_LABELS, isRoleGroup, periodStateOf, workingDaysOfMonth } from "./pnl-rules";
 import { PnlService, pnlMeta, requirePeriodKey, shiftMonth } from "./pnl.service";
-import { COST_ITEM_METHOD_LABELS, DEFAULT_COST_TREE, SYSTEM_ITEM_CODES, accountingGroupOf, checkCostTree, effectiveDisabledCodes, type CostItemDef } from "./pnl-tree";
+import { COST_ITEM_METHOD_LABELS, DEFAULT_COST_TREE, REVENUE_ALWAYS_ON_CODES, SYSTEM_ITEM_CODES, accountingGroupOf, checkCostTree, effectiveDisabledCodes, normalizeRevenueItem, normalizeTemplateDisabledCodes, type CostItemDef } from "./pnl-tree";
 
 const sum = (values: readonly number[]) => values.reduce((total, value) => total + value, 0);
 const text = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : undefined);
 const monthLabel = (periodKey: string) => `${periodKey.slice(5)}/${periodKey.slice(0, 4)}`;
 const METHODS: PnlCostItemMethod[] = ["MANUAL", "SYSTEM", "FORMULA", "FUND", "GROUP"];
-const SYSTEM_CODES = new Set<string>(Object.values(SYSTEM_ITEM_CODES));
+// Revenue keeps a stable code for formulas and snapshots, but its amount is a
+// manual project input. All other chain codes remain system-controlled.
+const SYSTEM_CODES = new Set<string>(Object.values(SYSTEM_ITEM_CODES).filter((code) => code !== SYSTEM_ITEM_CODES.revenue));
 const ITEM_STATUS_LABELS = { active: "Đang dùng", draft: "Bản nháp", retired: "Ngừng dùng" } as const;
 
 /** Component columns of ResourceMonthlyCost, named after the payroll system's output (mục 6.7 khối 3). */
@@ -139,17 +141,17 @@ export class PnlConfigService {
   // -------------------------------------------------------------------------
 
   private toDef(row: any): CostItemDef {
-    return { code: row.code, name: row.name, parentCode: row.parentCode ?? null, sign: row.sign === -1 ? -1 : 1, roleGroup: row.roleGroup ?? null, unit: row.unit ?? "VND", method: row.method, systemSource: row.systemSource ?? null, formula: row.formula ?? null, required: Boolean(row.required), sortOrder: row.sortOrder ?? 10 };
+    return normalizeRevenueItem({ code: row.code, name: row.name, parentCode: row.parentCode ?? null, sign: row.sign === -1 ? -1 : 1, roleGroup: row.roleGroup ?? null, unit: row.unit ?? "VND", method: row.method, systemSource: row.systemSource ?? null, formula: row.formula ?? null, required: Boolean(row.required), sortOrder: row.sortOrder ?? 10 });
   }
 
   /** The stored tree, or the default set while nothing is stored; and the tree as it would be with the drafts applied. */
   private async trees(workspaceId: string) {
     const rows: any[] = await this.prisma.pnlCostItem.findMany({ where: { workspaceId }, orderBy: { sortOrder: "asc" } });
     const stored = rows.length > 0;
-    const active = stored ? rows.filter((row) => row.status === "active") : DEFAULT_COST_TREE.map((row) => ({ ...row, status: "active", draft: null, effectiveFromPeriod: null, sourceNote: "Khung I.10" }));
+    const active = stored ? rows.filter((row) => row.status === "active").map((row) => normalizeRevenueItem(row)) : DEFAULT_COST_TREE.map((row) => ({ ...row, status: "active", draft: null, effectiveFromPeriod: null, sourceNote: "Khung I.10" }));
     const drafted = [
       ...active.filter((row) => !(row.draft as any)?.retire).map((row) => ({ ...row, ...((row.draft as object) ?? {}) })),
-      ...rows.filter((row) => row.status === "draft")
+      ...rows.filter((row) => row.status === "draft").map((row) => normalizeRevenueItem(row))
     ].sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0));
     const hasDraft = rows.some((row) => row.status === "draft" || row.draft);
     return { rows, stored, active, drafted, hasDraft };
@@ -172,6 +174,7 @@ export class PnlConfigService {
     // "Khoản mục bắt buộc chưa có số ở kỳ": does the workspace have the item's input for the month at all?
     const ofMonth = ctx.entries.filter((entry) => entry.periodKey === periodKey && entry.status === "included");
     const hasValue = (row: CostItemDef): boolean => {
+      if (row.code === SYSTEM_ITEM_CODES.revenue) return true; // revenue is entered once per project, not per month
       if (row.method === "SYSTEM") return row.systemSource === "revenue" || ofMonth.some((entry) => entry.roleGroup === row.roleGroup);
       if (row.method === "FORMULA") return (row.formula ?? []).every((token) => !("param" in token) || ctx.params.resolve(token.param as PnlParameterKey, null, periodKey) !== undefined);
       if (row.method === "FUND") return ctx.fundShares.some((share) => share.periodKey === periodKey && share.itemCode === row.code);
@@ -186,6 +189,7 @@ export class PnlConfigService {
       const codeLocked = row.status === "active" && lockedPeriods.some((key) => !row.effectiveFromPeriod || key >= row.effectiveFromPeriod);
       const lockedMethods = METHODS.filter((method) => method !== def.method).flatMap((method) => {
         if (hasChildren.has(def.code)) return [{ method, reason: "Khoản mục có dòng con nên chỉ dùng Tổng nhóm." }];
+        if (def.code === SYSTEM_ITEM_CODES.revenue) return [{ method, reason: "Doanh thu được nhập tay theo từng dự án." }];
         if (SYSTEM_CODES.has(def.code) || (def.method === "SYSTEM" && def.systemSource === "labor")) return [{ method, reason: "Khoản mục hệ thống: chuỗi tính đọc đúng cách lấy số này." }];
         if (codeLocked) return [{ method, reason: "Đã có số ở kỳ đã khóa." }];
         return [];
@@ -235,13 +239,16 @@ export class PnlConfigService {
     const name = text(input.name);
     if (!name || name.length > 120) throw new BadRequestException("Tên khoản mục là bắt buộc (tối đa 120 ký tự).");
     if (!METHODS.includes(input.method)) throw new BadRequestException("Cách lấy số phải là Nhập tay, Lấy từ hệ thống, Công thức, Phân bổ quỹ hoặc Tổng nhóm.");
+    const systemSource = input.method === "SYSTEM" ? input.systemSource ?? current?.systemSource ?? null : null;
+    if (code === SYSTEM_ITEM_CODES.revenue && input.method !== "MANUAL") throw new BadRequestException("Doanh thu dự án chỉ được nhập tay theo từng dự án.");
+    if (input.method === "SYSTEM" && systemSource === "revenue") throw new BadRequestException("Doanh thu dự án không được lấy từ hệ thống; hãy chọn Nhập tay.");
     if (input.roleGroup && !isRoleGroup(input.roleGroup)) throw new BadRequestException("Nhóm vai trò không hợp lệ.");
     const unit = input.unit ?? current?.unit ?? "VND";
     if (!["VND", "PERCENT", "NONE"].includes(unit)) throw new BadRequestException("Đơn vị không hợp lệ.");
     if (input.method === "FORMULA" && !(Array.isArray(input.formula) && input.formula.length)) throw new BadRequestException("Công thức phải được ghép từ danh sách đại lượng.");
     return {
       code, name, parentCode: text(input.parentCode ?? undefined)?.toUpperCase() ?? null, sign: input.sign === -1 ? -1 : 1, roleGroup: input.roleGroup ?? null, unit, method: input.method,
-      systemSource: input.method === "SYSTEM" ? input.systemSource ?? current?.systemSource ?? null : null, formula: input.method === "FORMULA" ? input.formula : null,
+      systemSource, formula: input.method === "FORMULA" ? input.formula : null,
       required: Boolean(input.required), sourceNote: text(input.sourceNote ?? undefined) ?? current?.sourceNote ?? null, sortOrder: Number.isInteger(input.sortOrder) ? input.sortOrder : current?.sortOrder ?? 900
     };
   }
@@ -256,7 +263,7 @@ export class PnlConfigService {
     if (current && (SYSTEM_CODES.has(code) || (current.method === "SYSTEM" && current.systemSource === "labor")) && (data.method !== current.method || data.systemSource !== current.systemSource)) {
       throw new BadRequestException("Khoản mục hệ thống không đổi được cách lấy số.");
     }
-    if (current?.status === "active" && data.method !== current.method) {
+    if (current?.status === "active" && data.method !== current.method && code !== SYSTEM_ITEM_CODES.revenue) {
       const ctx = await this.pnl.context(principal.workspaceId, { projectIds: [] });
       if ([...ctx.lockedKeys].some((key) => !current.effectiveFromPeriod || key >= current.effectiveFromPeriod)) throw new ConflictException("Khoản mục đã có số ở kỳ đã khóa: không đổi cách lấy số, hãy tạo khoản mục mới.");
     }
@@ -281,7 +288,7 @@ export class PnlConfigService {
     if (!(await this.prisma.pnlCostItem.count({ where: { workspaceId: principal.workspaceId } }))) await this.loadDefaultItems(principal);
     const current: any = await this.prisma.pnlCostItem.findFirst({ where: { workspaceId: principal.workspaceId, code } });
     if (!current) throw new NotFoundException("Không tìm thấy khoản mục.");
-    if (SYSTEM_CODES.has(code) || (current.method === "SYSTEM" && current.systemSource === "labor")) throw new BadRequestException("Khoản mục hệ thống không ngừng dùng được.");
+    if (code === SYSTEM_ITEM_CODES.revenue || SYSTEM_CODES.has(code) || (current.method === "SYSTEM" && current.systemSource === "labor")) throw new BadRequestException("Khoản mục hệ thống không ngừng dùng được.");
     if (current.status === "active") this.assertItemChangeAllowed(await this.pnl.context(principal.workspaceId), current, { retire: true });
     if (current.status === "draft") await this.prisma.pnlCostItem.delete({ where: { id: current.id } });
     else await this.prisma.pnlCostItem.update({ where: { id: current.id }, data: { draft: { retire: true }, updatedByUserId: principal.subjectId } });
@@ -366,6 +373,7 @@ export class PnlConfigService {
     for (const code of codes as string[]) {
       const row = byCode.get(code);
       if (!row) throw new BadRequestException(`Khoản mục ${code} không có trong cây.`);
+      if (REVENUE_ALWAYS_ON_CODES.has(code)) throw new BadRequestException("Doanh thu và các chỉ số kết quả luôn bật cho mọi loại project.");
       // Labor cost may never be switched off: it would drop out of the project while staying out of the company lines (PL-12).
       if ((row.method === "SYSTEM" && row.systemSource === "labor") || code === SYSTEM_ITEM_CODES.costGroup) throw new BadRequestException(`Không tắt được khoản mục ${row.name}: chi phí nhân sự luôn thuộc P&L.`);
     }
@@ -378,7 +386,7 @@ export class PnlConfigService {
     const ctx = await this.pnl.context(principal.workspaceId);
     const template = ctx.templates.get(key);
     if (!template) throw new NotFoundException("Không tìm thấy mẫu khoản mục.");
-    const disabledCodes = this.checkSwitchable(ctx, input?.disabledCodes, "disabledCodes");
+    const disabledCodes = normalizeTemplateDisabledCodes(this.checkSwitchable(ctx, input?.disabledCodes, "disabledCodes"));
     // "Sửa mẫu có hiệu lực từ kỳ đang mở": a code that already carries a number of a locked month cannot be switched off.
     // Accepted projects are out of it — they keep the template of their G7 date.
     const wasOff = effectiveDisabledCodes(ctx.tree, template.disabledCodes);
@@ -772,28 +780,26 @@ export class PnlConfigService {
   }
 
   // -------------------------------------------------------------------------
-  // PL-13 / D-22 — Giá trị dự án, entered on the Doanh thu figure of the P&L dự án screen
+  // PL-13 / D-22 — doanh thu dự án, entered on the Doanh thu figure of the P&L dự án screen
   // -------------------------------------------------------------------------
 
   /**
-   * One amount (VND) per Loại Khách hàng project, entered by the PM (Admin) from BD's figures. Required before G1.
+   * One amount (VND) per project type, entered by the PM (Admin) from BD's figures. Required before G1.
    * After G1 a change needs a reason — except the first entry of a project that never had a value: there is nothing to
-   * justify changing. Locked once the closing gate (G7) is approved. Every change is kept, before and after, in the history.
+   * justify changing. The value remains editable after G7 because it is the source of revenue, not a system-derived result.
    */
   async setProjectValue(projectId: string, input: PnlProjectValueInput, principal: PrincipalContext) {
     assertProjectSetupEdit(principal);
-    if (!canViewCost(principal)) throw new ForbiddenException("Giá trị dự án chỉ dành cho nhóm quyền chi phí.");
+    if (!canViewCost(principal)) throw new ForbiddenException("Doanh thu dự án chỉ dành cho nhóm quyền chi phí.");
     const project = (await this.pnl.context(principal.workspaceId, { projectIds: [projectId] })).projects.get(projectId);
     if (!project) throw new NotFoundException("Dự án không thuộc workspace hiện tại.");
-    if (project.consumable) throw new BadRequestException("Dự án Loại Nội bộ, Đào tạo không có Giá trị dự án.");
-    if (project.closePassed) throw new ConflictException(`Giá trị dự án đã khóa khi ${project.closeGate} được duyệt.`);
     const amount = input?.amount === null || input?.amount === undefined || (input.amount as unknown) === "" ? null : Number(input.amount);
-    if (amount !== null && (!Number.isSafeInteger(amount) || amount <= 0)) throw new BadRequestException("Giá trị dự án là số tiền VND nguyên, lớn hơn 0.");
+    if (amount !== null && (!Number.isSafeInteger(amount) || amount <= 0)) throw new BadRequestException("Doanh thu dự án là số tiền VND nguyên, lớn hơn 0.");
     const current = project.projectValueAmount ?? null;
     if (amount === current) return { data: { projectId, amount: current } };
-    if (amount === null && project.g1Passed) throw new ConflictException("Dự án đã qua G1: Giá trị dự án không được để trống, chỉ sửa thành số khác kèm lý do.");
+    if (amount === null && project.g1Passed) throw new ConflictException("Dự án đã qua G1: doanh thu không được để trống, chỉ sửa thành số khác kèm lý do.");
     const reason = text(input.reason);
-    if (project.g1Passed && current !== null && !reason) throw new BadRequestException("Sửa Giá trị dự án sau G1 bắt buộc phải ghi lý do.");
+    if (project.g1Passed && current !== null && !reason) throw new BadRequestException("Sửa doanh thu sau G1 bắt buộc phải ghi lý do.");
     await this.prisma.$transaction(async (tx: any) => {
       // PL-28: one record per project (database trigger); a project older than the records gets its record here.
       if (project.record) await tx.projectPnlRecord.update({ where: { projectId }, data: { projectValueAmount: amount } });

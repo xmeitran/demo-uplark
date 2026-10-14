@@ -70,7 +70,7 @@ import {
   createHierarchyOrderCoordinator,
   isSortableTopLevelTask
 } from "@/features/project-hierarchy/hierarchy-order";
-import { selectActiveMilestone } from "@/features/project-hierarchy/milestone-gate-ui";
+import { isMilestoneWorkLocked, selectActiveMilestone } from "@/features/project-hierarchy/milestone-gate-ui";
 import { IssueLogPanel } from "@/features/issue-log/issue-log-panel";
 import { ApiResponseError, readApiError } from "@/lib/api-error";
 import { fetchAllPages } from "@/lib/api-pages";
@@ -84,7 +84,6 @@ import { GATE_TAB_LABEL, gateBlockLabel, gateBlockNote, useStageGateBlocks, type
 import { ProjectStatusProposalCard } from "@/features/project-gates/status-proposal-card";
 import { ProjectBaselineBlock } from "@/features/project-baseline/baseline-block";
 import { FrameworkConversionButton } from "@/components/crm-workspace/framework-conversion-button";
-import { LarkGroupsControl } from "@/components/crm-workspace/lark-groups-control";
 import { putProjectHierarchyOrder } from "@/features/project-hierarchy/hierarchy-order-client";
 import {
   HierarchyDragHandle,
@@ -1809,7 +1808,6 @@ function ProjectStatusSlaBar({
       <ProjectStatusProposalCard projectId={projectId} pending={project.pendingStatusProposal} onDecided={onStatusChanged} className="md:col-span-4" />
       <ProjectBaselineBlock projectId={projectId} refreshKey={`${project.status}|${project.statusSince ?? ""}`} className="md:col-span-4" />
       <FrameworkConversionButton projectId={projectId} className="md:col-span-4" />
-      <LarkGroupsControl projectId={projectId} className="md:col-span-4" />
       {editing ? <ProjectStatusEditModal projectId={projectId} project={project} color={projectColor} onClose={() => setEditing(false)} onSaved={onStatusChanged} /> : null}
     </section>
   );
@@ -1817,11 +1815,8 @@ function ProjectStatusSlaBar({
 
 const MEMBER_PREVIEW_COUNT = 8;
 
-function milestoneIsLocked(milestones: Milestone[], milestone: Milestone) {
-  const index = milestones.findIndex((item) => item.id === milestone.id);
-  if (milestone.gateStatus === "open") return false;
-  if (milestone.gateStatus === "locked") return true;
-  return milestone.status === "upcoming" || (index > 0 && milestones[index - 1]?.status !== "done");
+function milestoneIsLocked(milestone: Milestone) {
+  return isMilestoneWorkLocked(milestone);
 }
 
 function ProjectDeliveryWireframePanels({
@@ -4379,13 +4374,13 @@ function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onA
   locked?: boolean;
   members?: ProjectTeamMember[];
 }) {
-  const [open, setOpen] = useState(milestone.status !== "upcoming");
+  const [open, setOpen] = useState(milestone.gateStatus !== "locked");
   const [menuOpen, setMenuOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
 
   const cfg = MILESTONE_STATUS[milestone.status];
   const visibleStages = visibleStagesForMilestone(group, milestone);
-  const locked = lockedProp ?? (milestone.gateStatus === "locked" || milestone.status === "upcoming");
+  const locked = lockedProp ?? isMilestoneWorkLocked(milestone);
   const gateBlocks = React.useContext(StageGateLocks).blocks;
   const milestoneGateBlock = visibleStages.map((stage) => gateBlocks[stage.id]).find(Boolean);
 
@@ -4569,10 +4564,12 @@ function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onA
                 <p className="text-sm font-medium text-foreground">No stages yet</p>
                 <p className="text-xs text-muted-foreground mt-0.5 mb-2">Create a stage to start adding tasks</p>
                 <motion.button whileHover={{ scale:1.04 }} whileTap={{ scale:0.96 }}
+                  disabled={locked || hierarchyBusy}
+                  title={locked ? (milestoneGateBlock ? gateBlockNote(milestoneGateBlock, "thêm stage") : `Milestone đang khóa: duyệt điểm chốt trước đó ở tab ${GATE_TAB_LABEL}.`) : undefined}
                   onClick={() => onAddStage(milestone.id, milestone.name)}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-sm mx-auto"
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-sm mx-auto disabled:cursor-not-allowed disabled:opacity-50"
                   style={{ backgroundColor:projectColor }}>
-                  <Plus className="w-4 h-4" /> Create First Stage
+                  <Plus className="w-4 h-4" /> {locked ? "Milestone đang khóa" : "Create First Stage"}
                 </motion.button>
               </div>
             )}
@@ -5598,6 +5595,11 @@ export default function ProjectDetailPage() {
   const pc = PRIORITY_CFG[project.priority.toLowerCase() as keyof typeof PRIORITY_CFG];
 
   const nextMilestoneIdx = milestones.findIndex(m => m.status !== "done");
+  // Adding work is allowed for completed/approved milestones. Only an
+  // explicitly locked gate is skipped when choosing the default target.
+  const firstWritableMilestone = milestones.find((milestone) =>
+    !isUnassignedTasksMilestoneId(milestone.id) && !isMilestoneWorkLocked(milestone)
+  );
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
@@ -6341,8 +6343,9 @@ export default function ProjectDetailPage() {
                   <UserPlus className="w-4 h-4" /> Invite
                 </motion.button>
                 <motion.button whileHover={{ scale:1.02 }} whileTap={{ scale:0.97 }}
+                  disabled={!firstWritableMilestone}
                   onClick={() => {
-                    const firstMil = milestones[0];
+                    const firstMil = firstWritableMilestone;
                     if (firstMil) {
                       const group = milestoneGroups.find(mg => mg.milestoneId === firstMil.id);
                       const firstStage = group ? visibleStagesForMilestone(group, firstMil)[0] : undefined;
@@ -6357,7 +6360,8 @@ export default function ProjectDetailPage() {
                       }
                     }
                   }}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-sm"
+                  title={!firstWritableMilestone ? "Tất cả milestone đang bị khóa bởi gate" : undefined}
+                  className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
                   style={{ backgroundColor:project.color }}>
                   <Plus className="w-4 h-4" /> Add Task
                 </motion.button>
@@ -7083,7 +7087,7 @@ export default function ProjectDetailPage() {
                               <MilestoneSectionTasks
                                 milestone={milestone}
                                 group={group}
-                                locked={milestoneIsLocked(milestones, milestone)}
+                                locked={milestoneIsLocked(milestone)}
                                 projectColor={project.color}
                                 onAddStage={(id, name) => setAddStageFor({ id, name })}
                                 onAddTask={(id, stageId, stageName) => setAddTaskFor({ milestoneId:id, stageId, stageName })}
@@ -7132,7 +7136,7 @@ export default function ProjectDetailPage() {
                               <MilestoneSectionTasks
                                 milestone={milestone}
                                 group={group}
-                                locked={milestoneIsLocked(milestones, milestone)}
+                                locked={milestoneIsLocked(milestone)}
                                 projectColor={project.color}
                                 onAddStage={(id, name) => setAddStageFor({ id, name })}
                                 onAddTask={(id, stageId, stageName) => setAddTaskFor({ milestoneId:id, stageId, stageName })}

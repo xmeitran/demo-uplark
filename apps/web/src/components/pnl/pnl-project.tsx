@@ -27,19 +27,17 @@ const WHOLE_ONLY = "Chỉ xem ở Toàn dự án";
 /** Khối 2 — năm ô tổng kiểu trang Dự án: nhãn nhỏ, ô biểu tượng, số lớn, một dòng chú thích. Ô thiếu số ghi lý do. */
 function ProjectTotals({ data, moneyVisible, canEdit, onEditValue }: Readonly<{ data: Project; moneyVisible: boolean; canEdit: boolean; onEditValue: () => void }>) {
   const { totals, header } = data;
-  const { revenue, cost, ebit, consumable } = totals;
+  const { revenue, cost, ebit } = totals;
   const hidden = moneyVisible ? null : COST_GROUP_ONLY;
   const blocked = notComputableWhy(header.result);
-  const revenueNote = revenue.basis === "recognized" ? "đã ghi nhận tại G7" : revenue.basis === "project_value" ? "giá trị dự án, chưa nghiệm thu" : revenue.note;
+  const revenueNote = revenue.amount === null ? revenue.note : "nhập tay theo từng dự án";
   const ebitNote = [ebit.marginPercent === null ? null : `Biên ${formatPercent(ebit.marginPercent)}`, header.result.labelText].filter(Boolean).join(" · ");
   const vsPlan = totals.loggedVsPlanPercent === null ? null : `${formatSignedPercent(totals.loggedVsPlanPercent)} so với kế hoạch`;
   return (
     <section aria-label="Năm ô tổng" className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
       <Tile icon={CalendarClock} color="#0891b2" label="Giờ kế hoạch" value={formatHoursValue(totals.plannedMinutes)} unit="giờ" note="từ các sub-task đã lập" />
       <Tile icon={Clock3} color="#0891b2" label="Giờ thực hiện" value={formatHoursValue(totals.loggedMinutes)} unit="giờ" note={[vsPlan, `${totals.monthsWithHours} tháng có giờ`].filter(Boolean).join(" · ")} />
-      {/* Loại Nội bộ / Đào tạo: cùng bố cục, không có ô Doanh thu và EBIT (mục 5). */}
-      {consumable ? null : (
-        <Tile
+      <Tile
           icon={Wallet}
           color="#2563eb"
           label={revenue.label}
@@ -47,9 +45,8 @@ function ProjectTotals({ data, moneyVisible, canEdit, onEditValue }: Readonly<{ 
           title={revenue.lockedReason ?? formatExactVnd(revenue.amount)}
           note={revenueNote}
           whyEmpty={hidden ?? (revenue.wholeProjectOnly ? WHOLE_ONLY : blocked ?? revenue.missingReason ?? "Chưa có số liệu")}
-          action={moneyVisible && canEdit && revenue.canEdit ? <button type="button" onClick={onEditValue} title="Nhập hoặc sửa Giá trị dự án" className="shrink-0 rounded-lg border border-border px-2 py-0.5 text-xs font-semibold text-foreground transition-colors hover:bg-muted">{revenue.projectValueAmount === null ? "Nhập" : "Sửa"}</button> : undefined}
-        />
-      )}
+          action={moneyVisible && canEdit && revenue.canEdit ? <button type="button" onClick={onEditValue} title="Nhập hoặc sửa doanh thu dự án" className="shrink-0 rounded-lg border border-border px-2 py-0.5 text-xs font-semibold text-foreground transition-colors hover:bg-muted">{revenue.projectValueAmount === null ? "Nhập" : "Sửa"}</button> : undefined}
+      />
       <Tile
         icon={Receipt}
         color="#7c3aed"
@@ -59,8 +56,7 @@ function ProjectTotals({ data, moneyVisible, canEdit, onEditValue }: Readonly<{ 
         note={`Nhân sự ${formatMillions(cost.laborAmount)} · khác ${formatMillions(cost.otherAmount)}`}
         whyEmpty={hidden ?? blocked ?? "Chưa có số liệu"}
       />
-      {consumable ? null : (
-        <Tile
+      <Tile
           icon={TrendingUp}
           color="#16a34a"
           label={ebit.label}
@@ -69,8 +65,7 @@ function ProjectTotals({ data, moneyVisible, canEdit, onEditValue }: Readonly<{ 
           note={ebitNote}
           noteClass={`font-medium ${RESULT_TEXT_CLASS[header.result.label]}`}
           whyEmpty={hidden ?? (ebit.wholeProjectOnly ? WHOLE_ONLY : blocked ?? ebit.missingReason ?? "Chưa có số liệu")}
-        />
-      )}
+      />
     </section>
   );
 }
@@ -97,7 +92,7 @@ function StatementRow({ label, hint, amount, why, strong = false, aside }: Reado
  */
 function ProjectStatement({ data, meta, projectId, onChanged, onEditValue, onOverrideTemplate }: Readonly<{ data: Project; meta: PnlMeta; projectId: string; onChanged: () => void; onEditValue: () => void; onOverrideTemplate: () => void }>) {
   const { header, totals } = data;
-  const { revenue, cost, ebit, consumable } = totals;
+  const { revenue, cost, ebit } = totals;
   const scope = header.scope;
   const [itemsOpen, setItemsOpen] = useState(true);
   const mayFixCosts = meta.canEdit || meta.canApprove;
@@ -134,7 +129,7 @@ function ProjectStatement({ data, meta, projectId, onChanged, onEditValue, onOve
               {reasons.map((reason) => {
                 const open = reason.target === "pending_hours" || reason.target === "project_setup" || reason.target === "approval";
                 const href = fixTargetHref(reason.target, { projectId: header.projectId, periodKey: reason.target === "pending_hours" ? undefined : reason.periodKeys?.[0], group: reason.code.replace(/^pending_/, "") });
-                // Giá trị dự án is entered right here, on the Doanh thu figure.
+                // Doanh thu dự án is entered right here, on the Doanh thu figure.
                 if (reason.target === "project_value") {
                   return (
                     <li key={reason.code}>
@@ -155,27 +150,23 @@ function ProjectStatement({ data, meta, projectId, onChanged, onEditValue, onOve
         ) : <p className="text-sm text-muted-foreground">{RESULT_MEANING[header.result.label]}</p>}
       </div>
 
-      {consumable ? null : (
-        <StatementRow
+      <StatementRow
           label={revenue.label}
-          hint={revenue.basis === "recognized" ? "Giá trị dự án, ghi nhận một lần khi dự án qua mốc nghiệm thu G7" : "Giá trị dự án do PM nhập; ghi nhận thành doanh thu khi dự án nghiệm thu G7"}
+          hint="Doanh thu do Admin/PM nhập trực tiếp theo từng dự án; không lấy tự động từ hệ thống"
           amount={revenue.amount}
           why={revenue.wholeProjectOnly ? wholeOnly : why}
-        />
-      )}
+      />
       <StatementRow label="Chi phí nhân sự" hint="Giờ đã tính vào P&L × đơn giá giờ của từng người trong tháng" amount={cost.laborAmount} why={why} />
       <StatementRow label="Chi phí khác" hint="Quỹ chi phí chung được chia, chi phí riêng của dự án, hoa hồng…" amount={cost.otherAmount} why={why} />
       <StatementRow strong label="Tổng chi phí" hint="Chi phí nhân sự + chi phí khác" amount={cost.totalAmount} why={why} />
-      {consumable ? null : (
-        <StatementRow
+      <StatementRow
           strong
           label={ebit.label}
-          hint={ebit.expected ? "Lãi lỗ dự kiến = giá trị dự án − tổng chi phí đến nay" : "Lãi lỗ = doanh thu ghi nhận − tổng chi phí"}
+          hint={ebit.expected ? "Lãi lỗ dự kiến = doanh thu dự án − tổng chi phí đến nay" : "Lãi lỗ = doanh thu dự án − tổng chi phí"}
           amount={ebit.amount}
           why={ebit.wholeProjectOnly ? wholeOnly : why}
           aside={ebit.marginPercent === null ? undefined : `Biên EBIT ${formatPercent(ebit.marginPercent)}`}
-        />
-      )}
+      />
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3 sm:px-5">
         <div className="min-w-0">

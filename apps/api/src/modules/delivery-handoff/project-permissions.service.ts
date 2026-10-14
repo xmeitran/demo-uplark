@@ -96,12 +96,25 @@ export class ProjectPermissionsService {
     if (action === "log giờ") await assertStageGateOpen(client, workspaceId, stageId, action);
   }
 
+  /** Keep stage creation on the same gate rule as task creation. */
+  async assertMilestoneUnlockedById(client: any, workspaceId: string, milestoneId: string | null | undefined, action: string) {
+    if (!milestoneId || typeof client?.projectMilestone?.findFirst !== "function") return;
+    const milestone = await client.projectMilestone.findFirst({
+      where: { id: milestoneId, workspaceId },
+      select: { name: true, gateStatus: true }
+    });
+    if (milestone?.gateStatus === "locked") {
+      throw new ConflictException(`Milestone "${milestone.name}" đang khóa cho đến khi milestone trước được duyệt, nên chưa thể ${action}.`);
+    }
+  }
+
   /**
-   * Founder/GM, Workspace Admin and anyone allowed to see cost (P&L needs every hour) read planning blocks and time entries of the whole workspace.
-   * Any other internal user reads their own rows plus those of projects they are a member of or lead a stage in.
+   * An Admin in admin view, and the cost permission group, read planning
+   * blocks and time entries of the whole workspace. An Admin deliberately
+   * working in user view follows the same narrowed scope as a User.
    */
   timeRecordVisibilityWhere(principal: PrincipalContext) {
-    if (isWorkspaceAdmin(principal.roleCodes) || canViewCost(principal)) return {};
+    if ((principal.viewMode !== "user" && isAdminAccount(principal)) || canViewCost(principal)) return {};
     const memberOrLead: Prisma.ProjectWhereInput = { OR: [
       { members: { some: { userId: principal.subjectId, workspaceId: principal.workspaceId } } },
       { stages: { some: { ownerUserId: principal.subjectId } } }

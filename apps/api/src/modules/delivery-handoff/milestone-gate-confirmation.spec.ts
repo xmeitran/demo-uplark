@@ -84,6 +84,48 @@ describe("ProjectsService milestone customer confirmation", () => {
     expect(approved.tasksSatisfied).toBe(true);
   });
 
+  it("counts only active top-level tasks from ordinary stages", async () => {
+    const milestone = { id: "milestone-1", projectId: "project-1", workspaceId: "workspace-1", sortOrder: 1, gateStatus: "open", requiredDocumentCount: 0, requiredDocumentTypes: [], evidenceMode: "file_or_link", customerConfirmationRequired: false, customerConfirmationAt: null };
+    const prisma = createPrisma(milestone, ["done"]);
+
+    const result = await new ProjectsService(prisma as any).evaluateProjectMilestoneGate("project-1", "milestone-1", principal);
+
+    expect(result.tasksSatisfied).toBe(true);
+    expect(prisma.projectTask.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        parentTaskId: null,
+        stage: { milestoneId: "milestone-1", changeRequestId: null }
+      })
+    }));
+  });
+
+  it("reopens an approved milestone when a new active task makes it incomplete", async () => {
+    const milestone = {
+      id: "milestone-1", projectId: "project-1", workspaceId: "workspace-1", sortOrder: 1,
+      gateStatus: "approved", requiredDocumentCount: 0, requiredDocumentTypes: [], evidenceMode: "file_or_link",
+      customerConfirmationRequired: false, customerConfirmationAt: null,
+      reviewerApprovedAt: new Date("2026-10-03T08:00:00.000Z"), reviewerApprovedByUserId: "usr-admin",
+      approvalRequestedAt: new Date("2026-10-03T07:00:00.000Z"), approvalRequestedByUserId: "usr-lead", approvalRequestedByName: "Lead"
+    };
+    const prisma = createPrisma(milestone, ["completed", "todo"]);
+    prisma.projectMilestone.update.mockImplementation(async ({ data }: any) => ({ ...milestone, ...data }));
+
+    const result = await new ProjectsService(prisma as any).evaluateProjectMilestoneGate("project-1", "milestone-1", principal);
+
+    expect(result.gateStatus).toBe("open");
+    expect(result.tasksSatisfied).toBe(false);
+    expect(result.reviewerApprovedAt).toBeNull();
+    expect(result.reviewerApprovedByUserId).toBeUndefined();
+    expect(prisma.projectMilestone.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        gateStatus: "open",
+        reviewerApprovedAt: null,
+        reviewerApprovedByUserId: null,
+        approvalRequestedAt: null
+      })
+    }));
+  });
+
   it("moves a document-gated milestone to review after all visible requirements pass", async () => {
     const milestone = { id: "milestone-1", projectId: "project-1", workspaceId: "workspace-1", sortOrder: 1, gateStatus: "open", requiredDocumentCount: 1, requiredDocumentTypes: ["BRD"], evidenceMode: "file_or_link", customerConfirmationRequired: true, customerConfirmationAt: new Date("2026-10-02T08:00:00.000Z") };
     const prisma = createPrisma(milestone, ["done"]);

@@ -21,17 +21,17 @@ describe("plain wording of P&L reasons", () => {
 
   it("a Không tính được row names only what blocks the calculation; an empty cell says why", () => {
     const result: PnlResult = { label: "not_computable", labelText: "Không tính được", reasons: [
-      { code: "no_project_value", label: "chưa có Giá trị dự án", target: "project_value" },
+      { code: "no_project_value", label: "chưa nhập doanh thu dự án", target: "project_value" },
       { code: "months_unlocked", label: "tháng 09 chưa khóa", periodKeys: ["2026-09"], target: "periods" }
     ] };
-    expect(notComputableWhy(result)).toBe("Chưa có Giá trị dự án nên chưa tính được doanh thu");
-    expect(whyNoValue(true, result)).toBe("Chưa có Giá trị dự án nên chưa tính được doanh thu");
+    expect(notComputableWhy(result)).toBe("Chưa nhập doanh thu dự án nên chưa tính được EBIT");
+    expect(whyNoValue(true, result)).toBe("Chưa nhập doanh thu dự án nên chưa tính được EBIT");
     expect(whyNoValue(false, result)).toBe("Chỉ nhóm quyền chi phí xem được số tiền");
     const official: PnlResult = { label: "official", labelText: "Chính thức", reasons: [] };
     expect(notComputableWhy(official)).toBeNull();
     expect(whyNoValue(true, official)).toBe("Chưa có số liệu");
     expect(resultExplanation(official)).toMatch(/^Chính thức: /);
-    expect(resultExplanation(result)).toMatch(/Lý do: Chưa có Giá trị dự án.*; Tháng 09\/2026 chưa khóa sổ\.$/);
+    expect(resultExplanation(result)).toMatch(/Lý do: Chưa nhập doanh thu dự án.*; Tháng 09\/2026 chưa khóa sổ\.$/);
   });
 });
 

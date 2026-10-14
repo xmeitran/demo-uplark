@@ -1,8 +1,8 @@
 /**
  * Two-layer work classification (rules section 4): the one label map every screen and export uses.
  * Mirrors apps/api/src/modules/delivery-handoff/task-classification.ts — keep both tables identical.
- * Layer 1 is inherited from the stage; a task's Layer 2 is derived by the API and read-only. On a time log the person
- * logging chooses Layer 2 (see the bottom of this file).
+ * Layer 1 is inherited from the stage; a task's Layer 2 is derived by the API and read-only. The standard time-log
+ * form sends that derived value automatically; the API still keeps the explicit field for legacy rows and corrections.
  */
 export const TASK_TYPE_LAYER1_LABELS = { PRE_SALE: "Pre-sale", DELIVERY: "Delivery", PM: "PM" } as const;
 export type TaskTypeLayer1 = keyof typeof TASK_TYPE_LAYER1_LABELS;
@@ -41,8 +41,8 @@ export function taskTypeLabel(layer1: unknown, layer2: unknown): string {
 }
 
 // ── Layer 2 on a time log (P&L spec, decision 12/10 point 5) ─────────────────────────────────────────────────────────
-// The task's Layer 2 stays derived and read-only; the person logging time picks one per log. A choice that differs
-// from the task's is saved and shown as "Lớp 2 không khớp" until it is corrected.
+// The task's Layer 2 stays derived and read-only. Standard logging uses that value automatically; an explicit choice
+// remains supported for legacy data and correction flows. A differing choice is saved and shown as "Lớp 2 không khớp".
 
 export const TASK_TYPE_LAYER2_OPTIONS = (Object.keys(TASK_TYPE_LAYER2_LABELS) as TaskTypeLayer2[])
   .map((value) => ({ value, label: TASK_TYPE_LAYER2_LABELS[value] }));
@@ -63,7 +63,7 @@ export function layer2OptionsForTask(taskTypeLayer1: unknown) {
   return TASK_TYPE_LAYER2_OPTIONS.filter((option) => !(taskTypeLayer1 === "PRE_SALE" && option.value === "TICKET_MAINTENANCE"));
 }
 
-/** Pre-selection of the log form: the task's derived value when there is one, otherwise nothing (the person must choose). */
+/** Value sent by the standard log form: the task's derived value when there is one, otherwise nothing to validate. */
 export function defaultSelectedLayer2(taskTypeLayer2: unknown): TaskTypeLayer2 | "" {
   return isTaskTypeLayer2(taskTypeLayer2) ? taskTypeLayer2 : "";
 }

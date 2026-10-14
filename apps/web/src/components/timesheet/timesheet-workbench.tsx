@@ -22,7 +22,7 @@ import { ProjectTimesheet } from "./project-timesheet";
 import { useAuth } from "@/lib/auth";
 import { fetchWorkspaceUserOptions } from "@/lib/workspace-users";
 import { exportTimesheetWorkbook } from "./timesheet-export";
-import { canViewTimesheetGroup } from "./timesheet-access";
+import { canViewTimesheetGroup, resolveTimesheetScope } from "./timesheet-access";
 import { buildTimesheetAlerts } from "./timesheet-alerts";
 import { TimesheetViewNav } from "./timesheet-view-nav";
 import { monthBounds } from "./timesheet-dates";
@@ -100,9 +100,9 @@ export function TimesheetWorkbench() {
 
   // Anything else (including the retired `daily` view) falls back to the month view.
   const view: TimesheetView = searchParams.get("view") === "project" ? "project" : "monthly";
-  const requestedScope = (searchParams.get("scope") as ViewerScope | null) ?? "workspace";
-  const canViewWorkspace = canViewTimesheetGroup(user?.roleCodes);
-  const scope: ViewerScope = canViewWorkspace ? requestedScope : "self";
+  const requestedScope = searchParams.get("scope");
+  const canViewWorkspace = canViewTimesheetGroup(user);
+  const scope: ViewerScope = resolveTimesheetScope(user, requestedScope);
 
   const defaultMonth = dataset.months[dataset.months.length - 1];
   const filters = useMemo<TimesheetFilters>(() => {
@@ -196,7 +196,7 @@ export function TimesheetWorkbench() {
 
   /* ── Filter options ───────────────────────────────────────────────── */
 
-  const scopeOptions = (Object.keys(VIEWER_SCOPE_LABELS) as ViewerScope[]).filter((key) => canViewWorkspace || key === "self").map((key) => ({ value: key, label: VIEWER_SCOPE_LABELS[key] }));
+  const scopeOptions = (Object.keys(VIEWER_SCOPE_LABELS) as ViewerScope[]).filter((key) => canViewWorkspace ? key !== "self" : key === "self").map((key) => ({ value: key, label: VIEWER_SCOPE_LABELS[key] }));
   const departmentOptions = dataset.departments.length > 0
     ? dataset.departments.map((department) => ({ value: department.id, label: department.name }))
     : [...new Set(availablePeople.map((person) => person.departmentId).filter((id) => id !== "unassigned"))].map((id) => ({ value: id, label: id }));

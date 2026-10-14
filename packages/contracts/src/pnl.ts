@@ -1,5 +1,5 @@
 /**
- * Tab P&L — API contract of "Yêu cầu tab P&L – hệ thống PM" (v2, 13/10/2026: revenue is one "Giá trị dự án" per project).
+ * Tab P&L — API contract of "Yêu cầu tab P&L – hệ thống PM" (v2: revenue is one manual amount per project).
  * Screen-by-screen mapping: docs/pnl-api-cho-man-hinh.md. Rules: apps/api/src/modules/resource-controls/pnl-*.ts.
  *
  * Conventions for every type below:
@@ -35,7 +35,7 @@ export type PnlCostItemMethod = "MANUAL" | "SYSTEM" | "FORMULA" | "FUND" | "GROU
 export type PnlFormulaToken = { item: string } | { param: string } | { value: number } | { op: "+" | "-" | "*" | "/" };
 
 /** Where a "thiếu …" link leads (mục 2.4 bước 7, 11, 14). */
-/** `project_value`: the Doanh thu figure of the project P&L screen, where the PM enters Giá trị dự án. */
+/** `project_value`: the Doanh thu figure of the project P&L screen, where the PM enters the project's revenue. */
 export type PnlFixTarget = "staff_costs" | "pending_hours" | "funds" | "periods" | "project_setup" | "project_value" | "parameters" | "approval";
 
 export type PnlReasonCode =
@@ -106,8 +106,8 @@ export interface PnlDashboardQuery {
   picUserId?: string;
   /** Text found in the project name, project code or client name (case- and accent-insensitive). */
   q?: string;
-  /** "accepted" (default) | "in_progress" — which tab the page/sort apply to. Both tabs are always returned counted. */
-  tab?: "accepted" | "in_progress";
+  /** "all" (default) | "accepted" | "in_progress" — which project list the page/sort apply to. All lists are returned. */
+  tab?: "all" | "accepted" | "in_progress";
   /** Filter the project table to one cost group of block 4 (key of PnlCostGroup). */
   groupKey?: string;
   page?: number;
@@ -139,7 +139,7 @@ export interface PnlDashboardProjectRow {
   acceptedOn: string | null;
   /** true: the project has no G7 date — `acceptedOn` is an estimate, show it as "ngày nghiệm thu chưa xác định". */
   acceptedOnEstimated: boolean;
-  /** null on the "Đang triển khai" tab (no revenue, no EBIT dự kiến there). */
+  /** Doanh thu nhập tay theo dự án; null chỉ khi chưa nhập hoặc người xem không có quyền xem số. EBIT vẫn null ở tab "Đang triển khai". */
   revenueAmount: number | null;
   laborCostAmount: number | null;
   otherCostAmount: number | null;
@@ -223,7 +223,8 @@ export interface PnlDashboardResponse {
     pending: PnlPendingStripItem[];
     /** Khối 4. */
     costGroups: { accounting: PnlCostGroup[]; role: PnlCostGroup[] };
-    /** Khối 5. */
+    /** Khối 5. The default list contains every P&L-eligible project; the two lifecycle tabs remain available for focused views. */
+    all: { total: number; page: number; pageSize: number; rows: PnlDashboardProjectRow[] };
     accepted: {
       total: number; page: number; pageSize: number;
       rows: PnlDashboardProjectRow[];
@@ -356,18 +357,18 @@ export interface PnlProjectResponse {
       /** null + wholeProjectOnly when the scope is narrowed: show "Chỉ xem ở Toàn dự án". */
       revenue: {
         amount: number | null; basis: "project_value" | "recognized" | "none"; label: string; note: string; wholeProjectOnly: boolean; missingReason: string | null;
-        /** D-22 / PL-13: Giá trị dự án as stored (whatever the scope); null = chưa nhập, or hidden outside the cost permission group. */
+        /** D-22 / PL-13: doanh thu nhập tay theo dự án (stored under the legacy projectValueAmount field). */
         projectValueAmount: number | null;
-        /** The viewer may enter or change it now (Admin - PM in the cost group, a Loại Khách hàng project, G7 not passed). */
+        /** The viewer may enter or change it now (Admin - PM in the cost group, every project type). */
         canEdit: boolean;
         /** A change needs a reason: G1 is approved and a value already exists (the first entry never needs one). */
         reasonRequired: boolean;
-        /** Why it cannot be edited although the viewer has the right ("đã khóa khi G7 được duyệt"); null otherwise. */
+        /** Reserved for compatibility; manual project revenue is not locked by G7. */
         lockedReason: string | null;
       };
       cost: { totalAmount: number | null; laborAmount: number | null; otherAmount: number | null };
       ebit: { amount: number | null; marginPercent: number | null; expected: boolean; label: string; wholeProjectOnly: boolean; missingReason: string | null };
-      /** Loại Nội bộ / Đào tạo: read as "chi phí tiêu hao" — no Doanh thu, no EBIT. */
+      /** Loại Nội bộ / Đào tạo: read hours as "chi phí tiêu hao"; doanh thu vẫn nhập tay như mọi project. */
       consumable: boolean;
     };
     /** Khối 3. */
@@ -461,7 +462,7 @@ export interface PnlProjectMonthDetail {
 export interface PnlProjectMonthDetailResponse { data: PnlProjectMonthDetail[]; meta: PnlMeta }
 
 /**
- * PUT /pnl/projects/:projectId/project-value — "Giá trị dự án" (D-22, PL-13), entered on the Doanh thu figure.
+ * PUT /pnl/projects/:projectId/project-value — manual project revenue (D-22, PL-13), entered on the Doanh thu figure.
  * `amount` null clears it (only before G1). `reason` is mandatory when G1 is approved and a value already exists.
  */
 export interface PnlProjectValueInput {
@@ -546,7 +547,7 @@ export interface PnlCostItem {
   methodLabel: string;
   systemSource: "revenue" | "labor" | null;
   formula: PnlFormulaToken[] | null;
-  /** "[Doanh thu ghi nhận] × [Tỷ lệ hoa hồng]". */
+  /** "[Doanh thu dự án] × [Tỷ lệ hoa hồng]". */
   formulaText: string | null;
   required: boolean;
   effectiveFromPeriod: string | null;

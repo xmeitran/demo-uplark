@@ -4,9 +4,9 @@ Rules: "Nguyên tắc nền tảng hệ thống PM" V-02, V-14, V-15, V-20, 7.5 
 Code: `apps/api/src/modules/lark-integration/`, worker `apps/worker/src/lark-direct-message.ts`, `lark-sweep-scheduler.ts`.
 
 Nothing is sent to Lark until `LARK_MESSAGING_ENABLED=true` **and** `LARK_APP_ID` / `LARK_APP_SECRET` are set. Until
-then every attempt is written to the table `LarkDeliveryLog` with status `disabled` and the note "chưa bật kênh Lark",
-new projects show "Chưa tạo được nhóm" with the button "Tạo lại nhóm", and the daily reminders keep using the group
-webhook.
+then every attempt is written to the table `LarkDeliveryLog` with status `disabled` and the note "chưa bật kênh Lark".
+CRM no longer creates project groups or synchronizes their members. Existing group IDs are still used when sending
+project notifications.
 
 ## Lark app: what the owner must grant
 
@@ -51,7 +51,6 @@ Deployments without a worker (Render) call the sweep from a cron, e.g. hourly:
 
 | Bot | Channel | When | Template (`lark-templates.ts`) |
 |---|---|---|---|
-| Khởi tạo dự án | project's internal group | project created (after the groups exist) | `projectCreatedCard` |
 | Hồ sơ chuyển tiếp | review group, reposted to the internal group | G1–G8 submitted; result; one reminder after "Hạn duyệt hồ sơ chuyển tiếp" naming the Admins (V-15) | `handoffSubmittedCard`, `handoffResultCard`, `handoffReviewOverdueCard` |
 | Xác nhận khách hàng | customer group | G1, G2, G4, G7 approved internally; one reminder per working day, at most "Số lần nhắc tối đa trong nhóm khách hàng" (2); later reminders go to the internal group only | `customerConfirmationRequestCard`, `customerConfirmationReminderCard` |
 | Trạng thái dự án | internal group | proposal created; confirmed / declined; one reminder after "Hạn xác nhận đề xuất trạng thái" (V-20) | `statusProposalCard`, `statusProposalDecidedCard`, `statusProposalReminderCard` |
@@ -67,12 +66,9 @@ project right after the change, the scheduled call covers reminders and anything
 
 ## Project groups (V-02)
 
-- Names: `[Nội bộ] <khách hàng> - <dự án>` and `[Khách hàng] <khách hàng> - <dự án>`.
-- Internal group members = project members with a linked Lark account; they follow later member changes (people added
-  by hand in Lark are never removed).
-- Failure or a disabled channel: the project is still created, `Project.larkGroupStatus = failed`, one open warning
-  `LARK-GROUP` per project, and "Tạo lại nhóm" (Admin or the project's PM) in the project header:
-  `POST /api/projects/:projectId/lark-groups/recreate`.
+CRM does not create project groups or manage their membership. If a project already has `larkInternalChatId` or
+`larkCustomerChatId`, the notification sweep continues to use those existing chats. Group creation, naming and member
+management are handled outside CRM.
 
 ## Personal leave (D-09)
 

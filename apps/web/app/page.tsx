@@ -15,7 +15,11 @@ import {
   Clock,
   Plus,
   ArrowRight,
-  X
+  X,
+  Sparkles,
+  FileUp,
+  MessageSquare,
+  Check
 } from "lucide-react";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { CustomDropdown, CustomDatePicker } from "@/components/constructor-x/custom-controls";
@@ -41,7 +45,7 @@ import {
   type WorkspaceUserOption
 } from "@/lib/workspace-users";
 import { uiProjectDateToIso } from "@/lib/project-date";
-import { PROJECT_TYPE_OPTIONS, type ResourceListPaginationMeta } from "@b2b-crm/contracts";
+import { PROJECT_TYPE_OPTIONS, type ProjectTaskTemplateInput, type ResourceListPaginationMeta } from "@b2b-crm/contracts";
 
 // ─── Live Dashboard Data ─────────────────────────────────────────────────────
 
@@ -58,6 +62,79 @@ interface DashboardProject {
   members: Member[];
   client: string;
   status: Project["status"];
+}
+
+type DashboardDraftMilestone = {
+  name: string;
+  stages: { name: string; tasks?: ProjectTaskTemplateInput[] }[];
+};
+
+type DashboardAiDraft = {
+  sourceFileName: string;
+  projectName: string;
+  description: string;
+  milestones: DashboardDraftMilestone[];
+  warnings: string[];
+};
+
+function countDashboardSubtasks(tasks: ProjectTaskTemplateInput[]): number {
+  return tasks.reduce((total, task) => total + (task.subtasks?.length ?? 0) + countDashboardSubtasks(task.subtasks ?? []), 0);
+}
+
+function DashboardDraftHierarchyTree({ milestones }: { milestones: DashboardDraftMilestone[] }) {
+  return (
+    <div className="min-h-0 space-y-3 pr-1" aria-label="Cấu trúc bản nháp project">
+      {milestones.map((milestone, milestoneIndex) => {
+        const taskCount = milestone.stages.reduce((total, stage) => total + (stage.tasks?.length ?? 0), 0);
+        return (
+          <section key={`${milestone.name}-${milestoneIndex}`} className="rounded-xl border border-slate-200 bg-white p-2.5">
+            <div className="flex items-start gap-2">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-[10px] font-bold text-primary">M{milestoneIndex + 1}</span>
+              <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-bold text-slate-900">{milestone.name}</p><p className="mt-0.5 text-[9px] text-slate-500">{milestone.stages.length} stage · {taskCount} task</p></div>
+            </div>
+            <div className="mt-2 space-y-2 border-l-2 border-primary/15 pl-3">
+              {milestone.stages.length ? milestone.stages.map((stage, stageIndex) => {
+                const tasks = stage.tasks ?? [];
+                return <div key={`${stage.name}-${stageIndex}`} className="rounded-lg border border-slate-200 bg-slate-50/80 p-2">
+                  <div className="flex items-center gap-2"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-blue-100 text-[9px] font-bold text-blue-700">S{stageIndex + 1}</span><span className="min-w-0 flex-1 truncate text-[10px] font-semibold text-slate-900">{stage.name}</span><span className="shrink-0 rounded-full bg-white px-1.5 py-0.5 text-[9px] text-slate-500">{tasks.length} task</span></div>
+                  <div className="mt-1.5 space-y-1 border-l-2 border-blue-100 pl-2">
+                    {tasks.length ? tasks.map((task, taskIndex) => <div key={`${task.title}-${taskIndex}`} className="rounded-md border border-slate-200 bg-white px-2 py-1.5"><div className="flex items-start gap-1.5"><span className="mt-0.5 text-[9px] font-bold text-primary">T{taskIndex + 1}</span><p className="min-w-0 flex-1 text-[10px] font-medium leading-relaxed text-slate-800">{task.title}</p>{task.subtasks?.length ? <span className="shrink-0 text-[9px] text-slate-400">{task.subtasks.length} sub</span> : null}</div>{task.subtasks?.length ? <div className="mt-1 space-y-1 border-l-2 border-blue-100 pl-2">{task.subtasks.map((subtask, subtaskIndex) => <div key={`${subtask.title}-${subtaskIndex}`} className="flex gap-1.5 text-[9px] leading-relaxed text-slate-500"><span className="font-semibold text-blue-600">ST{subtaskIndex + 1}</span><span>{subtask.title}</span></div>)}</div> : null}</div>) : <p className="px-1 py-1 text-[10px] italic text-slate-400">Chưa có task</p>}
+                  </div>
+                </div>;
+              }) : <p className="px-1 py-1 text-[10px] italic text-slate-400">Chưa có stage</p>}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function normalizeDashboardAiDraft(raw: unknown): DashboardAiDraft {
+  const value = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  const rawMilestones = Array.isArray(value.milestones) ? value.milestones : [];
+  const milestones = rawMilestones.flatMap((rawMilestone) => {
+    if (!rawMilestone || typeof rawMilestone !== "object") return [];
+    const milestone = rawMilestone as Record<string, unknown>;
+    const rawStages = Array.isArray(milestone.stages) ? milestone.stages : [];
+    const stages = rawStages.flatMap((rawStage) => {
+      if (typeof rawStage === "string") return [{ name: rawStage, tasks: [] }];
+      if (!rawStage || typeof rawStage !== "object") return [];
+      const stage = rawStage as Record<string, unknown>;
+      const name = String(stage.name ?? stage.activity ?? "Stage").trim();
+      if (!name) return [];
+      return [{ name, tasks: Array.isArray(stage.tasks) ? stage.tasks as ProjectTaskTemplateInput[] : [] }];
+    });
+    const name = String(milestone.name ?? "Milestone").trim();
+    return name ? [{ name, stages }] : [];
+  });
+  return {
+    sourceFileName: String(value.sourceFileName ?? "file-import"),
+    projectName: String(value.projectName ?? ""),
+    description: String(value.description ?? ""),
+    milestones,
+    warnings: Array.isArray(value.warnings) ? value.warnings.map(String) : []
+  };
 }
 
 const DASHBOARD_COLOR_MAP: Record<string, { bg: string; text: string }> = {
@@ -301,7 +378,9 @@ export default function DashboardPage() {
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
   const [dashboardAiBusy, setDashboardAiBusy] = useState(false);
   const [dashboardAiError, setDashboardAiError] = useState<string | null>(null);
-  const [dashboardAiDraft, setDashboardAiDraft] = useState<{ sourceFileName: string; projectName: string; description: string; milestones: { name: string; stages: string[] }[]; warnings: string[] } | null>(null);
+  const [dashboardAiDraft, setDashboardAiDraft] = useState<DashboardAiDraft | null>(null);
+  const [dashboardAiDraftApplied, setDashboardAiDraftApplied] = useState(false);
+  const [dashboardAiPanelOpen, setDashboardAiPanelOpen] = useState(false);
   const dashboardAiInputRef = useRef<HTMLInputElement | null>(null);
   const displayName = user?.name ?? "Workspace";
 
@@ -310,6 +389,8 @@ export default function DashboardPage() {
   const openCreateProject = () => {
     setDashboardError(null);
     setDashboardAiError(null);
+    setDashboardAiDraft(null);
+    setDashboardAiDraftApplied(false);
     setIsCreateOpen(true);
   };
 
@@ -337,10 +418,12 @@ export default function DashboardPage() {
       const response = await fetch("/api/projects/ai-template-draft", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(typeof payload.message === "string" ? payload.message : "Không tạo được template tạm từ file.");
-      if (!payload?.data?.milestones?.length) throw new Error("Không tìm thấy milestone trong file.");
-      setDashboardAiDraft(payload.data);
-      setName(payload.data.projectName || "");
-      setDescription(payload.data.description || "");
+      const draft = normalizeDashboardAiDraft(payload?.data);
+      if (!draft.milestones.length) throw new Error("Không tìm thấy milestone trong file.");
+      setDashboardAiDraft(draft);
+      setDashboardAiDraftApplied(false);
+      setName(draft.projectName);
+      setDescription(draft.description);
     } catch (error) {
       setDashboardAiError(error instanceof Error ? error.message : "Không thể đọc file.");
     } finally {
@@ -532,12 +615,12 @@ export default function DashboardPage() {
           color,
           scopeSummary: description.trim() || undefined,
           createStageTemplate: true,
-          milestoneMode: dashboardAiDraft ? "manual" : undefined,
-          manualMilestones: dashboardAiDraft?.milestones.map((milestone, index) => ({
+          milestoneMode: dashboardAiDraftApplied ? "manual" : undefined,
+          manualMilestones: dashboardAiDraftApplied ? dashboardAiDraft?.milestones.map((milestone, index) => ({
             name: milestone.name,
             sortOrder: (index + 1) * 10,
-            stages: (milestone.stages.length ? milestone.stages : [`${milestone.name} - Stage 1`]).map((activity, stageIndex) => ({ activity, phase: milestone.name, sortOrder: (stageIndex + 1) * 10 }))
-          }))
+            stages: (milestone.stages.length ? milestone.stages : [{ name: `${milestone.name} - Stage 1`, tasks: [] }]).map((stage, stageIndex) => ({ activity: stage.name, phase: milestone.name, sortOrder: (stageIndex + 1) * 10, tasks: stage.tasks ?? [] }))
+          })) : undefined
       });
 
       if (response.status === 401) {
@@ -579,6 +662,7 @@ export default function DashboardPage() {
       setTags("");
       setSelectedMembers([]);
       setDashboardAiDraft(null);
+      setDashboardAiDraftApplied(false);
       setDashboardAiError(null);
     } catch (error) {
       setDashboardError(error instanceof Error ? error.message : "Could not create project");
@@ -847,7 +931,7 @@ export default function DashboardPage() {
                 initial={{ opacity: 0, scale: 0.95, y: 16 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 16 }}
-                className="bg-card border border-border rounded-2xl w-full max-w-2xl overflow-visible shadow-2xl flex flex-col max-h-[90dvh]"
+                className={`bg-card border border-border rounded-2xl w-full ${dashboardAiPanelOpen ? "max-w-7xl" : "max-w-2xl"} overflow-visible shadow-2xl flex flex-col max-h-[90dvh]`}
               >
                 {/* Modal Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-muted/20">
@@ -855,17 +939,24 @@ export default function DashboardPage() {
                     <h3 id="dashboard-create-title" className="text-base font-bold text-foreground">Create New Project</h3>
                     <p className="text-xs text-muted-foreground mt-0.5">Define core properties, schedules, and assign team members.</p>
                   </div>
-                  <button
-                    aria-label="Close create project dialog" type="button"
-                    onClick={() => setIsCreateOpen(false)}
-                    className="min-h-11 min-w-11 p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button type="button" onClick={() => setDashboardAiPanelOpen((open) => !open)} aria-pressed={dashboardAiPanelOpen} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-semibold transition-colors ${dashboardAiPanelOpen ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
+                      <Sparkles className="h-3.5 w-3.5" /> AI đọc file
+                    </button>
+                    <button
+                      aria-label="Close create project dialog" type="button"
+                      onClick={() => setIsCreateOpen(false)}
+                      className="min-h-11 min-w-11 p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Modal Body */}
-                <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4">
+                <div className="flex min-h-0 flex-1">
+                <form onSubmit={handleSubmit} className="min-w-0 flex-1 overflow-y-auto p-6 space-y-4">
+                  <input ref={dashboardAiInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleDashboardExcelImport(file); }} />
                   {dashboardError && <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{dashboardError}{accountOptions.length === 0 && <button type="button" className="ml-2 underline" onClick={() => setAccountLoadRevision(value => value + 1)}>Retry loading clients</button>}</div>}
                   {loadingAccounts && <p role="status">Loading clients…</p>}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -958,24 +1049,6 @@ export default function DashboardPage() {
                       className="w-full px-3.5 py-2.5 bg-background border border-input rounded-xl text-sm text-foreground focus:outline-none focus:border-primary transition-colors resize-none"
                     />
                   </div>
-
-                  <section className="rounded-2xl border border-border bg-muted/15 p-4 space-y-3" aria-labelledby="dashboard-ai-import-title">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <h4 id="dashboard-ai-import-title" className="text-sm font-bold text-foreground">Import Excel → template tạm</h4>
-                        <p className="mt-1 text-xs text-muted-foreground">Đọc milestone và stage từ Excel/CSV miễn phí. Bạn kiểm tra trước khi tạo Project.</p>
-                      </div>
-                      <div className="shrink-0">
-                        <input ref={dashboardAiInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleDashboardExcelImport(file); }} />
-                        <button type="button" disabled={dashboardAiBusy} onClick={() => dashboardAiInputRef.current?.click()} className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-50">{dashboardAiBusy ? "Đang đọc…" : "Import Excel"}</button>
-                      </div>
-                    </div>
-                    {dashboardAiError ? <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{dashboardAiError}</div> : null}
-                    {dashboardAiDraft ? <div className="overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-b from-primary/5 to-background text-xs text-foreground shadow-sm">
-                      <div className="border-b border-primary/10 px-3.5 py-3"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="font-bold">Bản nháp project đã đọc</p><p className="mt-1 truncate text-[10px] text-muted-foreground">{dashboardAiDraft.sourceFileName}</p></div><span className="shrink-0 rounded-full bg-primary/10 px-2 py-1 text-[10px] font-bold text-primary">Đã đọc</span></div></div>
-                      <div className="space-y-3 p-3.5"><div className="rounded-xl border border-border bg-background px-3 py-2.5"><p className="truncate font-bold">{dashboardAiDraft.projectName || "Chưa nhận diện tên project"}</p><p className="mt-1 text-[10px] text-muted-foreground">{dashboardAiDraft.milestones.length} milestone · {dashboardAiDraft.milestones.reduce((sum, milestone) => sum + milestone.stages.length, 0)} stage</p></div><div className="max-h-44 space-y-2 overflow-y-auto pr-1">{dashboardAiDraft.milestones.slice(0, 8).map((milestone, index) => <div key={milestone.name} className="flex gap-2 rounded-xl border border-border/70 bg-background/70 p-2"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-primary/10 text-[10px] font-bold text-primary">M{index + 1}</span><div className="min-w-0"><p className="truncate text-[11px] font-bold">{milestone.name}</p><p className="mt-0.5 line-clamp-2 text-[10px] leading-relaxed text-muted-foreground">{milestone.stages.length ? milestone.stages.slice(0, 3).join(" · ") : "Chưa có stage"}</p></div></div>)}</div>{dashboardAiDraft.warnings.length ? <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[10px] leading-relaxed text-amber-800"><span className="font-bold">Cần rà soát:</span> {dashboardAiDraft.warnings.join("; ")}</div> : null}</div>
-                    </div> : null}
-                  </section>
 
                   {/* Highlight Color & Tags */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1078,6 +1151,24 @@ export default function DashboardPage() {
                     </button>
                   </div>
                 </form>
+                {dashboardAiPanelOpen ? <aside aria-label="Project file reader" className="flex w-[400px] max-w-[42vw] min-h-0 shrink-0 flex-col border-l border-slate-200 bg-slate-50/60">
+                  <div className="flex items-start justify-between border-b border-slate-200 bg-white px-5 py-4">
+                    <div className="min-w-0"><div className="flex items-center gap-2 text-sm font-bold text-foreground"><Sparkles className="h-4 w-4 text-primary" /> Project file reader</div><p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">Đọc local trước, chưa cần API key. Bạn kiểm tra cây công việc trước khi tạo project.</p></div>
+                    <button type="button" aria-label="Đóng Project file reader" onClick={() => setDashboardAiPanelOpen(false)} className="ml-3 rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground"><X className="h-4 w-4" /></button>
+                  </div>
+                  <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+                    <p className="flex items-start gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-[11px] leading-relaxed text-slate-500"><MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-primary" /> File có thể là roadmap, task list, nhiều sheet hoặc tiếng Việt/Anh; không bắt buộc đúng template.</p>
+                    <div className="grid grid-cols-3 gap-1 rounded-xl border border-slate-200 bg-white p-1 text-center text-[10px] font-semibold text-slate-500" aria-label="Các bước đọc file"><span className="rounded-lg bg-blue-50 px-2 py-1.5 text-blue-700">1. Đọc file</span><span className="px-2 py-1.5">2. Rà soát</span><span className="px-2 py-1.5">3. Tạo project</span></div>
+                    <button type="button" disabled={dashboardAiBusy} onClick={() => dashboardAiInputRef.current?.click()} className="flex w-full shrink-0 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-blue-300 bg-blue-50/50 px-4 py-5 text-center text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50"><FileUp className="h-5 w-5" />{dashboardAiBusy ? "Đang đọc file…" : "Chọn file Excel hoặc CSV"}<span className="text-[10px] font-normal text-slate-500">XLSX hoặc CSV · tối đa 8 MB · hỗ trợ nhiều sheet</span></button>
+                    {dashboardAiError ? <div role="alert" className="shrink-0 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] leading-relaxed text-destructive">{dashboardAiError}</div> : null}
+                    {dashboardAiDraft ? <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white text-xs text-foreground">
+                      <div className="shrink-0 border-b border-slate-200 px-3.5 py-3"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="flex items-center gap-1.5 font-bold"><Sparkles className="h-3.5 w-3.5 text-primary" /> Bản nháp project</p><p className="mt-1 truncate text-[10px] text-slate-500">{dashboardAiDraft.sourceFileName}</p></div><span className="shrink-0 rounded-full bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-700">Đã đọc</span></div><p className="mt-2 truncate font-semibold text-slate-900">{dashboardAiDraft.projectName || "Chưa nhận diện tên project"}</p><div className="mt-2 grid grid-cols-4 gap-1.5 text-center"><span className="rounded-md bg-blue-50 px-1 py-1.5"><strong className="block text-[11px] text-blue-700">{dashboardAiDraft.milestones.length}</strong><small className="text-[9px] text-slate-500">Milestone</small></span><span className="rounded-md bg-slate-50 px-1 py-1.5"><strong className="block text-[11px] text-slate-700">{dashboardAiDraft.milestones.reduce((sum, milestone) => sum + milestone.stages.length, 0)}</strong><small className="text-[9px] text-slate-500">Stage</small></span><span className="rounded-md bg-emerald-50 px-1 py-1.5"><strong className="block text-[11px] text-emerald-700">{dashboardAiDraft.milestones.reduce((sum, milestone) => sum + milestone.stages.reduce((stageTotal, stage) => stageTotal + (stage.tasks?.length ?? 0), 0), 0)}</strong><small className="text-[9px] text-slate-500">Task</small></span><span className="rounded-md bg-amber-50 px-1 py-1.5"><strong className="block text-[11px] text-amber-700">{dashboardAiDraft.milestones.reduce((sum, milestone) => sum + milestone.stages.reduce((stageTotal, stage) => stageTotal + countDashboardSubtasks(stage.tasks ?? []), 0), 0)}</strong><small className="text-[9px] text-slate-500">Subtask</small></span></div></div>
+                      <div className="min-h-0 flex-1 overflow-y-auto p-3"><DashboardDraftHierarchyTree milestones={dashboardAiDraft.milestones} />{dashboardAiDraft.warnings.length ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[10px] leading-relaxed text-amber-800"><span className="font-bold">Cần rà soát:</span> {dashboardAiDraft.warnings.join("; ")}</div> : null}</div>
+                      <div className="shrink-0 border-t border-slate-200 bg-white p-3"><button type="button" onClick={() => { setDashboardAiDraftApplied(true); setDashboardAiPanelOpen(false); }} className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2.5 text-xs font-bold text-primary-foreground shadow-sm transition hover:opacity-90"><Check className="h-3.5 w-3.5" /> Dùng bản nháp này</button></div>
+                    </section> : <div className="rounded-xl border border-dashed border-border bg-background px-4 py-6 text-center text-[11px] leading-relaxed text-muted-foreground">Bản nháp sẽ xuất hiện ở đây sau khi đọc file. Bạn có thể kiểm tra cây milestone, stage, task và subtask trước khi tạo project.</div>}
+                  </div>
+                </aside> : null}
+                </div>
               </motion.div>
             </div>
             </ModalLayer>

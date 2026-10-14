@@ -67,7 +67,7 @@ describe("Phụ lục B2 — kết quả qua chuỗi tính", () => {
 
   it("bước 7 · doanh thu: 67.200.000 đ Giá trị dự án, chỉ dùng cho EBIT dự kiến", async () => {
     const data = await scenario().project();
-    expect(data.totals.revenue).toMatchObject({ amount: 67_200_000, basis: "project_value", note: "giá trị dự án, chưa G7", projectValueAmount: 67_200_000 });
+    expect(data.totals.revenue).toMatchObject({ amount: 67_200_000, basis: "project_value", note: "nhập tay theo từng dự án", projectValueAmount: 67_200_000 });
     expect(data.totals.ebit).toMatchObject({ expected: true, label: "EBIT dự kiến" });
   });
 
@@ -136,7 +136,7 @@ describe("Phụ lục B3 — ca kiểm thử theo quy tắc mới", () => {
     expect(funds.funds[0].preview).toMatchObject({ confirmed: false, canConfirm: true, totalMinutes: hours(134.5) });
   });
 
-  it("ca 2 · A ghi thêm 20 giờ tháng 10 vào task của dự án, PM xác nhận đã thu đủ, G7 duyệt 30/10: doanh thu ghi nhận 67.200.000 đ, bằng Giá trị dự án; hoa hồng 3.360.000 ghi nhận; chi phí thêm 3.000.000, tổng 33.970.000; EBIT 33.230.000, biên 49,4%; vẫn Tạm tính", async () => {
+  it("ca 2 · A ghi thêm 20 giờ tháng 10 vào task của dự án, G7 duyệt 30/10: doanh thu vẫn là số PM nhập tay và có thể điều chỉnh sau khi dự án hoàn tất", async () => {
     const s = scenario({ now: "2026-11-02T03:00:00.000Z" });
     s.log({ userId: "u-a", taskId: "t-cr", month: "2026-10", hours: 20 });
     await s.approveCost("u-a", "2026-10", 26_400_000); // giờ chuẩn 176 → cost rate 150.000 đ/giờ
@@ -145,10 +145,10 @@ describe("Phụ lục B3 — ca kiểm thử theo quy tắc mới", () => {
     s.approveG7("2026-10-30");
     const data = await s.project();
     expect(data.header).toMatchObject({ acceptedOn: "2026-10-30", recordState: "closed", recordStateLabel: "Đã đóng" });
-    expect(data.totals.revenue).toMatchObject({ amount: 67_200_000, basis: "recognized", label: "Doanh thu ghi nhận", projectValueAmount: 67_200_000 });
-    // "khóa Giá trị dự án": G7 passed, nobody edits it any more.
-    expect(data.totals.revenue).toMatchObject({ canEdit: false, lockedReason: "Giá trị dự án đã khóa khi G7 được duyệt" });
-    await expect(s.config.setProjectValue("p-a", { amount: 70_000_000, reason: "Phụ lục 02" }, founder)).rejects.toThrow("Giá trị dự án đã khóa khi G7 được duyệt.");
+    expect(data.totals.revenue).toMatchObject({ amount: 67_200_000, basis: "recognized", label: "Doanh thu dự án", projectValueAmount: 67_200_000 });
+    expect(data.totals.revenue).toMatchObject({ canEdit: true, lockedReason: null });
+    await s.config.setProjectValue("p-a", { amount: 70_000_000, reason: "Phụ lục 02" }, founder);
+    expect((await s.project()).totals.revenue).toMatchObject({ amount: 70_000_000, projectValueAmount: 70_000_000, canEdit: true, lockedReason: null });
     expect(data.items!.find((row) => row.code === "DOANHTHU.GHINHAN")!.amount).toBe(67_200_000);
     expect(data.months.wholeProjectItems[0]).toMatchObject({ amount: 3_360_000, expected: false, note: "Hoa hồng ghi nhận" });
     expect(month(data, "2026-10").laborCostAmount).toBe(3_000_000);
@@ -203,9 +203,9 @@ describe("Phụ lục B3 — ca kiểm thử theo quy tắc mới", () => {
     const data = await s.project({}, "p-new");
     expect(data.months.whole).toMatchObject({ includedMinutes: hours(6), pendingMinutes: 0, laborCostAmount: 1_080_000 });
     expect(data.header).toMatchObject({ recordState: "awaiting_contract", recordStateLabel: "Chờ hợp đồng", result: { label: "not_computable", labelText: "Không tính được" } });
-    expect(data.header.result.reasons[0]).toMatchObject({ code: "no_project_value", label: "chưa có Giá trị dự án", target: "project_value" });
-    expect(data.totals.revenue).toMatchObject({ amount: null, basis: "none", missingReason: "chưa có Giá trị dự án", projectValueAmount: null, canEdit: true, reasonRequired: false });
-    expect(data.totals.ebit).toMatchObject({ amount: null, missingReason: "chưa có Giá trị dự án" });
+    expect(data.header.result.reasons[0]).toMatchObject({ code: "no_project_value", label: "chưa nhập doanh thu dự án", target: "project_value" });
+    expect(data.totals.revenue).toMatchObject({ amount: null, basis: "none", missingReason: "chưa nhập doanh thu dự án", projectValueAmount: null, canEdit: true, reasonRequired: false });
+    expect(data.totals.ebit).toMatchObject({ amount: null, missingReason: "chưa nhập doanh thu dự án" });
     // Step 2 of mục 2.3: the PM enters Giá trị dự án before G1 — no reason needed — and EBIT dự kiến appears.
     await s.config.setProjectValue("p-new", { amount: 40_000_000 }, founder);
     const valued = await s.project({}, "p-new");
@@ -322,7 +322,7 @@ describe("Phụ lục B3 — ca kiểm thử theo quy tắc mới", () => {
   it("ca 10 · sau G1, PM sửa Giá trị dự án từ 67.200.000 đ lên 70.000.000 đ để trống lý do: không cho lưu; nhập lại với lý do “Phụ lục 02”: hoa hồng dự kiến 3.500.000 đ; tổng chi phí 31.110.000 đ; EBIT dự kiến 38.890.000 đ, biên 55,6%; lịch sử có dòng 67,2 → 70,0", async () => {
     const s = scenario();
     expect((await s.project()).totals.revenue).toMatchObject({ canEdit: true, reasonRequired: true, lockedReason: null });
-    await expect(s.config.setProjectValue("p-a", { amount: 70_000_000 }, founder)).rejects.toThrow("Sửa Giá trị dự án sau G1 bắt buộc phải ghi lý do.");
+    await expect(s.config.setProjectValue("p-a", { amount: 70_000_000 }, founder)).rejects.toThrow("Sửa doanh thu sau G1 bắt buộc phải ghi lý do.");
     expect((await s.project()).totals.revenue.amount).toBe(67_200_000);
     await s.config.setProjectValue("p-a", { amount: 70_000_000, reason: "Phụ lục 02" }, founder);
     const data = await s.project();
@@ -331,11 +331,12 @@ describe("Phụ lục B3 — ca kiểm thử theo quy tắc mới", () => {
     expect(data.totals.cost.totalAmount).toBe(31_110_000);
     expect(data.totals.ebit).toMatchObject({ amount: 38_890_000, expected: true });
     expect((data.totals.ebit.marginPercent as number).toFixed(1)).toBe("55.6");
-    expect(data.history![0]).toMatchObject({ action: "pnl.project_value_changed", label: "Sửa Giá trị dự án", actorName: null, reason: "Phụ lục 02", before: { amount: 67_200_000 }, after: { amount: 70_000_000, reason: "Phụ lục 02" } });
+    expect(data.history![0]).toMatchObject({ action: "pnl.project_value_changed", label: "Sửa doanh thu dự án", actorName: null, reason: "Phụ lục 02", before: { amount: 67_200_000 }, after: { amount: 70_000_000, reason: "Phụ lục 02" } });
     expect(typeof data.history![0].at).toBe("string");
-    // Loại Nội bộ / Đào tạo have no Giá trị dự án at all; after G1 the value cannot be emptied.
-    await expect(s.config.setProjectValue("p-a", { amount: null }, founder)).rejects.toThrow("Giá trị dự án không được để trống");
+    // Sau G1 không được xoá doanh thu, nhưng mọi loại project đều được nhập/sửa doanh thu.
+    await expect(s.config.setProjectValue("p-a", { amount: null }, founder)).rejects.toThrow("doanh thu không được để trống");
     Object.assign(s.db.table("project").find((row) => row.id === "p-a") as object, { projectType: "training" });
-    await expect(s.config.setProjectValue("p-a", { amount: 1_000_000, reason: "x" }, founder)).rejects.toThrow("Dự án Loại Nội bộ, Đào tạo không có Giá trị dự án.");
+    await s.config.setProjectValue("p-a", { amount: 1_000_000, reason: "x" }, founder);
+    expect((await s.project()).totals.revenue).toMatchObject({ amount: 1_000_000, canEdit: true });
   });
 });

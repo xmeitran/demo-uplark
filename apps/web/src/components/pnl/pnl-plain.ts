@@ -28,7 +28,7 @@ const hoursOf = (minutes: number | undefined) => (minutes === undefined ? "Có" 
 export function plainReason(reason: PnlReason): string {
   const hours = hoursOf(reason.minutes);
   switch (reason.code) {
-    case "no_project_value": return "Chưa có Giá trị dự án nên chưa tính được doanh thu";
+    case "no_project_value": return "Chưa nhập doanh thu dự án nên chưa tính được EBIT";
     case "no_cost_rate": return `Chưa có ${STAFF_COST_PHRASE} nào nên chưa tính được chi phí nhân sự`;
     case "not_closed": return "Dự án chưa nghiệm thu (chưa qua mốc G7)";
     case "missing_acceptance_date": return "Chưa có ngày nghiệm thu (G7); tháng nghiệm thu đang là ước lượng";
@@ -166,7 +166,7 @@ export const FIX_ACTION_LABELS: Record<PnlFixTarget, string> = {
   funds: "Chia quỹ chi phí chung",
   periods: "Mở kỳ và khóa kỳ",
   project_setup: "Mở dự án",
-  project_value: "Nhập Giá trị dự án",
+  project_value: "Nhập doanh thu dự án",
   parameters: "Mở tham số",
   approval: "Mở duyệt nghiệm thu"
 };

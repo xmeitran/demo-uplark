@@ -232,8 +232,8 @@ export class PnlService {
     const toRow = (project: ProjectCtx, pnl: ProjectPnl, tab: "accepted" | "in_progress"): PnlDashboardProjectRow => ({
       projectId: project.id, projectCode: project.code, projectName: project.name, accountId: project.accountId, accountName: project.accountName, projectType: project.templateKey,
       picUserId: project.picUserId, picName: ctx.userName(project.picUserId), startedOn: project.startedOn, acceptedOn: tab === "accepted" ? orNull(project.acceptedOn) : null, acceptedOnEstimated: tab === "accepted" && project.acceptanceEstimated,
-      // Đang triển khai: costs only — no revenue, no EBIT dự kiến (mục 7 điểm 4).
-      revenueAmount: tab === "accepted" ? orNull(pnl.revenue.amount) : null,
+      // Doanh thu là số nhập tay theo từng dự án, nên hiển thị ở mọi tab lifecycle. EBIT vẫn chỉ hiển thị ở tab đã nghiệm thu.
+      revenueAmount: orNull(pnl.revenue.amount),
       laborCostAmount: pnl.laborCostAmount, otherCostAmount: pnl.otherCostAmount, totalCostAmount: pnl.totalCostAmount,
       ebitAmount: tab === "accepted" ? orNull(pnl.ebit.amount) : null, marginPercent: tab === "accepted" ? orNull(pnl.ebit.marginPercent) : null,
       result: toResult(pnl.result),
@@ -243,6 +243,12 @@ export class PnlService {
       reconciliation: pnl.reconciliation
     });
     const computed = filtered.map((project) => ({ project, tab: tabOf(project) })).filter((row): row is { project: ProjectCtx; tab: "accepted" | "in_progress" } => row.tab !== null).map((row) => ({ ...row, pnl: ctx.compute(row.project.id) }));
+    // The overview list is intentionally broader than the two lifecycle tabs: P&L is also the place to inspect
+    // projects that have not reached G7 yet. Keep test/lost-deal exclusions from the accounting rules,
+    // but do not use the selected reporting period to hide an otherwise valid project from "Tất cả dự án".
+    const allComputed = filtered
+      .filter((project) => !project.isTest && !project.lostDeal)
+      .map((project) => ({ project, tab: project.closePassed ? "accepted" as const : "in_progress" as const, pnl: ctx.compute(project.id) }));
     // Mục 6.6: an accepted project keeps the template of its G7 date. The figures above already use it; this stores it.
     await this.freezeTemplates(principal.workspaceId, computed.map((row) => row.project));
     // Khối 4 → khối 5: "bấm một nhóm thì bảng dự án lọc theo nhóm đó". The tiles, the total row and the reconciliation
@@ -252,6 +258,7 @@ export class PnlService {
     const everyAccepted = computed.filter((row) => row.tab === "accepted");
     const accepted = everyAccepted.filter((row) => inGroup(row.pnl));
     const inProgress = computed.filter((row) => row.tab === "in_progress" && inGroup(row.pnl));
+    const everyProject = allComputed.filter((row) => inGroup(row.pnl));
     const totals = dashboardTotals(accepted.map((row) => row.pnl));
 
     // Khối 3: why the totals are still Tạm tính, by kind.
@@ -280,7 +287,9 @@ export class PnlService {
       return [...rows.values()].filter((row) => row.amount !== 0).map((row) => ({ ...row, sharePercent: meta.moneyVisible ? orNull(percentOf(row.amount, allTotals.totalCostAmount)) : null }));
     };
 
-    const tab = text(query.tab) === "in_progress" ? "in_progress" : "accepted";
+    const requestedTab = text(query.tab);
+    // Keep the API's old default for direct callers; the web screen sends tab=all explicitly.
+    const tab = requestedTab === "all" ? "all" : requestedTab === "in_progress" ? "in_progress" : "accepted";
     const pageSize = Math.min(Math.max(Number(text(query.pageSize) ?? 20) || 20, 1), 200);
     const page = Math.max(Number(text(query.page) ?? 1) || 1, 1);
     const sortKey = text(query.sort) ?? "start";
@@ -294,6 +303,7 @@ export class PnlService {
     };
     const totalResult: PnlResult = { label: totals.label, labelText: totals.labelText, reasons: [] };
     const acceptedList = list(accepted, tab === "accepted");
+    const allList = list(everyProject, tab === "all");
     const years = [...new Set([...all.map((project) => Number(project.startedOn.slice(0, 4))), Number(ctx.currentPeriodKey.slice(0, 4)), year])].sort((left, right) => right - left);
     const uniq = <T extends { id: string }>(rows: T[]) => [...new Map(rows.map((row) => [row.id, row])).values()].sort((left, right) => String((left as any).name).localeCompare(String((right as any).name)));
 
@@ -324,6 +334,7 @@ export class PnlService {
           pendingMinutes: sum(accepted.map((row) => row.pnl.reconciliation.pendingMinutes)), excludedMinutes: sum(accepted.map((row) => row.pnl.reconciliation.excludedMinutes))
         })
       },
+      all: allList,
       inProgress: list(inProgress, tab === "in_progress"),
       companyCosts: this.companyCosts(this.companyMonths(ctx, periodKeys))
     }, meta);
@@ -433,8 +444,8 @@ export class PnlService {
       };
     };
     const consumable = project.consumable;
-    // PL-13: Admin - PM in the cost group enters Giá trị dự án of a Loại Khách hàng project until G7 is approved.
-    const mayEditValue = meta.moneyVisible && canEditProjectSetup(principal) && !consumable;
+    // PL-13: Admin - PM in the cost group enters the project's revenue directly.
+    const mayEditValue = meta.moneyVisible && canEditProjectSetup(principal);
     // "Khoản tính cho cả dự án" is added to Toàn dự án only: with a narrowed scope it is, like Doanh thu and EBIT, "Chỉ xem ở Toàn dự án".
     // Every cost line computed once for the lifecycle is listed, with the amount it enters Tổng chi phí with, so
     // Toàn dự án = the month rows + these rows whatever the tree holds.
@@ -442,7 +453,7 @@ export class PnlService {
       const commission = row.code === SYSTEM_ITEM_CODES.commission;
       return { code: row.code, label: commission ? "Hoa hồng" : row.name, amount: range ? null : orNull(row.amount), note: range ? "Chỉ xem ở Toàn dự án" : !commission ? "Tính một lần cho cả dự án" : whole.commission.expected ? "Hoa hồng dự kiến" : "Hoa hồng ghi nhận", expected: whole.commission.expected };
     });
-    const revenueLabel = whole.revenue.basis === "recognized" ? "Doanh thu ghi nhận" : "Doanh thu";
+    const revenueLabel = "Doanh thu dự án";
 
     const body: PnlProjectResponse["data"] = {
       header: {
@@ -459,18 +470,18 @@ export class PnlService {
         loggedVsPlanPercent: plannedMinutes > 0 ? Math.round(((pnl.whole.loggedMinutes - plannedMinutes) / plannedMinutes) * 10000) / 100 : null,
         monthsWithHours: pnl.months.filter((row) => row.loggedMinutes > 0).length,
         revenue: {
-          amount: range ? null : orNull(whole.revenue.amount), basis: whole.revenue.basis, label: consumable ? "Không có doanh thu" : revenueLabel,
-          note: range ? "Chỉ xem ở Toàn dự án" : whole.revenue.basis === "recognized" ? "ghi nhận tại G7" : whole.revenue.basis === "project_value" ? "giá trị dự án, chưa G7" : whole.revenue.missingReason ?? "",
+          amount: range ? null : orNull(whole.revenue.amount), basis: whole.revenue.basis, label: revenueLabel,
+          note: range ? "Chỉ xem ở Toàn dự án" : whole.revenue.amount === undefined ? whole.revenue.missingReason ?? "" : "nhập tay theo từng dự án",
           wholeProjectOnly: Boolean(range), missingReason: orNull(whole.revenue.missingReason),
-          projectValueAmount: orNull(project.projectValueAmount), canEdit: mayEditValue && !project.closePassed,
+          projectValueAmount: orNull(project.projectValueAmount), canEdit: mayEditValue,
           reasonRequired: project.g1Passed && project.projectValueAmount !== undefined,
-          lockedReason: mayEditValue && project.closePassed ? `Giá trị dự án đã khóa khi ${project.closeGate} được duyệt` : null
+          lockedReason: null
         },
         cost: { totalAmount: pnl.whole.totalCostAmount, laborAmount: pnl.whole.laborCostAmount, otherAmount: pnl.whole.otherCostAmount },
         ebit: {
           amount: range ? null : orNull(whole.ebit.amount), marginPercent: range ? null : orNull(whole.ebit.marginPercent), expected: whole.ebit.expected,
           label: whole.ebit.expected ? "EBIT dự kiến" : "EBIT", wholeProjectOnly: Boolean(range),
-          missingReason: consumable ? "Dự án nội bộ không có EBIT" : whole.ebit.amount === undefined ? whole.revenue.missingReason ?? "chưa có doanh thu" : null
+          missingReason: whole.ebit.amount === undefined ? whole.revenue.missingReason ?? "chưa có doanh thu" : null
         },
         consumable
       },
@@ -524,8 +535,8 @@ export class PnlService {
       let source: PnlProjectItemRow["source"];
       if (row.method === "SYSTEM" && row.systemSource === "labor") {
         source = { kind: "hours", description: `Giờ tính P&L của nhóm ${ROLE_GROUP_LABELS[row.roleGroup as RoleGroup]} × cost rate của từng người trong từng tháng`, byMonth: byMonth(buckets.filter((bucket) => bucket.roleGroup === row.roleGroup).map((bucket) => ({ periodKey: bucket.periodKey, amount: costOfMinutes(project.consumable ? bucket.internalMinutes : bucket.includedMinutes, bucket.rate) ?? 0 })).filter((item) => item.amount !== 0)) };
-      } else if (row.method === "SYSTEM") {
-        source = { kind: "revenue", description: pnl.revenue.basis === "recognized" ? "Giá trị dự án, ghi nhận một lần thành doanh thu tại G7" : "Giá trị dự án (chưa qua G7), PM nhập ở ô Doanh thu", byMonth: [] };
+      } else if (row.code === SYSTEM_ITEM_CODES.revenue) {
+        source = { kind: "revenue", description: "Doanh thu do Admin/PM nhập trực tiếp theo từng dự án; không lấy tự động từ hệ thống", byMonth: [] };
       } else if (row.method === "FUND") {
         source = { kind: "fund", description: "Phần quỹ chi phí chung được chia theo giờ tính P&L, đã xác nhận", byMonth: byMonth(ctx.fundShares.filter((share) => share.projectId === project.id && share.itemCode === row.code && counted(share))) };
       } else if (row.method === "MANUAL") {
@@ -550,7 +561,7 @@ export class PnlService {
     const labels: Record<string, string> = {
       "pnl.period_locked": "Khóa kỳ", "pnl.period_reopened": "Mở lại kỳ", "pnl.fund_confirmed": "Xác nhận phân bổ quỹ", "pnl.fund_rerun": "Chạy lại phân bổ quỹ",
       "pnl.project_cost_created": "Thêm chi phí riêng", "pnl.project_cost_changed": "Sửa chi phí riêng", "pnl.project_cost_deleted": "Xóa chi phí riêng",
-      "pnl.project_value_changed": "Sửa Giá trị dự án", "pnl.template_override": "Ghi đè mẫu khoản mục", "pnl.contract_status_changed": "Đổi trạng thái hợp đồng", "pnl.installments_changed": "Sửa đợt thanh toán", "pnl.installment_status_changed": "Đổi trạng thái đợt thanh toán"
+      "pnl.project_value_changed": "Sửa doanh thu dự án", "pnl.template_override": "Ghi đè mẫu khoản mục", "pnl.contract_status_changed": "Đổi trạng thái hợp đồng", "pnl.installments_changed": "Sửa đợt thanh toán", "pnl.installment_status_changed": "Đổi trạng thái đợt thanh toán"
     };
     const kept = rows.filter((row) => row.resource === "pnl_project" || months.has(String((row.after as any)?.periodKey ?? "")));
     const actorIds = [...new Set(kept.map((row) => row.actorUserId).filter((id) => id && !ctx.users.has(id)))];

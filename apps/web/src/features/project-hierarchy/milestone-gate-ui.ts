@@ -4,6 +4,15 @@ export type MilestoneGateSelection = {
   gateStatus?: string;
 };
 
+/**
+ * A milestone's work-entry lock comes from the gate, not from its derived
+ * delivery status. A legacy `upcoming` status can still be an editable
+ * planning bucket when no gate has explicitly locked it.
+ */
+export function isMilestoneWorkLocked(milestone: MilestoneGateSelection): boolean {
+  return milestone.gateStatus === "locked";
+}
+
 export function selectActiveMilestone<T extends MilestoneGateSelection>(milestones: readonly T[]): T | undefined {
   const actionable = milestones.find((milestone) => ["open", "pending_review", "rejected", "conditional"].includes(milestone.gateStatus ?? ""));
   if (actionable) return actionable;

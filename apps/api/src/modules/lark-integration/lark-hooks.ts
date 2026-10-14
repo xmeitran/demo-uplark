@@ -3,6 +3,7 @@
  *
  * - gateHooks / issueLogHooks (delivery-handoff): the members that were left as TODO for Lark are assigned here.
  * - projectLifecycleHooks: called by ProjectsService after a project is created / changed / its status proposal recomputed.
+ *   Project-created and project-changed hooks intentionally remain no-ops: CRM no longer provisions or syncs Lark groups.
  * - larkAlertDelivery: the Lark channel of the daily alert scan (alerts.service.ts passes it as `deliverLark`).
  *
  * Until LarkIntegrationService registers itself (module init) every hook is a no-op, so unit specs of the other
@@ -29,8 +30,8 @@ export const projectLifecycleHooks = {
 export const larkAlertDelivery: { deliver?: (message: { title: string; body: string; href: string }) => Promise<string> } = {};
 
 export function registerLarkHooks(service: LarkIntegrationService) {
-  projectLifecycleHooks.onProjectCreated = (project, actor) => quiet("onProjectCreated", () => service.ensureProjectGroups(project.id, { actorUserId: actor.subjectId, actorName: actor.displayName }));
-  projectLifecycleHooks.onProjectChanged = (projectId) => quiet("onProjectChanged", () => service.syncProjectGroupMembers(projectId));
+  // Project creation and member changes no longer create or modify Lark groups.
+  // Existing group IDs remain available to the notification sweep below.
   projectLifecycleHooks.onStatusProposalChanged = (projectId) => quiet("onStatusProposalChanged", () => service.sweepProject(projectId));
   larkAlertDelivery.deliver = (message) => service.deliverProjectAlert(message);
 

@@ -191,7 +191,9 @@ export function ItemTree({ projectId, items, months, canEdit, onChanged }: Reado
     <div id="pnl-items-panel">
       {visibleTreeRows(items, collapsed).map((item) => {
         const open = openCode === item.code;
-        const manual = item.method === "MANUAL";
+        // Revenue is technically a manual input too, but it is entered once on
+        // the project revenue tile—not as a monthly project-cost line.
+        const manual = item.method === "MANUAL" && item.source.kind === "manual";
         const top = item.level <= 1;
         return (
           <div key={item.code} data-item-code={item.code} className={`border-t border-border ${top ? "bg-muted/20" : ""}`}>
@@ -233,7 +235,7 @@ export function ItemTree({ projectId, items, months, canEdit, onChanged }: Reado
 
 function historyValue(value: unknown) {
   if (typeof value === "number" || typeof value === "string") return String(value);
-  // "Sửa Giá trị dự án": { amount } before and after, in đồng.
+  // "Sửa doanh thu dự án": { amount } before and after, in đồng.
   if (value && typeof value === "object" && "amount" in value) {
     const amount = (value as { amount: unknown }).amount;
     return typeof amount === "number" ? formatExactVnd(amount) ?? null : "chưa nhập";
@@ -266,7 +268,7 @@ function HistoryList({ events }: Readonly<{ events: PnlHistoryEvent[] }>) {
 /** Khối cuối — lịch sử thay đổi, một thanh gập; chỉ nhóm quyền chi phí mở được (`history` là null với người khác). */
 export function ProjectHistory({ history }: Readonly<{ history: PnlHistoryEvent[] | null }>) {
   return (
-    <Collapsible id="pnl-history" title="Lịch sử thay đổi số liệu" hint="Ai đã sửa gì, khi nào — gồm các lần sửa Giá trị dự án, khóa sổ và mở lại kỳ." locked={history === null}>
+    <Collapsible id="pnl-history" title="Lịch sử thay đổi số liệu" hint="Ai đã sửa gì, khi nào — gồm các lần sửa doanh thu dự án, khóa sổ và mở lại kỳ." locked={history === null}>
       {history ? <HistoryList events={history} /> : null}
     </Collapsible>
   );

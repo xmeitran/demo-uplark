@@ -1727,8 +1727,6 @@ export function LogWorkModal({
   const [workDate, setWorkDate] = useState("");
   const [workType, setWorkType] = useState("delivery");
   const [billable, setBillable] = useState(true);
-  // P&L spec 12/10 point 5: the person logging chooses Layer 2; pre-selected to the task's derived value.
-  const [selectedLayer2, setSelectedLayer2] = useState<string>("");
   const [completeTask, setCompleteTask] = useState(false);
   const [userId, setUserId] = useState("none");
   const [submitting, setSubmitting] = useState(false);
@@ -1754,7 +1752,6 @@ export function LogWorkModal({
       setWorkType(task.taskType || "delivery");
       setNote("");
       setBillable(true);
-      setSelectedLayer2(defaultSelectedLayer2(task.taskTypeLayer2));
       setCompleteTask(false);
       setUseTimeSlot(true);
       setStartTime("09:00");
@@ -1807,7 +1804,10 @@ export function LogWorkModal({
     if (people.loading || people.error || !performerOptions.some(option => option.value === userId)) { setSubmitError("Người thực hiện phải là thành viên đang hoạt động của dự án. Hãy thêm người này vào danh sách thành viên của dự án hoặc chọn người khác rồi lưu lại."); return; }
     if (!minutes || !workDate) return;
     if (useTimeSlot && (!startTime || !endTime)) return;
-    if (step === "actual" && !selectedLayer2) { setSubmitError(`Chọn ${TASK_TYPE_LAYER2_FIELD_LABEL} cho giờ log này.`); return; }
+    // The task's Layer 2 is derived by the system. The logging form keeps it out of the
+    // user's way and sends that derived value so the existing API/P&L classification stays intact.
+    const selectedTaskTypeLayer2 = step === "actual" ? defaultSelectedLayer2(task?.taskTypeLayer2) : undefined;
+    if (step === "actual" && !selectedTaskTypeLayer2) { setSubmitError("Task chưa được hệ thống phân loại bối cảnh công việc. Hãy bổ sung phân loại cho task trước khi ghi giờ."); return; }
     if (actualValidationMessage) {
       setSubmitError(actualValidationMessage);
       return;
@@ -1829,7 +1829,7 @@ export function LogWorkModal({
         workDate,
         workType,
         billable,
-        selectedTaskTypeLayer2: step === "actual" ? selectedLayer2 : undefined,
+        selectedTaskTypeLayer2,
         completeTask,
         userId: userId === "none" ? undefined : userId,
         startTime: useTimeSlot ? startTime : undefined,
@@ -2010,20 +2010,6 @@ export function LogWorkModal({
               onChange={setWorkType}
             />
           </div>
-          {step === "actual" ? (
-            <div className="mb-3">
-              <CustomDropdown
-                id="log-work-layer2"
-                label={<>{TASK_TYPE_LAYER2_FIELD_LABEL} <span className="text-rose-500">*</span></>}
-                value={selectedLayer2}
-                options={[...(selectedLayer2 ? [] : [{ value: "", label: "Chọn Lớp 2" }]), ...layer2OptionsForTask(task?.taskTypeLayer1)]}
-                onChange={setSelectedLayer2}
-              />
-              {selectedLayer2 && task?.taskTypeLayer2 && selectedLayer2 !== task.taskTypeLayer2 ? (
-                <p className="mt-1 text-[11px] text-amber-700">Task đang là “{taskTypeLayer2Label(task.taskTypeLayer2)}”. Giờ vẫn được lưu nhưng sẽ Chờ xử lý với lý do Lớp 2 không khớp.</p>
-              ) : null}
-            </div>
-          ) : null}
           {people.principalUserId && userId === people.principalUserId ? (
             <p className="-mt-2 mb-3 text-[11px] text-slate-500">Mặc định là tài khoản đang đăng nhập. Bạn có thể đổi người thực hiện nếu có quyền.</p>
           ) : null}

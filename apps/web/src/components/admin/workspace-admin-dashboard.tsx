@@ -64,6 +64,7 @@ import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-t
 import { businessRoleFromMember, systemRoleFromCodes, systemRoleLabel } from "@/lib/people-roles";
 import { milestoneReviewerOptions, WORKSPACE_ADMIN_REVIEWER_VALUE } from "./milestone-reviewer-options";
 import { SystemParametersPanel, WarningRecordsPanel } from "./alert-admin-panels";
+import { PnlSetupPage } from "@/components/pnl/pnl-setup-page";
 
 type AdminSection = "overview" | "alerts" | "parameters" | "day-offs" | "reminders" | "milestones" | "approval" | "history" | "pnl-config";
 type MilestoneView = "templates" | "project-gates";
@@ -204,7 +205,7 @@ export function WorkspaceAdminDashboard() {
   useEffect(() => {
     const syncHash = () => {
       const hash = window.location.hash.replace(/^#/, "");
-      if (hash === "alerts" || hash === "parameters" || hash === "day-offs" || hash === "reminders" || hash === "milestones" || hash === "approval" || hash === "history") setSection(hash);
+      if (hash === "alerts" || hash === "parameters" || hash === "day-offs" || hash === "reminders" || hash === "milestones" || hash === "approval" || hash === "pnl-config" || hash === "history") setSection(hash);
       else setSection("overview");
     };
     syncHash();
@@ -228,10 +229,6 @@ export function WorkspaceAdminDashboard() {
   }, [isAdmin, selectedProjectId]);
 
   const selectSection = (next: AdminSection) => {
-    if (next === "pnl-config") {
-      window.location.assign("/pnl/costs");
-      return;
-    }
     setSection(next);
     window.history.replaceState(window.history.state, "", next === "overview" ? "/admin" : `/admin#${next}`);
     window.requestAnimationFrame(() => document.getElementById("admin-content")?.scrollIntoView({ behavior: "smooth", block: "start" }));
@@ -341,7 +338,7 @@ export function WorkspaceAdminDashboard() {
             meta={<span className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 font-semibold"><span className="h-2 w-2 rounded-full bg-emerald-500" /> {overview?.workspace.name ?? "Workspace"}<span className="text-border">·</span>{overview?.workspace.timezone ?? "Asia/Ho_Chi_Minh"}</span>}
           />
 
-          <div className="sticky top-0 z-10 -mx-3 bg-background/95 px-3 py-1 backdrop-blur sm:-mx-4 sm:px-4 xl:-mx-6 xl:px-6">
+          <div className="admin-workspace-tabbar sticky top-0 z-30 self-start -mx-3 border-b border-border bg-background/95 px-3 py-2 backdrop-blur sm:-mx-4 sm:px-4 xl:-mx-6 xl:px-6">
             <nav aria-label="Admin sections" className="overflow-x-auto">
               <WorkspaceTabBar
                 items={[
@@ -352,7 +349,7 @@ export function WorkspaceAdminDashboard() {
                   { id: "reminders" as AdminSection, label: "Nhắc Lark", description: "Lịch gửi & người nhận", icon: <BellRing className="h-4 w-4" /> },
                   { id: "milestones" as AdminSection, label: "Milestone", description: "Template & gate", icon: <LockKeyhole className="h-4 w-4" /> },
                   { id: "approval" as AdminSection, label: "Phê duyệt", description: "Hồ sơ chờ duyệt", icon: <ShieldCheck className="h-4 w-4" /> },
-                  { id: "pnl-config" as AdminSection, label: "Thiết lập P&L", description: "Khoản mục & kỳ khóa", icon: <Settings2 className="h-4 w-4" /> },
+                  { id: "pnl-config" as AdminSection, label: "Thiết lập P&L", description: "Khoản mục & tham số", icon: <Settings2 className="h-4 w-4" /> },
                   { id: "history" as AdminSection, label: "Lịch sử", description: "Audit hoạt động admin", icon: <Clock3 className="h-4 w-4" /> }
                 ]}
                 value={section}
@@ -426,6 +423,7 @@ export function WorkspaceAdminDashboard() {
             }} />}
             </> : null}
             {section === "approval" ? <ApprovalPanel approvalHistory={approvalHistoryEntries} historyLoading={loading} onRefreshHistory={() => void load()} onApproved={() => void load()} /> : null}
+            {section === "pnl-config" ? <PnlSetupPage embedded /> : null}
             {section === "history" ? <AdminHistoryLog people={reminderRecipients.users.map((person) => ({ id: person.id, name: person.displayName, email: person.email, avatarUrl: person.avatarUrl }))} /> : null}
           </div>
         </div>

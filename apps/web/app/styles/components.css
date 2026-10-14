@@ -14513,6 +14513,7 @@ button.pipeline-stage-card {
 .money-amount-tooltip { position: fixed; z-index: 10000; width: max-content; max-width: min(320px, calc(100vw - 24px)); padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--color-popover); color: var(--color-popover-foreground); box-shadow: 0 8px 24px #0002; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; white-space: normal; max-height: min(320px, 50vh); overflow: auto; }
 
 /* Admin workspace visual contract: one calm surface language across legacy panels. */
+.admin-workspace-tabbar { isolation: isolate; }
 .admin-workspace-page .rounded-3xl { border-radius: 14px !important; }
 .admin-workspace-page .shadow-sm { box-shadow: none !important; }
 .admin-workspace-page .bg-gradient-to-r { background-image: none !important; }

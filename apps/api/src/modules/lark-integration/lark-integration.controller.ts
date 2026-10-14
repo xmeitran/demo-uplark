@@ -1,4 +1,4 @@
-import { Controller, Get, Headers, Inject, Param, Post, Query, UseGuards } from "@nestjs/common";
+import { Controller, Get, Headers, Inject, Post, Query, UseGuards } from "@nestjs/common";
 import { ProjectVisibilityGuard } from "../delivery-handoff/project-visibility";
 import { PrincipalService } from "../identity-access/principal.service";
 import { LarkIntegrationService } from "./lark-integration.service";
@@ -10,18 +10,6 @@ export class LarkIntegrationController {
     @Inject(LarkIntegrationService) private readonly larkIntegration: LarkIntegrationService,
     @Inject(PrincipalService) private readonly principals: PrincipalService
   ) {}
-
-  /** V-02: state of the project's two Lark groups, for the control in the project header. */
-  @Get("projects/:projectId/lark-groups")
-  async projectGroups(@Param("projectId") projectId: string, @Headers("authorization") authorization?: string, @Query("principal") principalFallback?: string) {
-    return this.larkIntegration.getProjectGroups(projectId, await this.principals.resolveFromAuthorization(authorization, principalFallback));
-  }
-
-  /** V-02 "Tạo lại nhóm": Admin or the project's PM. */
-  @Post("projects/:projectId/lark-groups/recreate")
-  async recreateProjectGroups(@Param("projectId") projectId: string, @Headers("authorization") authorization?: string, @Query("principal") principalFallback?: string) {
-    return this.larkIntegration.recreateProjectGroups(projectId, await this.principals.resolveFromAuthorization(authorization, principalFallback));
-  }
 
   /** D-09: Admin › Ngày nghỉ, read-only. */
   @Get("admin/personal-leave")

@@ -45,18 +45,34 @@ export const SYSTEM_ITEM_CODES = {
   costRatio: "KQ.CPDT"
 } as const;
 
+/**
+ * Revenue used to be represented as a SYSTEM item named "Doanh thu ghi nhận".
+ * Keep the code stable for saved formulas and old workspaces, but make its input
+ * semantics explicit: one amount entered manually for every project type.
+ */
+export function normalizeRevenueItem<T extends { code: string; name: string; method: PnlCostItemMethod; systemSource?: "revenue" | "labor" | null; required?: boolean }>(row: T): T {
+  if (row.code !== SYSTEM_ITEM_CODES.revenue) return row;
+  return {
+    ...row,
+    name: row.name === "Doanh thu ghi nhận" ? "Doanh thu dự án" : row.name,
+    method: "MANUAL",
+    systemSource: null,
+    required: true
+  };
+}
+
 const item = (code: string, name: string, parentCode: string | null, method: PnlCostItemMethod, extra: Partial<CostItemDef> = {}): Omit<CostItemDef, "sortOrder"> =>
   ({ code, name, parentCode, method, sign: 1, roleGroup: null, unit: "VND", required: false, ...extra });
 
 /**
  * Bộ khoản mục mặc định (mục 6.2 khối 2). The accounting groups are the six expense groups already used by the
  * workspace (BRD 2.1); "Khung I.10" itself is not in the repository, so its exact group names are the Admin's to adjust.
- * Doanh thu ghi nhận has its own code; DOANHTHU.LIC is Rebate License. Chi phí công cụ AI sits under Functional operation.
+ * Doanh thu dự án has its own stable code and is entered manually per project; DOANHTHU.LIC is Rebate License. Chi phí công cụ AI sits under Functional operation.
  * No "Accumulate EBIT": the project P&L already covers the whole lifecycle.
  */
 export const DEFAULT_COST_TREE: CostItemDef[] = [
   item("DOANHTHU", "Doanh thu", null, "GROUP"),
-  item("DOANHTHU.GHINHAN", "Doanh thu ghi nhận", "DOANHTHU", "SYSTEM", { systemSource: "revenue", required: true }),
+  item("DOANHTHU.GHINHAN", "Doanh thu dự án", "DOANHTHU", "MANUAL", { required: true }),
   item("DOANHTHU.LIC", "Rebate License", "DOANHTHU", "MANUAL"),
   item("CHIPHI", "Tổng chi phí", null, "GROUP"),
   item("CP.SALARIES", "Salaries related", "CHIPHI", "GROUP"),
@@ -84,12 +100,21 @@ export interface ItemTemplateDef {
   key: string;
   name: string;
   disabledCodes: string[];
-  /** Read as "chi phí tiêu hao": no revenue, no EBIT. */
+  /** Read as "chi phí tiêu hao" for hours; revenue is still entered per project. */
   consumable: boolean;
 }
 
-/** "Tắt Doanh thu, Rebate License, Hoa hồng, EBIT" — the ratios on revenue go with them. */
-const INTERNAL_DISABLED = ["DOANHTHU", "DOANHTHU.LIC", "CP.HOAHONG", "KQ.EBIT", "KQ.BIEN", "KQ.CPDT"];
+/** Revenue and its result ratios are always available for every project type. */
+export const REVENUE_ALWAYS_ON_CODES: ReadonlySet<string> = new Set([
+  SYSTEM_ITEM_CODES.revenueGroup,
+  SYSTEM_ITEM_CODES.revenue,
+  SYSTEM_ITEM_CODES.ebit,
+  SYSTEM_ITEM_CODES.margin,
+  SYSTEM_ITEM_CODES.costRatio
+]);
+
+/** Internal/training only disable optional revenue-side inputs, not project revenue itself. */
+const INTERNAL_DISABLED = ["DOANHTHU.LIC", "CP.HOAHONG"];
 /** Mẫu trùng tên với Loại dự án: Khách hàng, Nội bộ, Đào tạo. */
 export const DEFAULT_ITEM_TEMPLATES: ItemTemplateDef[] = [
   { key: "customer", name: "Khách hàng", disabledCodes: [], consumable: false },
@@ -115,6 +140,11 @@ export function effectiveDisabledCodes(items: readonly CostItemDef[], disabledCo
     }
   }
   return result;
+}
+
+/** Remove legacy template settings that disabled the now-universal revenue/result lines. */
+export function normalizeTemplateDisabledCodes(disabledCodes: Iterable<string>): string[] {
+  return [...new Set(disabledCodes)].filter((code) => !REVENUE_ALWAYS_ON_CODES.has(code));
 }
 
 export interface CostTreeCheck {
@@ -154,7 +184,8 @@ export function checkCostTree(items: readonly CostItemDef[]): CostTreeCheck {
       const error = formulaShapeError(row.formula ?? []);
       if (error) errors.push(`${row.code}: ${error}`);
     }
-    if (row.method === "SYSTEM" && row.systemSource !== "revenue" && !(row.systemSource === "labor" && row.roleGroup)) errors.push(`${row.code}: "Lấy từ hệ thống" cần nguồn Doanh thu ghi nhận, hoặc Chi phí nhân sự kèm Nhóm vai trò.`);
+    if (row.method === "SYSTEM" && row.systemSource === "revenue") errors.push(`${row.code}: doanh thu dự án phải dùng "Nhập tay", không lấy từ hệ thống.`);
+    else if (row.method === "SYSTEM" && !(row.systemSource === "labor" && row.roleGroup)) errors.push(`${row.code}: "Lấy từ hệ thống" chỉ dùng cho Chi phí nhân sự kèm Nhóm vai trò.`);
     const deps = dependenciesOf(row, children);
     for (const dep of deps) {
       if (!byCode.has(dep)) errors.push(`${row.code}: tham chiếu khoản mục "${dep}" không tồn tại.`);
@@ -208,7 +239,7 @@ export interface CostItemValue {
 }
 
 export interface CostTreeInputs {
-  /** Doanh thu ghi nhận — or the contract value before G7. Undefined when there is none. */
+  /** Legacy revenue input kept for the engine boundary; it is copied to the manual project-revenue item. */
   revenueAmount?: number;
   laborByRole: Partial<Record<RoleGroup, number>>;
   /** Nhập tay lines by item code. */
@@ -274,9 +305,13 @@ export function evaluateCostTree(items: readonly CostItemDef[], disabled: Readon
       case "SYSTEM":
         value = row.systemSource === "revenue" ? { amount: inputs.revenueAmount, incomplete: false } : { amount: inputs.laborByRole[row.roleGroup as RoleGroup] ?? 0, incomplete: false };
         break;
-      case "MANUAL":
-        value = { amount: inputs.manualByCode.get(code) ?? 0, incomplete: false };
+      case "MANUAL": {
+        const amount = inputs.manualByCode.get(code);
+        // Required manual inputs (currently project revenue) must stay missing,
+        // not become 0, so the P&L can explain why EBIT is unavailable.
+        value = { amount: amount ?? (row.required ? undefined : 0), incomplete: false };
         break;
+      }
       case "FUND":
         value = { amount: inputs.fundByCode.get(code) ?? 0, incomplete: false };
         break;
@@ -300,7 +335,7 @@ export function evaluateCostTree(items: readonly CostItemDef[], disabled: Readon
         const incomplete = known.length !== active.length || active.some((child) => result.get(child.code)?.incomplete);
         // Revenue that is not known yet leaves its group without a number (PL-25 "Không tính được") — a rebate alone is not
         // the project's revenue. A missing cost component only makes the cost total partial (Tạm tính).
-        const revenueMissing = active.some((child) => child.method === "SYSTEM" && child.systemSource === "revenue" && result.get(child.code)?.amount === undefined);
+        const revenueMissing = active.some((child) => child.code === SYSTEM_ITEM_CODES.revenue && result.get(child.code)?.amount === undefined);
         value = { amount: revenueMissing ? undefined : known.length ? known.reduce((total, child) => total + contributionOf(byCode, disabled, child.code, code, result.get(child.code)!.amount as number), 0) : active.length ? undefined : 0, incomplete };
       }
     }

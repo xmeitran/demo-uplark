@@ -32,6 +32,17 @@ const num = `${numberCellClass} !px-2.5 whitespace-nowrap`;
 
 type EditTarget = Pick<PnlStaffCostRow, "userId" | "periodKey" | "components" | "status"> & { displayName?: string; employeeCode?: string | null };
 
+function HourlyRateCell({ rate, status }: Readonly<{ rate: number | null; status: PnlStaffCostRow["status"] | StaffMonthlyCostRow["status"] }>) {
+  if (rate === null) return <span title="Chưa có tổng chi phí tháng để tính đơn giá giờ">—</span>;
+  const draft = status === "DRAFT";
+  return (
+    <span title={draft ? "Mức dự kiến. P&L chỉ dùng sau khi bản chi phí tháng được duyệt." : "Tổng chi phí tháng đã duyệt ÷ giờ chuẩn của tháng"}>
+      {formatDong(Math.round(rate))}
+      {draft ? <span className="block text-[11px] font-normal text-amber-700">chờ duyệt</span> : null}
+    </span>
+  );
+}
+
 /** Excel cell → plain value (formula results and rich text included). */
 function cellValue(value: unknown): unknown {
   if (value && typeof value === "object") {
@@ -122,6 +133,11 @@ export function StaffCostsPage() {
         {locked ? <Strip tone="muted">{periodLabel(period)} đã khóa: không nhập, sửa hay duyệt được, kể cả dữ liệu từ hệ thống lương. Muốn đổi thì mở lại kỳ ở <Link href={`/pnl/costs?tab=periods&periodKey=${period}`} className={linkClass}>Thiết lập P&amp;L › Kỳ và khóa kỳ</Link>.</Strip> : null}
         {!meta.canEdit && !meta.canApprove ? <ReadOnlyNote>Chế độ chỉ xem. Nhập và import cần quyền Sửa chi phí; duyệt bản nháp cần quyền Duyệt chi phí.</ReadOnlyNote> : null}
 
+        <Strip tone={data.counts.draft ? "warn" : "muted"}>
+          <p className="font-semibold">Cách đưa chi phí vào P&amp;L</p>
+          <p className="mt-0.5 text-xs">Nhập tổng chi phí tháng → Lưu bản nháp → Duyệt bản nháp. Đơn giá giờ được hệ thống tự tính = tổng chi phí tháng đã duyệt ÷ giờ chuẩn tháng; bản Nháp chưa được dùng trong P&amp;L{data.counts.draft ? ` · hiện có ${data.counts.draft} bản nháp cần duyệt` : ""}.</p>
+        </Strip>
+
         {/* ① Thanh kỳ và tiến độ */}
         <section aria-label="Thanh kỳ và tiến độ" className="space-y-2">
           <FilterBar
@@ -170,7 +186,7 @@ export function StaffCostsPage() {
                     <td className={`${cell} font-mono text-xs`}>{row.employeeCode ?? <span className={toneClass.warn}>Chưa gán mã</span>}</td>
                     <td className={cell}><Link href={`/users/${encodeURIComponent(row.userId)}`} className="font-medium !text-foreground hover:!text-primary hover:underline">{row.displayName}</Link>{row.department ? <span className="block text-[11px] text-muted-foreground">{row.department}</span> : null}</td>
                     {row.components
-                      ? <>{COMPONENTS.map((component) => <td key={component.key} className={num}>{formatMillions(row.components?.[component.key], "table")}</td>)}<td className={`${num} font-bold`}>{formatMillions(row.totalAmount, "table")}</td><td className={num}>{formatDong(row.hourlyCostRate === null ? null : Math.round(row.hourlyCostRate))}</td></>
+                      ? <>{COMPONENTS.map((component) => <td key={component.key} className={num}>{formatMillions(row.components?.[component.key], "table")}</td>)}<td className={`${num} font-bold`}>{formatMillions(row.totalAmount, "table")}</td><td className={num}><HourlyRateCell rate={row.hourlyCostRate} status={row.status} /></td></>
                       : <td colSpan={8} className={`${cell} ${waiting ? "font-medium text-amber-700" : "text-muted-foreground"}`}>{waiting ? waitingText : "Chưa nhập chi phí tháng này"}</td>}
                     <td className={cell}>{row.sourceLabel ?? ""}</td>
                     <td className={cell}>
@@ -216,8 +232,8 @@ export function StaffCostsPage() {
         <PageHeader
           back={{ href: "/users", label: "Nhân sự" }}
           title="Chi phí nhân sự theo tháng"
-          subtitle="Nhập và duyệt chi phí của từng người mỗi tháng; từ đó hệ thống tính đơn giá giờ dùng cho P&L."
-          meta="Chỉ nhóm quyền chi phí · đơn vị: triệu đồng"
+          subtitle="Nhập tổng chi phí theo tháng, duyệt một lần, rồi hệ thống tự tính đơn giá giờ cho P&L."
+          meta="Chỉ nhóm quyền chi phí · các ô nhập là đồng · bảng hiển thị theo triệu đồng"
         />
         {body}
       </main>
@@ -259,7 +275,10 @@ function StaffCostModal({ target, locked, reload, onClose }: Readonly<{ target: 
         ))}
       </div>
       {codeEditable ? <Field label="Mã nhân sự (đúng mã của hệ thống lương)" htmlFor="staff-cost-code"><input id="staff-cost-code" value={employeeCode} maxLength={40} onChange={(event) => setEmployeeCode(event.target.value)} className={inputClass} placeholder="Ví dụ: NS-012" /></Field> : null}
-      <p className="text-xs text-muted-foreground">Lưu ở trạng thái Nháp, chưa dùng cho P&amp;L cho tới khi được duyệt{target.status === "APPROVED" ? "; bản Đã duyệt hiện tại quay về Nháp và cần duyệt lại" : ""}. Tổng chi phí và đơn giá giờ (cost rate) do hệ thống tính (Tổng ÷ giờ chuẩn của tháng). Người sửa, thời điểm, giá trị trước và sau được ghi lại.</p>
+      <Strip tone="muted">
+        <p className="font-semibold">Bạn nhập tổng chi phí, không nhập đơn giá giờ</p>
+        <p className="mt-0.5 text-xs">Các ô nhập là đồng. Ví dụ tổng 150.000đ và tháng có 176 giờ chuẩn → đơn giá giờ khoảng 852đ/giờ. Lưu xong sẽ là Nháp; cần Duyệt bản nháp thì P&amp;L mới sử dụng{target.status === "APPROVED" ? "; bản Đã duyệt hiện tại sẽ quay về Nháp và cần duyệt lại" : ""}.</p>
+      </Strip>
       <SaveFeedback error={save.error} message={null} />
     </PnlModal>
   );
@@ -284,7 +303,7 @@ export function StaffMonthlyCosts({ userId }: Readonly<{ userId: string; default
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-5">
         <div className="min-w-0">
           <h2 id="staff-cost-title" className="!text-sm font-bold text-foreground">Chi phí theo tháng</h2>
-          <p className="mt-1 text-xs text-muted-foreground">Chỉ nhóm quyền chi phí xem và sửa · đơn vị triệu đồng. Cùng bảng với <Link href="/users/costs" className={linkClass}>Chi phí nhân sự theo tháng</Link>. Đơn giá giờ (cost rate) = Tổng ÷ giờ chuẩn của tháng; chỉ bản Đã duyệt được dùng cho P&amp;L.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Chỉ nhóm quyền chi phí xem và sửa · các ô nhập là đồng, bảng hiển thị theo triệu đồng. Đơn giá giờ là số tự tính = tổng chi phí tháng ÷ giờ chuẩn; chỉ bản Đã duyệt được dùng cho P&amp;L. Cùng bảng với <Link href="/users/costs" className={linkClass}>Chi phí nhân sự theo tháng</Link>.</p>
         </div>
         {canEdit ? (
           <div className="flex flex-wrap items-center gap-2">
@@ -293,6 +312,14 @@ export function StaffMonthlyCosts({ userId }: Readonly<{ userId: string; default
           </div>
         ) : api.data ? <p role="status" className="text-xs text-muted-foreground">Chế độ chỉ xem (cần quyền Sửa chi phí).</p> : null}
       </div>
+      {rows.some((row) => row.status === "DRAFT") ? (
+        <div className="border-b border-border px-4 py-3 sm:px-5">
+          <Strip tone="warn" action={<Link href={`/users/costs?periodKey=${encodeURIComponent(rows.find((row) => row.status === "DRAFT")?.periodKey ?? newPeriod)}`} className={linkClass}>Mở màn hình duyệt</Link>}>
+            <p className="font-semibold">Chi phí đang là bản Nháp</p>
+            <p className="mt-0.5 text-xs">Đơn giá giờ bên dưới chỉ là mức dự kiến. Duyệt bản Nháp ở màn hình tổng để chi phí xuất hiện trong P&amp;L.</p>
+          </Strip>
+        </div>
+      ) : null}
       {api.error ? <div className="p-4"><PnlLoadError error={api.error} onRetry={api.reload} /></div> : null}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[900px] text-sm">
@@ -309,7 +336,7 @@ export function StaffMonthlyCosts({ userId }: Readonly<{ userId: string; default
                 <td className={`${cell} font-semibold`}>{formatMonth(row.periodKey)}</td>
                 {COMPONENTS.map((component) => <td key={component.key} className={num}>{formatMillions(row.components[component.key], "table")}</td>)}
                 <td className={`${num} font-bold`}>{formatMillions(row.monthlyCostAmount, "table")}</td>
-                <td className={num}>{formatDong(Math.round(row.hourlyCostRate))}</td>
+                <td className={num}><HourlyRateCell rate={row.hourlyCostRate} status={row.status} /></td>
                 <td className={cell}>{row.sourceLabel}</td>
                 <td className={`${cell} font-medium ${STATUS_TONE[status]}`}>{row.statusLabel}</td>
                 <td className={`${cell} text-right`}>{canEdit && !row.locked && status !== "LOCKED" ? <button type="button" aria-label={`Sửa chi phí ${periodLabel(row.periodKey).toLowerCase()}`} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-primary" onClick={() => open(row.periodKey, row)}><Pencil className="h-3.5 w-3.5" aria-hidden /></button> : null}</td>

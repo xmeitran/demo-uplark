@@ -50,9 +50,9 @@ describe("period: days rounded to whole months", () => {
 describe("dashboard URL state", () => {
   it("defaults to the current year with the default selection rule", () => {
     const state = parse("");
-    expect(state).toMatchObject({ fromMonth: "2026-01", toMonth: "2026-12", rule: "started_and_accepted", tab: "accepted", view: "accounting", page: 1, sort: "start", direction: "asc" });
+    expect(state).toMatchObject({ fromMonth: "2026-01", toMonth: "2026-12", rule: "started_and_accepted", tab: "all", view: "accounting", page: 1, sort: "start", direction: "asc" });
     expect(dashboardSearch(state, 2026)).toBe("");
-    expect(dashboardApiQuery(state)).toBe("unit=custom&fromMonth=2026-01&toMonth=2026-12");
+    expect(dashboardApiQuery(state)).toBe("unit=custom&fromMonth=2026-01&toMonth=2026-12&tab=all");
     expect(dashboardPeriodPresets("2026-10-13")[6]).toMatchObject(monthsToDays(state)); // the control shows "Năm nay"
   });
 
@@ -72,7 +72,7 @@ describe("dashboard URL state", () => {
     expect(parse("unit=custom&fromMonth=2025-11&toMonth=2026-02")).toMatchObject({ fromMonth: "2025-11", toMonth: "2026-02" });
     expect(dashboardSearch(parse("year=2026&unit=quarter&index=3"), 2026)).toBe("fromMonth=2026-07&toMonth=2026-09");
     expect(dashboardSearch(parse("year=2026"), 2026)).toBe("");
-    expect(dashboardApiQuery(parse("unit=half&index=2&view=role"))).toBe("unit=custom&fromMonth=2026-07&toMonth=2026-12");
+    expect(dashboardApiQuery(parse("unit=half&index=2&view=role"))).toBe("unit=custom&fromMonth=2026-07&toMonth=2026-12&tab=all");
   });
 
   it("sends several clients, project types and PICs comma-joined, and the search text as q", () => {
@@ -85,7 +85,7 @@ describe("dashboard URL state", () => {
 
   it("falls back on invalid values instead of passing them on", () => {
     const state = parse("year=abc&unit=week&index=9&rule=x&tab=y&view=z&page=-1&sort=drop&direction=up");
-    expect(state).toMatchObject({ fromMonth: "2026-01", toMonth: "2026-12", rule: "started_and_accepted", tab: "accepted", view: "accounting", page: 1, sort: "start", direction: "asc" });
+    expect(state).toMatchObject({ fromMonth: "2026-01", toMonth: "2026-12", rule: "started_and_accepted", tab: "all", view: "accounting", page: 1, sort: "start", direction: "asc" });
     for (const query of ["fromMonth=2026-05", "fromMonth=2026-05&toMonth=2026-04", "fromMonth=2026-13&toMonth=2026-14"]) expect(parse(query)).toMatchObject({ fromMonth: "2026-01", toMonth: "2026-12" });
     expect(parse("fromMonth=2015-01&toMonth=2026-12")).toMatchObject({ fromMonth: "2015-01", toMonth: "2019-12" }); // 60 months at most
   });

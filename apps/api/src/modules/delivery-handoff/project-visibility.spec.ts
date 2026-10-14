@@ -2,6 +2,7 @@ import { ForbiddenException, NotFoundException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 import { expandRoleCodes, type PrincipalContext } from "@b2b-crm/contracts";
 import { ProjectVisibilityGuard, canSeeProject, seesAllProjects, visibleProjectWhere, withoutProjectFinancials } from "./project-visibility";
+import { ProjectPermissionsService } from "./project-permissions.service";
 import { ProjectsService } from "./projects.service";
 
 const as = (subjectId: string, held: string[], extra: Partial<PrincipalContext> = {}): PrincipalContext => ({
@@ -71,6 +72,23 @@ describe("project visibility (7.7)", () => {
     expect(JSON.parse(JSON.stringify(withoutProjectFinancials(summary, as("usr-admin", ["WORKSPACE_ADMIN"]))))).toEqual({ id: "prj-1", name: "P", loggedMinutes: 60 });
     expect(withoutProjectFinancials(summary, as("usr-dx", ["DX", "COST_VIEW"]))).toBe(summary);
     expect(withoutProjectFinancials(summary, as("usr-admin", ["FOUNDER_GM"]))).toBe(summary);
+  });
+});
+
+describe("timesheet record visibility (7.7)", () => {
+  it("gives an Admin in admin view the whole workspace, including business Admin roles", () => {
+    const permissions = new ProjectPermissionsService({} as any);
+
+    expect(permissions.timeRecordVisibilityWhere(as("usr-admin", ["PM"]))).toEqual({});
+    expect(permissions.timeRecordVisibilityWhere(as("usr-admin", ["DX_DIRECTOR"]))).toEqual({});
+    expect(permissions.timeRecordVisibilityWhere(as("usr-admin", ["BD_LEAD"]))).toEqual({});
+  });
+
+  it("narrows an Admin in user view back to their own/project records", () => {
+    const permissions = new ProjectPermissionsService({} as any);
+    const where = permissions.timeRecordVisibilityWhere(as("usr-admin", ["PM"], { viewMode: "user" }));
+
+    expect(where).toHaveProperty("AND");
   });
 });
 

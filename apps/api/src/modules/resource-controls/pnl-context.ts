@@ -16,7 +16,7 @@ import { isInternalWorklogProjectType } from "../delivery-handoff/task-classific
 import { nextMonthKey, reportDayStart, reportMonthKey, reportMonthStart } from "./pnl-calc";
 import { classifyEntry, computeProjectPnl, type EngineEntry, type ProjectPnl } from "./pnl-engine";
 import { costRateOf, isPnlGateReason, rateKey, roleGroupOf, standardMonthMinutes, workingDaysOfMonth, type CostRate, type PnlGateReason, type PnlGateStatus, type RoleGroup } from "./pnl-rules";
-import { DEFAULT_COST_TREE, DEFAULT_ITEM_TEMPLATES, effectiveDisabledCodes, templateKeyOfProjectType, type CostItemDef, type ItemTemplateDef } from "./pnl-tree";
+import { DEFAULT_COST_TREE, DEFAULT_ITEM_TEMPLATES, effectiveDisabledCodes, normalizeRevenueItem, normalizeTemplateDisabledCodes, templateKeyOfProjectType, type CostItemDef, type ItemTemplateDef } from "./pnl-tree";
 
 const HCM_OFFSET_MS = 7 * 60 * 60 * 1000;
 export const dayKeyOf = (date: Date) => new Date(date.getTime() + HCM_OFFSET_MS).toISOString().slice(0, 10);
@@ -307,10 +307,10 @@ export async function loadPnlContext(prisma: any, workspaceId: string, scope: Pn
   const stageById = new Map<string, any>(stageRows.map((stage) => [stage.id, stage]));
 
   const tree: CostItemDef[] = itemRows.length
-    ? itemRows.map((row: any) => ({ code: row.code, name: row.name, parentCode: row.parentCode ?? null, sign: row.sign === -1 ? -1 : 1, roleGroup: row.roleGroup ?? null, unit: row.unit, method: row.method, systemSource: row.systemSource ?? null, formula: row.formula ?? null, required: Boolean(row.required), sortOrder: row.sortOrder }))
+    ? itemRows.map((row: any) => normalizeRevenueItem({ code: row.code, name: row.name, parentCode: row.parentCode ?? null, sign: row.sign === -1 ? -1 : 1, roleGroup: row.roleGroup ?? null, unit: row.unit, method: row.method, systemSource: row.systemSource ?? null, formula: row.formula ?? null, required: Boolean(row.required), sortOrder: row.sortOrder }))
     : DEFAULT_COST_TREE;
   const templates = new Map<string, ItemTemplateDef>(DEFAULT_ITEM_TEMPLATES.map((template) => [template.key, template]));
-  for (const row of templateRows) templates.set(row.key, { key: row.key, name: row.name, disabledCodes: row.disabledCodes ?? [], consumable: Boolean(row.consumable) });
+  for (const row of templateRows) templates.set(row.key, { key: row.key, name: row.name, disabledCodes: normalizeTemplateDisabledCodes(row.disabledCodes ?? []), consumable: Boolean(row.consumable) });
 
   const accountName = new Map<string, string>(accounts.map((account: any) => [account.id, account.name]));
   const lastHourBeforeClose = new Map<string, string>();
@@ -338,9 +338,9 @@ export async function loadPnlContext(prisma: any, workspaceId: string, scope: Pn
     const storedValue = record?.projectValueAmount === null || record?.projectValueAmount === undefined ? undefined : Number(record.projectValueAmount);
     const templateKey = templateKeyOfProjectType(row.projectType);
     const template = templates.get(templateKey) ?? DEFAULT_ITEM_TEMPLATES[0];
-    const switchedOff = record?.frozenAt
+    const switchedOff = normalizeTemplateDisabledCodes(record?.frozenAt
       ? record.frozenDisabledCodes ?? []
-      : [...templateCodesAt(template, accepted.at), ...(record?.overrideDisabledCodes ?? [])].filter((code) => !(record?.overrideEnabledCodes ?? []).includes(code));
+      : [...templateCodesAt(template, accepted.at), ...(record?.overrideDisabledCodes ?? [])].filter((code) => !(record?.overrideEnabledCodes ?? []).includes(code)));
     const stages = stagesByProject.get(row.id) ?? [];
     const starts = stages.map((stage) => stage.plannedStartAt).filter(Boolean).map((value: Date) => new Date(value).getTime());
     const ends = stages.map((stage) => stage.plannedEndAt).filter(Boolean).map((value: Date) => new Date(value).getTime());
@@ -353,7 +353,7 @@ export async function loadPnlContext(prisma: any, workspaceId: string, scope: Pn
       id: row.id, code: row.code, name: row.name, accountId: row.accountId, accountName: accountName.get(row.accountId) ?? "", projectType: row.projectType, status: String(row.status),
       isTest: Boolean(row.isTestProject), internalWorklog: isInternalWorklogProjectType(row.projectType),
       templateKey, template, consumable: template.consumable, disabledCodes: effectiveDisabledCodes(tree, switchedOff), record,
-      projectValueAmount: template.consumable ? undefined : storedValue,
+      projectValueAmount: storedValue,
       g1Passed, g1At: g1 && isGatePassed(g1.status) ? GATE_DATE(g1) : undefined,
       closeGate, closePassed: accepted.passed, acceptedAt, acceptedOn: accepted.at ? dayKeyOf(accepted.at) : estimatedOn, acceptanceEstimated: accepted.passed && !accepted.at,
       lostDeal: isLostDealProject(row.status, history),
@@ -440,7 +440,7 @@ export async function loadPnlContext(prisma: any, workspaceId: string, scope: Pn
   const lockedDefs = new Map<string, CostItemDef>();
   for (const [periodKey, lock] of [...locked].sort(([left], [right]) => left.localeCompare(right))) {
     if (!lock.snapshot) continue;
-    for (const def of lock.snapshot.tree ?? []) lockedDefs.set(def.code, def);
+    for (const def of lock.snapshot.tree ?? []) lockedDefs.set(def.code, normalizeRevenueItem(def));
     const counted = (projectId: string, itemCode: string | null) => { const off = lock.snapshot!.disabledCodes?.[projectId]; return off ? !(itemCode && off.includes(itemCode)) : undefined; };
     for (const share of lock.snapshot.fundShares) if (inScopeProject(share.projectId)) fundShares.push({ ...share, periodKey, counted: counted(share.projectId, share.itemCode) });
     for (const line of lock.snapshot.manualLines) if (inScopeProject(line.projectId)) manualLines.push({ ...line, periodKey, occurredOn: `${periodKey}-01`, counted: counted(line.projectId, line.itemCode) });

@@ -54,14 +54,16 @@ const money = (visible: boolean, amount: number | null) => (visible ? amount : n
 
 function dashboardRow(id: string, pic: string, startedOn: string, acceptedOn: string | null, figures: [number, number, number] | null, result: PnlResult, visible: boolean): PnlDashboardProjectRow {
   const letter = id.slice(-1).toUpperCase();
-  const [revenue, labor, other] = figures ?? [0, 30 * M, 5 * M];
+  const revenue = figures?.[0] ?? null;
+  const labor = figures?.[1] ?? 30 * M;
+  const other = figures?.[2] ?? 5 * M;
   const accepted = acceptedOn !== null;
   return {
     projectId: id, projectCode: `DA-${letter}`, projectName: `Dự án ${letter}`, accountId: `acc-${letter}`, accountName: `Khách ${letter}`, projectType: "delivery",
     picUserId: `usr-${pic}`, picName: pic, startedOn, acceptedOn, acceptedOnEstimated: false,
-    revenueAmount: accepted ? money(visible, revenue) : null, laborCostAmount: money(visible, labor), otherCostAmount: money(visible, other),
-    totalCostAmount: money(visible, labor + other), ebitAmount: accepted ? money(visible, revenue - labor - other) : null,
-    marginPercent: accepted ? money(visible, ((revenue - labor - other) / revenue) * 100) : null,
+    revenueAmount: revenue === null ? null : money(visible, revenue), laborCostAmount: money(visible, labor), otherCostAmount: money(visible, other),
+    totalCostAmount: money(visible, labor + other), ebitAmount: accepted && revenue !== null ? money(visible, revenue - labor - other) : null,
+    marginPercent: accepted && revenue !== null ? money(visible, ((revenue - labor - other) / revenue) * 100) : null,
     result, adjustedAfterClose: false, costByAccountingGroup: {}, costByRoleGroup: {}, reconciliation: reconciliation(0, 0, 0, 0)
   };
 }
@@ -111,7 +113,16 @@ function dashboardFixture(visible = true): PnlDashboardResponse {
         totalRow: { revenueAmount: money(visible, 1240 * M), laborCostAmount: money(visible, 690 * M), otherCostAmount: money(visible, 122 * M), ebitAmount: money(visible, 428 * M), marginPercent: money(visible, 34.5161), result: totalResult },
         reconciliation: reconciliation(2140 * H, 1986 * H, 117.5 * H, 36.5 * H)
       },
-      inProgress: { total: 7, page: 1, pageSize: 20, rows: [dashboardRow("prj-d", "PM-2", "2026-06-01", null, null, provisional, visible)] },
+      all: {
+        total: 4, page: 1, pageSize: 20,
+        rows: [
+          dashboardRow("prj-a", "PM-1", "2026-03-02", "2026-07-20", [420 * M, 236 * M, 41 * M], official, visible),
+          dashboardRow("prj-b", "PM-2", "2026-02-10", "2026-08-14", [560 * M, 318 * M, 52 * M], provisional, visible),
+          dashboardRow("prj-c", "PM-1", "2026-05-05", "2026-09-25", [260 * M, 136 * M, 29 * M], provisional, visible),
+          dashboardRow("prj-d", "PM-2", "2026-06-01", null, [100 * M, 30 * M, 5 * M], provisional, visible)
+        ]
+      },
+      inProgress: { total: 7, page: 1, pageSize: 20, rows: [dashboardRow("prj-d", "PM-2", "2026-06-01", null, [100 * M, 30 * M, 5 * M], provisional, visible)] },
       companyCosts: {
         periodKeys: ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10", "2026-11", "2026-12"],
         staffCostAmount: money(visible, 838 * M), projectLaborAmount: money(visible, 690 * M),
@@ -148,7 +159,7 @@ function projectFixture(visible = true, scope: { from: string; to: string } | nu
       },
       totals: {
         plannedMinutes: 260 * H, loggedMinutes: 273.5 * H, loggedVsPlanPercent: 5.1923, monthsWithHours: 2,
-        revenue: { amount: whole ? money(visible, 67_200_000) : null, basis: "project_value", label: "Doanh thu", note: whole ? "giá trị dự án, chưa G7" : "Chỉ xem ở Toàn dự án", wholeProjectOnly: !whole, missingReason: null, projectValueAmount: money(visible, 67_200_000), canEdit: visible, reasonRequired: true, lockedReason: null },
+        revenue: { amount: whole ? money(visible, 67_200_000) : null, basis: "project_value", label: "Doanh thu dự án", note: whole ? "nhập tay theo từng dự án" : "Chỉ xem ở Toàn dự án", wholeProjectOnly: !whole, missingReason: null, projectValueAmount: money(visible, 67_200_000), canEdit: visible, reasonRequired: true, lockedReason: null },
         cost: { totalAmount: money(visible, 30_970_000), laborAmount: money(visible, 26_350_000), otherAmount: money(visible, 4_620_000) },
         ebit: { amount: whole ? money(visible, 36_230_000) : null, marginPercent: whole ? money(visible, 53.9137) : null, expected: true, label: "EBIT dự kiến", wholeProjectOnly: !whole, missingReason: null },
         consumable: false
@@ -183,11 +194,11 @@ function projectFixture(visible = true, scope: { from: string; to: string } | nu
         reconciliation: reconciliation(273.5 * H, 168 * H, 105.5 * H, 0)
       },
       items: visible ? [
-        { code: "DT", name: "Doanh thu ghi nhận", parentCode: null, level: 1, sign: 1, unit: "VND", method: "SYSTEM", methodLabel: "Lấy từ hệ thống", roleGroup: null, amount: 67_200_000, incomplete: false, source: { kind: "revenue", description: "Giá trị hợp đồng của các hạng mục Trọn gói", byMonth: [] } },
+        { code: "DT", name: "Doanh thu dự án", parentCode: null, level: 1, sign: 1, unit: "VND", method: "MANUAL", methodLabel: "Nhập tay", roleGroup: null, amount: 67_200_000, incomplete: false, source: { kind: "revenue", description: "Doanh thu do Admin/PM nhập trực tiếp theo từng dự án; không lấy tự động từ hệ thống", byMonth: [] } },
         { code: "CP", name: "Tổng chi phí", parentCode: null, level: 1, sign: -1, unit: "VND", method: "GROUP", methodLabel: "Tổng nhóm", roleGroup: null, amount: 30_970_000, incomplete: true, source: { kind: "group", description: "Cộng các khoản mục con", byMonth: [] } },
         { code: "CP.NS", name: "Chi phí nhân sự", parentCode: "CP", level: 2, sign: 1, unit: "VND", method: "SYSTEM", methodLabel: "Lấy từ hệ thống", roleGroup: "DELIVERY", amount: 26_350_000, incomplete: false, source: { kind: "hours", description: "Giờ tính P&L × cost rate tháng", byMonth: [{ periodKey: "2026-08", amount: 21_340_000 }, { periodKey: "2026-09", amount: 5_010_000 }] } },
         { code: "CP.RIENG", name: "Chi phí riêng của dự án", parentCode: "CP", level: 2, sign: 1, unit: "VND", method: "MANUAL", methodLabel: "Nhập tay", roleGroup: null, amount: null, incomplete: false, source: { kind: "manual", description: "Nhập theo tháng phát sinh", byMonth: [] }, manualLines: [] },
-        { code: "EBIT.PCT", name: "Biên EBIT", parentCode: null, level: 1, sign: 1, unit: "PERCENT", method: "FORMULA", methodLabel: "Công thức", roleGroup: null, amount: 53.9137, incomplete: false, source: { kind: "formula", description: "[EBIT] ÷ [Doanh thu ghi nhận]", byMonth: [] } }
+        { code: "EBIT.PCT", name: "Biên EBIT", parentCode: null, level: 1, sign: 1, unit: "PERCENT", method: "FORMULA", methodLabel: "Công thức", roleGroup: null, amount: 53.9137, incomplete: false, source: { kind: "formula", description: "[EBIT] ÷ [Doanh thu dự án]", byMonth: [] } }
       ] : null,
       history: visible ? [{ id: "evt-1", at: "2026-10-05T02:00:00.000Z", actorName: "PM-1", action: "pnl.period_reopened", label: "Mở lại kỳ", periodKey: "2026-08", reason: "Bổ sung hóa đơn công cụ AI" }] : null,
       template: { key: "customer", name: "Khách hàng", disabledCodes: [], override: null, canOverride: true }
@@ -254,15 +265,15 @@ const itemsFixture: PnlCostItemsResponse = {
   data: {
     check: { hasCycle: false, cycleCodes: [], allGroupsSummed: true, groupErrors: [], errors: [], requiredWithoutValue: [{ code: "CP.QUY.AI", name: "Công cụ AI" }], periodKey: "2026-10", canApply: true },
     items: [
-      costItem("DT", "Doanh thu ghi nhận", null, 1, "SYSTEM", "Lấy từ hệ thống", { systemSource: "revenue" }),
+      costItem("DT", "Doanh thu dự án", null, 1, "MANUAL", "Nhập tay"),
       costItem("CP", "Tổng chi phí", null, 1, "GROUP", "Tổng nhóm"),
       costItem("CP.NS", "Chi phí nhân sự", "CP", 2, "GROUP", "Tổng nhóm"),
       costItem("CP.NS.DELIVERY", "Delivery", "CP.NS", 3, "SYSTEM", "Lấy từ hệ thống", { roleGroup: "DELIVERY", systemSource: "labor" }),
       costItem("CP.QUY.AI", "Công cụ AI", "CP", 2, "FUND", "Phân bổ quỹ", { required: true }),
-      costItem("CP.HOAHONG", "Hoa hồng", "CP", 2, "FORMULA", "Công thức", { formula: [{ item: "DT" }, { op: "*" }, { param: "commissionPercent" }], formulaText: "[Doanh thu ghi nhận] × [Tỷ lệ hoa hồng]", dependsOn: [{ code: "DT", name: "Doanh thu ghi nhận" }] })
+      costItem("CP.HOAHONG", "Hoa hồng", "CP", 2, "FORMULA", "Công thức", { formula: [{ item: "DT" }, { op: "*" }, { param: "commissionPercent" }], formulaText: "[Doanh thu dự án] × [Tỷ lệ hoa hồng]", dependsOn: [{ code: "DT", name: "Doanh thu dự án" }] })
     ],
     hasDraft: false, openPeriodKeys: ["2026-10"],
-    formulaOperands: [{ token: { item: "DT" }, label: "Doanh thu ghi nhận" }, { token: { param: "commissionPercent" }, label: "Tỷ lệ hoa hồng" }],
+    formulaOperands: [{ token: { item: "DT" }, label: "Doanh thu dự án" }, { token: { param: "commissionPercent" }, label: "Tỷ lệ hoa hồng" }],
     usingDefaultTree: false
   },
   meta: meta()
@@ -381,7 +392,7 @@ test.describe("P&L dự án — tổng quan (/pnl)", () => {
     await page.goto("/pnl?year=2026");
 
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("P&L dự án");
-    await expect(page.getByText("Lãi lỗ của từng dự án đã nghiệm thu: doanh thu ghi nhận, chi phí và EBIT.")).toBeVisible();
+    await expect(page.getByText("Theo dõi doanh thu, chi phí và EBIT của toàn bộ dự án trong workspace.")).toBeVisible();
     await expect(page.getByText("Đơn vị: triệu đồng", { exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: /^Quay lại/ })).toHaveCount(0); // a top-level page has no back link
     await expect(page.getByRole("link", { name: "Chi phí nhân sự", exact: true })).toHaveAttribute("href", "/users/costs");
@@ -397,21 +408,21 @@ test.describe("P&L dự án — tổng quan (/pnl)", () => {
     await expect(filters.getByLabel("Loại dự án")).toContainText("Tất cả loại dự án");
     await expect(filters.getByLabel("Khách hàng", { exact: true })).toContainText("Tất cả khách hàng");
     await expect(filters.getByLabel("PIC", { exact: true })).toContainText("Tất cả PIC");
-    await expect(filters).toContainText("Đang xem 3 dự án bắt đầu trong kỳ và đến nay đã nghiệm thu (từ 01/2026 đến 12/2026) · không tính 4 dự án thử nghiệm · số liệu cập nhật lúc 08:30 ngày 12/10");
+    await expect(filters).toContainText("Đang hiển thị 4 dự án. Tổng P&L tính cho 3 dự án bắt đầu trong kỳ và đến nay đã nghiệm thu (từ 01/2026 đến 12/2026) · không tính 4 dự án thử nghiệm · số liệu cập nhật lúc 08:30 ngày 12/10");
     await expect(filters).toContainText("P&L tính theo tháng nên khoảng ngày được làm tròn thành các tháng trọn vẹn.");
     // An address written before the date control (year=2026) is read as the months of that year.
-    expect(["unit", "fromMonth", "toMonth", "year"].map((key) => api.last("dashboard")?.query.get(key))).toEqual(["custom", "2026-01", "2026-12", null]);
+    expect(["unit", "fromMonth", "toMonth", "tab", "year"].map((key) => api.last("dashboard")?.query.get(key))).toEqual(["custom", "2026-01", "2026-12", "all", null]);
 
     const tiles = page.getByRole("region", { name: "Năm ô tổng" }).locator("> div");
     await expect(tiles).toHaveCount(5);
     // Tile: label, figure and ONE caption line; what the figure is sits in the label's tooltip.
     await expect(tiles.nth(0)).toHaveText(/^Dự án\s*3\s*đều đã cộng vào tổng$/);
-    await expect(tiles.nth(1)).toHaveText(/^Doanh thu ghi nhận\s*1\.240\s*triệu đồng$/);
+    await expect(tiles.nth(1)).toHaveText(/^Doanh thu dự án\s*1\.240\s*triệu đồng$/);
     await expect(tiles.nth(2)).toHaveText(/^Tổng chi phí\s*812\s*Nhân sự 690 · khác 122$/);
     await expect(tiles.nth(3)).toHaveText(/^EBIT\s*428\s*Tạm tính · 2 dự án$/);
     await expect(tiles.nth(4)).toContainText(/^Biên EBIT\s*34,5%/);
-    await expect(tiles.nth(1).getByTitle("Ghi nhận khi dự án qua mốc nghiệm thu G7")).toHaveText("Doanh thu ghi nhận");
-    await expect(tiles.nth(3).getByTitle("Lãi lỗ = doanh thu ghi nhận − tổng chi phí")).toHaveText("EBIT");
+    await expect(tiles.nth(1).getByTitle("Tổng doanh thu nhập tay theo từng dự án")).toHaveText("Doanh thu dự án");
+    await expect(tiles.nth(3).getByTitle("Lãi lỗ = doanh thu dự án − tổng chi phí")).toHaveText("EBIT");
     await expect(tiles.nth(1).getByTitle("1.240.000.000 đ")).toBeVisible();
 
     // Each reason is one plain sentence with its count and one link to the place that fixes it.
@@ -438,7 +449,7 @@ test.describe("P&L dự án — tổng quan (/pnl)", () => {
     // The old address of "Quý 3 / 2026".
     await page.goto("/pnl?year=2026&unit=quarter&index=3");
     const filters = page.getByRole("region", { name: "Bộ lọc" });
-    await expect.poll(() => api.last("dashboard")?.query.toString()).toBe("unit=custom&fromMonth=2026-07&toMonth=2026-09");
+    await expect.poll(() => api.last("dashboard")?.query.toString()).toBe("unit=custom&fromMonth=2026-07&toMonth=2026-09&tab=all");
     await expect(filters).toContainText("Gợi ý: nên xem kỳ dài");
     await expect(filters.getByRole("button", { name: "Đặt lại (1)" })).toBeVisible();
 
@@ -455,7 +466,7 @@ test.describe("P&L dự án — tổng quan (/pnl)", () => {
     await expect(picker).toContainText("Từ 17/07/2026 đến hết ngày 05/08/2026");
     await picker.getByRole("button", { name: "Áp dụng" }).click();
     await expect(page).toHaveURL(/\/pnl\?fromMonth=2026-07&toMonth=2026-08$/);
-    await expect.poll(() => api.last("dashboard")?.query.toString()).toBe("unit=custom&fromMonth=2026-07&toMonth=2026-08");
+    await expect.poll(() => api.last("dashboard")?.query.toString()).toBe("unit=custom&fromMonth=2026-07&toMonth=2026-08&tab=all");
     await expect(filters.getByRole("button", { name: "Kỳ: 01/07/2026 – 31/08/2026" })).toBeVisible(); // what is shown is what is computed
     await expect(filters.getByRole("button", { name: "Xóa lọc thời gian" })).toHaveCount(0); // a period is always set
 
@@ -530,46 +541,53 @@ test.describe("P&L dự án — tổng quan (/pnl)", () => {
     await page.goto("/pnl?year=2026");
     const block = page.getByRole("region", { name: "Bảng dự án" });
     const tabs = block.getByRole("tablist", { name: "Nhóm dự án" }).getByRole("tab");
-    await expect(tabs).toHaveText(["Đã nghiệm thu (3)", "Đang triển khai (7) · chỉ chi phí, không cộng vào tổng"]);
+    await expect(tabs).toHaveText(["Tất cả dự án (4)", "Đã nghiệm thu (3)", "Đang triển khai (7) · chưa cộng vào tổng"]);
     await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
 
     const headers = block.getByRole("columnheader");
-    // Seven columns: client and PIC sit under the project name, the margin under EBIT.
+    // The default view lists every project and makes its P&L lifecycle explicit.
     await expect(headers).toHaveCount(7);
-    await expect(headers).toContainText(["Dự án", "Bắt đầu → Nghiệm thu", "Doanh thu ghi nhận", "Chi phí nhân sự", "Chi phí khác", "EBIT · Biên", "Kết quả"]);
-    await expect(headers.nth(2)).toHaveAttribute("title", "Doanh thu ghi nhận tại mốc nghiệm thu G7 (triệu đồng)");
-    await expect(headers.nth(5)).toHaveAttribute("title", /EBIT = doanh thu ghi nhận − chi phí nhân sự − chi phí khác/);
+    await expect(headers).toContainText(["Dự án", "Trạng thái P&L", "Bắt đầu → Nghiệm thu", "Doanh thu dự án", "Tổng chi phí", "EBIT", "Kết quả"]);
+    await expect(headers.nth(3)).toHaveAttribute("title", "Doanh thu nhập tay theo từng dự án (triệu đồng)");
+    await expect(headers.nth(5)).toHaveAttribute("title", "EBIT của dự án đã nghiệm thu; dự án đang triển khai chưa có EBIT");
 
     const help = block.getByRole("button", { name: "Cách đọc bảng này" });
     await expect(help).toHaveAttribute("aria-expanded", "false");
     await help.click();
     await expect(help).toHaveAttribute("aria-expanded", "true");
     await expect(block.getByRole("listitem")).toHaveCount(5);
-    await expect(block).toContainText("Doanh thu chỉ được ghi nhận khi dự án qua mốc nghiệm thu G7.");
+    await expect(block).toContainText("Doanh thu dự án do Admin/PM nhập tay theo từng dự án.");
     await expect(block).toContainText("Không tính được: thiếu dữ liệu bắt buộc nên chưa ra được lãi lỗ");
     await help.click();
     await expect(block.getByRole("listitem")).toHaveCount(0);
 
     const rowA = block.getByRole("row", { name: /Dự án A/ });
-    await expect(rowA.getByRole("cell")).toHaveText([/^Dự án A\s*Khách A · PIC PM-1$/, "03/26 → 07/26", "420", "236", "41", /^143\s*34,0%$/, "Chính thức"]);
+    await expect(rowA.getByRole("cell")).toHaveText([/^Dự án A\s*Khách A · PIC PM-1$/, "Đã nghiệm thu", "03/26 → 07/26", "420", "277", /^143\s*34,0%$/, "Chính thức"]);
     await expect(rowA.getByRole("link", { name: "Dự án A" })).toHaveAttribute("href", /^\/pnl\/prj-a\?returnTo=%2Fpnl/);
     // The result label explains itself on hover or focus.
     await expect(rowA.getByLabel(/^Chính thức\. Chính thức: dự án đã nghiệm thu, đủ dữ liệu và mọi tháng đã khóa sổ/)).toHaveText("Chính thức");
     const rowB = block.getByRole("row", { name: /Dự án B/ });
     await expect(rowB.getByLabel(/^Tạm tính\. .*Lý do: 105,5 giờ chưa có chi phí nhân sự tháng được duyệt; Tháng 08\/2026, 09\/2026 chưa khóa sổ\.$/)).toHaveText("Tạm tính");
 
+    await expect(block.getByRole("row", { name: /Tổng 3 dự án/ })).toHaveCount(0);
+    await block.getByRole("tab", { name: "Đã nghiệm thu (3)" }).click();
+    await expect(page).toHaveURL(/tab=accepted/);
+    await expect(headers).toHaveCount(7);
+    await expect(headers).toContainText(["Dự án", "Bắt đầu → Nghiệm thu", "Doanh thu dự án", "Chi phí nhân sự", "Chi phí khác", "EBIT · Biên", "Kết quả"]);
+    await expect(rowA.getByRole("cell")).toHaveText([/^Dự án A\s*Khách A · PIC PM-1$/, "03/26 → 07/26", "420", "236", "41", /^143\s*34,0%$/, "Chính thức"]);
+
     const total = block.getByRole("row", { name: /Tổng 3 dự án/ });
     await expect(total.getByRole("cell")).toHaveText(["Tổng 3 dự án", "1.240", "690", "122", /^428\s*34,5%$/, "Tạm tính"]);
     await expect(block).toContainText("Kiểm tra giờ: 2.140 giờ đã ghi = 1.986 giờ đã tính vào P&L + 117,5 giờ chờ xử lý + 36,5 giờ không tính vào P&L dự án · khớp. Dòng tổng bằng các ô tổng phía trên.");
     await expect(block).toContainText("Trang 1/1 · các ô tổng và thứ tự sắp xếp tính trên toàn bộ danh sách");
 
-    await tabs.nth(1).click();
+    await tabs.nth(2).click();
     await expect(page).toHaveURL(/tab=in_progress/);
-    await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
+    await expect(tabs.nth(2)).toHaveAttribute("aria-selected", "true");
     await expect.poll(() => api.last("dashboard")?.query.get("tab")).toBe("in_progress");
-    await expect(headers).toHaveCount(6);
-    await expect(headers).toContainText(["Dự án", "Bắt đầu", "Chi phí nhân sự", "Chi phí khác", "Tổng chi phí đến nay", "Kết quả"]);
-    await expect(block.getByRole("row", { name: /Dự án D/ }).getByRole("cell")).toHaveText([/^Dự án D\s*Khách D · PIC PM-2$/, "06/26", "30", "5", "35", "Tạm tính"]);
+    await expect(headers).toHaveCount(7);
+    await expect(headers).toContainText(["Dự án", "Bắt đầu", "Doanh thu dự án", "Chi phí nhân sự", "Chi phí khác", "Tổng chi phí đến nay", "Kết quả"]);
+    await expect(block.getByRole("row", { name: /Dự án D/ }).getByRole("cell")).toHaveText([/^Dự án D\s*Khách D · PIC PM-2$/, "06/26", "100", "30", "5", "35", "Tạm tính"]);
     await expect(block.getByRole("row", { name: /Tổng 3 dự án/ })).toHaveCount(0);
     await expect(block).toContainText("không cộng vào các ô tổng");
 
@@ -584,12 +602,12 @@ test.describe("P&L dự án — tổng quan (/pnl)", () => {
     await page.route("**/api/pnl/dashboard**", async (route) => {
       const body = dashboardFixture();
       const row = body.data.accepted.rows[2];
-      Object.assign(row, { revenueAmount: null, ebitAmount: null, marginPercent: null, result: { label: "not_computable", labelText: "Không tính được", reasons: [{ code: "no_project_value", label: "chưa có Giá trị dự án", target: "project_value" }, { code: "months_unlocked", label: "tháng 09 chưa khóa", periodKeys: ["2026-09"], target: "periods" }] } });
+      Object.assign(row, { revenueAmount: null, ebitAmount: null, marginPercent: null, result: { label: "not_computable", labelText: "Không tính được", reasons: [{ code: "no_project_value", label: "chưa nhập doanh thu dự án", target: "project_value" }, { code: "months_unlocked", label: "tháng 09 chưa khóa", periodKeys: ["2026-09"], target: "periods" }] } });
       body.data.totals.notComputableProjectCount = 1;
       body.data.pending = [{ kind: "not_computable", label: "1 dự án Không tính được, chưa cộng vào ô tổng", projectCount: 1, target: "project_value" }];
       await fulfillJson(route, body);
     });
-    await page.goto("/pnl?year=2026");
+    await page.goto("/pnl?year=2026&tab=accepted");
 
     await expect(page.getByRole("region", { name: "Năm ô tổng" }).locator("> div").first()).toContainText("1 dự án chưa tính được, chưa cộng vào tổng");
     const why = page.getByRole("region", { name: "Vì sao số liệu còn tạm tính?" });
@@ -598,10 +616,10 @@ test.describe("P&L dự án — tổng quan (/pnl)", () => {
 
     const rowC = page.getByRole("region", { name: "Bảng dự án" }).getByRole("row", { name: /Dự án C/ });
     // The reason sits on one line under the project name (whole sentence in its tooltip), not as a paragraph in the result cell.
-    await expect(rowC.getByRole("cell").first()).toHaveText(/^Dự án C\s*Khách C · PIC PM-1\s*Chưa có Giá trị dự án nên chưa tính được doanh thu$/);
-    await expect(rowC.getByTitle("Chưa có Giá trị dự án nên chưa tính được doanh thu", { exact: true })).toHaveCount(3); // the line, and the two empty cells
+    await expect(rowC.getByRole("cell").first()).toHaveText(/^Dự án C\s*Khách C · PIC PM-1\s*Chưa nhập doanh thu dự án nên chưa tính được EBIT$/);
+    await expect(rowC.getByTitle("Chưa nhập doanh thu dự án nên chưa tính được EBIT", { exact: true })).toHaveCount(3); // the line, and the two empty cells
     await expect(rowC.getByRole("cell").last()).toHaveText("Không tính được");
-    await expect(rowC.getByLabel("Chưa có số: Chưa có Giá trị dự án nên chưa tính được doanh thu")).toHaveCount(2); // doanh thu, EBIT
+    await expect(rowC.getByLabel("Chưa có số: Chưa nhập doanh thu dự án nên chưa tính được EBIT")).toHaveCount(2); // doanh thu, EBIT
     await expect(rowC.getByRole("cell").nth(3)).toHaveText("136"); // the cost it does have still shows
   });
 
@@ -626,7 +644,7 @@ test.describe("P&L dự án — tổng quan (/pnl)", () => {
 
   test("Admin outside the cost permission group: every “—” says why, and links to cost screens are not offered", async ({ page }) => {
     await installPnlMocks(page, { moneyVisible: false });
-    await page.goto("/pnl?year=2026");
+    await page.goto("/pnl?year=2026&tab=accepted");
     await expect(page.getByRole("note").filter({ hasText: "Bạn không thuộc nhóm quyền chi phí" })).toContainText("doanh thu, chi phí, đơn giá giờ của nhân sự và biên lợi nhuận không hiển thị (ghi “—”). Giờ và trạng thái dữ liệu vẫn xem được.");
     const tiles = page.getByRole("region", { name: "Năm ô tổng" }).locator("> div");
     await expect(tiles.nth(0)).toContainText(/Dự án\s*3/);
@@ -679,7 +697,7 @@ test.describe("P&L của một dự án (/pnl/[projectId])", () => {
     await expect(tiles).toHaveCount(5);
     await expect(tiles.nth(0)).toHaveText(/^Giờ kế hoạch\s*260\s*giờ\s*từ các sub-task đã lập$/);
     await expect(tiles.nth(1)).toHaveText(/^Giờ thực hiện\s*273,5\s*giờ\s*\+5% so với kế hoạch · 2 tháng có giờ$/);
-    await expect(tiles.nth(2)).toHaveText(/^Doanh thu\s*Sửa\s*67,2\s*giá trị dự án, chưa nghiệm thu$/);
+    await expect(tiles.nth(2)).toHaveText(/^Doanh thu dự án\s*Sửa\s*67,2\s*nhập tay theo từng dự án$/);
     await expect(tiles.nth(3)).toHaveText(/^Tổng chi phí\s*30,97\s*Nhân sự 26,35 · khác 4,62$/);
     await expect(tiles.nth(4)).toHaveText(/^EBIT dự kiến\s*36,23\s*Biên 53,9% · Tạm tính$/);
     await expect(tiles.nth(2).getByTitle("67.200.000 đ")).toBeVisible();
@@ -699,34 +717,34 @@ test.describe("P&L của một dự án (/pnl/[projectId])", () => {
     await expect(statement.getByRole("link", { name: "Nhập / duyệt chi phí nhân sự ›" })).toHaveAttribute("href", "/users/costs");
     await expect(statement.getByRole("link", { name: "Mở kỳ và khóa kỳ ›" })).toHaveAttribute("href", "/pnl/costs?tab=periods&periodKey=2026-08");
     for (const line of [
-      /Doanh thu\s*Giá trị dự án do PM nhập; ghi nhận thành doanh thu khi dự án nghiệm thu G7\s*67,2/,
+      /Doanh thu dự án\s*Doanh thu do Admin\/PM nhập trực tiếp theo từng dự án; không lấy tự động từ hệ thống\s*67,2/,
       /Chi phí nhân sự\s*Giờ đã tính vào P&L × đơn giá giờ của từng người trong tháng\s*26,35/,
       /Chi phí khác\s*Quỹ chi phí chung được chia, chi phí riêng của dự án, hoa hồng…\s*4,62/,
       /Tổng chi phí\s*Chi phí nhân sự \+ chi phí khác\s*30,97/,
-      /EBIT dự kiến\s*Lãi lỗ dự kiến = giá trị dự án − tổng chi phí đến nay\s*36,23\s*Biên EBIT 53,9%/
+      /EBIT dự kiến\s*Lãi lỗ dự kiến = doanh thu dự án − tổng chi phí đến nay\s*36,23\s*Biên EBIT 53,9%/
     ]) await expect(statement).toContainText(line);
     await expect(page.getByText(/cost rate/i)).toHaveCount(0);
   });
 
-  test("Phụ lục B ca 10 · “Sửa” on the Doanh thu tile: after G1 a change of Giá trị dự án needs a reason, then it is saved and the page re-reads", async ({ page }) => {
+  test("Phụ lục B ca 10 · “Sửa” on the Doanh thu tile: after G1 a change of doanh thu dự án needs a reason, then it is saved and the page re-reads", async ({ page }) => {
     await installPnlMocks(page);
     const writes: Array<{ amount: number; reason?: string }> = [];
     await page.route("**/api/pnl/projects/prj-a/project-value", async (route) => {
       const body = route.request().postDataJSON() as { amount: number; reason?: string };
-      if (!body.reason) return fulfillJson(route, { message: "Sửa Giá trị dự án sau G1 bắt buộc phải ghi lý do." }, 400);
+      if (!body.reason) return fulfillJson(route, { message: "Sửa doanh thu sau G1 bắt buộc phải ghi lý do." }, 400);
       writes.push(body);
       await fulfillJson(route, { data: { projectId: "prj-a", amount: body.amount } });
     });
     await page.goto("/pnl/prj-a");
     const tile = page.getByRole("region", { name: "Năm ô tổng" }).locator("> div").nth(2);
     await tile.getByRole("button", { name: "Sửa" }).click();
-    const dialog = page.getByRole("dialog", { name: "Sửa Giá trị dự án" });
-    await expect(dialog.getByLabel("Giá trị dự án (đồng)")).toHaveValue("67.200.000");
-    await dialog.getByLabel("Giá trị dự án (đồng)").fill("70.000.000");
+    const dialog = page.getByRole("dialog", { name: "Sửa doanh thu dự án" });
+    await expect(dialog.getByLabel("Doanh thu dự án (đồng)")).toHaveValue("67.200.000");
+    await dialog.getByLabel("Doanh thu dự án (đồng)").fill("70.000.000");
     await expect(dialog.getByText("= 70.000.000 đ")).toBeVisible();
     // G1 đã duyệt: để trống lý do thì không lưu được.
     await expect(dialog.getByRole("button", { name: "Lưu" })).toBeDisabled();
-    await dialog.getByLabel("Lý do (bắt buộc — dự án đã qua G1)").fill("Phụ lục 02");
+    await dialog.getByLabel("Lý do điều chỉnh (bắt buộc — dự án đã qua G1)").fill("Phụ lục 02");
     await dialog.getByRole("button", { name: "Lưu" }).click();
     await expect(dialog).toHaveCount(0);
     expect(writes).toEqual([{ amount: 70_000_000, reason: "Phụ lục 02" }]);
@@ -762,7 +780,7 @@ test.describe("P&L của một dự án (/pnl/[projectId])", () => {
     const tree = page.locator("#pnl-items-panel");
     const line = (code: string) => tree.locator(`[data-item-code="${code}"]`);
     await expect(tree.locator("[data-item-code]")).toHaveCount(5);
-    await expect(line("DT")).toHaveText(/^Doanh thu ghi nhận\s*Lấy từ hệ thống\s*67,20\s*Nguồn số\s*$/);
+    await expect(line("DT")).toHaveText(/^Doanh thu dự án\s*Nhập tay\s*67,20\s*Nguồn số\s*$/);
     await expect(line("CP")).toHaveText(/^Tổng chi phí\s*Tổng nhóm\s*30,97\s*chưa đủ\s*Nguồn số\s*$/);
     await expect(line("EBIT.PCT")).toContainText("53,9%");
     await expect(line("CP.RIENG").getByLabel(/^Chưa có số: Khoản mục này chưa có số/)).toHaveText("—");
@@ -782,7 +800,7 @@ test.describe("P&L của một dự án (/pnl/[projectId])", () => {
     await expect(tree).toHaveCount(0);
 
     const history = page.getByRole("button", { name: /Lịch sử thay đổi số liệu/ });
-    await expect(history).toContainText("Ai đã sửa gì, khi nào — gồm các lần sửa Giá trị dự án, khóa sổ và mở lại kỳ.");
+    await expect(history).toContainText("Ai đã sửa gì, khi nào — gồm các lần sửa doanh thu dự án, khóa sổ và mở lại kỳ.");
     await expect(history).toHaveAttribute("aria-expanded", "false");
     await history.click();
     await expect(page.locator("#pnl-history-panel").getByRole("listitem")).toHaveText(/05\/10\/2026 09:00\s*Mở lại kỳ\s*kỳ 08\/2026\s*PM-1\s*lý do: Bổ sung hóa đơn công cụ AI/);
@@ -946,18 +964,15 @@ test.describe("P&L của một dự án (/pnl/[projectId])", () => {
   });
 });
 
-// --- Mục 6.2–6.6: Thiết lập P&L -----------------------------------------------------
+// --- Thiết lập P&L -----------------------------------------------------
 
 test.describe("Thiết lập P&L (/pnl/costs)", () => {
   const TABS = [
     { id: "items", label: "Khoản mục", endpoint: "config/items" },
-    { id: "parameters", label: "Tham số", endpoint: "config/parameters" },
-    { id: "funds", label: "Quỹ chi phí chung", endpoint: "funds" },
-    { id: "periods", label: "Kỳ và khóa kỳ", endpoint: "periods" },
-    { id: "templates", label: "Mẫu khoản mục", endpoint: "config/templates" }
+    { id: "parameters", label: "Tham số", endpoint: "config/parameters" }
   ];
 
-  test("header leads back to Admin; five tabs, each reachable through ?tab= and by click; unknown tabs and the old address are rewritten", async ({ page }) => {
+  test("header leads back to Admin; only the two supported tabs are reachable and legacy tabs are rewritten", async ({ page }) => {
     const api = await installPnlMocks(page);
     for (const tab of TABS) {
       await page.goto(`/pnl/costs?tab=${tab.id}`);
@@ -969,64 +984,17 @@ test.describe("Thiết lập P&L (/pnl/costs)", () => {
       await expect(page.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", `pnl-setup-tab-${tab.id}`);
       await expect.poll(() => Boolean(api.last(tab.endpoint))).toBe(true);
     }
-    await expect(page.getByText("Chưa có mẫu khoản mục nào.")).toBeVisible();
-    await expect(page.getByLabel("Tìm mẫu hoặc khoản mục")).toBeVisible();
-
-    await page.getByRole("tab", { name: "Quỹ chi phí chung" }).click();
-    await expect(page).toHaveURL(/\/pnl\/costs\?tab=funds$/);
-    const funds = page.getByRole("region", { name: "Danh sách quỹ" });
-    await expect(funds).toContainText("Chưa khai báo quỹ nào.");
-    // The month of the funds is the shared month control: ‹ Tháng mm/yyyy ›.
-    await expect(funds.getByLabel("Kỳ", { exact: true })).toContainText("Tháng 09/2026");
-    await funds.getByRole("button", { name: "Tháng sau" }).click();
-    await expect(page).toHaveURL(/tab=funds&periodKey=2026-10$/);
-    await expect.poll(() => api.last("funds")?.query.get("periodKey")).toBe("2026-10");
-
     await page.goto("/pnl/costs?tab=cost-categories");
     await expect(page).toHaveURL(/\/pnl\/costs\?tab=items$/);
     await expect(page.getByRole("tab", { selected: true })).toHaveText("Khoản mục");
 
+    await page.goto("/pnl/costs?tab=funds&periodKey=2026-09");
+    await expect(page).toHaveURL(/\/pnl\/costs\?tab=items$/);
+    await expect(page.getByRole("tab", { selected: true })).toHaveText("Khoản mục");
+
     await page.goto("/pnl/config");
-    await expect(page).toHaveURL(/\/pnl\/costs\?tab=periods$/);
-    await expect(page.getByRole("tab", { selected: true })).toHaveText("Kỳ và khóa kỳ");
-  });
-
-  test("Kỳ và khóa kỳ: month cards, the five-condition checklist and a disabled lock button that says why", async ({ page }) => {
-    const api = await installPnlMocks(page);
-    await page.goto("/pnl/costs?tab=periods&periodKey=2026-09");
-    await expect.poll(() => api.last("periods")?.query.get("periodKey")).toBe("2026-09");
-
-    const cards = page.getByRole("list", { name: "Danh sách các tháng" }).getByRole("button");
-    await expect(cards).toHaveText([/T07\/2026\s*Đã khóa · 05\/08 · PM-1/, /T08\/2026\s*Chờ khóa · sẵn sàng/, /T09\/2026\s*Chờ khóa · còn 3 việc/, /T10\/2026\s*Đang mở · hiện tại/, /T11\/2026\s*Chưa mở/]);
-    await expect(cards.nth(2)).toHaveAttribute("aria-pressed", "true");
-
-    const checklist = page.getByRole("region", { name: "Checklist khóa kỳ 09/2026" });
-    const conditions = checklist.getByRole("listitem");
-    await expect(conditions).toHaveCount(5);
-    await expect(conditions).toContainText([
-      "Tham số có hiệu lực cho tháng",
-      "Không còn giờ Chờ xử lý của tháng · còn 117,5 giờ",
-      "Mọi người có giờ log có chi phí tháng Đã duyệt · thiếu: Nhân sự B",
-      "Mọi quỹ của tháng đã chia đủ và xác nhận · còn: Công cụ AI",
-      "Dự án qua G7 trong tháng có ngày nghiệm thu và Giá trị dự án"
-    ]);
-    await expect(checklist.getByText("Đạt", { exact: true })).toHaveCount(2);
-    await expect(checklist.getByText("Chưa đạt", { exact: true })).toHaveCount(3);
-    await expect(checklist.getByRole("link", { name: "Danh sách ›" })).toHaveAttribute("href", "/pnl/hours?periodKey=2026-09");
-    await expect(checklist.getByRole("link", { name: "Hồ sơ nhân sự ›" })).toHaveAttribute("href", "/users/costs?periodKey=2026-09");
-    await expect(checklist.getByRole("link", { name: "Quỹ chi phí chung ›" })).toHaveAttribute("href", "/pnl/costs?tab=funds&periodKey=2026-09");
-
-    const lockBlock = page.getByRole("region", { name: "Khóa kỳ", exact: true });
-    const lock = lockBlock.getByRole("button", { name: "Khóa kỳ 09/2026 · còn 3 việc" });
-    await expect(lock).toBeDisabled();
-    await expect(lock).toHaveAccessibleDescription(/Kỳ khóa theo thứ tự: tháng 08\/2026 có dữ liệu và chưa khóa\./);
-    await expect(lockBlock).toContainText("Khóa lưu ảnh chụp tham số, cost rate, số chia quỹ, kết quả cổng lọc");
-    await expect(lockBlock).toContainText("Mở lại kỳ đã khóa: Admin, bắt buộc lý do");
-    await expect(page.getByText("Kỳ chỉ khóa dữ liệu đầu vào của tháng.")).toBeVisible();
-
-    await lockBlock.getByRole("button", { name: "Mở kỳ 08/2026 ›" }).click();
-    await expect(page).toHaveURL(/tab=periods&periodKey=2026-08$/);
-    await expect(page.getByRole("region", { name: "Checklist khóa kỳ 08/2026" })).toBeVisible();
+    await expect(page).toHaveURL(/\/pnl\/costs\?tab=items$/);
+    await expect(page.getByRole("tab", { selected: true })).toHaveText("Khoản mục");
   });
 
   test("Khoản mục: configuration check, the cost-item tree searches and folds, an item opens its declaration panel", async ({ page }) => {
@@ -1037,7 +1005,7 @@ test.describe("Thiết lập P&L (/pnl/costs)", () => {
     const tree = page.getByRole("region", { name: "Cây khoản mục" });
     await expect(tree.getByRole("columnheader")).toHaveText(["Khoản mục", "Cách lấy số"]);
     const rows = tree.locator("tbody tr");
-    await expect(rows).toHaveText([/Doanh thu ghi nhận\s*Lấy từ hệ thống/, /Tổng chi phí\s*Tổng nhóm/, /Chi phí nhân sự\s*Tổng nhóm/, /Delivery\s*Lấy từ hệ thống/, /Công cụ AI\s*Phân bổ quỹ/, /Hoa hồng\s*Công thức/]);
+    await expect(rows).toHaveText([/Doanh thu dự án\s*Nhập tay/, /Tổng chi phí\s*Tổng nhóm/, /Chi phí nhân sự\s*Tổng nhóm/, /Delivery\s*Lấy từ hệ thống/, /Công cụ AI\s*Phân bổ quỹ/, /Hoa hồng\s*Công thức/]);
 
     // The search keeps a hit with its parents, without accents, whatever is folded.
     const search = page.getByLabel("Tìm khoản mục");
@@ -1060,7 +1028,7 @@ test.describe("Thiết lập P&L (/pnl/costs)", () => {
     await tree.getByRole("button", { name: "Hoa hồng", exact: true }).click();
     const panel = page.getByRole("region", { name: "Khai báo khoản mục Hoa hồng" });
     await expect(panel.getByRole("heading", { level: 2 })).toHaveText("Khoản mục: Hoa hồng");
-    await expect(panel).toContainText("[Doanh thu ghi nhận] × [Tỷ lệ hoa hồng]");
+    await expect(panel).toContainText("[Doanh thu dự án] × [Tỷ lệ hoa hồng]");
   });
 
   test("Tham số: the parameters table, its derived standard-hours line and the moved parameters", async ({ page }) => {

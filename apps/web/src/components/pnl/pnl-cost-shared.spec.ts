@@ -55,9 +55,11 @@ describe("checklist and fix links", () => {
     expect(checklistRow({ ok: false, label: "Không còn giờ Chờ xử lý", detail: "còn 117,5 giờ", target: "pending_hours", targetLabel: "Danh sách" }, "2026-09").link).toEqual({ href: "/pnl/hours?periodKey=2026-09", label: "Danh sách" });
     expect(checklistRow({ ...item, target: null, targetLabel: null }, "2026-09").link).toBeNull();
   });
-  it("sends old or unknown tab values to the nearest tab", () => {
-    expect(setupTabOf("periods")).toBe("periods");
-    expect(setupTabOf("funds")).toBe("funds");
+  it("keeps only the two Admin settings tabs and sends legacy values to Khoản mục", () => {
+    expect(setupTabOf("periods")).toBe("items");
+    expect(setupTabOf("funds")).toBe("items");
+    expect(setupTabOf("templates")).toBe("items");
+    expect(setupTabOf("parameters")).toBe("parameters");
     expect(setupTabOf(null)).toBe("items");
     expect(setupTabOf("other-costs")).toBe("items");
   });

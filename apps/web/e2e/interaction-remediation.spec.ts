@@ -83,6 +83,8 @@ const task = {
   title: "Verify failure semantics",
   description: "A deterministic task for false-success regression coverage.",
   taskType: "delivery",
+  taskTypeLayer1: "DELIVERY",
+  taskTypeLayer2: "CUSTOMER_PROJECT",
   status: "in_progress",
   priority: "high",
   assigneeUserId: workspaceUser.id,
@@ -328,9 +330,7 @@ async function openActualWorkModal(page: Page, completeTask: boolean) {
   if (completeTask) {
     await page.getByLabel("Đánh dấu hoàn thành công việc này").check();
   }
-  // A time log needs its own Lớp 2; the fixture task has none to pre-select, so the person chooses.
-  await page.getByRole("button", { name: /Lớp 2 · Bối cảnh công việc/ }).click();
-  await page.getByRole("option", { name: "Dự án tính phí", exact: true }).click();
+  // Lớp 2 is derived from the task and sent automatically by the logging form.
   await page.getByRole("button", { name: "Ghi thời gian", exact: true }).click();
 }
 

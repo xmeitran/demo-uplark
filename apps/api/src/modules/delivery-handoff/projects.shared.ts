@@ -74,9 +74,16 @@ export function mapMilestoneGateSummary(
   const evidenceMode = normalizeMilestoneEvidenceMode(milestone.evidenceMode);
   const requiredDocumentCount = effectiveMilestoneRequiredDocumentCount(milestone);
   const submittedDocumentCount = submittedMilestoneEvidenceCount(evidenceCounts, evidenceMode);
-  const taskStatuses = (milestone.stages ?? []).flatMap((stage: any) =>
-    (stage.tasks ?? []).map((task: any) => task.status)
-  );
+  // The gate is about milestone deliverables, so count active top-level Tasks
+  // only. Subtasks are execution detail and change-request stages are tracked
+  // outside the ordinary milestone handoff.
+  const taskStatuses = (milestone.stages ?? [])
+    .filter((stage: any) => !stage.changeRequestId)
+    .flatMap((stage: any) =>
+      (stage.tasks ?? [])
+        .filter((task: any) => !task.parentTaskId && !task.archivedAt)
+        .map((task: any) => task.status)
+    );
   const evaluation = evaluateMilestoneGate({
     requiredDocumentCount,
     submittedDocumentCount,

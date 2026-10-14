@@ -6,7 +6,7 @@
  * delivery log does not have yet (dedupe key per event). Hooks call it for one project right after the change;
  * the scheduled call (POST /api/internal/lark-sweep) covers reminders and whatever a hook missed.
  */
-import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, type OnModuleInit } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { timingSafeEqual } from "node:crypto";
 import { PROJECT_GATE_CATALOGUE, type PrincipalContext, type ProjectGateCode } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
@@ -17,17 +17,14 @@ import { deliverLarkAlert } from "../alerts/alert-notifications";
 import { WORKSPACE_ADMIN_ROLE_CODES, isWorkspaceAdmin } from "../delivery-handoff/milestone-reviewer";
 import { projectPmUserId } from "../delivery-handoff/project-visibility";
 import { projectStatusLabel } from "../delivery-handoff/project-status";
-import { closeProjectWarnings, openOrRefreshProjectWarning } from "../delivery-handoff/project-warnings";
-import { addChatMembers, createChat, LarkTransport, listChatMembers, removeChatMembers, sendMessage, type LarkCard, type LarkOutcome, type LarkTransportLike } from "./lark-client";
+import { LarkTransport, sendMessage, type LarkCard, type LarkOutcome, type LarkTransportLike } from "./lark-client";
 import { registerLarkHooks } from "./lark-hooks";
 import {
   LARK_BOTS, customerConfirmationReminderCard, customerConfirmationRequestCard, handoffResultCard, handoffReviewOverdueCard, handoffSubmittedCard, issueLogCard,
-  projectAlertCard, projectCreatedCard, projectGroupName, projectUrl, statusProposalCard, statusProposalDecidedCard, statusProposalReminderCard, type IssueLogEvent, type ProjectRef
+  projectAlertCard, projectUrl, statusProposalCard, statusProposalDecidedCard, statusProposalReminderCard, type IssueLogEvent, type ProjectRef
 } from "./lark-templates";
 import { syncPersonalLeave } from "./personal-leave";
 
-export const GROUP_WARNING_CODE = "LARK-GROUP";
-export const GROUP_NOT_CREATED = "Chưa tạo được nhóm";
 const SWEEP_WINDOW_DAYS = 14;
 const DAY_MS = 24 * 3_600_000;
 const NO_INTERNAL_GROUP = "dự án chưa có nhóm nội bộ trên Lark";
@@ -112,118 +109,6 @@ export class LarkIntegrationService implements OnModuleInit {
       return { status: "disabled", detail: missing };
     }
     return sendMessage(this.lark, { chatId }, post.card, ctx);
-  }
-
-  // -------------------------------------------------------------------------
-  // V-02 — project groups
-  // -------------------------------------------------------------------------
-
-  /**
-   * Creates whichever of the two groups is missing, then posts the "Khởi tạo dự án" message to the internal group.
-   * Any failure (or a disabled channel) leaves the project in "Chưa tạo được nhóm" with a warning; calling again retries.
-   */
-  async ensureProjectGroups(projectId: string, actor: { actorUserId?: string | null; actorName?: string | null } = {}, workspaceId?: string) {
-    const project = await this.loadProject(projectId, workspaceId);
-    if (!project) throw new NotFoundException("Project not found");
-    const members = await this.memberUsers(project);
-    const pic = await this.picUserId(project);
-    const openIds = await this.openIds(project.workspaceId, [...members.map((member) => member.id), pic, actor.actorUserId]);
-    // Customer group: the people who talk to the customer (PIC, BD, creator). Customer contacts are outside the tenant and are invited by the PM in Lark.
-    const customerSide = [pic, actor.actorUserId, ...members.filter((member) => member.roleCodes.includes("SALES_OWNER")).map((member) => member.id)];
-    const plan = [
-      { kind: "internal" as const, field: "larkInternalChatId" as const, label: "Nhóm nội bộ", userIds: members.map((member) => member.id), description: `Nhóm nội bộ của dự án ${project.name} (${project.code}).` },
-      { kind: "customer" as const, field: "larkCustomerChatId" as const, label: "Nhóm khách hàng", userIds: customerSide, description: `Nhóm trao đổi với khách hàng của dự án ${project.name}. Bot chỉ gửi yêu cầu xác nhận.` }
-    ];
-    const patch: Record<string, unknown> = {};
-    const errors: string[] = [];
-    for (const group of plan) {
-      if (project[group.field]) continue;
-      const name = projectGroupName(group.kind, project);
-      const outcome = await createChat(this.lark, { name, description: group.description, openIds: [...new Set(group.userIds.flatMap((id) => (id && openIds.get(id) ? [openIds.get(id) as string] : [])))] },
-        { workspaceId: project.workspaceId, projectId: project.id, bot: LARK_BOTS.projectInit, target: name });
-      if (outcome.status === "sent" && outcome.data?.chat_id) patch[group.field] = project[group.field] = outcome.data.chat_id;
-      else errors.push(`${group.label}: ${outcome.status === "sent" ? "Lark không trả về mã nhóm" : outcome.detail}`);
-    }
-    const status = errors.length ? "failed" : "created";
-    const error = errors.join("; ") || null;
-    await this.prisma.project.update({ where: { id: project.id }, data: { ...patch, larkGroupStatus: status, larkGroupError: error, larkGroupSyncedAt: new Date() } });
-    if (errors.length) {
-      await openOrRefreshProjectWarning(this.prisma, {
-        workspaceId: project.workspaceId, projectId: project.id, dedupeKey: GROUP_WARNING_CODE, typeCode: GROUP_WARNING_CODE, severity: "low", title: `${GROUP_NOT_CREATED} Lark`,
-        detail: `${error}. Admin hoặc PM bấm "Tạo lại nhóm" ở đầu trang dự án.`, ownerUserId: pic, actorUserId: actor.actorUserId ?? null
-      });
-    } else {
-      await closeProjectWarnings(this.prisma, { projectId: project.id, dedupeKey: GROUP_WARNING_CODE }, actor.actorUserId ?? null, "Đã tạo đủ hai nhóm Lark của dự án");
-    }
-    if (project.larkInternalChatId) {
-      await this.post(project, project.larkInternalChatId, {
-        bot: LARK_BOTS.projectInit, dedupeKey: `project:${project.id}:created`, target: "nhóm nội bộ",
-        card: projectCreatedCard({
-          project, createdByName: actor.actorName, picName: await this.userName(pic), memberNames: members.map((member) => member.displayName), hasCustomerGroup: Boolean(project.larkCustomerChatId),
-          frameworkLabel: project.milestoneTemplateKey ? `Template ${project.milestoneTemplateKey}` : project.milestoneMode === "manual" ? "Tự chọn" : project.milestoneMode ?? null, url: projectUrl(this.origin, project.id)
-        })
-      });
-    }
-    return this.mapGroupStatus({ ...project, larkGroupStatus: status, larkGroupError: error, larkGroupSyncedAt: new Date() }, true);
-  }
-
-  /**
-   * Internal group members follow the project members: missing ones are added; people the system knows (a linked
-   * Lark account) who left the project are removed. Anyone else in the chat (added by hand in Lark) is left alone.
-   */
-  async syncProjectGroupMembers(projectId: string) {
-    const project = await this.loadProject(projectId);
-    if (!project?.larkInternalChatId) return;
-    const ctx = { workspaceId: project.workspaceId, projectId: project.id, bot: LARK_BOTS.projectInit, target: "nhóm nội bộ" };
-    const current = await listChatMembers(this.lark, project.larkInternalChatId, ctx);
-    if (current.status !== "sent") return;
-    const inChat = new Set(current.data ?? []);
-    const wanted = new Set((await this.openIds(project.workspaceId, (await this.memberUsers(project)).map((member) => member.id))).values());
-    const toAdd = [...wanted].filter((openId) => !inChat.has(openId));
-    const candidates = [...inChat].filter((openId) => !wanted.has(openId));
-    const workspace = await this.prisma.tenantWorkspace.findUnique({ where: { id: project.workspaceId }, select: { tenantKey: true } });
-    const known: Array<{ providerUserId: string }> = candidates.length
-      ? await this.prisma.portalIdentity.findMany({ where: { provider: "lark", tenantKey: workspace?.tenantKey, providerUserId: { in: candidates } }, select: { providerUserId: true } })
-      : [];
-    if (toAdd.length) await addChatMembers(this.lark, project.larkInternalChatId, toAdd, ctx);
-    if (known.length) await removeChatMembers(this.lark, project.larkInternalChatId, known.map((row) => row.providerUserId), ctx);
-  }
-
-  private mapGroupStatus(project: ProjectRow, canRecreate: boolean) {
-    const complete = Boolean(project.larkInternalChatId && project.larkCustomerChatId);
-    return {
-      projectId: project.id,
-      status: complete ? "created" : project.larkGroupStatus,
-      statusLabel: complete ? "Đã tạo nhóm" : project.larkGroupStatus === "failed" ? GROUP_NOT_CREATED : "Chưa tạo nhóm",
-      hasInternalGroup: Boolean(project.larkInternalChatId),
-      hasCustomerGroup: Boolean(project.larkCustomerChatId),
-      error: complete ? undefined : project.larkGroupError ?? undefined,
-      syncedAt: project.larkGroupSyncedAt ? new Date(project.larkGroupSyncedAt).toISOString() : undefined,
-      messagingEnabled: this.env.LARK_MESSAGING_ENABLED === "true",
-      canRecreate: canRecreate && !complete
-    };
-  }
-
-  /** "Tạo lại nhóm": Admin, or the project's PM (PIC). */
-  private async canManageGroups(project: { id: string; workspaceId: string }, principal: PrincipalContext) {
-    if (principal.subjectType !== "internal_user") return false;
-    return isWorkspaceAdmin(principal.roleCodes) || (await this.picUserId(project)) === principal.subjectId;
-  }
-
-  async getProjectGroups(projectId: string, principal: PrincipalContext) {
-    if (principal.subjectType !== "internal_user") throw new ForbiddenException("Lark groups are internal");
-    const project = await this.loadProject(projectId, principal.workspaceId);
-    if (!project) throw new NotFoundException("Project not found");
-    return this.mapGroupStatus(project, await this.canManageGroups(project, principal));
-  }
-
-  async recreateProjectGroups(projectId: string, principal: PrincipalContext) {
-    const project = await this.loadProject(projectId, principal.workspaceId);
-    if (!project) throw new NotFoundException("Project not found");
-    if (!(await this.canManageGroups(project, principal))) throw new ForbiddenException("Chỉ Admin hoặc PM của dự án mới được tạo lại nhóm Lark.");
-    const result = await this.ensureProjectGroups(projectId, { actorUserId: principal.subjectId, actorName: principal.displayName }, principal.workspaceId);
-    await this.syncProjectGroupMembers(projectId);
-    return result;
   }
 
   // -------------------------------------------------------------------------

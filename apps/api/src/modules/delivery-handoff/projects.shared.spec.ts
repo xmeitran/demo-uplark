@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dayCapMessage } from "./projects.shared";
+import { dayCapMessage, mapMilestoneGateSummary } from "./projects.shared";
 
 describe("dayCapMessage", () => {
   it("says how much the person already has on that day and how much is left", () => {
@@ -13,5 +13,28 @@ describe("dayCapMessage", () => {
 
   it("keeps the full-day leave message", () => {
     expect(dayCapMessage(0, "plan", 0)).toContain("đơn nghỉ phép cả ngày");
+  });
+});
+
+describe("mapMilestoneGateSummary", () => {
+  it("keeps subtasks and change-request stages out of milestone deliverable counts", () => {
+    const result = mapMilestoneGateSummary({
+      id: "milestone-1",
+      projectId: "project-1",
+      name: "Discovery",
+      normalizedKey: "discovery",
+      sortOrder: 1,
+      gateStatus: "open",
+      requiredDocumentCount: 0,
+      requiredDocumentTypes: [],
+      evidenceMode: "file_or_link",
+      customerConfirmationRequired: false,
+      stages: [
+        { changeRequestId: null, tasks: [{ status: "done" }, { status: "todo", parentTaskId: "task-1" }] },
+        { changeRequestId: "risk-1", tasks: [{ status: "todo" }] }
+      ]
+    }, { fileCount: 0, linkCount: 0, missingRequiredTypes: [] });
+
+    expect(result).toMatchObject({ taskCount: 1, completedTaskCount: 1, tasksSatisfied: true });
   });
 });

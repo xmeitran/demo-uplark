@@ -36,8 +36,9 @@ const RULE_SENTENCE: Record<PnlDashboardState["rule"], string> = {
 };
 
 /** Khối 1 — bộ lọc và dòng trạng thái ngay dưới. */
-function DashboardFilters({ filter, state, generatedAt, activeCount, onChange, onReset }: Readonly<{
+function DashboardFilters({ filter, allProjectCount, state, generatedAt, activeCount, onChange, onReset }: Readonly<{
   filter: Dashboard["filter"];
+  allProjectCount: number;
   state: PnlDashboardState;
   generatedAt: string;
   activeCount: number;
@@ -70,7 +71,7 @@ function DashboardFilters({ filter, state, generatedAt, activeCount, onChange, o
         <MultiSelectFilter label="Khách hàng" options={filter.options.accounts.map((account) => ({ value: account.id, label: account.name }))} values={state.accountId} onChange={(accountId) => onChange({ accountId })} allLabel="Tất cả khách hàng" searchPlaceholder="Tìm khách hàng..." />
       </FilterBar>
       <p className={mutedNoteClass}>
-        Đang xem {filter.countedProjectCount} dự án {RULE_SENTENCE[filter.rule]} (từ {formatMonth(filter.fromPeriodKey)} đến {formatMonth(filter.toPeriodKey)}) · không tính {filter.excludedTestProjectCount} dự án thử nghiệm · số liệu cập nhật lúc {formatUpdatedAt(generatedAt)}
+        Đang hiển thị {allProjectCount} dự án. Tổng P&amp;L tính cho {filter.countedProjectCount} dự án {RULE_SENTENCE[filter.rule]} (từ {formatMonth(filter.fromPeriodKey)} đến {formatMonth(filter.toPeriodKey)}) · không tính {filter.excludedTestProjectCount} dự án thử nghiệm · số liệu cập nhật lúc {formatUpdatedAt(generatedAt)}
       </p>
       <p className={mutedNoteClass}>
         P&amp;L tính theo tháng nên khoảng ngày được làm tròn thành các tháng trọn vẹn. Kỳ chỉ dùng để chọn dự án; số của mỗi dự án luôn là số của cả vòng đời dự án.
@@ -90,7 +91,7 @@ function DashboardTotals({ totals, moneyVisible }: Readonly<{ totals: Dashboard[
   return (
     <section aria-label="Năm ô tổng" className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
       <Tile icon={FolderKanban} color="#0891b2" label="Dự án" hint="Số dự án đã nghiệm thu khớp bộ lọc" value={totals.projectCount} note={waiting ? `${waiting} dự án chưa tính được, chưa cộng vào tổng` : totals.projectCount ? "đều đã cộng vào tổng" : "chưa có dự án nào"} noteClass={waiting ? "font-medium text-amber-700" : undefined} />
-      <Tile icon={Wallet} color="#2563eb" label="Doanh thu ghi nhận" hint="Ghi nhận khi dự án qua mốc nghiệm thu G7" value={formatMillions(totals.revenueAmount, "overview")} title={formatExactVnd(totals.revenueAmount)} note="triệu đồng" whyEmpty={whyEmpty} />
+      <Tile icon={Wallet} color="#2563eb" label="Doanh thu dự án" hint="Tổng doanh thu nhập tay theo từng dự án" value={formatMillions(totals.revenueAmount, "overview")} title={formatExactVnd(totals.revenueAmount)} note="triệu đồng" whyEmpty={whyEmpty} />
       <Tile
         icon={Receipt}
         color="#7c3aed"
@@ -105,7 +106,7 @@ function DashboardTotals({ totals, moneyVisible }: Readonly<{ totals: Dashboard[
         icon={TrendingUp}
         color="#16a34a"
         label="EBIT"
-        hint="Lãi lỗ = doanh thu ghi nhận − tổng chi phí"
+        hint="Lãi lỗ = doanh thu dự án − tổng chi phí"
         value={formatMillions(totals.ebitAmount, "overview")}
         title={formatExactVnd(totals.ebitAmount)}
         note={<span title={resultExplanation(totals.result)} className="cursor-help">{totals.result.labelText}</span>}
@@ -278,7 +279,7 @@ export function PnlDashboard() {
       <main className={pageMainClassName}>
         <PageHeader
           title="P&L dự án"
-          subtitle="Lãi lỗ của từng dự án đã nghiệm thu: doanh thu ghi nhận, chi phí và EBIT."
+          subtitle="Theo dõi doanh thu, chi phí và EBIT của toàn bộ dự án trong workspace."
           meta="Đơn vị: triệu đồng"
           actions={
             <>
@@ -292,7 +293,7 @@ export function PnlDashboard() {
         {!data && !error ? <PnlSkeleton /> : null}
         {data && meta ? (
           <div aria-busy={loading} className={`space-y-4 ${loading ? "opacity-70" : ""}`}>
-            <DashboardFilters filter={data.filter} state={state} generatedAt={meta.generatedAt} activeCount={activeCount} onChange={change} onReset={reset} />
+            <DashboardFilters filter={data.filter} allProjectCount={data.all.total} state={state} generatedAt={meta.generatedAt} activeCount={activeCount} onChange={change} onReset={reset} />
             {meta.moneyVisible ? null : <MoneyHiddenNote />}
             <DashboardTotals totals={data.totals} moneyVisible={meta.moneyVisible} />
             <DashboardPending data={data} meta={meta} />

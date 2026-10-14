@@ -89,7 +89,10 @@ export function WarningRecordsPanel({ legacy }: { legacy: ReactNode }) {
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scan, setScan] = useState<AlertScanResult | null>(null);
-  const [showLegacy, setShowLegacy] = useState(false);
+  // Keep the previous detailed warning view visible by default. The stored
+  // warning records add lifecycle/filtering, but they must not hide the
+  // Estimate/Actual breakdown that Admin uses to understand the issue.
+  const [showLegacy, setShowLegacy] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);

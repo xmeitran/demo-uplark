@@ -19,7 +19,7 @@ export function parseVndAmount(text: string): number | null {
 }
 
 /**
- * PL-13 / D-22 — "Sửa" trên ô Doanh thu: PM nhập Giá trị dự án (VND) theo số liệu BD. Sau G1, đổi một giá trị đã có
+ * PL-13 / D-22 — "Sửa" trên ô Doanh thu: PM nhập doanh thu dự án (VND) theo số liệu BD. Sau G1, đổi một giá trị đã có
  * phải ghi lý do; mỗi lần lưu vào "Lịch sử thay đổi số liệu". The API enforces every rule; this form only mirrors them.
  */
 export function ProjectValueModal({ projectId, revenue, reload, onClose }: Readonly<{ projectId: string; revenue: Revenue; reload: () => Promise<void>; onClose: () => void }>) {
@@ -35,14 +35,14 @@ export function ProjectValueModal({ projectId, revenue, reload, onClose }: Reado
     if (await save.run(() => pnlRequest(`/api/pnl/projects/${encodeURIComponent(projectId)}/project-value`, { method: "PUT", body }))) onClose();
   }
   return (
-    <PnlModal title={current === null ? "Nhập Giá trị dự án" : "Sửa Giá trị dự án"} onClose={onClose} onSubmit={() => void submit()} footer={<ModalActions onCancel={onClose} busy={save.busy} disabled={amount === null || amount === current || missingReason} submitLabel="Lưu" />}>
-      <Field label="Giá trị dự án (đồng)" htmlFor="pnl-project-value" hint={amount === null ? "Nhập số tiền VND theo số liệu BD, ví dụ 67.200.000." : `= ${formatExactVnd(amount)}`}>
+    <PnlModal title={current === null ? "Nhập doanh thu dự án" : "Sửa doanh thu dự án"} onClose={onClose} onSubmit={() => void submit()} footer={<ModalActions onCancel={onClose} busy={save.busy} disabled={amount === null || amount === current || missingReason} submitLabel="Lưu" />}>
+      <Field label="Doanh thu dự án (đồng)" htmlFor="pnl-project-value" hint={amount === null ? "Nhập số tiền VND trực tiếp cho dự án, ví dụ 67.200.000." : `= ${formatExactVnd(amount)}`}>
         <input id="pnl-project-value" inputMode="numeric" autoComplete="off" value={amountText} onChange={(event) => setAmountText(event.target.value)} className={inputClass} placeholder="67.200.000" />
       </Field>
-      <Field label={revenue.reasonRequired ? "Lý do (bắt buộc — dự án đã qua G1)" : "Lý do (không bắt buộc)"} htmlFor="pnl-project-value-reason">
+      <Field label={revenue.reasonRequired ? "Lý do điều chỉnh (bắt buộc — dự án đã qua G1)" : "Lý do (không bắt buộc)"} htmlFor="pnl-project-value-reason">
         <input id="pnl-project-value-reason" value={reason} maxLength={500} onChange={(event) => setReason(event.target.value)} className={inputClass} placeholder="Ví dụ: Phụ lục 02" />
       </Field>
-      <p className="text-xs text-muted-foreground">Trước G7 đây là doanh thu dự kiến (EBIT dự kiến); khi G7 được duyệt, số này được ghi nhận một lần thành doanh thu và khóa lại. Hợp đồng, phụ lục theo dõi ngoài hệ thống.</p>
+      <p className="text-xs text-muted-foreground">Đây là nguồn doanh thu duy nhất của dự án trong P&amp;L và được nhập trực tiếp tại đây. G7 chỉ quyết định nhãn dự kiến/chính thức; không tự lấy số từ hệ thống và không khóa giá trị đã nhập.</p>
       <SaveFeedback error={save.error} message={null} />
     </PnlModal>
   );

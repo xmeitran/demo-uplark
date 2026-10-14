@@ -145,11 +145,11 @@ describe("bước 4, 9, 10 — chi phí nhân sự, chi phí riêng, cộng vòn
     expect(pnl.whole.excludedMinutes).toBe(10 * H);
   });
 
-  it("dự án nội bộ: no revenue, no EBIT, no commission; its Nội bộ hours are still costed (dòng Chi phí nội bộ); Đang ghi nhận from creation", () => {
+  it("dự án nội bộ vẫn có doanh thu/EBIT nhập tay; giờ Nội bộ vẫn tính theo chi phí tiêu hao", () => {
     const disabledCodes = effectiveDisabledCodes(DEFAULT_COST_TREE, DEFAULT_ITEM_TEMPLATES[1].disabledCodes);
-    const pnl = project({ consumable: true, g1Passed: false, disabledCodes, projectValueAmount: undefined, entries: [entry({ hours: 20, taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: "INTERNAL_PROJECT" })] });
-    expect(pnl.revenue).toMatchObject({ amount: undefined, basis: "none" });
-    expect(pnl.ebit.amount).toBeUndefined();
+    const pnl = project({ consumable: true, g1Passed: false, disabledCodes, projectValueAmount: 10_000_000, entries: [entry({ hours: 20, taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: "INTERNAL_PROJECT" })] });
+    expect(pnl.revenue).toMatchObject({ amount: 10_000_000, basis: "project_value" });
+    expect(pnl.ebit.amount).toBe(7_000_000);
     expect(pnl.commission).toMatchObject({ amount: undefined, enabled: false });
     expect(pnl.whole).toMatchObject({ includedMinutes: 0, excludedMinutes: 20 * H, laborCostAmount: 3_000_000 });
     expect(pnl.internalCost).toMatchObject({ minutes: 20 * H, amount: 3_000_000 });
@@ -176,7 +176,7 @@ describe("bước 11 — nhãn kết quả (PL-25)", () => {
   it("Không tính được: chưa có doanh thu (Giá trị dự án) hoặc chưa có cost rate nào", () => {
     const noContract = project({ projectValueAmount: undefined, entries: [entry({ hours: 8 })] });
     expect(noContract.result).toMatchObject({ label: "not_computable", labelText: "Không tính được" });
-    expect(noContract.result.reasons[0]).toMatchObject({ code: "no_project_value", label: "chưa có Giá trị dự án", target: "project_value" });
+    expect(noContract.result.reasons[0]).toMatchObject({ code: "no_project_value", label: "chưa nhập doanh thu dự án", target: "project_value" });
     expect(noContract.revenue.amount).toBeUndefined(); // not 0
     expect(noContract.ebit).toMatchObject({ amount: undefined, marginPercent: undefined }); // not a 100% margin
     const noRate = project({ entries: [entry({ hours: 8, rate: null })] });
@@ -286,11 +286,11 @@ describe("lớp 4 — Tổng quan P&L (mục 4)", () => {
     expect(dashboardTab({ ...base, startedOn: "2026-03-02" }, q3, "started_and_accepted")).toBeNull();
   });
 
-  it("PL-02: dự án thử nghiệm, dự án nội bộ and lost deals are on neither tab", () => {
+  it("PL-02: dự án thử nghiệm và lost deals không lên tab; Nội bộ vẫn lên P&L", () => {
     const year = dashboardPeriod(2026, "year");
     const accepted = { isTest: false, consumable: false, lostDeal: false, startedOn: "2026-03-02", acceptedOn: "2026-07-20" };
     expect(dashboardTab({ ...accepted, isTest: true }, year, "started_and_accepted")).toBeNull();
-    expect(dashboardTab({ ...accepted, consumable: true }, year, "started_and_accepted")).toBeNull();
+    expect(dashboardTab({ ...accepted, consumable: true }, year, "started_and_accepted")).toBe("accepted");
     expect(dashboardTab({ ...accepted, acceptedOn: undefined, lostDeal: true }, year, "started_and_accepted")).toBeNull();
   });
 

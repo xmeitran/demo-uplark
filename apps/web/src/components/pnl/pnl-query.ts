@@ -20,7 +20,7 @@ export interface PnlDashboardState {
   projectType: string[];
   accountId: string[];
   picUserId: string[];
-  tab: "accepted" | "in_progress";
+  tab: "all" | "accepted" | "in_progress";
   /** Khối 4: "Nhóm hạch toán" (default) | "Vai trò". */
   view: "accounting" | "role";
   groupKey: string;
@@ -147,7 +147,7 @@ export function parseDashboardState(params: URLSearchParams, currentYear: number
     projectType: fromCsvParam(params.get("projectType")),
     accountId: fromCsvParam(params.get("accountId")),
     picUserId: fromCsvParam(params.get("picUserId")),
-    tab: oneOf(params.get("tab"), ["accepted", "in_progress"] as const, "accepted"),
+    tab: oneOf(params.get("tab"), ["all", "accepted", "in_progress"] as const, "all"),
     view: oneOf(params.get("view"), ["accounting", "role"] as const, "accounting"),
     groupKey: params.get("groupKey") ?? "",
     page: wholeNumber(params.get("page"), 1, 1, 100_000),
@@ -166,7 +166,7 @@ function entries(state: PnlDashboardState, period: Array<[string, string | null]
     ["projectType", toCsvParam(state.projectType) ?? null],
     ["accountId", toCsvParam(state.accountId) ?? null],
     ["picUserId", toCsvParam(state.picUserId) ?? null],
-    ["tab", state.tab === "accepted" ? null : state.tab],
+    ["tab", state.tab === "all" ? null : state.tab],
     ["groupKey", state.groupKey || null],
     ["page", state.page === 1 ? null : String(state.page)],
     ["sort", state.sort === "start" ? null : state.sort],
@@ -185,7 +185,9 @@ export function dashboardSearch(state: PnlDashboardState, currentYear: number): 
 
 /** State → query of GET /pnl/dashboard: always a month range (`unit=custom`). `view` is a screen-only choice and is not sent. */
 export function dashboardApiQuery(state: PnlDashboardState): string {
-  return new URLSearchParams(entries(state, [["unit", "custom"], ["fromMonth", state.fromMonth], ["toMonth", state.toMonth]])).toString();
+  const query = new URLSearchParams(entries(state, [["unit", "custom"], ["fromMonth", state.fromMonth], ["toMonth", state.toMonth]]));
+  query.set("tab", state.tab);
+  return query.toString();
 }
 
 /** Changing a filter goes back to page 1; changing the grouping drops the group filter. */

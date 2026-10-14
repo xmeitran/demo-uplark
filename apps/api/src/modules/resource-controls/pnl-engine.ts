@@ -184,7 +184,7 @@ export function toVnd(sourceCurrency: string, sourceAmount: number, usdRate: num
 }
 
 // ---------------------------------------------------------------------------
-// Step 7 — revenue (PL-13, PL-14): one "Giá trị dự án" per project, see computeProjectPnl
+// Step 7 — revenue (PL-13, PL-14): one manually entered revenue amount per project, see computeProjectPnl
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -194,7 +194,7 @@ export function toVnd(sourceCurrency: string, sourceAmount: number, usdRate: num
 export interface ProjectPnlInput {
   /** Every hour of the project, classified. Locked months come from their snapshot (plus hours logged after the lock). */
   entries: readonly EngineEntry[];
-  /** PL-13 "Giá trị dự án" (VND) as the PM entered it; undefined = chưa nhập. Loại Nội bộ / Đào tạo have none. */
+  /** PL-13 project revenue (VND) as the PM entered it; undefined = chưa nhập. Applies to every project type. */
   projectValueAmount?: number;
   /** The P&L closing gate (G7) is approved. */
   closePassed: boolean;
@@ -202,7 +202,7 @@ export interface ProjectPnlInput {
   acceptanceDateMissing?: boolean;
   g1Passed: boolean;
   lostDeal: boolean;
-  /** The project's template is read as "chi phí tiêu hao" (mẫu Nội bộ, Đào tạo): no revenue, no EBIT. */
+  /** The project's template is read as "chi phí tiêu hao" for internal hours. */
   consumable: boolean;
   lockedPeriods: ReadonlySet<string>;
   /**
@@ -353,8 +353,9 @@ export function computeProjectPnl(input: ProjectPnlInput): ProjectPnl {
     };
   });
 
-  // Step 7 (PL-14): before G7 the revenue tile is Giá trị dự án (EBIT dự kiến); at G7 that same amount is recognised once.
-  const revenueEnabled = !input.consumable && !input.disabledCodes.has(SYSTEM_ITEM_CODES.revenue);
+  // Revenue is a project-level manual input. G7 still changes the reporting label
+  // from expected to final, but it no longer changes the source or locks the input.
+  const revenueEnabled = !input.disabledCodes.has(SYSTEM_ITEM_CODES.revenue);
   const baseRevenue = revenueEnabled ? input.projectValueAmount : undefined;
 
   // Step 10: the tree adds everything up over the lifecycle (never narrowed: revenue, commission and EBIT are whole-project figures).
@@ -365,10 +366,12 @@ export function computeProjectPnl(input: ProjectPnlInput): ProjectPnl {
     for (const row of rows) { const code = row.itemCode ?? fallback; if (code) map.set(code, (map.get(code) ?? 0) + row.amount); }
     return map;
   };
+  const manualByCode = byCode(manual, fallbackManualCode);
+  if (baseRevenue !== undefined) manualByCode.set(SYSTEM_ITEM_CODES.revenue, baseRevenue);
   const itemValues = evaluateCostTree(input.tree, input.disabledCodes, {
     revenueAmount: baseRevenue,
     laborByRole,
-    manualByCode: byCode(manual, fallbackManualCode),
+    manualByCode,
     fundByCode: byCode(funds),
     params: { commissionPercent: input.commissionPercent === undefined ? undefined : input.commissionPercent / 100 }
   });
@@ -436,8 +439,8 @@ export function computeProjectPnl(input: ProjectPnlInput): ProjectPnl {
   const reasons: PnlReason[] = [];
   const notComputable: PnlReason[] = [];
   const anyRate = buckets.some((bucket) => bucket.rate);
-  // PL-25 "chưa có doanh thu (Giá trị dự án)".
-  if (revenueEnabled && baseRevenue === undefined) notComputable.push({ code: "no_project_value", label: "chưa có Giá trị dự án", target: "project_value" });
+  // PL-25 "chưa có doanh thu dự án".
+  if (revenueEnabled && baseRevenue === undefined) notComputable.push({ code: "no_project_value", label: "chưa nhập doanh thu dự án", target: "project_value" });
   if (buckets.length && !anyRate) notComputable.push({ code: "no_cost_rate", label: "chưa có cost rate nào", target: "staff_costs" });
   if (!input.closePassed && !input.consumable) reasons.push({ code: "not_closed", label: "chưa qua G7", target: "approval" });
   if (input.closePassed && input.acceptanceDateMissing) reasons.push({ code: "missing_acceptance_date", label: "Thiếu ngày nghiệm thu (G7)", target: "project_setup" });
@@ -467,7 +470,7 @@ export function computeProjectPnl(input: ProjectPnlInput): ProjectPnl {
       amount: input.range ? undefined : revenueAmount,
       basis: !revenueEnabled || baseRevenue === undefined ? "none" : input.closePassed ? "recognized" : "project_value",
       projectValueAmount: baseRevenue, recognizedAmount: input.closePassed ? baseRevenue : undefined, rebateAmount,
-      missingReason: revenueEnabled && baseRevenue === undefined ? "chưa có Giá trị dự án" : undefined
+      missingReason: revenueEnabled && baseRevenue === undefined ? "chưa nhập doanh thu dự án" : undefined
     },
     commission: { amount: commissionAmount, expected: !input.closePassed, enabled: commissionEnabled },
     wholeProjectCosts,
@@ -589,7 +592,7 @@ export function periodChecklist(input: ChecklistInput): ChecklistRow[] {
     { key: "pending_hours", ok: pendingMinutes === 0, label: "Không còn giờ Chờ xử lý của tháng", detail: pendingMinutes ? `còn ${hoursText(pendingMinutes)} giờ` : null, count: pendingMinutes, names: [], target: pendingMinutes ? "pending_hours" : null, targetLabel: pendingMinutes ? "Danh sách" : null },
     { key: "staff_costs", ok: !noCost.length, label: "Mọi người có giờ log có chi phí tháng Đã duyệt", detail: noCost.length ? `thiếu: ${nameList(noCost)}` : null, count: noCost.length, names: noCost, target: noCost.length ? "staff_costs" : null, targetLabel: noCost.length ? "Hồ sơ nhân sự" : null },
     { key: "funds", ok: !openFunds.length, label: "Mọi quỹ của tháng đã chia đủ và xác nhận", detail: openFunds.length ? `còn: ${openFunds.join(", ")}` : null, count: openFunds.length, names: openFunds, target: openFunds.length ? "funds" : null, targetLabel: openFunds.length ? "Quỹ chi phí chung" : null },
-    { key: "accepted_projects", ok: !badProjects.length, label: "Dự án qua G7 trong tháng có ngày nghiệm thu và Giá trị dự án", detail: badProjects.length ? `thiếu: ${badProjects.join(", ")}` : null, count: badProjects.length, names: badProjects, target: badProjects.length ? "project_value" : null, targetLabel: badProjects.length ? "P&L dự án" : null }
+    { key: "accepted_projects", ok: !badProjects.length, label: "Dự án qua G7 trong tháng có ngày nghiệm thu và doanh thu dự án", detail: badProjects.length ? `thiếu: ${badProjects.join(", ")}` : null, count: badProjects.length, names: badProjects, target: badProjects.length ? "project_value" : null, targetLabel: badProjects.length ? "P&L dự án" : null }
   ];
 }
 
@@ -608,7 +611,7 @@ export function dashboardPeriod(year: number, unit: "year" | "half" | "quarter" 
 
 export interface DashboardCandidate {
   isTest: boolean;
-  /** Internal projects (mẫu Nội bộ, Đào tạo) never reach the dashboard. */
+  /** Internal/training projects use consumable-hour costing but remain visible in P&L. */
   consumable: boolean;
   lostDeal: boolean;
   /** Planned start, YYYY-MM-DD. */
@@ -625,7 +628,7 @@ export interface DashboardCandidate {
  * Trial projects are out of everything (PL-02).
  */
 export function dashboardTab(project: DashboardCandidate, period: { from: string; to: string }, rule: "started_and_accepted" | "accepted_in_period"): "accepted" | "in_progress" | null {
-  if (project.isTest || project.consumable || project.lostDeal) return null;
+  if (project.isTest || project.lostDeal) return null;
   const within = (dateKey: string | undefined) => Boolean(dateKey) && dateKey!.slice(0, 7) >= period.from && dateKey!.slice(0, 7) <= period.to;
   if (project.acceptedOn) return (rule === "accepted_in_period" ? within(project.acceptedOn) : within(project.startedOn)) ? "accepted" : null;
   return within(project.startedOn) ? "in_progress" : null;
