@@ -121,6 +121,8 @@ export interface PnlGateInput {
   projectId?: string | null;
   /** PRE_SALE | DELIVERY | PM, copied from the task. */
   taskTypeLayer1?: string | null;
+  /** Internal/training projects are costed on the internal company line instead of the project P&L. */
+  internalProject?: boolean;
   /** Layer 2 derived from the task's position (table 4.2): CUSTOMER_PROJECT | TICKET_MAINTENANCE | INTERNAL_PROJECT. */
   taskTypeLayer2?: string | null;
   /** Layer 2 the person chose when logging; null on rows written before the picker was restored (12/10/2026). */
@@ -146,7 +148,7 @@ export interface PnlGateResult {
 
 /**
  * PL-04: an hour is "Được tính" when ALL FOUR hold —
- *   (1) the chosen Layer 2 is Dự án tính phí or Ticket/bảo trì AND agrees with the task;
+ *   (1) it belongs to a project and has a Layer 1 classification;
  *   (2) it lies before the P&L closing point;
  *   (3) the classification is complete ("đủ phân loại" — there is no contract line item any more, chốt 13/10);
  *   (4) the person has an approved cost rate for that month.
@@ -157,11 +159,9 @@ export interface PnlGateResult {
  * Order of the checks:
  *   a. a locked month accepts nothing new: "Tháng đã khóa" (A-1a) until the period is reopened;
  *   b. lost-deal Pre-sale hours are excluded whatever else is wrong — nobody will come back to fix them;
- *   c. a choice that differs from the task is "Lớp 2 không khớp" BEFORE any exclusion: an hour on a chargeable task
- *      chosen as Nội bộ must not silently drop out of the P&L (A-8, Phụ lục B ca 8);
- *   d. then the exclusions, then the missing data.
- * Legacy rows (selectedTaskTypeLayer2 = null) carry no choice to compare: the task's Layer 2 stands, so hours of the
- * months before 10/2026 become "Được tính" as soon as their monthly cost is back-filled (mục 7 điểm 8).
+ *   c. then the exclusions, then the missing data.
+ * Layer 2 is legacy metadata and is not a P&L gate. The explicit internalProject flag keeps internal/training projects
+ * on the company line; the old derived Layer 2 is only used as a backwards-compatible fallback for legacy callers.
  */
 export function classifyPnlEntry(input: PnlGateInput): PnlGateResult {
   const excluded = (reason: PnlGateReason): PnlGateResult => ({ status: "excluded", reason, reasons: [reason] });
@@ -171,22 +171,13 @@ export function classifyPnlEntry(input: PnlGateInput): PnlGateResult {
   if (input.lostDeal && input.taskTypeLayer1 === "PRE_SALE") return excluded("lost_deal_pre_sale");
   // 9.2 of the rules document: an old "Họp"/"Khác" hour inside a project waits for the PM's review before any other rule reads it.
   if (input.legacyPendingReason === "legacy_group_in_project") return pending(["legacy_group_in_project"]);
-
-  const layer2 = input.taskTypeLayer2 || null;
-  const selected = input.selectedTaskTypeLayer2 || null;
-  if (selected && layer2 && selected !== layer2) {
-    return pending(["layer2_mismatch", ...(input.hasCostRate ? [] : ["missing_staff_cost" as const])]);
-  }
-  if (layer2 === "INTERNAL_PROJECT") return excluded("internal");
+  if (input.internalProject ?? input.taskTypeLayer2 === "INTERNAL_PROJECT") return excluded("internal");
   if (input.afterPnlClose === true) return excluded("after_close");
 
   const reasons: PnlGateReason[] = [];
   if (!input.projectId) reasons.push("missing_project");
   if (!input.taskTypeLayer1) reasons.push("missing_layer1");
-  if (!layer2) reasons.push("missing_layer2");
   if (input.afterPnlClose !== false) reasons.push("unknown_close_position");
-  // Ticket/bảo trì only exists from Milestone 4 on (table 4.2); before the closing point it cannot agree with the task.
-  if (layer2 === "TICKET_MAINTENANCE" && input.afterPnlClose === false) reasons.push("layer2_mismatch");
   if (!input.hasCostRate) reasons.push("missing_staff_cost");
   if ((input.legacyPendingReason === "legacy_unmapped_stage" || input.legacyPendingReason === "legacy_no_stage") && (reasons.includes("missing_layer1") || reasons.includes("unknown_close_position"))) {
     reasons.unshift(input.legacyPendingReason);

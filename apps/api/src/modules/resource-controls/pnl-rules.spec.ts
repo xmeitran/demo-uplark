@@ -72,20 +72,25 @@ describe("bước 2 — cost rate (PL-08, PL-09)", () => {
 });
 
 describe("bước 3 — cổng lọc giờ (PL-04, PL-05, PL-06)", () => {
+  it("không yêu cầu Lớp 2 để tính giờ vào P&L", () => {
+    expect(gate({ taskTypeLayer2: null, selectedTaskTypeLayer2: null })).toEqual({ status: "included", reasons: [] });
+    expect(gate({ taskTypeLayer2: "CUSTOMER_PROJECT", selectedTaskTypeLayer2: "INTERNAL_PROJECT" })).toEqual({ status: "included", reasons: [] });
+    expect(gate({ taskTypeLayer2: "TICKET_MAINTENANCE", selectedTaskTypeLayer2: "CUSTOMER_PROJECT", afterPnlClose: false })).toEqual({ status: "included", reasons: [] });
+    expect(gate({ internalProject: false, taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: "INTERNAL_PROJECT" })).toEqual({ status: "included", reasons: [] });
+  });
+
   it("Được tính when all four conditions hold; giờ log không qua bước duyệt", () => {
     expect(gate({})).toEqual({ status: "included", reasons: [] });
   });
 
-  it("(1) Lớp 2 người ghi chọn phải khớp với task: lệch thì Chờ xử lý, lý do Lớp 2 không khớp", () => {
-    expect(gate({ selectedTaskTypeLayer2: "INTERNAL_PROJECT" })).toMatchObject({ status: "pending", reason: "layer2_mismatch", reasons: ["layer2_mismatch"] });
-    expect(gate({ selectedTaskTypeLayer2: "TICKET_MAINTENANCE" })).toMatchObject({ status: "pending", reason: "layer2_mismatch" });
-    // chosen as chargeable on a maintenance (Milestone 4) task: waits too instead of being excluded silently
-    expect(gate({ taskTypeLayer2: "TICKET_MAINTENANCE", afterPnlClose: true, selectedTaskTypeLayer2: "CUSTOMER_PROJECT" })).toMatchObject({ status: "pending", reason: "layer2_mismatch" });
-    // chosen as chargeable on an internal task
-    expect(gate({ taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: "CUSTOMER_PROJECT" })).toMatchObject({ status: "pending", reason: "layer2_mismatch" });
+  it("(1) Lớp 2 cũ không còn là điều kiện chặn P&L", () => {
+    expect(gate({ selectedTaskTypeLayer2: "INTERNAL_PROJECT" })).toEqual({ status: "included", reasons: [] });
+    expect(gate({ selectedTaskTypeLayer2: "TICKET_MAINTENANCE" })).toEqual({ status: "included", reasons: [] });
+    expect(gate({ taskTypeLayer2: "TICKET_MAINTENANCE", afterPnlClose: true, selectedTaskTypeLayer2: "CUSTOMER_PROJECT" })).toMatchObject({ status: "excluded", reason: "after_close" });
+    expect(gate({ taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: "CUSTOMER_PROJECT" })).toEqual({ status: "excluded", reason: "internal", reasons: ["internal"] });
   });
 
-  it("a legacy row without a choice (before 10/2026) is judged on the task's Layer 2 alone", () => {
+  it("a legacy row without a choice is judged without requiring Layer 2", () => {
     expect(gate({ selectedTaskTypeLayer2: null })).toEqual({ status: "included", reasons: [] });
     expect(gate({ selectedTaskTypeLayer2: null, hasCostRate: false })).toMatchObject({ status: "pending", reasons: ["missing_staff_cost"] });
     expect(gate({ selectedTaskTypeLayer2: null, taskTypeLayer2: "INTERNAL_PROJECT" })).toMatchObject({ status: "excluded", reason: "internal" });
@@ -99,7 +104,7 @@ describe("bước 3 — cổng lọc giờ (PL-04, PL-05, PL-06)", () => {
   it("(3) thiếu phân loại → Chờ xử lý, kèm lý do; “đủ phân loại” no longer asks for a contract line item (chốt 13/10)", () => {
     expect(gate({ taskTypeLayer1: "PRE_SALE" })).toEqual({ status: "included", reasons: [] }); // Pre-sale counts from the start (Phụ lục B ca 4)
     expect(gate({ taskTypeLayer1: null })).toMatchObject({ status: "pending", reason: "missing_layer1" });
-    expect(gate({ taskTypeLayer2: null, selectedTaskTypeLayer2: "CUSTOMER_PROJECT" })).toMatchObject({ status: "pending", reason: "missing_layer2" });
+    expect(gate({ taskTypeLayer2: null, selectedTaskTypeLayer2: "CUSTOMER_PROJECT" })).toEqual({ status: "included", reasons: [] });
     expect(gate({ projectId: null })).toMatchObject({ status: "pending", reason: "missing_project" });
     expect(gate({ taskTypeLayer1: null, hasCostRate: false }).reasons).toEqual(["missing_layer1", "missing_staff_cost"]);
   });
@@ -108,8 +113,8 @@ describe("bước 3 — cổng lọc giờ (PL-04, PL-05, PL-06)", () => {
     expect(gate({ hasCostRate: false })).toEqual({ status: "pending", reason: "missing_staff_cost", reasons: ["missing_staff_cost"] });
   });
 
-  it("Nội bộ: Lớp 2 là Nội bộ thì Bị loại, lý do Nội bộ — with or without a cost rate", () => {
-    expect(gate({ taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: "INTERNAL_PROJECT", afterPnlClose: null, hasCostRate: false })).toEqual({ status: "excluded", reason: "internal", reasons: ["internal"] });
+  it("Nội bộ: dự án nội bộ vẫn nằm ở company line, không vào P&L dự án", () => {
+    expect(gate({ internalProject: true, taskTypeLayer2: null, selectedTaskTypeLayer2: null, afterPnlClose: null, hasCostRate: false })).toEqual({ status: "excluded", reason: "internal", reasons: ["internal"] });
   });
 
   it("giờ Pre-sale của deal thua bị loại khỏi P&L dự án (PL-12), whatever else is missing", () => {
@@ -130,7 +135,7 @@ describe("bước 3 — cổng lọc giờ (PL-04, PL-05, PL-06)", () => {
   it("G7 chỉ bị chặn bởi giờ chờ vì thiếu hoặc sai phân loại; giờ chờ cost rate không chặn (mục 7 điểm 6)", () => {
     expect(blocksG7(gate({ hasCostRate: false }))).toBe(false);
     expect(blocksG7(gate({ loggedAfterLock: true }))).toBe(false);
-    expect(blocksG7(gate({ selectedTaskTypeLayer2: "INTERNAL_PROJECT" }))).toBe(true);
+    expect(blocksG7(gate({ selectedTaskTypeLayer2: "INTERNAL_PROJECT" }))).toBe(false);
     expect(blocksG7(gate({ taskTypeLayer1: null }))).toBe(true);
     expect(blocksG7(gate({ taskTypeLayer1: null, hasCostRate: false }))).toBe(true);
     expect(blocksG7(gate({}))).toBe(false);

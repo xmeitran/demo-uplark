@@ -285,18 +285,17 @@ describe("Phụ lục B3 — ca kiểm thử theo quy tắc mới", () => {
     expect(checklist.find((row) => row.key === "pending_hours")!.detail).toBe("còn 105,5 giờ");
   });
 
-  it("ca 8 · A ghi 2 giờ tháng 09 vào task của dự án nhưng chọn Lớp 2 là Nội bộ: Chờ xử lý, lý do Lớp 2 không khớp; G7 chưa duyệt được; sửa thành Dự án tính phí thì Được tính, chi phí tháng 09 tăng 324.762 đ (2 × 162.381 đ)", async () => {
+  it("ca 8 · Lớp 2 không còn chặn giờ P&L: A ghi 2 giờ tháng 09 dù dữ liệu chọn cũ là Nội bộ vẫn Được tính", async () => {
     const s = scenario();
     const before = await s.project();
     const [entryId] = s.log({ userId: "u-a", taskId: "t-build-a", dateKey: "2026-09-28", hours: 2, selected: "INTERNAL_PROJECT" });
     const wrong = (await s.pnl.entries({ projectId: "p-a", group: "layer2_mismatch" }, founder)).data;
-    expect(wrong).toHaveLength(1);
-    expect(wrong[0]).toMatchObject({ id: entryId, minutes: hours(2), status: "pending", reason: "layer2_mismatch", reasonLabels: ["Lớp 2 không khớp"], taskTypeLayer2: "CUSTOMER_PROJECT", selectedTaskTypeLayer2: "INTERNAL_PROJECT", blocksG7: true, target: "pending_hours" });
-    // G7 chưa duyệt được khi còn 2 giờ này — while B's 105,5 giờ chờ cost rate do not count.
-    expect(await s.pnl.pendingHoursBlockingG7(WS, "p-a")).toEqual({ projectId: "p-a", blockingMinutes: hours(2), entryCount: 1, byReason: [{ reason: "layer2_mismatch", label: "Lớp 2 không khớp", minutes: hours(2), entryCount: 1 }], waitingCostRateMinutes: hours(105.5) });
+    expect(wrong).toHaveLength(0);
+    // G7 chỉ còn chặn thiếu Lớp 1; B's 105,5 giờ chờ cost rate cũng không count.
+    expect(await s.pnl.pendingHoursBlockingG7(WS, "p-a")).toEqual({ projectId: "p-a", blockingMinutes: 0, entryCount: 0, byReason: [], waitingCostRateMinutes: hours(105.5) });
     const pending = await s.project();
-    expect(month(pending, "2026-09").laborCostAmount).toBe(month(before, "2026-09").laborCostAmount);
-    expect(pending.header.result.reasons.map((reason) => reason.label)).toContain("2 giờ chọn Lớp 2 không khớp");
+    expect(month(pending, "2026-09").includedMinutes).toBe(hours(31));
+    expect((month(pending, "2026-09").laborCostAmount as number) - (month(before, "2026-09").laborCostAmount as number)).toBe(324_762);
 
     Object.assign(s.db.table("taskTimeEntry").find((row) => row.id === entryId) as object, { selectedTaskTypeLayer2: "CUSTOMER_PROJECT" });
     expect(await s.pnl.pendingHoursBlockingG7(WS, "p-a")).toMatchObject({ blockingMinutes: 0 });

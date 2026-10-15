@@ -117,8 +117,8 @@ describe("ResourceControlsService", () => {
     const service = new ResourceControlsService(s.db as any, s.pnl);
     await expect(service.pendingHoursBlockingG7(WS, "p-a")).resolves.toEqual({ projectId: "p-a", blockingMinutes: 0, entryCount: 0, byReason: [], waitingCostRateMinutes: 105.5 * 60 });
     s.log({ userId: "u-a", taskId: "t-build-a", dateKey: "2026-09-28", hours: 2, selected: "INTERNAL_PROJECT" });
-    await expect(service.pendingHoursBlockingG7(WS, "p-a")).resolves.toMatchObject({ blockingMinutes: 120, byReason: [{ reason: "layer2_mismatch", label: "Lớp 2 không khớp", minutes: 120, entryCount: 1 }] });
+    await expect(service.pendingHoursBlockingG7(WS, "p-a")).resolves.toMatchObject({ blockingMinutes: 0, entryCount: 0, byReason: [] });
     // Also without the injected PnlService (the service builds one over the same database).
-    await expect(new ResourceControlsService(s.db as any).pendingHoursBlockingG7(WS, "p-a")).resolves.toMatchObject({ blockingMinutes: 120 });
+    await expect(new ResourceControlsService(s.db as any).pendingHoursBlockingG7(WS, "p-a")).resolves.toMatchObject({ blockingMinutes: 0 });
   });
 });

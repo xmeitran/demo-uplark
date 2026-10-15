@@ -189,16 +189,16 @@ describe("bước 11 — nhãn kết quả (PL-25)", () => {
       entries: [entry({ hours: 8 }), entry({ hours: 2, taskTypeLayer1: null }), entry({ hours: 3, selectedTaskTypeLayer2: "INTERNAL_PROJECT" }), entry({ hours: 1, loggedAfterLock: true })],
       unallocatedFundPeriods: new Set(["2026-08", "2026-12"])
     });
-    expect(pnl.result.reasons.map((reason) => reason.label)).toEqual(["chưa qua G7", "2 giờ thiếu phân loại", "3 giờ chọn Lớp 2 không khớp", "1 giờ ghi bù vào tháng đã khóa", "tháng 08 chưa khóa", "quỹ tháng 08 chưa chia"]);
-    expect(pnl.blockingMinutes).toBe(5 * H);
-    expect(pnl.reconciliation).toMatchObject({ loggedMinutes: 14 * H, includedMinutes: 8 * H, pendingMinutes: 6 * H, balanced: true });
+    expect(pnl.result.reasons.map((reason) => reason.label)).toEqual(["chưa qua G7", "2 giờ thiếu phân loại", "1 giờ ghi bù vào tháng đã khóa", "tháng 08 chưa khóa", "quỹ tháng 08 chưa chia"]);
+    expect(pnl.blockingMinutes).toBe(2 * H);
+    expect(pnl.reconciliation).toMatchObject({ loggedMinutes: 14 * H, includedMinutes: 11 * H, pendingMinutes: 3 * H, balanced: true });
   });
 
   it("g7Blockers: only missing or wrong classification blocks; cost-rate waits are reported apart", () => {
     const blockers = g7Blockers([entry({ hours: 8 }), entry({ hours: 2, taskTypeLayer1: null, rate: null }), entry({ hours: 3, selectedTaskTypeLayer2: "INTERNAL_PROJECT" }), entry({ hours: 5, rate: null }), entry({ hours: 1, loggedAfterLock: true })]);
     expect(blockers).toEqual({
-      blockingMinutes: 5 * H, entryCount: 2, waitingCostRateMinutes: 5 * H,
-      byReason: [{ reason: "missing_layer1", label: "Thiếu phân loại Lớp 1", minutes: 2 * H, entryCount: 1 }, { reason: "layer2_mismatch", label: "Lớp 2 không khớp", minutes: 3 * H, entryCount: 1 }]
+      blockingMinutes: 2 * H, entryCount: 1, waitingCostRateMinutes: 5 * H,
+      byReason: [{ reason: "missing_layer1", label: "Thiếu phân loại Lớp 1", minutes: 2 * H, entryCount: 1 }]
     });
   });
 });

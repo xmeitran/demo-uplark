@@ -408,7 +408,7 @@ export async function loadPnlContext(prisma: any, workspaceId: string, scope: Pn
     const project = row.projectId ? projects.get(row.projectId) : undefined;
     entries.push(classifyEntry({
       id: row.id, projectId: row.projectId ?? null, userId: row.userId, taskId: row.taskId ?? null, dateKey, minutes: row.minutes,
-      taskTypeLayer1: row.taskTypeLayer1 ?? null, taskTypeLayer2: row.taskTypeLayer2 ?? null, selectedTaskTypeLayer2: row.selectedTaskTypeLayer2 ?? null,
+      taskTypeLayer1: row.taskTypeLayer1 ?? null, internalProject: Boolean(project?.consumable), taskTypeLayer2: row.taskTypeLayer2 ?? null, selectedTaskTypeLayer2: row.selectedTaskTypeLayer2 ?? null,
       afterPnlClose: stage?.afterPnlClose ?? null,
       lostDeal: Boolean(project?.lostDeal),
       loggedAfterLock: Boolean(ids),
