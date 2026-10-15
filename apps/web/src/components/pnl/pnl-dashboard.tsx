@@ -106,14 +106,15 @@ function DashboardTotals({ totals, moneyVisible }: Readonly<{ totals: Dashboard[
         : "Chưa có số liệu";
   const waiting = totals.notComputableProjectCount;
   return (
-    <section aria-label="Năm ô tổng" className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-      <Tile icon={FolderKanban} color="#0891b2" label="Dự án" hint="Số dự án đã nghiệm thu khớp bộ lọc" value={totals.projectCount} note={waiting ? `${waiting} dự án chưa tính được, chưa cộng vào tổng` : totals.projectCount ? "đều đã cộng vào tổng" : "chưa có dự án nào"} noteClass={waiting ? "font-medium text-amber-700" : undefined} />
-      <Tile icon={Wallet} color="#2563eb" label="Doanh thu dự án" hint="Tổng doanh thu nhập tay theo từng dự án" value={formatVndAmount(totals.revenueAmount)} title={formatExactVnd(totals.revenueAmount)} note="đồng" whyEmpty={whyEmpty} />
+    <>
+      <section aria-label="Năm ô tổng" className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+      <Tile icon={FolderKanban} color="#0891b2" label="Dự án được tính" hint="Số dự án đủ điều kiện để cộng vào các ô tổng P&L" value={totals.projectCount} note={waiting ? `${waiting} dự án chưa tính được · xem lý do bên dưới` : totals.projectCount ? "đã cộng vào các ô tổng" : "chưa có dự án nào"} noteClass={waiting ? "font-medium text-amber-700" : undefined} />
+      <Tile icon={Wallet} color="#2563eb" label="Giá trị dự án" hint="Giá trị dự án do Admin/PM nhập tay; đây không phải Budget tự động" value={formatVndAmount(totals.revenueAmount)} title={formatExactVnd(totals.revenueAmount)} note="Doanh thu nhập tay · VND" whyEmpty={whyEmpty} />
       <Tile
         icon={Receipt}
         color="#7c3aed"
         label="Tổng chi phí"
-        hint="Chi phí nhân sự + chi phí khác của các dự án"
+        hint="Chi phí nhân sự đã duyệt + chi phí khác của các dự án"
         value={formatVndAmount(totals.totalCostAmount)}
         title={formatExactVnd(totals.totalCostAmount)}
         note={`Nhân sự ${formatVndAmount(totals.laborCostAmount)} · khác ${formatVndAmount(totals.otherCostAmount)}`}
@@ -123,15 +124,26 @@ function DashboardTotals({ totals, moneyVisible }: Readonly<{ totals: Dashboard[
         icon={TrendingUp}
         color="#16a34a"
         label="EBIT"
-        hint="Lãi lỗ = doanh thu dự án − tổng chi phí"
+        hint="EBIT = giá trị dự án − tổng chi phí"
         value={formatVndAmount(totals.ebitAmount)}
         title={formatExactVnd(totals.ebitAmount)}
         note={<span title={resultExplanation(totals.result)} className="cursor-help">{totals.result.labelText}</span>}
         noteClass={`font-medium ${RESULT_TEXT_CLASS[totals.result.label]}`}
         whyEmpty={whyEmpty}
       />
-      <Tile icon={Percent} color="#d97706" label="Biên EBIT" hint="Tỷ lệ lãi = tổng EBIT ÷ tổng doanh thu" value={formatPercent(totals.marginPercent)} note="trên toàn bộ dự án trong ô “Dự án”" whyEmpty={whyEmpty} />
-    </section>
+      <Tile icon={Percent} color="#d97706" label="Biên EBIT" hint="Biên EBIT = EBIT ÷ giá trị dự án" value={formatPercent(totals.marginPercent)} note="tỷ lệ lãi trên dự án được tính" whyEmpty={whyEmpty} />
+      </section>
+      <section aria-label="Cách tính P&L" className="rounded-xl border border-sky-200 bg-sky-50/70 px-4 py-3 text-xs text-sky-950 sm:px-5">
+        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+          <strong className="text-sm">Cách đọc số liệu</strong>
+          <span>Giá trị dự án = số tiền Admin/PM nhập tay</span>
+          <span>Tổng chi phí = nhân sự đã duyệt + chi phí khác</span>
+          <span>EBIT = giá trị dự án − tổng chi phí</span>
+          <span>Biên EBIT = EBIT ÷ giá trị dự án</span>
+        </div>
+        {waiting ? <p className="!mt-1.5 font-medium text-amber-800">{waiting} dự án chưa được cộng vào các ô tổng vì còn thiếu dữ liệu bắt buộc; xem trạng thái và lý do ngay dưới tên từng dự án.</p> : null}
+      </section>
+    </>
   );
 }
 
