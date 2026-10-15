@@ -3274,4 +3274,39 @@ describe("ProjectsService interaction remediation", () => {
     ]);
     expect(result.data.stats?.taskCount).toBe(2);
   });
+
+  it("infers milestone, stage, task and subtask levels from indented rows without a header", () => {
+    const result = buildSpreadsheetTemplateDraft("delivery-roadmap.tsv", [
+      "SHEET: Delivery roadmap",
+      "Discovery",
+      "\tResearch",
+      "\t\tInterview stakeholders",
+      "\t\tReview analytics",
+      "Build",
+      "\tImplementation",
+      "\t\tConfigure workspace",
+    ].join("\n"));
+
+    expect(result.data.milestones.map((milestone) => milestone.name)).toEqual(["Discovery", "Build"]);
+    expect(result.data.milestones[0]?.stages[0]?.tasks).toEqual([
+      { title: "Interview stakeholders", subtasks: [] },
+      { title: "Review analytics", subtasks: [] }
+    ]);
+    expect(result.data.stats).toMatchObject({ milestoneCount: 2, stageCount: 2, taskCount: 3 });
+  });
+
+  it("recognizes semantic hierarchy headers instead of requiring canonical labels", () => {
+    const result = buildSpreadsheetTemplateDraft("work-plan.csv", [
+      "Workstream,Work package,Deliverable,Child item",
+      "Onboarding,Discovery,Map the current process,Interview stakeholders",
+      "Onboarding,Discovery,Map the current process,Review analytics",
+      "Onboarding,Build,Configure workspace,"
+    ].join("\n"));
+
+    expect(result.data.milestones.map((milestone) => milestone.name)).toEqual(["Onboarding"]);
+    expect(result.data.milestones[0]?.stages.map((stage) => stage.name)).toEqual(["Discovery", "Build"]);
+    expect(result.data.milestones[0]?.stages[0]?.tasks).toEqual([
+      { title: "Map the current process", subtasks: [{ title: "Interview stakeholders" }, { title: "Review analytics" }] }
+    ]);
+  });
 });

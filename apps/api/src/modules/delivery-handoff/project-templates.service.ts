@@ -39,18 +39,114 @@ function spreadsheetText(value: unknown) {
   return String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/đ/g, "d").replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-function spreadsheetColumnIndex(header: string[], aliases: string[], excludedAliases: string[] = []) {
-  const exact = header.findIndex((cell) => aliases.includes(spreadsheetText(cell)) && !excludedAliases.includes(spreadsheetText(cell)));
-  if (exact >= 0) return exact;
-  return header.findIndex((cell) => aliases.some((alias) => {
-    const normalized = spreadsheetText(cell);
-    return !excludedAliases.some((excluded) => normalized === excluded || normalized.includes(excluded))
-      && (normalized === alias || normalized.includes(alias));
-  }));
+type SpreadsheetRole = "project" | "milestone" | "stage" | "task" | "subtask";
+type SpreadsheetColumns = Partial<Record<SpreadsheetRole, number>>;
+type SpreadsheetAliases = Record<SpreadsheetRole, string[]>;
+
+const SPREADSHEET_ALIASES: SpreadsheetAliases = {
+  milestone: [
+    "milestone", "giai doan", "phase", "workstream", "epic", "release", "moc", "nhom tinh nang",
+    "project phase", "stream", "track", "work area"
+  ],
+  stage: [
+    "stage", "activity", "hang muc", "work package", "module", "workstream", "phase", "area", "process", "function"
+  ],
+  task: [
+    "task", "task criteria", "task tieu chi", "task tieu chi hoan thanh", "task criteria complete", "cong viec",
+    "chi tiet cong viec", "mo ta cong viec", "mo ta", "noi dung", "description", "detail", "deliverable",
+    "deliverable item", "work item", "work item name", "action", "action item", "output", "title", "tieu chi hoan thanh"
+  ],
+  subtask: [
+    "subtask", "sub task", "sub-task", "cong viec con", "con viec con", "chi tiet con", "child", "child item",
+    "nested item", "nested task", "sub item", "step", "breakdown"
+  ],
+  project: ["project", "project name", "project title", "du an", "ten du an", "initiative", "program"]
+};
+
+const SPREADSHEET_ROLE_ORDER: SpreadsheetRole[] = ["project", "milestone", "stage", "subtask", "task"];
+
+function spreadsheetAliasScore(cell: string, alias: string) {
+  const normalizedCell = spreadsheetText(cell);
+  const normalizedAlias = spreadsheetText(alias);
+  if (!normalizedCell || !normalizedAlias) return 0;
+  if (normalizedCell === normalizedAlias) return 100;
+  if (normalizedCell.startsWith(`${normalizedAlias} `) || normalizedCell.endsWith(` ${normalizedAlias}`) || normalizedCell.includes(` ${normalizedAlias} `)) {
+    return 75;
+  }
+  if (normalizedCell.includes(normalizedAlias)) return 50;
+  const aliasTokens = normalizedAlias.split(" ");
+  const cellTokens = new Set(normalizedCell.split(" "));
+  return aliasTokens.length > 1 && aliasTokens.every((token) => cellTokens.has(token)) ? 40 : 0;
+}
+
+function selectSpreadsheetColumns(header: string[], aliases: SpreadsheetAliases = SPREADSHEET_ALIASES) {
+  const columns: SpreadsheetColumns = {};
+  const scores: Partial<Record<SpreadsheetRole, number>> = {};
+  const usedColumns = new Set<number>();
+
+  for (const role of SPREADSHEET_ROLE_ORDER) {
+    let bestIndex = -1;
+    let bestScore = 0;
+    header.forEach((cell, index) => {
+      if (usedColumns.has(index)) return;
+      const score = Math.max(...aliases[role].map((alias) => spreadsheetAliasScore(cell, alias)));
+      if (score > bestScore) {
+        bestIndex = index;
+        bestScore = score;
+      }
+    });
+    if (bestIndex >= 0 && bestScore > 0) {
+      columns[role] = bestIndex;
+      scores[role] = bestScore;
+      usedColumns.add(bestIndex);
+    }
+  }
+
+  return { columns, scores, score: Object.values(scores).reduce((total, value) => total + (value ?? 0), 0) };
+}
+
+function findSpreadsheetHeader(rows: string[][], aliases: SpreadsheetAliases = SPREADSHEET_ALIASES) {
+  let best: { index: number; columns: SpreadsheetColumns; score: number; recognized: number } | undefined;
+  for (const [index, row] of rows.slice(0, 40).entries()) {
+    const match = selectSpreadsheetColumns(row, aliases);
+    const recognized = Object.keys(match.columns).length;
+    const structuralRoles = ["milestone", "stage", "task", "subtask"].filter((role) => match.columns[role as SpreadsheetRole] !== undefined).length;
+    const hasCanonicalTask = match.columns.task !== undefined && (match.scores.task ?? 0) === 100;
+    if (structuralRoles < 2 && !hasCanonicalTask) continue;
+    if (!best || match.score > best.score || (match.score === best.score && recognized > best.recognized)) {
+      best = { index, columns: match.columns, score: match.score, recognized };
+    }
+  }
+  return best;
+}
+
+function inferSpreadsheetColumns(rows: string[][]): SpreadsheetColumns {
+  const maxColumns = rows.reduce((max, row) => Math.max(max, row.length), 0);
+  const maxLeadingCells = rows.reduce((max, row) => {
+    const firstNonEmpty = row.findIndex((cell) => cell.trim());
+    return Math.max(max, firstNonEmpty);
+  }, -1);
+
+  if (maxLeadingCells >= 3 || maxColumns >= 4) return { milestone: 0, stage: 1, task: 2, subtask: 3 };
+  if (maxLeadingCells >= 2 || maxColumns >= 3) return { milestone: 0, stage: 1, task: 2 };
+  if (maxColumns >= 2) return { milestone: 0, task: 1 };
+  return { task: 0 };
+}
+
+function isSpreadsheetHeaderRow(row: string[], columns: SpreadsheetColumns, aliases: SpreadsheetAliases = SPREADSHEET_ALIASES) {
+  const matches = Object.entries(columns).filter(([role, index]) => {
+    const value = row[index as number];
+    return value && aliases[role as SpreadsheetRole].some((alias) => spreadsheetText(alias) === spreadsheetText(value));
+  });
+  return matches.length >= 2;
+}
+
+function firstSpreadsheetValueIndex(row: string[]) {
+  return row.findIndex((cell) => cell.trim());
 }
 
 function splitSpreadsheetRow(rawLine: string) {
-  const delimiter = rawLine.includes("\t") ? "\t" : rawLine.includes(";") ? ";" : ",";
+  const delimiter = rawLine.includes("\t") ? "\t" : rawLine.includes(";") ? ";" : rawLine.includes("|") ? "|" : ",";
   const cells: string[] = [];
   let current = "";
   let quoted = false;
@@ -72,13 +168,6 @@ function splitSpreadsheetRow(rawLine: string) {
 
 export function buildSpreadsheetTemplateDraft(fileName: string, source: string) {
   const fallbackMilestone = fileName.replace(/\.(xlsx|xls|csv)$/i, "").replace(/[_-]+/g, " ").trim() || "Imported project";
-  const aliases = {
-    milestone: ["milestone", "giai doan", "phase", "workstream", "epic", "release", "moc", "nhom tinh nang", "project phase"],
-    stage: ["stage", "activity", "hang muc", "work package", "module", "workstream", "phase"],
-    task: ["task", "task criteria", "task tieu chi", "task tieu chi hoan thanh", "task criteria complete", "cong viec", "chi tiet cong viec", "mo ta cong viec", "mo ta", "noi dung", "description", "item", "detail", "deliverable", "tieu chi hoan thanh"],
-    subtask: ["subtask", "sub task", "sub-task", "cong viec con", "con viec con", "chi tiet con"],
-    project: ["project", "project name", "du an", "ten du an", "initiative"],
-  };
   const groups = new Map<string, Map<string, { name: string; tasks: Array<{ title: string; subtasks: Array<{ title: string }> }> }>>();
   const warnings: string[] = [];
   const sheetBlocks: Array<{ name: string; rows: string[][] }> = [];
@@ -110,68 +199,75 @@ export function buildSpreadsheetTemplateDraft(fileName: string, source: string) 
   let explicitMilestoneColumn = false;
   let parsedTables = 0;
   for (const block of sheetBlocks) {
-    const candidates = block.rows.slice(0, Math.min(block.rows.length, 40)).map((row, index) => {
-      const normalized = row.map(spreadsheetText);
-      const score = normalized.reduce((total, cell) => total + (Object.values(aliases).some((list) => list.some((alias) => cell === alias || cell.includes(alias))) ? 1 : 0), 0);
-      return { index, row, normalized, score };
-    });
-    const headerCandidate = candidates.sort((a, b) => b.score - a.score)[0];
-    const headerIndex = headerCandidate && headerCandidate.score > 0 ? headerCandidate.index : -1;
-    const header = headerIndex >= 0 ? headerCandidate!.normalized : [];
-    const milestoneColumn = spreadsheetColumnIndex(header, aliases.milestone);
-    const stageColumn = spreadsheetColumnIndex(header, aliases.stage);
-    const taskColumn = spreadsheetColumnIndex(header, aliases.task, aliases.subtask);
-    const subtaskColumn = spreadsheetColumnIndex(header, aliases.subtask);
-    const projectColumn = spreadsheetColumnIndex(header, aliases.project);
-    const fallbackTaskColumn = taskColumn >= 0 ? taskColumn : spreadsheetColumnIndex(header, aliases.task, [...aliases.milestone, ...aliases.stage, ...aliases.subtask, ...aliases.project]);
-    const effectiveTaskColumn = taskColumn >= 0 ? taskColumn : fallbackTaskColumn;
+    const header = findSpreadsheetHeader(block.rows);
+    const headerIndex = header?.index ?? -1;
+    const columns = header?.columns ?? inferSpreadsheetColumns(block.rows);
+    const milestoneColumn = columns.milestone;
+    const stageColumn = columns.stage;
+    const taskColumn = columns.task;
+    const subtaskColumn = columns.subtask;
+    const projectColumn = columns.project;
     if (headerIndex >= 0) parsedTables += 1;
-    if (milestoneColumn >= 0) explicitMilestoneColumn = true;
-    if (milestoneColumn >= 0) detectedColumns.add("Milestone");
-    if (stageColumn >= 0) detectedColumns.add("Stage");
-    if (effectiveTaskColumn >= 0) detectedColumns.add("Task");
-    if (subtaskColumn >= 0) detectedColumns.add("Subtask");
-    if (projectColumn >= 0) detectedColumns.add("Project");
-    if (projectColumn >= 0) {
+    if (milestoneColumn !== undefined) explicitMilestoneColumn = true;
+    if (milestoneColumn !== undefined) detectedColumns.add("Milestone");
+    if (stageColumn !== undefined) detectedColumns.add("Stage");
+    if (taskColumn !== undefined) detectedColumns.add("Task");
+    if (subtaskColumn !== undefined) detectedColumns.add("Subtask");
+    if (projectColumn !== undefined) detectedColumns.add("Project");
+    if (projectColumn !== undefined) {
       const projectValue = block.rows.slice(headerIndex + 1).map((row) => row[projectColumn]).find((value) => value?.trim());
       if (projectValue) projectName = projectValue.trim();
     }
     const projectMarker = block.rows.slice(0, Math.min(block.rows.length, 12)).flat().find((value) => /^project\s*:/i.test(value.trim()));
     if (projectMarker) projectName = projectMarker.replace(/^project\s*:\s*/i, "").trim() || projectName;
-    if (headerIndex < 0) warnings.push(`Không nhận diện được hàng tiêu đề ở sheet “${block.name}”; hệ thống dùng cách đoán cột.`);
-    let activeMilestone = block.name !== "Imported sheet" ? block.name : fallbackMilestone;
+    if (headerIndex < 0) warnings.push(`Không nhận diện được hàng tiêu đề ở sheet “${block.name}”; hệ thống suy luận theo vị trí và thụt dòng, cần rà soát.`);
+    let activeMilestone = milestoneColumn === undefined
+      ? (block.name !== "Imported sheet" ? block.name : fallbackMilestone)
+      : "";
     let activeStage = "General work";
     for (const row of block.rows.slice(headerIndex >= 0 ? headerIndex + 1 : 0)) {
       const values = row.map((cell) => cell.trim());
       const nonEmpty = values.filter(Boolean);
       if (!nonEmpty.length) continue;
+      if (headerIndex < 0 && isSpreadsheetHeaderRow(values, columns)) continue;
       rowCount += 1;
       if (/^project\s*:/i.test(nonEmpty[0])) continue;
-      const rowLooksLikeSection = nonEmpty.length === 1 && nonEmpty[0].length < 120 && !/\d{1,4}[\-\/]\d{1,2}/.test(nonEmpty[0]);
-      const rawMilestone = milestoneColumn >= 0 ? values[milestoneColumn] : "";
+      const firstNonEmpty = firstSpreadsheetValueIndex(values);
+      const rawMilestone = milestoneColumn !== undefined ? values[milestoneColumn] ?? "" : "";
       if (rawMilestone) {
         if (rawMilestone !== activeMilestone) activeStage = "General work";
         activeMilestone = rawMilestone;
       }
-      if (rowLooksLikeSection && milestoneColumn < 0) {
-        activeMilestone = nonEmpty[0];
+      const stageValue = stageColumn !== undefined ? values[stageColumn] ?? "" : "";
+      const taskValue = taskColumn !== undefined ? values[taskColumn] ?? "" : "";
+      const subtaskValue = subtaskColumn !== undefined ? values[subtaskColumn] ?? "" : "";
+
+      // Headerless files commonly encode the hierarchy with indentation: first
+      // non-empty cell = milestone, then stage, then task, then subtask.
+      // The inferred columns above preserve those empty leading cells.
+      if (headerIndex < 0 && milestoneColumn !== undefined && firstNonEmpty === milestoneColumn && !stageValue && !taskValue && !subtaskValue) {
+        activeMilestone = rawMilestone || nonEmpty[0];
+        activeStage = "General work";
         continue;
       }
-      const stageValue = stageColumn >= 0 ? values[stageColumn] : "";
-      const taskValue = effectiveTaskColumn >= 0 ? values[effectiveTaskColumn] : "";
-      const subtaskValue = subtaskColumn >= 0 ? values[subtaskColumn] : "";
+      if (headerIndex < 0 && stageColumn !== undefined && firstNonEmpty === stageColumn && !taskValue && !subtaskValue) {
+        activeStage = stageValue || nonEmpty[0];
+        continue;
+      }
+
       const fallbackDetail = !taskValue && stageValue && values.length > 2
-        ? values.find((value, valueIndex) => value && valueIndex !== milestoneColumn && valueIndex !== stageColumn)
+        ? values.find((value, valueIndex) => value && valueIndex !== milestoneColumn && valueIndex !== stageColumn && valueIndex !== projectColumn)
         : "";
-      const resolvedTask = taskValue || fallbackDetail || "";
-      const guessedStage = stageValue || (!resolvedTask ? nonEmpty.find((value) => value !== activeMilestone && !/^stt$|^no\.?$/i.test(value)) : activeStage) || "";
+      const resolvedTask = taskValue || fallbackDetail || (taskColumn === undefined && !stageValue && !subtaskValue ? nonEmpty.at(-1) ?? "" : "");
+      if (!activeMilestone && rawMilestone) activeMilestone = rawMilestone;
+      const guessedStage = stageValue || activeStage;
       if (!guessedStage || /^stt$|^no\.?$/i.test(guessedStage) || /^(status|trang thai|owner|pic|assignee|deadline|due date)$/i.test(guessedStage)) continue;
       if (stageValue) activeStage = stageValue;
       const stage = stageValue || guessedStage;
       const milestone = rawMilestone || activeMilestone || fallbackMilestone;
       const current = groups.get(milestone) ?? new Map<string, { name: string; tasks: Array<{ title: string; subtasks: Array<{ title: string }> }> }>();
       const stageRecord = current.get(stage) ?? { name: stage, tasks: [] };
-      if (resolvedTask && resolvedTask !== stageValue) {
+      if (resolvedTask && resolvedTask !== stageValue && resolvedTask !== milestone) {
         const taskKey = spreadsheetText(resolvedTask);
         const task = stageRecord.tasks.find((candidate) => spreadsheetText(candidate.title) === taskKey) ?? { title: resolvedTask, subtasks: [] };
         if (!stageRecord.tasks.includes(task)) { stageRecord.tasks.push(task); taskCount += 1; }
@@ -181,7 +277,6 @@ export function buildSpreadsheetTemplateDraft(fileName: string, source: string) 
         if (parentTask && !parentTask.subtasks.some((subtask) => spreadsheetText(subtask.title) === spreadsheetText(subtaskValue))) { parentTask.subtasks.push({ title: subtaskValue }); subtaskCount += 1; }
         else warnings.push(`Sheet “${block.name}” có Subtask nhưng chưa có Task cha ở milestone “${milestone}”, stage “${stage}”.`);
       }
-      else if (!current.has(stage) && stageValue) stageRecord.tasks = [];
       current.set(stage, stageRecord);
       groups.set(milestone, current);
     }
