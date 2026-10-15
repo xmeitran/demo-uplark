@@ -4,7 +4,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, ChevronUp } from "lucide-react";
 import type { PnlHistoryEvent, PnlManualCostInput, PnlManualLine, PnlProjectItemRow, PnlProjectResponse } from "@b2b-crm/contracts";
 import { formatMoneyInput, inputClass, labelClass, parseMoneyInput, visibleTreeRows } from "./pnl-cost-shared";
-import { NO_VALUE, formatDateTime, formatExactVnd, formatMillions, formatMonth, formatPercent } from "./pnl-format";
+import { NO_VALUE, formatDateTime, formatExactVnd, formatMonth, formatPercent, formatVndAmount } from "./pnl-format";
 import {
   NoValue, PnlApiError, cardClass, mutedNoteClass, pnlRequest, primaryButtonClass, secondaryButtonClass
 } from "./pnl-ui";
@@ -43,7 +43,7 @@ function Collapsible({ id, title, hint, locked, children }: Readonly<{ id: strin
 
 function itemAmount(item: PnlProjectItemRow) {
   if (item.unit === "PERCENT") return formatPercent(item.amount);
-  if (item.unit === "VND") return formatMillions(item.amount, "table");
+  if (item.unit === "VND") return formatVndAmount(item.amount);
   return item.amount === null ? NO_VALUE : String(item.amount);
 }
 
@@ -139,7 +139,7 @@ function ManualLines({ projectId, item, months, canEdit, onChanged }: Readonly<{
               {line.label}
               {line.note ? <span className="text-muted-foreground"> · {line.note}</span> : null}
             </span>
-            <span title={formatExactVnd(line.amount)} className="font-mono font-semibold tabular-nums">{formatMillions(line.amount, "table")}</span>
+            <span title={formatExactVnd(line.amount)} className="font-mono font-semibold tabular-nums">{formatVndAmount(line.amount)}</span>
             {line.locked ? <span className="text-xs text-muted-foreground">Kỳ đã khóa</span> : null}
             {canEdit && !line.locked ? (
               <span className="flex gap-2 text-xs font-semibold">
@@ -224,7 +224,7 @@ export function ItemTree({ projectId, items, months, canEdit, projectRevenue, on
                 {isRevenue ? <ProjectValueInlineForm projectId={projectId} revenue={projectRevenue} reload={onChanged} canEdit={canEdit} /> : null}
                 {!isRevenue && item.source.byMonth.length ? (
                   <p className="text-xs text-muted-foreground">
-                    {item.source.byMonth.map((month) => `${formatMonth(month.periodKey)}: ${formatMillions(month.amount, "table")}`).join(" · ")}
+                    {item.source.byMonth.map((month) => `${formatMonth(month.periodKey)}: ${formatVndAmount(month.amount)}`).join(" · ")}
                   </p>
                 ) : null}
                 {!isRevenue && manual ? <ManualLines projectId={projectId} item={item} months={months} canEdit={canEdit} onChanged={onChanged} /> : null}

@@ -12,25 +12,15 @@ const numberFormat = (minimumFractionDigits: number, maximumFractionDigits: numb
 
 type Amount = number | null | undefined;
 
-const MILLIONS = { value: numberFormat(1, 2), table: numberFormat(2, 2), overview: numberFormat(0, 1) };
-
-/**
- * Đồng → "triệu đồng", in the three precisions the wireframes draw:
- *  - "value" (default) — one or two decimals: "67,2", "60,0", "30,97" (tiles of mục 5, every amount of mục 6.1);
- *  - "table" — exactly two: "22,60", "3,20" (tables of mục 5, 6.4, 6.7);
- *  - "overview" — at most one: "1.240", "690" (Tổng quan, mục 4).
- * Zero is a plain "0" in all three (mục 6.7: cột OT).
- */
-export function formatMillions(amount: Amount, style: keyof typeof MILLIONS = "value"): string {
-  if (amount === null || amount === undefined) return NO_VALUE;
-  if (amount === 0) return "0";
-  return MILLIONS[style].format(amount / 1_000_000);
-}
-
 /** Exact đồng for tooltips: "67.200.000 đ". */
 export function formatExactVnd(amount: Amount): string | undefined {
   if (amount === null || amount === undefined) return undefined;
   return `${numberFormat(0, 0).format(amount)} đ`;
+}
+
+/** Exact VND amount for visible P&L figures; never hides the million conversion behind a coefficient. */
+export function formatVndAmount(amount: Amount): string {
+  return formatExactVnd(amount) ?? NO_VALUE;
 }
 
 /** Whole đồng without the unit — cost rate and sell rate per hour, period totals: "162.381". */

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { PnlDashboardProjectRow, PnlDashboardResponse, PnlHourReconciliation } from "@b2b-crm/contracts";
-import { formatExactVnd, formatHoursValue, formatMillions, formatMonthShort, formatPercent } from "./pnl-format";
+import { formatExactVnd, formatHoursValue, formatMonthShort, formatPercent, formatVndAmount } from "./pnl-format";
 import { RESULT_MEANING, notComputableWhy, whyNoValue } from "./pnl-plain";
 import type { PnlDashboardSort, PnlDashboardState } from "./pnl-query";
 import { EmptyRow, HelpToggle, NoValue, ResultBadge, Tabs, cardClass, mutedNoteClass, sectionTitleClass, tdClass, tdNumberClass, thClass, thNumberClass } from "./pnl-ui";
@@ -12,28 +12,28 @@ type Dashboard = PnlDashboardResponse["data"];
 type Column = { label: string; title: string; sort?: PnlDashboardSort; numeric?: boolean; center?: boolean; width?: string };
 
 const PROJECT: Column = { label: "Dự án", title: "Tên dự án (bấm để mở P&L chi tiết), khách hàng và PIC", sort: "name" };
-const LABOR: Column = { label: "Chi phí nhân sự", title: "Giờ được tính vào P&L × đơn giá giờ của từng người trong tháng (triệu đồng)", sort: "laborCost", numeric: true, width: "w-[112px]" };
-const OTHER: Column = { label: "Chi phí khác", title: "Quỹ chi phí chung được chia, chi phí riêng của dự án, hoa hồng… (triệu đồng)", sort: "otherCost", numeric: true, width: "w-[104px]" };
+const LABOR: Column = { label: "Chi phí nhân sự", title: "Giờ được tính vào P&L × đơn giá giờ của từng người trong tháng (đồng)", sort: "laborCost", numeric: true, width: "w-[148px]" };
+const OTHER: Column = { label: "Chi phí khác", title: "Quỹ chi phí chung được chia, chi phí riêng của dự án, hoa hồng… (đồng)", sort: "otherCost", numeric: true, width: "w-[140px]" };
 const RESULT: Column = { label: "Kết quả", title: "Chính thức, Tạm tính hay Không tính được — rê chuột vào nhãn để xem lý do", center: true, width: "w-[136px]" };
 
 // Seven columns at most, fixed widths: the table fits its card from 1280px up without scrolling sideways.
 const ACCEPTED_COLUMNS: Column[] = [
   PROJECT,
   { label: "Bắt đầu → Nghiệm thu", title: "Tháng bắt đầu và tháng nghiệm thu (mốc G7)", sort: "start", width: "w-[128px]" },
-  { label: "Doanh thu dự án", title: "Doanh thu nhập tay theo từng dự án (triệu đồng)", sort: "revenue", numeric: true, width: "w-[112px]" },
+  { label: "Doanh thu dự án", title: "Doanh thu nhập tay theo từng dự án (đồng)", sort: "revenue", numeric: true, width: "w-[148px]" },
   LABOR,
   OTHER,
-  { label: "EBIT · Biên", title: "EBIT = doanh thu dự án − chi phí nhân sự − chi phí khác (triệu đồng); dòng dưới là biên EBIT = EBIT ÷ doanh thu dự án", sort: "ebit", numeric: true, width: "w-[112px]" },
+  { label: "EBIT · Biên", title: "EBIT = doanh thu dự án − chi phí nhân sự − chi phí khác (đồng); dòng dưới là biên EBIT = EBIT ÷ doanh thu dự án", sort: "ebit", numeric: true, width: "w-[148px]" },
   RESULT
 ];
 
 const IN_PROGRESS_COLUMNS: Column[] = [
   PROJECT,
   { label: "Bắt đầu", title: "Tháng bắt đầu dự án", sort: "start", width: "w-[128px]" },
-  { label: "Doanh thu dự án", title: "Doanh thu nhập tay theo từng dự án (triệu đồng)", sort: "revenue", numeric: true, width: "w-[112px]" },
+  { label: "Doanh thu dự án", title: "Doanh thu nhập tay theo từng dự án (đồng)", sort: "revenue", numeric: true, width: "w-[148px]" },
   LABOR,
   OTHER,
-  { label: "Tổng chi phí đến nay", title: "Chi phí nhân sự + chi phí khác đã phát sinh; dự án chưa nghiệm thu nên chưa có EBIT", numeric: true, width: "w-[128px]" },
+  { label: "Tổng chi phí đến nay", title: "Chi phí nhân sự + chi phí khác đã phát sinh; dự án chưa nghiệm thu nên chưa có EBIT", numeric: true, width: "w-[148px]" },
   RESULT
 ];
 
@@ -41,17 +41,17 @@ const ALL_COLUMNS: Column[] = [
   PROJECT,
   { label: "Trạng thái P&L", title: "Dự án đã nghiệm thu hoặc đang triển khai", center: true, width: "w-[132px]" },
   { label: "Bắt đầu → Nghiệm thu", title: "Tháng bắt đầu và tháng nghiệm thu (mốc G7), nếu đã có", sort: "start", width: "w-[148px]" },
-  { label: "Doanh thu dự án", title: "Doanh thu nhập tay theo từng dự án (triệu đồng)", sort: "revenue", numeric: true, width: "w-[112px]" },
-  { label: "Tổng chi phí", title: "Chi phí nhân sự + chi phí khác (triệu đồng)", sort: "laborCost", numeric: true, width: "w-[112px]" },
-  { label: "EBIT", title: "EBIT của dự án đã nghiệm thu; dự án đang triển khai chưa có EBIT", sort: "ebit", numeric: true, width: "w-[112px]" },
+  { label: "Doanh thu dự án", title: "Doanh thu nhập tay theo từng dự án (đồng)", sort: "revenue", numeric: true, width: "w-[148px]" },
+  { label: "Tổng chi phí", title: "Chi phí nhân sự + chi phí khác (đồng)", sort: "laborCost", numeric: true, width: "w-[148px]" },
+  { label: "EBIT", title: "EBIT của dự án đã nghiệm thu; dự án đang triển khai chưa có EBIT", sort: "ebit", numeric: true, width: "w-[148px]" },
   RESULT
 ];
 
-/** Whole "triệu đồng", one decimal kept when the figure has one; the exact đồng is in the tooltip. No figure → "—" that says why. */
+/** P&L money is shown as the exact VND amount; no hidden million coefficient. */
 function Money({ amount, bold = false, why, percent }: Readonly<{ amount: number | null; bold?: boolean; why: string; percent?: number | null }>) {
   return (
     <td title={formatExactVnd(amount)} className={`${tdNumberClass} !px-3 ${bold ? "font-bold" : ""}`}>
-      {amount === null ? <NoValue why={why} /> : formatMillions(amount, "overview")}
+      {amount === null ? <NoValue why={why} /> : formatVndAmount(amount)}
       {percent === undefined || percent === null ? null : <span title="Biên EBIT = EBIT ÷ doanh thu dự án" className="block text-xs font-medium text-muted-foreground">{formatPercent(percent)}</span>}
     </td>
   );
@@ -136,7 +136,7 @@ export function DashboardProjectTable({ data, state, moneyVisible, returnTo, onC
           <p className={`!mt-0.5 ${mutedNoteClass}`}>Bấm vào một dòng để xem chi tiết P&amp;L của dự án.</p>
         </div>
         <HelpToggle label="Cách đọc bảng này" storageKey="pnl-help-dashboard-table">
-          <li>Mỗi dòng là một dự án. Số tiền (triệu đồng) là số của cả vòng đời dự án, không riêng kỳ đang lọc. Bấm tên dự án để xem chi tiết theo tháng.</li>
+          <li>Mỗi dòng là một dự án. Số tiền (đồng) là số của cả vòng đời dự án, không riêng kỳ đang lọc. Bấm tên dự án để xem chi tiết theo tháng.</li>
           <li>Doanh thu dự án do Admin/PM nhập tay theo từng dự án. Dự án đang triển khai vẫn hiện trong bảng; EBIT chỉ tính khi đủ dữ liệu theo kỳ.</li>
           <li>EBIT = doanh thu dự án − chi phí nhân sự − chi phí khác. Dòng nhỏ dưới EBIT là biên EBIT = EBIT ÷ doanh thu dự án.</li>
           <li>{RESULT_MEANING.official} {RESULT_MEANING.provisional}</li>

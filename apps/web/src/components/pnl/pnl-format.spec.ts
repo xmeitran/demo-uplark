@@ -1,27 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  NO_VALUE, formatDateTime, formatDay, formatExactVnd, formatHoursValue, formatMillions, formatMonth, formatDong, formatEnteredPercent, formatMonthShort, formatPercent,
+  NO_VALUE, formatDateTime, formatDay, formatExactVnd, formatHoursValue, formatMonth, formatDong, formatEnteredPercent, formatMonthShort, formatPercent, formatVndAmount,
   formatSignedPercent, formatUpdatedAt, monthRangeLabel, monthsBetween
 } from "./pnl-format";
 
 describe("pnl-format", () => {
-  it("formats đồng as triệu đồng with the wireframe's figures", () => {
-    expect(formatMillions(1_240_000_000, "overview")).toBe("1.240");
-    expect(formatMillions(67_200_000, "overview")).toBe("67,2");
-    expect(formatMillions(67_200_000)).toBe("67,2");
-    expect(formatMillions(30_970_000)).toBe("30,97");
-    expect(formatMillions(60_000_000)).toBe("60,0"); // the same on the report tile and on Thiết lập P&L (mục 6.1)
-    expect(formatMillions(5_260_000)).toBe("5,26");
-    expect(formatMillions(3_200_000, "table")).toBe("3,20");
-    expect(formatMillions(22_600_000, "table")).toBe("22,60");
-    expect(formatMillions(540_000, "table")).toBe("0,54");
-    expect(formatMillions(0, "table")).toBe("0"); // mục 6.7: cột OT "0"
-    expect(formatMillions(0)).toBe("0");
-  });
-
   it("never shows 0 for a missing figure (PL-25)", () => {
-    expect(formatMillions(null)).toBe(NO_VALUE);
-    expect(formatMillions(undefined, "table")).toBe(NO_VALUE);
     expect(formatPercent(null)).toBe(NO_VALUE);
     expect(formatHoursValue(null)).toBe(NO_VALUE);
     expect(formatDong(null)).toBe(NO_VALUE);
@@ -32,6 +16,12 @@ describe("pnl-format", () => {
   it("keeps the exact đồng for tooltips and the cost rate unrounded to millions", () => {
     expect(formatExactVnd(67_200_000)).toBe("67.200.000 đ");
     expect(formatDong(162_380.95)).toBe("162.381");
+  });
+
+  it("shows P&L money as the exact VND amount instead of a million coefficient", () => {
+    expect(formatVndAmount(5_000_000)).toBe("5.000.000 đ");
+    expect(formatVndAmount(4_800_000)).toBe("4.800.000 đ");
+    expect(formatVndAmount(null)).toBe(NO_VALUE);
   });
 
   it("formats minutes as hours", () => {

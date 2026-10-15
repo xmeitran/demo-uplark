@@ -6,17 +6,17 @@ import type { PnlFundAmountInput, PnlFundInput, PnlFundsResponse, PnlFundSummary
 import { CrmSelect } from "@/components/crm-workspace/crm-select";
 import { MonthFilter } from "@/components/filters";
 import { inputClass, parseDecimalInput } from "./pnl-cost-shared";
-import { formatDay, formatHoursValue, formatMillions, formatMonth, formatPercent } from "./pnl-format";
+import { formatDay, formatHoursValue, formatMonth, formatPercent, formatVndAmount } from "./pnl-format";
 import { fixTargetHref } from "./pnl-query";
 import { Field, linkClass, LoadingBlock, ModalActions, numberCellClass, PnlModal, ReadOnlyNote, SaveFeedback, smallButton, Strip, tableCellClass, tableHeadClass, toneClass, useSave } from "./pnl-setup-ui";
 import { cardClass, PnlLoadError, pnlRequest, primaryButtonClass, secondaryButtonClass, usePnlLoad } from "./pnl-ui";
 
 const FORBIDDEN = "Chỉ tài khoản Admin vào được Thiết lập P&L. Tài khoản User không xem được quỹ chi phí chung.";
 
-/** "5,26 tr · Chưa chia" of a fund card; a month without an amount says so instead of showing 0. */
+/** Exact VND amount of a fund card; a month without an amount says so instead of showing 0. */
 function fundLine(fund: PnlFundSummary, moneyVisible: boolean) {
   if (!fund.period) return { text: "Chưa nhập số tiền", tone: toneClass.warn };
-  const amount = moneyVisible ? `${formatMillions(fund.period.amount)} tr` : "—";
+  const amount = moneyVisible ? formatVndAmount(fund.period.amount) : "—";
   return { text: `${amount} · ${fund.period.statusLabel}`, tone: fund.period.status === "allocated" && !fund.period.stale ? toneClass.ok : toneClass.warn };
 }
 
@@ -100,23 +100,23 @@ export function PnlSetupFunds({ periodKey, onPeriodChange }: Readonly<{ periodKe
               <section aria-label="Xem trước phân bổ" className={`${cardClass} overflow-x-auto`}>
                 <table className="w-full min-w-[460px] text-sm">
                   <caption className="sr-only">{fund.preview.confirmed ? "Phân bổ đã xác nhận" : "Xem trước phân bổ"}</caption>
-                  <thead><tr><th scope="col" className={tableHeadClass}>Dự án</th><th scope="col" className={`${tableHeadClass} !text-right`}>Giờ tính P&amp;L</th><th scope="col" className={`${tableHeadClass} !text-right`}>Tỷ trọng</th><th scope="col" className={`${tableHeadClass} !text-right`}>Số tiền (tr)</th></tr></thead>
+                  <thead><tr><th scope="col" className={tableHeadClass}>Dự án</th><th scope="col" className={`${tableHeadClass} !text-right`}>Giờ tính P&amp;L</th><th scope="col" className={`${tableHeadClass} !text-right`}>Tỷ trọng</th><th scope="col" className={`${tableHeadClass} !text-right`}>Số tiền (đồng)</th></tr></thead>
                   <tbody>
                     {fund.preview.rows.map((row) => (
                       <tr key={row.projectId}>
                         <td className={tableCellClass}>{row.projectName}{row.takesRemainder ? " (nhận phần lẻ)" : ""}</td>
                         <td className={numberCellClass}>{formatHoursValue(row.includedMinutes)}</td>
                         <td className={numberCellClass}>{formatPercent(row.sharePercent)}</td>
-                        <td className={numberCellClass}>{formatMillions(row.amount)}</td>
+                        <td className={numberCellClass}>{formatVndAmount(row.amount)}</td>
                       </tr>
                     ))}
                   </tbody>
-                  {fund.preview.rows.length ? <tfoot><tr className="font-bold"><td className={tableCellClass}>Tổng = tổng quỹ</td><td className={numberCellClass}>{formatHoursValue(fund.preview.totalMinutes)}</td><td className={numberCellClass}>100%</td><td className={numberCellClass}>{formatMillions(fund.preview.totalAmount)}</td></tr></tfoot> : null}
+                  {fund.preview.rows.length ? <tfoot><tr className="font-bold"><td className={tableCellClass}>Tổng = tổng quỹ</td><td className={numberCellClass}>{formatHoursValue(fund.preview.totalMinutes)}</td><td className={numberCellClass}>100%</td><td className={numberCellClass}>{formatVndAmount(fund.preview.totalAmount)}</td></tr></tfoot> : null}
                 </table>
                 {!fund.preview.rows.length ? <p className="px-4 py-8 text-center text-sm text-muted-foreground">{fund.period ? "Chưa có dự án tính phí nào có giờ tính P&L trong tháng để nhận chia." : "Nhập số tiền quỹ của tháng để hệ thống tính bảng chia."}</p> : null}
               </section>
               {fund.preview.confirmed ? <p className="text-xs text-muted-foreground">Đang xem số chia đã xác nhận; số đã ghi vào khoản mục đích của từng dự án ở tháng này.</p> : null}
-              {unequal ? <Strip tone="warn">Tổng đã chia {formatMillions(fund.period?.allocatedAmount)} tr khác tổng quỹ {formatMillions(fund.period?.amount)} tr: chạy lại và xác nhận, nếu không kỳ không khóa được.</Strip> : null}
+              {unequal ? <Strip tone="warn">Tổng đã chia {formatVndAmount(fund.period?.allocatedAmount)} khác tổng quỹ {formatVndAmount(fund.period?.amount)}: chạy lại và xác nhận, nếu không kỳ không khóa được.</Strip> : null}
 
               <div className="flex flex-wrap items-center gap-3">
                 <button type="button" className={`${secondaryButtonClass} ${fund.period?.stale ? "!border-amber-400 !text-amber-800" : ""}`} disabled={save.busy || locked || !meta.canApprove || !fund.period} onClick={() => void save.run(() => pnlRequest(fundUrl("/rerun"), { method: "POST", body: {} }), "Đã chạy lại phân bổ theo giờ tính P&L hiện tại.")}>Chạy lại</button>

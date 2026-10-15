@@ -10,7 +10,7 @@ import { DateRangeFilter } from "@/components/filters";
 import { HeaderLinkButton, PageHeader, pageMainClassName } from "@/components/page-header";
 import { toVietnamDateKey } from "@/lib/vietnam-time";
 import { PersonLink } from "@/components/person-link";
-import { formatDay, formatExactVnd, formatHoursValue, formatMillions, formatMonth, formatPercent, formatSignedPercent, monthsBetween } from "./pnl-format";
+import { formatDay, formatExactVnd, formatHoursValue, formatMonth, formatPercent, formatSignedPercent, formatVndAmount, monthsBetween } from "./pnl-format";
 import { COST_GROUP_ONLY, FIX_ACTION_LABELS, RESULT_MEANING, notComputableWhy, plainPersonStatus, plainReason } from "./pnl-plain";
 import { ItemTree, ProjectHistory } from "./pnl-project-details";
 import { ProjectValueModal, TemplateOverrideModal } from "./pnl-project-edit";
@@ -41,7 +41,7 @@ function ProjectTotals({ data, moneyVisible, canEdit, onEditValue }: Readonly<{ 
           icon={Wallet}
           color="#2563eb"
           label={revenue.label}
-          value={formatMillions(revenue.amount)}
+          value={formatVndAmount(revenue.amount)}
           title={revenue.lockedReason ?? formatExactVnd(revenue.amount)}
           note={revenueNote}
           whyEmpty={hidden ?? (revenue.wholeProjectOnly ? WHOLE_ONLY : blocked ?? revenue.missingReason ?? "Chưa có số liệu")}
@@ -51,16 +51,16 @@ function ProjectTotals({ data, moneyVisible, canEdit, onEditValue }: Readonly<{ 
         icon={Receipt}
         color="#7c3aed"
         label="Tổng chi phí"
-        value={formatMillions(cost.totalAmount)}
+        value={formatVndAmount(cost.totalAmount)}
         title={formatExactVnd(cost.totalAmount)}
-        note={`Nhân sự ${formatMillions(cost.laborAmount)} · khác ${formatMillions(cost.otherAmount)}`}
+        note={`Nhân sự ${formatVndAmount(cost.laborAmount)} · khác ${formatVndAmount(cost.otherAmount)}`}
         whyEmpty={hidden ?? blocked ?? "Chưa có số liệu"}
       />
       <Tile
           icon={TrendingUp}
           color="#16a34a"
           label={ebit.label}
-          value={formatMillions(ebit.amount)}
+          value={formatVndAmount(ebit.amount)}
           title={formatExactVnd(ebit.amount)}
           note={ebitNote}
           noteClass={`font-medium ${RESULT_TEXT_CLASS[header.result.label]}`}
@@ -80,7 +80,7 @@ function StatementRow({ label, hint, amount, why, strong = false, aside }: Reado
         <p className={`text-foreground ${strong ? "text-base font-bold" : "text-sm font-bold"}`}>{label}</p>
         <p className="!mt-0.5 text-xs text-muted-foreground">{hint}</p>
       </div>
-      <p title={formatExactVnd(amount)} className={`text-right font-mono tabular-nums text-foreground ${strong ? "text-base font-bold" : "text-sm font-semibold"}`}>{amount === null ? <NoValue why={why} /> : formatMillions(amount)}</p>
+      <p title={formatExactVnd(amount)} className={`text-right font-mono tabular-nums text-foreground ${strong ? "text-base font-bold" : "text-sm font-semibold"}`}>{amount === null ? <NoValue why={why} /> : formatVndAmount(amount)}</p>
       <p className="col-span-2 text-right text-xs font-semibold text-muted-foreground sm:col-span-1">{aside}</p>
     </div>
   );
@@ -171,7 +171,7 @@ function ProjectStatement({ data, meta, projectId, onChanged, onEditValue, onOve
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3 sm:px-5">
         <div className="min-w-0">
           <h3 className="!text-sm font-bold text-foreground">Chi tiết theo khoản mục P&amp;L</h3>
-          <p className="!mt-0.5 text-xs text-muted-foreground">Từng dòng doanh thu, chi phí, cộng dồn cả dự án (triệu đồng). Nhập chi phí riêng của dự án ở dòng “Nhập tay”.</p>
+          <p className="!mt-0.5 text-xs text-muted-foreground">Từng dòng doanh thu, chi phí, cộng dồn cả dự án (đồng). Nhập chi phí riêng của dự án ở dòng “Nhập tay”.</p>
           <p className="!mt-0.5 text-xs text-muted-foreground">
             Mẫu khoản mục: <span className="font-semibold text-foreground">{data.template.name}</span>
             {data.template.override ? ` · dự án ghi đè mẫu · ${data.template.override.byName ?? "—"} · ${formatDay(data.template.override.at.slice(0, 10))} · lý do: ${data.template.override.reason}` : null}
@@ -206,7 +206,7 @@ function PersonRow({ person, moneyVisible }: Readonly<{ person: PnlProjectPerson
       <td className={`${tdNumberClass} ${unassigned ? "!text-muted-foreground" : ""}`}>{formatHoursValue(person.plannedMinutes)}</td>
       <td className={tdNumberClass}>{unassigned ? null : formatHoursValue(person.loggedMinutes)}</td>
       <td className={tdNumberClass}>{unassigned ? null : formatHoursValue(person.includedMinutes)}</td>
-      {moneyVisible ? <td title={formatExactVnd(person.laborCostAmount)} className={tdNumberClass}>{unassigned ? null : person.laborCostAmount === null ? <NoValue why={missing ?? "Chưa có giờ được tính vào P&L"} /> : formatMillions(person.laborCostAmount, "table")}</td> : null}
+      {moneyVisible ? <td title={formatExactVnd(person.laborCostAmount)} className={tdNumberClass}>{unassigned ? null : person.laborCostAmount === null ? <NoValue why={missing ?? "Chưa có giờ được tính vào P&L"} /> : formatVndAmount(person.laborCostAmount)}</td> : null}
       <td className={`${tdClass} text-center`}>
         {!person.status ? null : missing ? <Chip tone="warn" title={missing}>Thiếu</Chip> : <Chip tone={person.status.ok ? "ok" : "warn"}>{person.status.label}</Chip>}
       </td>
@@ -231,7 +231,7 @@ function ProjectPeople({ people, moneyVisible }: Readonly<{ people: PnlProjectPe
               <th scope="col" title="Giờ ước tính của các sub-task giao cho người này" className={thNumberClass}>Giờ kế hoạch</th>
               <th scope="col" title="Giờ người này đã ghi cho dự án" className={thNumberClass}>Giờ đã ghi</th>
               <th scope="col" title="Phần giờ đã ghi đủ điều kiện để quy ra chi phí của dự án (giờ đã tính vào P&L)" className={thNumberClass}>Giờ đã tính</th>
-              {moneyVisible ? <th scope="col" title="Giờ đã tính vào P&L × đơn giá giờ của người đó trong từng tháng (triệu đồng)" className={thNumberClass}>Chi phí</th> : null}
+              {moneyVisible ? <th scope="col" title="Giờ đã tính vào P&L × đơn giá giờ của người đó trong từng tháng (đồng)" className={thNumberClass}>Chi phí</th> : null}
               <th scope="col" title="Đủ, hoặc còn thiếu dữ liệu khiến giờ của người này chưa tính được" className={`${thClass} !text-center`}>Dữ liệu</th>
             </tr>
           </thead>
@@ -279,7 +279,7 @@ export function PnlProjectScreen({ projectId }: Readonly<{ projectId: string }>)
           back={{ href: "/pnl", label: "P&L dự án" }}
           title={data ? data.header.projectName : "P&L của dự án"}
           subtitle={data ? `${data.header.accountName} · ${data.header.projectStatus}` : undefined}
-          meta="Đơn vị tiền: triệu đồng"
+          meta="Đơn vị tiền: đồng"
           actions={<HeaderLinkButton href={`/projects/${encodeURIComponent(projectId)}`}>Mở dự án</HeaderLinkButton>}
         />
         {error ? <PnlLoadError error={error} onRetry={reload} /> : null}

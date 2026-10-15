@@ -11,7 +11,7 @@ import { DateRangeFilter, FilterField, MultiSelectFilter, PersonFilter, SearchFi
 import { HeaderLinkButton, PageHeader, pageMainClassName } from "@/components/page-header";
 import { toVietnamDateKey } from "@/lib/vietnam-time";
 import { DashboardProjectTable } from "./pnl-dashboard-table";
-import { formatExactVnd, formatHoursValue, formatMillions, formatMonth, formatPercent, formatUpdatedAt, monthsBetween } from "./pnl-format";
+import { formatExactVnd, formatHoursValue, formatMonth, formatPercent, formatUpdatedAt, formatVndAmount, monthsBetween } from "./pnl-format";
 import { COST_GROUP_ONLY, STAFF_COST_PHRASE, plainPending, resultExplanation } from "./pnl-plain";
 import {
   PNL_RULES, dashboardApiQuery, dashboardFilterCount, dashboardPeriodPresets, dashboardSearch, monthsToDays, parseDashboardState, patchDashboardState, pendingHoursHref,
@@ -108,15 +108,15 @@ function DashboardTotals({ totals, moneyVisible }: Readonly<{ totals: Dashboard[
   return (
     <section aria-label="Năm ô tổng" className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
       <Tile icon={FolderKanban} color="#0891b2" label="Dự án" hint="Số dự án đã nghiệm thu khớp bộ lọc" value={totals.projectCount} note={waiting ? `${waiting} dự án chưa tính được, chưa cộng vào tổng` : totals.projectCount ? "đều đã cộng vào tổng" : "chưa có dự án nào"} noteClass={waiting ? "font-medium text-amber-700" : undefined} />
-      <Tile icon={Wallet} color="#2563eb" label="Doanh thu dự án" hint="Tổng doanh thu nhập tay theo từng dự án" value={formatMillions(totals.revenueAmount, "overview")} title={formatExactVnd(totals.revenueAmount)} note="triệu đồng" whyEmpty={whyEmpty} />
+      <Tile icon={Wallet} color="#2563eb" label="Doanh thu dự án" hint="Tổng doanh thu nhập tay theo từng dự án" value={formatVndAmount(totals.revenueAmount)} title={formatExactVnd(totals.revenueAmount)} note="đồng" whyEmpty={whyEmpty} />
       <Tile
         icon={Receipt}
         color="#7c3aed"
         label="Tổng chi phí"
         hint="Chi phí nhân sự + chi phí khác của các dự án"
-        value={formatMillions(totals.totalCostAmount, "overview")}
+        value={formatVndAmount(totals.totalCostAmount)}
         title={formatExactVnd(totals.totalCostAmount)}
-        note={`Nhân sự ${formatMillions(totals.laborCostAmount, "overview")} · khác ${formatMillions(totals.otherCostAmount, "overview")}`}
+        note={`Nhân sự ${formatVndAmount(totals.laborCostAmount)} · khác ${formatVndAmount(totals.otherCostAmount)}`}
         whyEmpty={whyEmpty}
       />
       <Tile
@@ -124,7 +124,7 @@ function DashboardTotals({ totals, moneyVisible }: Readonly<{ totals: Dashboard[
         color="#16a34a"
         label="EBIT"
         hint="Lãi lỗ = doanh thu dự án − tổng chi phí"
-        value={formatMillions(totals.ebitAmount, "overview")}
+        value={formatVndAmount(totals.ebitAmount)}
         title={formatExactVnd(totals.ebitAmount)}
         note={<span title={resultExplanation(totals.result)} className="cursor-help">{totals.result.labelText}</span>}
         noteClass={`font-medium ${RESULT_TEXT_CLASS[totals.result.label]}`}
@@ -171,7 +171,7 @@ function DashboardCostGroups({ groups, state, onChange }: Readonly<{
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <h2 id="pnl-cost-groups-title" className={sectionTitleClass}>Chi phí theo nhóm</h2>
-          <p className={`!mt-0.5 ${mutedNoteClass}`}>Tổng chi phí ở trên chia theo nhóm (triệu đồng · tỷ trọng). Bấm một nhóm để bảng dự án chỉ hiện dự án có chi phí nhóm đó.</p>
+          <p className={`!mt-0.5 ${mutedNoteClass}`}>Tổng chi phí ở trên chia theo nhóm (đồng · tỷ trọng). Bấm một nhóm để bảng dự án chỉ hiện dự án có chi phí nhóm đó.</p>
         </div>
         <Segmented ariaLabel="Cách xem nhóm chi phí" value={state.view} options={COST_VIEWS} onChange={(view) => onChange({ view })} />
       </div>
@@ -182,7 +182,7 @@ function DashboardCostGroups({ groups, state, onChange }: Readonly<{
             key={group.key}
             label={group.label}
             title={formatExactVnd(group.amount)}
-            value={`${formatMillions(group.amount, "overview")} · ${formatPercent(group.sharePercent, 0)}`}
+            value={`${formatVndAmount(group.amount)} · ${formatPercent(group.sharePercent, 0)}`}
             pressed={group.key === state.groupKey}
             onClick={() => onChange({ groupKey: group.key === state.groupKey ? "" : group.key })}
           />
@@ -225,7 +225,7 @@ function CompanyCostDetail({ line, from, to }: Readonly<{ line: PnlCompanyCostLi
               <td className={tdClass}>{row.userName ?? "—"}</td>
               <td className={tdClass}>{row.projectName ?? "—"}</td>
               <td className={tdNumberClass}>{formatHoursValue(row.minutes)}</td>
-              <td title={formatExactVnd(row.amount)} className={tdNumberClass}>{formatMillions(row.amount, "table")}</td>
+              <td title={formatExactVnd(row.amount)} className={tdNumberClass}>{formatVndAmount(row.amount)}</td>
             </tr>
           ))}
         </tbody>
@@ -254,7 +254,7 @@ function DashboardCompanyCosts({ companyCosts }: Readonly<{ companyCosts: Dashbo
             key={line.key}
             label={COMPANY_TILE_LABELS[line.key]}
             title={[line.label, formatExactVnd(line.amount)].filter(Boolean).join(" · ")}
-            value={formatMillions(line.amount, "overview")}
+            value={formatVndAmount(line.amount)}
             note={line.uncostedMinutes > 0 ? `còn ${formatHoursValue(line.uncostedMinutes)} giờ chưa có ${STAFF_COST_PHRASE}` : undefined}
             expanded={line.key === openKey}
             onClick={() => setOpenKey(line.key === openKey ? null : line.key)}
@@ -263,7 +263,7 @@ function DashboardCompanyCosts({ companyCosts }: Readonly<{ companyCosts: Dashbo
       </div>
       {companyCosts.overAllocatedAmount ? (
         <p role="note" title={formatExactVnd(companyCosts.overAllocatedAmount)} className="text-xs font-medium text-amber-700">
-          Có người ghi giờ nhiều hơn giờ chuẩn của tháng: chi phí đã tính vào dự án và ba dòng trên lớn hơn tổng chi phí nhân sự {formatMillions(companyCosts.overAllocatedAmount, "overview")} triệu đồng, nên “Chưa phân bổ” dừng ở 0.
+          Có người ghi giờ nhiều hơn giờ chuẩn của tháng: chi phí đã tính vào dự án và ba dòng trên lớn hơn tổng chi phí nhân sự {formatVndAmount(companyCosts.overAllocatedAmount)}, nên “Chưa phân bổ” dừng ở 0.
         </p>
       ) : null}
       {openLine && months.length ? <CompanyCostDetail line={openLine} from={months[0]} to={months[months.length - 1]} /> : null}
@@ -297,7 +297,7 @@ export function PnlDashboard() {
         <PageHeader
           title="P&L dự án"
           subtitle="Theo dõi doanh thu, chi phí và EBIT của toàn bộ dự án trong workspace."
-          meta="Đơn vị: triệu đồng"
+          meta="Đơn vị: đồng"
           actions={
             <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-border/70 bg-card p-1">
               <HeaderLinkButton className="!h-9 !rounded-lg !px-3 !py-0 !text-xs" href={data ? pendingHoursHref({ from: data.filter.fromPeriodKey, to: data.filter.toPeriodKey }) : "/pnl/hours"}>Giờ chờ xử lý</HeaderLinkButton>

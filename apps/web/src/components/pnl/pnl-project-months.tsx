@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Fragment, useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { PnlMonthMissing, PnlProjectMonthDetail, PnlProjectMonthDetailResponse, PnlProjectResponse } from "@b2b-crm/contracts";
-import { formatDong, formatExactVnd, formatHoursValue, formatMillions, formatMonth } from "./pnl-format";
+import { formatDong, formatExactVnd, formatHoursValue, formatMonth, formatVndAmount } from "./pnl-format";
 import { STAFF_COST_PHRASE, plainGateReason, plainMissing, plainPersonStatus } from "./pnl-plain";
 import { fixTargetHref } from "./pnl-query";
 import {
@@ -27,9 +27,9 @@ function Hours({ minutes, bold = false, title }: Readonly<{ minutes: number | nu
   return <td title={title} className={`${tdNumberClass} ${bold ? "font-bold" : ""} ${title ? "cursor-help" : ""}`}>{formatHoursValue(minutes)}</td>;
 }
 
-/** Two decimals of "triệu đồng" ("22,60"); the exact đồng — or `title` — is in the tooltip. No figure → "—" that says why. */
+/** Exact VND amount for the P&L; no hidden million coefficient. */
 function Money({ amount, bold = false, why = "Chưa có số liệu", title }: Readonly<{ amount: number | null; bold?: boolean; why?: string; title?: string }>) {
-  return <td title={title ?? formatExactVnd(amount)} className={`${tdNumberClass} ${bold ? "font-bold" : ""}`}>{amount === null ? <NoValue why={why} /> : formatMillions(amount, "table")}</td>;
+  return <td title={title ?? formatExactVnd(amount)} className={`${tdNumberClass} ${bold ? "font-bold" : ""}`}>{amount === null ? <NoValue why={why} /> : formatVndAmount(amount)}</td>;
 }
 
 function missingHref(projectId: string, missing: PnlMonthMissing) {
@@ -42,7 +42,7 @@ function reasonsTitle(reasons: Array<{ reason: string; label: string; minutes: n
 
 /** "Chi phí" of a row with what it is made of in the tooltip. */
 function costTitle(row: { laborCostAmount: number | null; otherCostAmount: number | null }) {
-  return `Chi phí nhân sự ${formatMillions(row.laborCostAmount, "table")} · chi phí khác ${formatMillions(row.otherCostAmount, "table")} (triệu đồng)`;
+  return `Chi phí nhân sự ${formatVndAmount(row.laborCostAmount)} · chi phí khác ${formatVndAmount(row.otherCostAmount)}`;
 }
 
 /** Mặc định của một tháng: mỗi người một dòng — giờ đã ghi, đã tính, chi phí, và còn thiếu gì. */
@@ -56,7 +56,7 @@ function PeopleOfMonth({ detail, moneyVisible }: Readonly<{ detail: PnlProjectMo
             <th scope="col" className={thNumberClass}>Giờ đã ghi</th>
             <th scope="col" title="Phần giờ đủ điều kiện để quy ra chi phí của dự án" className={thNumberClass}>Giờ đã tính</th>
             {moneyVisible ? <th scope="col" title="Đơn giá giờ đã nhập/được duyệt (đồng mỗi giờ)" className={thNumberClass}>Đơn giá giờ</th> : null}
-            {moneyVisible ? <th scope="col" title="Giờ đã tính vào P&L × đơn giá giờ (triệu đồng)" className={thNumberClass}>Chi phí</th> : null}
+            {moneyVisible ? <th scope="col" title="Giờ đã tính vào P&L × đơn giá giờ (đồng)" className={thNumberClass}>Chi phí</th> : null}
             <th scope="col" className={`${thClass} !text-center`}>Dữ liệu</th>
           </tr>
         </thead>
@@ -277,7 +277,7 @@ export function ProjectMonths({ projectId, months, moneyVisible }: Readonly<{ pr
               <th scope="col" title="Tổng giờ mọi người đã ghi cho dự án trong tháng (gồm cả giờ không tính)" className={thNumberClass}>Giờ đã ghi</th>
               <th scope="col" title="Phần giờ đủ điều kiện để quy ra chi phí của dự án (giờ đã tính vào P&L)" className={thNumberClass}>Đã tính</th>
               <th scope="col" title="Giờ còn thiếu một thông tin nên chưa tính được — rê chuột vào số để xem lý do" className={thNumberClass}>Chờ xử lý</th>
-              {moneyVisible ? <th scope="col" title="Chi phí nhân sự + chi phí khác của tháng (triệu đồng) — rê chuột vào số để xem từng phần" className={thNumberClass}>Chi phí</th> : null}
+              {moneyVisible ? <th scope="col" title="Chi phí nhân sự + chi phí khác của tháng (đồng) — rê chuột vào số để xem từng phần" className={thNumberClass}>Chi phí</th> : null}
               <th scope="col" title="Đủ, hoặc còn thiếu dữ liệu — bấm để mở nơi bổ sung" className={`${thClass} !text-center`}>Dữ liệu</th>
             </tr>
           </thead>
@@ -361,7 +361,7 @@ export function ProjectMonths({ projectId, months, moneyVisible }: Readonly<{ pr
           <h3 className="!text-sm font-bold text-foreground">Sau nghiệm thu</h3>
           {after.visible ? (
             <p className="font-mono text-sm font-semibold tabular-nums text-foreground">
-              {formatHoursValue(after.minutes)} giờ{moneyVisible ? <span title={formatExactVnd(after.amount)}> · {formatMillions(after.amount, "table")}</span> : null}
+              {formatHoursValue(after.minutes)} giờ{moneyVisible ? <span title={formatExactVnd(after.amount)}> · {formatVndAmount(after.amount)}</span> : null}
             </p>
           ) : null}
         </div>
@@ -371,7 +371,7 @@ export function ProjectMonths({ projectId, months, moneyVisible }: Readonly<{ pr
           <ul className="mt-2 flex flex-wrap gap-2">
             {after.rows.map((row) => (
               <li key={row.periodKey} className="rounded-lg border border-border bg-muted/30 px-2.5 py-1 text-xs text-foreground">
-                <span className="font-mono tabular-nums text-muted-foreground">{formatMonth(row.periodKey)}</span> · {formatHoursValue(row.minutes)} giờ{moneyVisible ? ` · ${formatMillions(row.amount, "table")}` : ""}
+                <span className="font-mono tabular-nums text-muted-foreground">{formatMonth(row.periodKey)}</span> · {formatHoursValue(row.minutes)} giờ{moneyVisible ? ` · ${formatVndAmount(row.amount)}` : ""}
               </li>
             ))}
           </ul>
