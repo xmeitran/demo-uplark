@@ -101,6 +101,21 @@ describe("bước 4, 9, 10 — chi phí nhân sự, chi phí riêng, cộng vòn
     expect(pnl.laborCostAmount).toBe(22_610_000);
   });
 
+  it("giờ đã log + cost rate đã duyệt được đưa vào P&L ngay cả khi chưa có phân loại/G7", () => {
+    const pnl = project({ entries: [entry({
+      hours: 24,
+      dateKey: "2026-09-03",
+      taskTypeLayer1: null,
+      taskTypeLayer2: null,
+      selectedTaskTypeLayer2: null,
+      afterPnlClose: null,
+      rate: { monthlyAmount: 35_200_000, hourlyAmount: 200_000, standardMinutes: 176 * H }
+    })] });
+
+    expect(pnl.whole).toMatchObject({ loggedMinutes: 24 * H, includedMinutes: 24 * H, pendingMinutes: 0, laborCostAmount: 4_800_000 });
+    expect(pnl.people[0]).toMatchObject({ loggedMinutes: 24 * H, includedMinutes: 24 * H, laborCostAmount: 4_800_000 });
+  });
+
   it("PL-11: một giờ của BD, PM chỉ được tính một lần — in the labor item of the logger's role group", () => {
     const pnl = project({ entries: [entry({ hours: 8, userId: "u-pm", roleGroup: "PM", taskTypeLayer1: "PM", rate: { monthlyAmount: 33_600_000, standardMinutes: 168 * H } }), entry({ hours: 8 })] });
     expect(pnl.itemValues.get("CP.NS.PM")?.amount).toBe(1_600_000);
@@ -147,7 +162,7 @@ describe("bước 4, 9, 10 — chi phí nhân sự, chi phí riêng, cộng vòn
 
   it("dự án nội bộ vẫn có doanh thu/EBIT nhập tay; giờ Nội bộ vẫn tính theo chi phí tiêu hao", () => {
     const disabledCodes = effectiveDisabledCodes(DEFAULT_COST_TREE, DEFAULT_ITEM_TEMPLATES[1].disabledCodes);
-    const pnl = project({ consumable: true, g1Passed: false, disabledCodes, projectValueAmount: 10_000_000, entries: [entry({ hours: 20, taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: "INTERNAL_PROJECT" })] });
+    const pnl = project({ consumable: true, g1Passed: false, disabledCodes, projectValueAmount: 10_000_000, entries: [entry({ hours: 20, internalProject: true, taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: "INTERNAL_PROJECT" })] });
     expect(pnl.revenue).toMatchObject({ amount: 10_000_000, basis: "project_value" });
     expect(pnl.ebit.amount).toBe(7_000_000);
     expect(pnl.commission).toMatchObject({ amount: undefined, enabled: false });
@@ -189,16 +204,16 @@ describe("bước 11 — nhãn kết quả (PL-25)", () => {
       entries: [entry({ hours: 8 }), entry({ hours: 2, taskTypeLayer1: null }), entry({ hours: 3, selectedTaskTypeLayer2: "INTERNAL_PROJECT" }), entry({ hours: 1, loggedAfterLock: true })],
       unallocatedFundPeriods: new Set(["2026-08", "2026-12"])
     });
-    expect(pnl.result.reasons.map((reason) => reason.label)).toEqual(["chưa qua G7", "2 giờ thiếu phân loại", "1 giờ ghi bù vào tháng đã khóa", "tháng 08 chưa khóa", "quỹ tháng 08 chưa chia"]);
-    expect(pnl.blockingMinutes).toBe(2 * H);
-    expect(pnl.reconciliation).toMatchObject({ loggedMinutes: 14 * H, includedMinutes: 11 * H, pendingMinutes: 3 * H, balanced: true });
+    expect(pnl.result.reasons.map((reason) => reason.label)).toEqual(["chưa qua G7", "1 giờ ghi bù vào tháng đã khóa", "tháng 08 chưa khóa", "quỹ tháng 08 chưa chia"]);
+    expect(pnl.blockingMinutes).toBe(0);
+    expect(pnl.reconciliation).toMatchObject({ loggedMinutes: 14 * H, includedMinutes: 13 * H, pendingMinutes: 1 * H, balanced: true });
   });
 
   it("g7Blockers: only missing or wrong classification blocks; cost-rate waits are reported apart", () => {
     const blockers = g7Blockers([entry({ hours: 8 }), entry({ hours: 2, taskTypeLayer1: null, rate: null }), entry({ hours: 3, selectedTaskTypeLayer2: "INTERNAL_PROJECT" }), entry({ hours: 5, rate: null }), entry({ hours: 1, loggedAfterLock: true })]);
     expect(blockers).toEqual({
-      blockingMinutes: 2 * H, entryCount: 1, waitingCostRateMinutes: 5 * H,
-      byReason: [{ reason: "missing_layer1", label: "Thiếu phân loại Lớp 1", minutes: 2 * H, entryCount: 1 }]
+      blockingMinutes: 0, entryCount: 0, waitingCostRateMinutes: 7 * H,
+      byReason: []
     });
   });
 });
@@ -210,7 +225,7 @@ describe("bước 12 — dòng cấp công ty (PL-12)", () => {
       entry({ hours: 100 }), // vào dự án
       entry({ hours: 6, projectId: "p-lost", userId: "u-bd", roleGroup: "BD", taskTypeLayer1: "PRE_SALE", lostDeal: true, rate: { monthlyAmount: 30_240_000, standardMinutes: 168 * H } }), // Chi phí Pre-sale
       entry({ hours: 10, userId: "u-cs", roleGroup: "CS", afterPnlClose: true, taskTypeLayer2: "TICKET_MAINTENANCE", selectedTaskTypeLayer2: "TICKET_MAINTENANCE", rate: rate160 }), // sau nghiệm thu
-      entry({ hours: 12, projectId: "p-worklog", taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: "INTERNAL_PROJECT" }), // nội bộ
+      entry({ hours: 12, projectId: "p-worklog", internalProject: true, taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: "INTERNAL_PROJECT" }), // nội bộ
       entry({ hours: 9, projectId: "p-test" }), // dự án thử nghiệm: out of every named part
       entry({ hours: 4, userId: "u-b", rate: null }) // chờ cost rate: no cost anywhere yet
     ];
@@ -226,7 +241,7 @@ describe("bước 12 — dòng cấp công ty (PL-12)", () => {
   });
 
   it("an excluded hour without a cost rate is counted in hours and flagged, not costed at 0", () => {
-    const month = companyCostMonth("2026-08", 0, [entry({ hours: 12, taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: null, rate: null })], new Set());
+    const month = companyCostMonth("2026-08", 0, [entry({ hours: 12, internalProject: true, taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: null, rate: null })], new Set());
     expect(month.lines.internal).toEqual({ amount: 0, minutes: 12 * H, uncostedMinutes: 12 * H });
   });
 });
@@ -247,7 +262,7 @@ describe("lớp 3 — checklist năm điều kiện (mục 6.5)", () => {
     });
     expect(rows.map((row) => [row.ok, row.detail, row.targetLabel])).toEqual([
       [false, "thiếu: Tỷ lệ hoa hồng", "Tham số"],
-      [false, "còn 117,5 giờ", "Danh sách"],
+      [false, "còn 105,5 giờ", "Danh sách"],
       [false, "thiếu: Nhân sự B", "Hồ sơ nhân sự"],
       [false, "còn: Công cụ AI", "Quỹ chi phí chung"],
       [false, "thiếu: Dự án C", "P&L dự án"]

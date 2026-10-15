@@ -83,30 +83,39 @@ describe("bước 3 — cổng lọc giờ (PL-04, PL-05, PL-06)", () => {
     expect(gate({})).toEqual({ status: "included", reasons: [] });
   });
 
+  it("giờ đã log được tính ngay khi có cost rate, không cần Lớp 1/Lớp 2 hay chờ duyệt G7", () => {
+    expect(gate({
+      taskTypeLayer1: null,
+      taskTypeLayer2: null,
+      selectedTaskTypeLayer2: null,
+      afterPnlClose: null
+    })).toEqual({ status: "included", reasons: [] });
+  });
+
   it("(1) Lớp 2 cũ không còn là điều kiện chặn P&L", () => {
     expect(gate({ selectedTaskTypeLayer2: "INTERNAL_PROJECT" })).toEqual({ status: "included", reasons: [] });
     expect(gate({ selectedTaskTypeLayer2: "TICKET_MAINTENANCE" })).toEqual({ status: "included", reasons: [] });
     expect(gate({ taskTypeLayer2: "TICKET_MAINTENANCE", afterPnlClose: true, selectedTaskTypeLayer2: "CUSTOMER_PROJECT" })).toMatchObject({ status: "excluded", reason: "after_close" });
-    expect(gate({ taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: "CUSTOMER_PROJECT" })).toEqual({ status: "excluded", reason: "internal", reasons: ["internal"] });
+    expect(gate({ taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: "CUSTOMER_PROJECT" })).toEqual({ status: "included", reasons: [] });
   });
 
   it("a legacy row without a choice is judged without requiring Layer 2", () => {
     expect(gate({ selectedTaskTypeLayer2: null })).toEqual({ status: "included", reasons: [] });
     expect(gate({ selectedTaskTypeLayer2: null, hasCostRate: false })).toMatchObject({ status: "pending", reasons: ["missing_staff_cost"] });
-    expect(gate({ selectedTaskTypeLayer2: null, taskTypeLayer2: "INTERNAL_PROJECT" })).toMatchObject({ status: "excluded", reason: "internal" });
+    expect(gate({ selectedTaskTypeLayer2: null, taskTypeLayer2: "INTERNAL_PROJECT" })).toEqual({ status: "included", reasons: [] });
   });
 
   it("(2) Sau mốc đóng P&L: task từ Milestone 4 trở đi bị loại, có lý do", () => {
     expect(gate({ taskTypeLayer2: "TICKET_MAINTENANCE", selectedTaskTypeLayer2: "TICKET_MAINTENANCE", afterPnlClose: true })).toEqual({ status: "excluded", reason: "after_close", reasons: ["after_close"] });
-    expect(gate({ afterPnlClose: null })).toMatchObject({ status: "pending", reason: "unknown_close_position" });
+    expect(gate({ afterPnlClose: null })).toEqual({ status: "included", reasons: [] });
   });
 
-  it("(3) thiếu phân loại → Chờ xử lý, kèm lý do; “đủ phân loại” no longer asks for a contract line item (chốt 13/10)", () => {
+  it("(3) thiếu phân loại không còn chặn P&L; chỉ thiếu project mới chờ xử lý", () => {
     expect(gate({ taskTypeLayer1: "PRE_SALE" })).toEqual({ status: "included", reasons: [] }); // Pre-sale counts from the start (Phụ lục B ca 4)
-    expect(gate({ taskTypeLayer1: null })).toMatchObject({ status: "pending", reason: "missing_layer1" });
+    expect(gate({ taskTypeLayer1: null })).toEqual({ status: "included", reasons: [] });
     expect(gate({ taskTypeLayer2: null, selectedTaskTypeLayer2: "CUSTOMER_PROJECT" })).toEqual({ status: "included", reasons: [] });
     expect(gate({ projectId: null })).toMatchObject({ status: "pending", reason: "missing_project" });
-    expect(gate({ taskTypeLayer1: null, hasCostRate: false }).reasons).toEqual(["missing_layer1", "missing_staff_cost"]);
+    expect(gate({ taskTypeLayer1: null, hasCostRate: false }).reasons).toEqual(["missing_staff_cost"]);
   });
 
   it("(4) thiếu cost rate của tháng → Chờ xử lý, never costed at 0", () => {
@@ -127,17 +136,17 @@ describe("bước 3 — cổng lọc giờ (PL-04, PL-05, PL-06)", () => {
     expect(gate({ loggedAfterLock: true, taskTypeLayer2: "INTERNAL_PROJECT" }).reason).toBe("locked_period");
   });
 
-  it("an old Họp/Khác hour inside a project waits for the PM's review", () => {
-    expect(gate({ legacyPendingReason: "legacy_group_in_project" })).toMatchObject({ status: "pending", reason: "legacy_group_in_project" });
-    expect(gate({ legacyPendingReason: "legacy_no_stage", taskTypeLayer1: null }).reasons[0]).toBe("legacy_no_stage");
+  it("dữ liệu cũ không còn chặn việc tính chi phí", () => {
+    expect(gate({ legacyPendingReason: "legacy_group_in_project" })).toEqual({ status: "included", reasons: [] });
+    expect(gate({ legacyPendingReason: "legacy_no_stage", taskTypeLayer1: null })).toEqual({ status: "included", reasons: [] });
   });
 
   it("G7 chỉ bị chặn bởi giờ chờ vì thiếu hoặc sai phân loại; giờ chờ cost rate không chặn (mục 7 điểm 6)", () => {
     expect(blocksG7(gate({ hasCostRate: false }))).toBe(false);
     expect(blocksG7(gate({ loggedAfterLock: true }))).toBe(false);
     expect(blocksG7(gate({ selectedTaskTypeLayer2: "INTERNAL_PROJECT" }))).toBe(false);
-    expect(blocksG7(gate({ taskTypeLayer1: null }))).toBe(true);
-    expect(blocksG7(gate({ taskTypeLayer1: null, hasCostRate: false }))).toBe(true);
+    expect(blocksG7(gate({ taskTypeLayer1: null }))).toBe(false);
+    expect(blocksG7(gate({ taskTypeLayer1: null, hasCostRate: false }))).toBe(false);
     expect(blocksG7(gate({}))).toBe(false);
     expect(blocksG7(gate({ taskTypeLayer2: "INTERNAL_PROJECT", selectedTaskTypeLayer2: null }))).toBe(false); // excluded, not pending
   });

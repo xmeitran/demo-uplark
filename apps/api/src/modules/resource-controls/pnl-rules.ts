@@ -147,21 +147,19 @@ export interface PnlGateResult {
 }
 
 /**
- * PL-04: an hour is "Được tính" when ALL FOUR hold —
- *   (1) it belongs to a project and has a Layer 1 classification;
- *   (2) it lies before the P&L closing point;
- *   (3) the classification is complete ("đủ phân loại" — there is no contract line item any more, chốt 13/10);
- *   (4) the person has an approved cost rate for that month.
+ * P&L rule: a logged hour is "Được tính" when it belongs to a project and the person has an approved
+ * cost rate for that month. Task classification (Lớp 1/Lớp 2), G7 position and a time-entry approval
+ * are metadata only; none of them is a prerequisite for calculating labor cost.
  * PL-06: "Bị loại" always has a reason — Nội bộ, or Sau mốc đóng P&L (tasks from Milestone 4 on); Pre-sale hours of a
  * lost deal are excluded too because PL-12 moves them to the company line "Chi phí Pre-sale".
- * PL-05: anything else missing leaves the hour "Chờ xử lý" with its reasons.
+ * PL-05: a missing project, cost rate, or a locked-period write-back leaves the hour "Chờ xử lý".
  *
  * Order of the checks:
  *   a. a locked month accepts nothing new: "Tháng đã khóa" (A-1a) until the period is reopened;
  *   b. lost-deal Pre-sale hours are excluded whatever else is wrong — nobody will come back to fix them;
  *   c. then the exclusions, then the missing data.
- * Layer 2 is legacy metadata and is not a P&L gate. The explicit internalProject flag keeps internal/training projects
- * on the company line; the old derived Layer 2 is only used as a backwards-compatible fallback for legacy callers.
+ * Layer 1/Layer 2 and legacy classification metadata are deliberately ignored here. The explicit internalProject
+ * flag keeps internal/training projects on the company line without bringing the removed Layer 2 gate back.
  */
 export function classifyPnlEntry(input: PnlGateInput): PnlGateResult {
   const excluded = (reason: PnlGateReason): PnlGateResult => ({ status: "excluded", reason, reasons: [reason] });
@@ -169,19 +167,12 @@ export function classifyPnlEntry(input: PnlGateInput): PnlGateResult {
 
   if (input.loggedAfterLock) return pending(["locked_period"]);
   if (input.lostDeal && input.taskTypeLayer1 === "PRE_SALE") return excluded("lost_deal_pre_sale");
-  // 9.2 of the rules document: an old "Họp"/"Khác" hour inside a project waits for the PM's review before any other rule reads it.
-  if (input.legacyPendingReason === "legacy_group_in_project") return pending(["legacy_group_in_project"]);
-  if (input.internalProject ?? input.taskTypeLayer2 === "INTERNAL_PROJECT") return excluded("internal");
+  if (input.internalProject) return excluded("internal");
   if (input.afterPnlClose === true) return excluded("after_close");
 
   const reasons: PnlGateReason[] = [];
   if (!input.projectId) reasons.push("missing_project");
-  if (!input.taskTypeLayer1) reasons.push("missing_layer1");
-  if (input.afterPnlClose !== false) reasons.push("unknown_close_position");
   if (!input.hasCostRate) reasons.push("missing_staff_cost");
-  if ((input.legacyPendingReason === "legacy_unmapped_stage" || input.legacyPendingReason === "legacy_no_stage") && (reasons.includes("missing_layer1") || reasons.includes("unknown_close_position"))) {
-    reasons.unshift(input.legacyPendingReason);
-  }
   return reasons.length ? pending(reasons) : { status: "included", reasons: [] };
 }
 
