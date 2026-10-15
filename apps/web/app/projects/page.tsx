@@ -1082,6 +1082,39 @@ export default function ProjectsPage() {
   }, [projectPage, filterKey, pushedProjectOwnerKey]);
 
   useEffect(() => {
+    const action = searchParams.get("edit") ? "edit" : searchParams.get("delete") ? "delete" : null;
+    const projectId = action === "edit" ? searchParams.get("edit")?.trim() : searchParams.get("delete")?.trim();
+    if (!action || !projectId || loadingProjects) return;
+    const targetProjectId = projectId;
+
+    let cancelled = false;
+    const clearAction = () => {
+      const next = new URLSearchParams(projectListSearch);
+      next.delete("edit");
+      next.delete("delete");
+      const query = next.toString();
+      router.replace(query ? `/projects?${query}` : "/projects", { scroll: false });
+    };
+
+    async function openProjectAction() {
+      const listed = projectsList.find((project) => project.id === targetProjectId);
+      const target = listed ?? await fetchLiveProjectById(targetProjectId).catch(() => null);
+      if (cancelled) return;
+      clearAction();
+      if (!target) {
+        setProjectsError("Không tìm thấy dự án để thực hiện thao tác.");
+        return;
+      }
+      setProjectMutationError(null);
+      if (action === "edit") setEditingProject(target);
+      else setDeletingProject(target);
+    }
+
+    void openProjectAction();
+    return () => { cancelled = true; };
+  }, [loadingProjects, projectListSearch, projectsList, router, searchParams]);
+
+  useEffect(() => {
     const controller = new AbortController();
 
     async function loadAccountOptions() {

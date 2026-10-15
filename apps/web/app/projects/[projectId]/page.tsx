@@ -4769,6 +4769,7 @@ export default function ProjectDetailPage() {
   const params    = useParams<{ projectId: string }>();
   const projectId = params?.projectId ?? "p1";
   const { user } = useAuth();
+  const router = useRouter();
   const pushedProjectOwnerKey = getPushedProjectsOwnerKey(user);
   const [initialProjectSnapshot] = useState(() => readLiveProjectSnapshot(projectId, pushedProjectOwnerKey));
 
@@ -4907,6 +4908,7 @@ export default function ProjectDetailPage() {
   const [isHoveredPush, setIsHoveredPush] = useState(false);
   const [isHoveredEdit, setIsHoveredEdit] = useState(false);
   const [isHoveredMore, setIsHoveredMore] = useState(false);
+  const canManageProjectActions = isAdminView(user);
 
   // Overview and Tasks each keep their own task filters (same shape, see task-filters.ts).
   const [overviewFilters, setOverviewFilters] = useState(EMPTY_PROJECT_TASK_FILTERS);
@@ -6428,7 +6430,8 @@ export default function ProjectDetailPage() {
                 <span>{isPushed ? "Pushed to Menu" : "Push to Menu"}</span>
               </button>
               <button
-                type="button" disabled aria-label="Edit project unavailable on this page" title="Edit the project from the Projects list"
+                type="button" disabled={!canManageProjectActions} aria-label={canManageProjectActions ? "Edit project" : "Edit project unavailable"} title={canManageProjectActions ? "Edit project" : "Only Workspace Admin can edit this project"}
+                onClick={() => canManageProjectActions && router.push(`/projects?edit=${encodeURIComponent(projectId)}`)}
                 onMouseEnter={() => setIsHoveredEdit(true)}
                 onMouseLeave={() => setIsHoveredEdit(false)}
                 className="min-h-11 min-w-11 p-2 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed"
@@ -6441,7 +6444,8 @@ export default function ProjectDetailPage() {
                 <Edit3 className="w-3.5 h-3.5" />
               </button>
               <button
-                type="button" disabled aria-label="More project actions unavailable" title="Additional actions are not available"
+                type="button" disabled={!canManageProjectActions} aria-label={canManageProjectActions ? "Delete project" : "Delete project unavailable"} title={canManageProjectActions ? "Delete project" : "Only Workspace Admin can delete this project"}
+                onClick={() => canManageProjectActions && router.push(`/projects?delete=${encodeURIComponent(projectId)}`)}
                 onMouseEnter={() => setIsHoveredMore(true)}
                 onMouseLeave={() => setIsHoveredMore(false)}
                 className="min-h-11 min-w-11 p-2 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed"
