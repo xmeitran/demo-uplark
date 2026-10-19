@@ -21,7 +21,7 @@ import {
 import { BASELINE_LAYER, baselineTotals, diffBaselines, estimateFindings } from "./baseline";
 import { gateHooks } from "./gates";
 import { FIRST_STAGE_ORDER } from "./project-visibility";
-import { closeProjectWarnings, isWarningSuppressed, openOrRefreshProjectWarning } from "./project-warnings";
+import { closeProjectWarnings, isWarningSuppressed, openOrRefreshProjectWarning, rearmManuallyClosedWarning } from "./project-warnings";
 
 export interface BaselineCause {
   type: BaselineCauseType;
@@ -164,6 +164,9 @@ export async function syncEstimateNotices(client: any, workspaceId: string, proj
     const findings = estimateFindings(tasks);
     const wanted = new Set(findings.map((finding) => finding.dedupeKey));
     for (const warning of open) if (!wanted.has(warning.dedupeKey)) await closeProjectWarnings(client, { projectId, id: warning.id }, actorUserId, "Giờ dự kiến các sub-task đã nằm trong giờ của task");
+    // Estimates fit again: a D-19 closed by hand may open again if they stop fitting later.
+    const everRaised: Array<{ dedupeKey: string }> = await client.projectWarning.findMany({ where: { projectId, typeCode: "D-19", status: { not: "open" } }, select: { dedupeKey: true }, distinct: ["dedupeKey"] });
+    for (const { dedupeKey } of everRaised) if (!wanted.has(dedupeKey)) await rearmManuallyClosedWarning(client, projectId, dedupeKey, actorUserId, "Giờ dự kiến đã nằm trong giờ của task");
     for (const finding of findings) {
       if (await isWarningSuppressed(client, projectId, finding.dedupeKey)) continue;
       await openOrRefreshProjectWarning(client, { workspaceId, projectId, typeCode: "D-19", severity: "low", ...finding, ownerUserId: firstStage?.ownerUserId ?? null, actorUserId });

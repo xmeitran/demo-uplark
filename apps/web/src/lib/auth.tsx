@@ -71,12 +71,18 @@ const LOCAL_FOUNDER_USER = authUserFromPrincipal({
   roleCodes: ["FOUNDER_GM"]
 });
 
+/** The session could not be checked (API down, 5xx): neither signed in nor signed out. */
+class SessionUnavailableError extends Error {}
+
 async function fetchSessionUser() {
   const response = await fetch("/api/auth/me", {
     cache: "no-store",
     credentials: "same-origin"
   });
 
+  // Only 401/403 mean "not signed in". A 5xx or gateway page while the API restarts must not send a signed-in user
+  // to the login page (and lose the filters in their URL).
+  if (response.status >= 500 && !LOCAL_AUTO_AUTH_ENABLED) throw new SessionUnavailableError(`Session check failed (${response.status})`);
   if (!response.ok) {
     if ((process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_LOCAL_AUTO_AUTH === "true") || process.env.NEXT_PUBLIC_STAGING_BYPASS_AUTH === "true") {
       return authUserFromPrincipal({
@@ -116,17 +122,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     let mounted = true;
+    let retryTimer: number | undefined;
     // Remove the former UI-only identity cache. It is never an authentication source.
     localStorage.removeItem("crm_auth_user");
-    fetchSessionUser().then(value => { if (mounted) setUser(value); })
-      .catch(() => { if (mounted) setUser(null); })
-      .finally(() => { if (mounted) setIsLoading(false); });
-    return () => { mounted = false; };
+    const check = () => {
+      fetchSessionUser()
+        .then(value => { if (mounted) { setUser(value); setIsLoading(false); } })
+        .catch(() => {
+          // Server unreachable: stay "loading" (no login redirect) and check again shortly.
+          if (mounted) retryTimer = window.setTimeout(check, 3000);
+        });
+    };
+    check();
+    return () => { mounted = false; if (retryTimer) window.clearTimeout(retryTimer); };
   }, []);
 
   useEffect(() => {
     if (!isLoading && !user && !PUBLIC_AUTH_PATHS.has(pathname) && !LOCAL_AUTO_AUTH_ENABLED) {
-      router.replace(`/login?returnTo=${encodeURIComponent(pathname)}`);
+      router.replace(`/login?returnTo=${encodeURIComponent(`${pathname}${window.location.search}`)}`);
     }
   }, [user, isLoading, pathname, router]);
 

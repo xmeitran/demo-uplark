@@ -24,12 +24,18 @@ export async function GET() {
 
   const endpoint = new URL(buildCrmApiEndpoint("/auth/me"));
   if (localAutoAuthEnabled() && !sessionToken) endpoint.searchParams.set("principal", "founder");
-  const response = await fetch(endpoint, {
-    cache: "no-store",
-    headers: {
-      ...(sessionToken ? { authorization: `Bearer ${sessionToken}` } : {})
-    }
-  });
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      cache: "no-store",
+      headers: {
+        ...(sessionToken ? { authorization: `Bearer ${sessionToken}` } : {})
+      }
+    });
+  } catch {
+    // The API is restarting or unreachable: that says nothing about the session, so it is not a 401.
+    return NextResponse.json({ message: "Máy chủ CRM tạm thời không phản hồi." }, { status: 503 });
+  }
   const body = (await response.json().catch(() => ({ message: "Unable to read auth session" }))) as
     | PrincipalContext
     | { message?: string };

@@ -186,9 +186,10 @@ export function WorkspaceAdminDashboard() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(input)
       });
-      const body = await response.json().catch(() => null) as { data?: { recipientCount?: number; recipientNames?: string[] }; message?: string } | null;
+      const body = await response.json().catch(() => null) as { data?: { recipientCount?: number; recipientNames?: string[]; failedRecipients?: Array<{ name: string; reason: string }> }; message?: string } | null;
       if (!response.ok) throw new Error(errorMessage(body, "Không gửi được nhắc Lark."));
-      setNotice(`Đã gửi nhắc Lark thủ công cho ${body?.data?.recipientCount ?? 0} người: ${(body?.data?.recipientNames ?? []).join(", ")}.`);
+      const failed = body?.data?.failedRecipients ?? [];
+      setNotice(`Đã gửi nhắc Lark thủ công cho ${body?.data?.recipientCount ?? 0} người: ${(body?.data?.recipientNames ?? []).join(", ")}.${failed.length ? ` Chưa gửi được ${failed.length} người: ${failed.map((item) => `${item.name} (${item.reason})`).join("; ")}.` : ""}`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Không gửi được nhắc Lark.");
     } finally {

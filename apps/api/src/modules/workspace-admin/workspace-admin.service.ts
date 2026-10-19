@@ -21,6 +21,7 @@ import { buildPaginationMeta } from "../../shared/http/request-context";
 import { csvIn, csvList, vietnamDayRange } from "../../shared/http/list-filters";
 import { activeMembershipWhere } from "../identity-access/active-membership";
 import { CLOSED_WORK_STATUSES } from "../delivery-handoff/task-status";
+import { userIdsOnFullDayLeave } from "../lark-integration/personal-leave";
 import { getParameter, getStoredParameter, standardDayMinutes } from "../../shared/system-parameters";
 import { PROJECT_STATUS_ALIASES } from "../delivery-handoff/project-status";
 
@@ -435,6 +436,11 @@ export class WorkspaceAdminService {
     const workspace = await this.prisma.tenantWorkspace.findUnique({ where: { id: principal.workspaceId }, select: { tenantKey: true } });
     if (!workspace) throw new ForbiddenException("Workspace is not available");
     const dayMinutes = standardDayMinutes({ standardDayHours: await getStoredParameter(this.prisma, principal.workspaceId, "standardDayHours") });
+    // D-09: nobody is reminded on a workspace day off (the card says so), nor on their own full day of approved leave.
+    const dayOff = typeof (this.prisma as any).workspaceDayOff?.findFirst === "function"
+      ? await this.prisma.workspaceDayOff.findFirst({ where: { workspaceId: principal.workspaceId, isActive: true, date: dateOnly(localDate) }, select: { name: true } })
+      : null;
+    if (dayOff) throw new BadRequestException(`Ngày ${localDate} là ngày nghỉ (${dayOff.name}) nên không gửi nhắc.`);
 
     let scopedUserIds: string[] | undefined;
     if (input.userId) {
@@ -465,7 +471,7 @@ export class WorkspaceAdminService {
       scopedUserIds = memberships.map((membership) => membership.userId);
     }
 
-    const users = await this.prisma.user.findMany({
+    const candidates = await this.prisma.user.findMany({
       where: {
         status: "ACTIVE",
         subjectType: "INTERNAL_USER",
@@ -487,7 +493,9 @@ export class WorkspaceAdminService {
       },
       orderBy: [{ displayName: "asc" }, { id: "asc" }]
     });
-    if (!users.length) throw new BadRequestException("Không có nhân sự phù hợp bộ lọc hoặc chưa tham gia project active.");
+    const onLeave = await userIdsOnFullDayLeave(this.prisma, principal.workspaceId, localDate, dayMinutes);
+    const users = candidates.filter((user) => !onLeave.has(user.id));
+    if (!users.length) throw new BadRequestException(candidates.length ? "Mọi người nhận đều nghỉ phép cả ngày hôm đó." : "Không có nhân sự phù hợp bộ lọc hoặc chưa tham gia project active.");
 
     const { startAt, endAt } = dayWindow(localDate);
     const userIds = users.map((user) => user.id);
@@ -598,52 +606,64 @@ export class WorkspaceAdminService {
       };
     };
     const payload = buildPayload(userFacts);
+    const sentUserIds = new Set<string>();
+    const failures: Array<{ name: string; reason: string }> = [];
     if (directDeliveryRequested) {
       const config = directMessageConfig();
       if (!config) throw new BadRequestException("Chưa cấu hình LARK_APP_ID/LARK_APP_SECRET để gửi tin nhắn riêng. Không dùng webhook group cho lựa chọn Một người/Team.");
       const missingIdentity = users.find((user) => !user.email && !user.identities[0]?.providerUserId);
       if (missingIdentity) throw new BadRequestException(`Người nhận ${missingIdentity.displayName} chưa có email workspace hoặc Lark open_id, không thể gửi tin nhắn riêng.`);
       const tenantAccessToken = await fetchTenantAccessToken(config);
+      // One recipient failing does not stop the others, and only those actually sent are logged — a retry targets the
+      // failed people instead of messaging the first ones again.
       for (const fact of userFacts) {
-        let resolvedOpenId = fact.user.email
-          ? await resolveLarkOpenIdByEmail(config, tenantAccessToken, fact.user.email)
-          : null;
-        // The CRM may still hold a tenant User ID (for example HCM273) while
-        // the directory email has changed. Resolve that tenant ID to the
-        // custom app's current Open ID before sending the direct message.
-        if (!resolvedOpenId) {
-          const legacyUserId = fact.user.identities.find((identity) => identity.provider === "lark_user_id")?.providerUserId;
-          if (legacyUserId) resolvedOpenId = await resolveLarkOpenIdByUserId(config, tenantAccessToken, legacyUserId);
-        }
-        if (resolvedOpenId && !fact.user.identities.some((identity) => identity.provider === "lark" && identity.providerUserId === resolvedOpenId)) {
-          const larkIdentity = fact.user.identities.find((identity) => identity.provider === "lark");
-          if (larkIdentity) {
-            await this.prisma.portalIdentity.update({ where: { id: larkIdentity.id }, data: { providerUserId: resolvedOpenId } });
-          } else {
-            await this.prisma.portalIdentity.create({ data: { userId: fact.user.id, provider: "lark", providerUserId: resolvedOpenId, tenantKey: workspace.tenantKey } });
+        try {
+          let resolvedOpenId = fact.user.email
+            ? await resolveLarkOpenIdByEmail(config, tenantAccessToken, fact.user.email)
+            : null;
+          // The CRM may still hold a tenant User ID (for example HCM273) while
+          // the directory email has changed. Resolve that tenant ID to the
+          // custom app's current Open ID before sending the direct message.
+          if (!resolvedOpenId) {
+            const legacyUserId = fact.user.identities.find((identity) => identity.provider === "lark_user_id")?.providerUserId;
+            if (legacyUserId) resolvedOpenId = await resolveLarkOpenIdByUserId(config, tenantAccessToken, legacyUserId);
           }
+          if (resolvedOpenId && !fact.user.identities.some((identity) => identity.provider === "lark" && identity.providerUserId === resolvedOpenId)) {
+            const larkIdentity = fact.user.identities.find((identity) => identity.provider === "lark");
+            if (larkIdentity) {
+              await this.prisma.portalIdentity.update({ where: { id: larkIdentity.id }, data: { providerUserId: resolvedOpenId } });
+            } else {
+              await this.prisma.portalIdentity.create({ data: { userId: fact.user.id, provider: "lark", providerUserId: resolvedOpenId, tenantKey: workspace.tenantKey } });
+            }
+          }
+          // Never send an email fallback when the custom app cannot resolve the
+          // recipient. Lark's message API may accept `email` in some tenants,
+          // but in this workspace it returns `invalid receive_id`; using an old
+          // app-scoped open_id is also invalid for the current custom app.
+          if (fact.user.email && !resolvedOpenId) {
+            throw new BadRequestException(
+              `Người nhận ${fact.user.displayName} chưa được liên kết với custom app Lark hiện tại (${fact.user.email}). ` +
+              "Không thể dùng Open ID cũ của app trước; hãy xác minh email Lark workspace hoặc liên kết lại tài khoản."
+            );
+          }
+          const receiveId = resolvedOpenId;
+          const receiveIdType = "open_id" as const;
+          if (!receiveId) throw new BadRequestException(`Người nhận ${fact.user.displayName} chưa có email workspace hoặc Lark open_id, không thể gửi tin nhắn riêng.`);
+          await postReminderDirectMessage(config, tenantAccessToken, receiveId, receiveIdType, buildPayload([fact]));
+          sentUserIds.add(fact.user.id);
+        } catch (error) {
+          failures.push({ name: fact.user.displayName, reason: error instanceof Error ? error.message : "Không gửi được" });
         }
-        // Never send an email fallback when the custom app cannot resolve the
-        // recipient. Lark's message API may accept `email` in some tenants,
-        // but in this workspace it returns `invalid receive_id`; using an old
-        // app-scoped open_id is also invalid for the current custom app.
-        if (fact.user.email && !resolvedOpenId) {
-          throw new BadRequestException(
-            `Người nhận ${fact.user.displayName} chưa được liên kết với custom app Lark hiện tại (${fact.user.email}). ` +
-            "Không thể dùng Open ID cũ của app trước; hãy xác minh email Lark workspace hoặc liên kết lại tài khoản."
-          );
-        }
-        const receiveId = resolvedOpenId;
-        const receiveIdType = "open_id" as const;
-        if (!receiveId) throw new BadRequestException(`Người nhận ${fact.user.displayName} chưa có email workspace hoặc Lark open_id, không thể gửi tin nhắn riêng.`);
-        await postReminderDirectMessage(config, tenantAccessToken, receiveId, receiveIdType, buildPayload([fact]));
       }
+      if (!sentUserIds.size) throw new BadRequestException(failures.map((failure) => failure.reason).join(" "));
     } else {
       await postReminderWebhook(payload);
+      for (const user of users) sentUserIds.add(user.id);
     }
+    const sentUsers = users.filter((user) => sentUserIds.has(user.id));
     const conditionKey = `manual:${randomUUID()}`;
     await this.prisma.reminderDeliveryLog.createMany({
-      data: users.map((user) => ({
+      data: sentUsers.map((user) => ({
         workspaceId: principal.workspaceId,
         localDate: dateOnly(localDate),
         moment: input.slot,
@@ -658,7 +678,7 @@ export class WorkspaceAdminService {
         sentAt: new Date()
       }))
     });
-    return { data: { sent: true, localDate, slot: input.slot, recipientCount: users.length, recipientNames: users.map((user) => user.displayName) } };
+    return { data: { sent: true, localDate, slot: input.slot, recipientCount: sentUsers.length, recipientNames: sentUsers.map((user) => user.displayName), ...(failures.length ? { failedRecipients: failures } : {}) } };
   }
 
   async alerts(principal: PrincipalContext) {

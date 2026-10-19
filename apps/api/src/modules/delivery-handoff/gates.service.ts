@@ -450,12 +450,25 @@ export async function decideStatusProposal(
   if (proposal.status !== "pending") throw new ConflictException("Đề xuất này đã được xử lý hoặc đã được thay bằng đề xuất mới.");
   if (!canDecideStatusProposal(ctx.actor)) throw new ForbiddenException("Chỉ PIC dự án hoặc PM/Leader (Admin) mới được xác nhận hay từ chối đề xuất trạng thái.");
   const reason = String(input?.reason ?? "").trim();
+  // Each decision claims the row only while it is still pending, so a confirm and a decline sent together cannot both land.
+  const claim = async (data: Record<string, unknown>) => {
+    const claimed = await ctx.prisma.projectStatusProposal.updateMany({ where: { id: proposal.id, status: "pending" }, data });
+    if (claimed.count === 0) throw new ConflictException("Đề xuất này đã được xử lý hoặc đã được thay bằng đề xuất mới.");
+  };
   if (input?.decision === "decline") {
     if (!reason) throw new BadRequestException("Từ chối đề xuất trạng thái bắt buộc ghi lý do.");
-    return mapStatusProposal(await ctx.prisma.projectStatusProposal.update({ where: { id: proposal.id }, data: { status: "declined", decidedAt: now, decidedByUserId: ctx.principal.subjectId, declineReason: reason } }), ctx.actor);
+    await claim({ status: "declined", decidedAt: now, decidedByUserId: ctx.principal.subjectId, declineReason: reason });
+    return mapStatusProposal(await ctx.prisma.projectStatusProposal.findFirst({ where: { id: proposal.id } }), ctx.actor);
   }
   if (input?.decision !== "confirm") throw new BadRequestException("decision phải là confirm hoặc decline.");
-  await applyStatus(proposal.proposedStatus, reason || proposal.suggestedReason || undefined);
+  await claim({ status: "confirmed", decidedAt: now, decidedByUserId: ctx.principal.subjectId });
+  try {
+    await applyStatus(proposal.proposedStatus, reason || proposal.suggestedReason || undefined);
+  } catch (error) {
+    // The status change was refused: the proposal is still waiting for a decision.
+    await ctx.prisma.projectStatusProposal.update({ where: { id: proposal.id }, data: { status: "pending", decidedAt: null, decidedByUserId: null } });
+    throw error;
+  }
   // The update above already recomputed and retired the pending row; whatever it wrote, this proposal was confirmed.
   return mapStatusProposal(await ctx.prisma.projectStatusProposal.update({ where: { id: proposal.id }, data: { status: "confirmed", decidedAt: now, decidedByUserId: ctx.principal.subjectId } }), ctx.actor);
 }

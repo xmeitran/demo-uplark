@@ -3692,5 +3692,7 @@ export interface SendWorkspaceReminderResponse {
     slot: WorkspaceReminderSlotCode;
     recipientCount: number;
     recipientNames: string[];
+    /** Direct messages that could not be sent (the others went out and are logged). */
+    failedRecipients?: Array<{ name: string; reason: string }>;
   };
 }

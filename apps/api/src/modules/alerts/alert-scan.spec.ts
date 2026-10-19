@@ -270,6 +270,13 @@ describe("daily scan", () => {
     expect(skipped.skipped).toContainEqual({ code: "TD-02", reason: "Admin đã tắt điểm kích hoạt" });
   });
 
+  it("switching a trigger off closes the warnings it still had open (they no longer feed the status proposal)", async () => {
+    const { prisma, db } = fakePrisma({ parameters: [{ key: TRIGGER_OVERRIDES_KEY, value: { "TD-02": { enabled: false } }, createdAt: WED }] });
+    db.warnings.push({ id: "w-td", workspaceId: "w", projectId: "p1", typeCode: "TD-02", dedupeKey: "TD-02:task:t1", status: "open", title: "Task quá hạn", openedAt: WED, events: [] });
+    expect((await scan(prisma, WED)).closed).toMatchObject({ "TD-02": 1 });
+    expect(db.warnings[0]).toMatchObject({ status: "closed", closeReason: "Admin đã tắt điểm kích hoạt" });
+  });
+
   it("leaves DL-01 untouched when the run has no pending-hours source", async () => {
     const { prisma } = fakePrisma({});
     const result = await runAlertScan(prisma, "w", { now: WED, deliverLark: vi.fn() });

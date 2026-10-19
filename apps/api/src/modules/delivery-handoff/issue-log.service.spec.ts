@@ -1,6 +1,7 @@
 import { ForbiddenException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 import type { IssueLogActor } from "./issue-log";
+import { MANUAL_CLOSE_ACTION, REARM_ACTION } from "./project-warnings";
 import { createIssueLogRecord, mapIssueLogRecord, nextIssueLogCode, syncIssueLogWarnings, transitionIssueLogRecord, updateIssueLogRecord, type IssueLogContext } from "./issue-log.service";
 
 const project = { id: "prj-1", accountId: "acc-1", code: "P-1", name: "Dự án A" };
@@ -161,5 +162,21 @@ describe("issue log warnings", () => {
     const escalated = await transitionIssueLogRecord(context(prisma, owner, { notifications }), project, record, { action: "escalate", impactArea: "timeline", note: "Trễ" });
     expect(escalated).toMatchObject({ escalationLevel: "bd_lead", status: "pending" });
     expect(notifications.notifyIssueLogEvent).toHaveBeenLastCalledWith(expect.objectContaining({ recipientUserIds: ["usr-admin"], event: "escalated" }));
+  });
+});
+
+describe("BRI warnings closed by hand come back (review 19/10: D2)", () => {
+  it("once the condition clears, a hand-closed BRI-02 is re-armed so it can open again next time", async () => {
+    const warning = { id: "w-1", projectId: "p1", dedupeKey: "BRI-02:r-1", status: "closed", events: [{ action: "opened" }, { action: MANUAL_CLOSE_ACTION }] };
+    const client = { projectWarning: {
+      findMany: vi.fn(async () => []),
+      findFirst: vi.fn(async ({ where }: any) => (where.dedupeKey === "BRI-02:r-1" ? warning : null)),
+      update: vi.fn(async () => ({})),
+      create: vi.fn(), updateMany: vi.fn()
+    } };
+    // An open record that is no longer overdue (due in the future, with an owner): BRI-02 is not wanted any more.
+    const record = { id: "r-1", code: "VD-1", workspaceId: "w", projectId: "p1", status: "open", type: "risk", severity: "medium", ownerUserId: "u-1", dueAt: new Date("2099-01-01"), createdAt: new Date() };
+    await syncIssueLogWarnings(client, record, "u-pm", new Date("2026-10-19T00:00:00.000Z"));
+    expect(client.projectWarning.update).toHaveBeenCalledWith({ where: { id: "w-1" }, data: { events: { create: expect.objectContaining({ action: REARM_ACTION }) } } });
   });
 });

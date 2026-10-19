@@ -184,6 +184,13 @@ describe("time log rules (D-03, D-09, D-13, D-14, D-16, V-07)", () => {
     await expect(fits.service.createTimeEntry("task-1", log(120), actor, "usr-1")).resolves.toMatchObject({ id: "time-1" });
   });
 
+  it("a holiday inside a task's date range does not block creating or editing the task (only logging and planning)", async () => {
+    const { prisma, service } = setup({ dayOff: { name: "Nghỉ lễ" }, task: { assigneeUserId: "usr-1" } });
+    await expect(service.createTask({ ...newTask, plannedStartAt: "2026-10-05T02:00:00.000Z", dueAt: "2026-10-07T10:00:00.000Z" }, as("usr-1"))).resolves.toBeTruthy();
+    await expect(service.updateTask("task-1", { title: "Renamed", dueAt: "2026-10-07T10:00:00.000Z" } as any, as("usr-1"))).resolves.toBeTruthy();
+    expect(prisma.projectTask.create).toHaveBeenCalled();
+  });
+
   it("overtime minutes already logged that day do not use up the standard-hours cap (D-14)", async () => {
     const { service } = setup({ logged: { minutes: STANDARD_DAY_MINUTES + 60, overtimeMinutes: 180 } });
     await expect(service.createTimeEntry("task-1", log(120), as("usr-1"), "usr-1")).resolves.toMatchObject({ id: "time-1" });

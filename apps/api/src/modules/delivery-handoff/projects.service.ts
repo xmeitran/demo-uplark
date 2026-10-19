@@ -56,7 +56,6 @@ import {
   mapTaskSummary
 } from "./delivery.mapper";
 import { DEFAULT_PROJECT_STAGE_TEMPLATE, PILOT_PROJECT_MILESTONE_TEMPLATE } from "./stage-template";
-import { dateOnlyToUtcDate, getLocalDateKeysForTimeRange, lockWorkspaceDayOffDates } from "../workspace-calendar/day-off-time";
 import { CLOSED_WORK_STATUSES, isCancelledTaskStatus, isCompletedTaskStatus } from "./task-status";
 import {
   countMilestoneEvidence,
@@ -85,7 +84,7 @@ import type { DecideProjectStatusProposalInput, ProjectGateActionInput, UpdateTa
 import { isStartedStageStatus } from "./gates";
 import { AUTOMATIC_PROJECT_STATUSES } from "./status-proposal";
 import { actOnProjectGate, assertStageGateOpen, createProjectGate, decideStatusProposal, listProjectGates, pendingStatusProposal, projectIdsWithPendingProposal, loadProjectGatePosition, projectUsesStageGates, syncProjectStatus, type StatusSyncContext } from "./gates.service";
-import { PROJECT_HIERARCHY_EDIT_ROLE_CODES, BUILTIN_MILESTONE_TEMPLATE_KEY, TASK_PLAN_APPROVER_ROLES, workspaceDayOffMessage, taskPlanningBlockInclude, taskTimeEntryInclude, isPrismaWriteConflict, normalizeMilestoneEvidenceMode, mapMilestoneGateSummary, omitUndefined, hasInputKey, optionalEnum, validateTaskEstimateMinutes, templateTaskTypeLayer1, assertTaskTypePair, normalizeTemplateTasks, normalizeMilestoneTemplateMilestones } from "./projects.shared";
+import { PROJECT_HIERARCHY_EDIT_ROLE_CODES, BUILTIN_MILESTONE_TEMPLATE_KEY, TASK_PLAN_APPROVER_ROLES, taskPlanningBlockInclude, taskTimeEntryInclude, isPrismaWriteConflict, normalizeMilestoneEvidenceMode, mapMilestoneGateSummary, omitUndefined, hasInputKey, optionalEnum, validateTaskEstimateMinutes, templateTaskTypeLayer1, assertTaskTypePair, normalizeTemplateTasks, normalizeMilestoneTemplateMilestones } from "./projects.shared";
 import { PROJECT_MANAGE_FORBIDDEN_MESSAGE, ProjectPermissionsService } from "./project-permissions.service";
 import { TimeEntriesService } from "./time-entries.service";
 import { MilestoneGatesService } from "./milestone-gates.service";
@@ -241,16 +240,11 @@ type ProjectActivityFeedItem = {
 };
 const COMMENT_VISIBILITIES = new Set(["internal", "customer"]);
 const COMMENT_STATUSES = new Set(["active", "deleted"]);
-const WORKSPACE_DAY_OFF_OVERRIDE_ROLES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN"]);
 const PROJECT_PRIORITIES = new Set(["critical", "high", "medium", "low"]);
 const CANONICAL_PROJECT_ACTIVITY_TYPES = new Set(["work_logged", "work_planned", "task_status_changed"]);
 const ACTIVITY_DISPLAY_TIME_ZONE = "Asia/Ho_Chi_Minh";
 const TASK_ARCHIVE_STATUS = "archived";
 
-/** Only for a task's planned date range. Planning blocks and time logs are blocked on a day off for everyone (D-09). */
-function canOverrideWorkspaceDayOff(principal: PrincipalContext) {
-  return principal.roleCodes.some((roleCode) => WORKSPACE_DAY_OFF_OVERRIDE_ROLES.has(roleCode));
-}
 
 const taskInclude = {
   account: true,
@@ -3008,17 +3002,8 @@ export class ProjectsService {
     const plannedStartAt = optionalDate(input.plannedStartAt, "plannedStartAt");
     const dueAt = optionalDate(input.dueAt, "dueAt");
     assertTaskDateRange(plannedStartAt, dueAt);
-    if (!canOverrideWorkspaceDayOff(principal) && (plannedStartAt || dueAt) && typeof this.prisma.workspaceDayOff?.findFirst === "function") {
-      const scheduleStart = plannedStartAt ?? dueAt!;
-      const scheduleEnd = dueAt ?? plannedStartAt!;
-      const dayOffKeys = getLocalDateKeysForTimeRange(scheduleStart, scheduleEnd, scheduleStart);
-      const blockedDay = await this.prisma.workspaceDayOff.findFirst({
-        where: { workspaceId: principal.workspaceId, isActive: true, date: { in: dayOffKeys.map(dateOnlyToUtcDate) } },
-        select: { date: true, name: true },
-        orderBy: { date: "asc" }
-      });
-      if (blockedDay) throw new ConflictException(workspaceDayOffMessage(blockedDay));
-    }
+    // A holiday locks time logging and planning blocks (D-09), not a task's date range: a task from 01/09 to 03/09 may
+    // span 02/09 (rules 2.4 "Ngày lễ khóa ghi giờ").
 
     const normalized = await this.normalizeTaskScope(input, principal.workspaceId);
     // 7.7 / V-03: a task is added only in a project the account takes part in (Admin: any project).
@@ -3280,22 +3265,6 @@ export class ProjectsService {
         include: { taskAssignees: { select: { userId: true, isPrimary: true } } }
       });
       if (!current) throw new NotFoundException("Task not found");
-      if (!canOverrideWorkspaceDayOff(principal) && typeof tx.workspaceDayOff?.findFirst === "function") {
-        const nextPlannedStartAt = hasInputKey(input, "plannedStartAt") ? optionalDate(input.plannedStartAt, "plannedStartAt") : current.plannedStartAt;
-        const nextDueAt = hasInputKey(input, "dueAt") ? optionalDate(input.dueAt, "dueAt") : current.dueAt;
-        if (nextPlannedStartAt || nextDueAt) {
-          const scheduleStart = nextPlannedStartAt ?? nextDueAt!;
-          const scheduleEnd = nextDueAt ?? nextPlannedStartAt!;
-          const dayOffKeys = getLocalDateKeysForTimeRange(scheduleStart, scheduleEnd, scheduleStart);
-          await lockWorkspaceDayOffDates(tx, principal.workspaceId, dayOffKeys);
-          const blockedDay = await tx.workspaceDayOff.findFirst({
-            where: { workspaceId: principal.workspaceId, isActive: true, date: { in: dayOffKeys.map(dateOnlyToUtcDate) } },
-            select: { date: true, name: true },
-            orderBy: { date: "asc" }
-          });
-          if (blockedDay) throw new ConflictException(workspaceDayOffMessage(blockedDay));
-        }
-      }
       const currentAssigneeUserIds = Array.from(new Set([
         ...(current.taskAssignees ?? []).map((row) => row.userId),
         ...(current.assigneeUserId ? [current.assigneeUserId] : [])

@@ -43,7 +43,7 @@ import {
 } from "./issue-log";
 import { WORKSPACE_ADMIN_ROLE_CODES, isWorkspaceAdmin } from "./milestone-reviewer";
 import { projectPmUserId } from "./project-visibility";
-import { closeProjectWarnings, isWarningSuppressed, openOrRefreshProjectWarning } from "./project-warnings";
+import { closeProjectWarnings, isWarningSuppressed, openOrRefreshProjectWarning, rearmManuallyClosedWarning } from "./project-warnings";
 
 export const issueLogInclude = {
   account: true,
@@ -265,6 +265,8 @@ export async function syncIssueLogWarnings(client: any, record: any, actorUserId
   const stale = issueLogWarningKeys(record.id).filter((key) => !wantedKeys.has(key));
   const reason = isIssueLogOpen(record.status) ? "Điều kiện cảnh báo không còn" : `Bản ghi ${record.code}: ${ISSUE_LOG_STATUS_LABELS[record.status as IssueLogStatus] ?? record.status}`;
   await closeProjectWarnings(client, { projectId: record.projectId, dedupeKey: { in: stale } }, actorUserId, reason);
+  // The condition is gone: a warning someone closed by hand may open again the next time it comes back (as NL-03).
+  for (const key of stale) await rearmManuallyClosedWarning(client, record.projectId, key, actorUserId, "Điều kiện cảnh báo không còn");
   for (const warning of wanted) {
     if (await isWarningSuppressed(client, record.projectId, warning.dedupeKey)) continue;
     await openOrRefreshProjectWarning(client, {
