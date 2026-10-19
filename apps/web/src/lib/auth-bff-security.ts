@@ -1,3 +1,5 @@
+import { isSafeReturnPath } from "./safe-return-path";
+
 /** Public origins are configuration, never arbitrary forwarded-header input. */
 function configuredAuthOrigins() {
   const origins = new Set<string>();
@@ -57,7 +59,7 @@ export function isSameOriginAuthRequest(request: Request) {
 }
 
 export function safeAuthReturnTo(value: string | null | undefined) {
-  if (!value || !value.startsWith("/") || value.startsWith("//") || /[\\\r\n]/.test(value)) return "/";
+  if (!isSafeReturnPath(value)) return "/";
   return value.startsWith("/login") ? "/" : value;
 }
 

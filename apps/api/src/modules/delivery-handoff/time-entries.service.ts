@@ -145,6 +145,13 @@ export class TimeEntriesService {
     };
   }
 
+  /** 7.7: a User plans and logs only their own time; a time reviewer or the project's managers act for others. */
+  private async assertMayActForUser(userId: string, projectId: string | null, principal: PrincipalContext) {
+    if (userId === principal.subjectId || principal.roleCodes.some((roleCode) => TIME_REVIEW_ROLE_CODES.has(roleCode))) return;
+    if (await this.permissions.canManageProjectOrAdmin(this.prisma, projectId, principal)) return;
+    throw new ForbiddenException("Chỉ được lập kế hoạch cho chính mình; PIC / quản lý dự án mới lập thay người khác.");
+  }
+
   async createTaskPlanningBlock(taskId: string, input: CreateTaskPlanningBlockInput, principal: PrincipalContext, fallbackUserId?: string) {
     this.permissions.assertInternalTaskPrincipal(principal, "Task planning blocks are internal");
     const task = await this.permissions.ensureTaskForPrincipal(taskId, principal);
@@ -152,6 +159,7 @@ export class TimeEntriesService {
     if (!userId) {
       throw new BadRequestException("userId is required");
     }
+    await this.assertMayActForUser(userId, task.projectId, principal);
 
     const startAt = optionalDate(input.startAt, "startAt");
     const endAt = optionalDate(input.endAt, "endAt");
@@ -275,6 +283,7 @@ export class TimeEntriesService {
     if (!existing) {
       throw new NotFoundException("Task planning block not found");
     }
+    await this.assertMayActForUser(existing.userId, existing.projectId, principal);
 
     // D-09: nobody works a plan on a workspace day off; with no Admin bypass left, cancelling must stay possible.
     if (targetStatus !== "cancelled" && typeof this.prisma.workspaceDayOff?.findFirst === "function") {

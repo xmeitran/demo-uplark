@@ -1,3 +1,4 @@
+import { isSafeReturnPath } from "@/lib/safe-return-path";
 import { resolveAuthPublicOrigin } from "@/lib/auth-bff-security";
 import { setMfaChallengeCookie } from "@/lib/native-auth-proxy";
 import { cookies } from "next/headers";
@@ -109,5 +110,5 @@ function redirectWithError(origin: string, error: string) {
 }
 
 function safeReturnTo(returnTo: string) {
-  return returnTo.startsWith("/") && !returnTo.startsWith("//") && !/[\\\r\n]/.test(returnTo) ? returnTo : "/";
+  return isSafeReturnPath(returnTo) ? returnTo : "/";
 }

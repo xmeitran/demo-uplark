@@ -129,7 +129,7 @@ describe("granting a business role (Users › Vai trò nghiệp vụ)", () => {
       $executeRaw: vi.fn(),
       user: { findFirst: vi.fn().mockResolvedValue({ id: "usr-target", status: "ACTIVE", resourceProfile: null, roleBindings: bindings }), update: vi.fn().mockResolvedValue({ id: "usr-target", status: "ACTIVE" }), count: vi.fn().mockResolvedValue(1) },
       role: { findUnique: vi.fn(async ({ where }: any) => ({ id: `role-${where.code}`, code: where.code })), findUniqueOrThrow: vi.fn(async ({ where }: any) => ({ id: `role-${where.code}`, code: where.code })) },
-      roleBinding: { findFirst: vi.fn(async ({ where }: any) => (where.role?.code?.in ? (where.role.code.in.some((code: string) => actor.roleCodes.includes(code)) ? { id: "rb-actor" } : null) : null)), updateMany: vi.fn(), upsert: vi.fn() },
+      roleBinding: { findFirst: vi.fn(async ({ where }: any) => (where.role?.code?.in ? (where.role.code.in.some((code: string) => actor.roleCodes.includes(code)) ? { id: "rb-actor" } : null) : null)), updateMany: vi.fn(), upsert: vi.fn(), count: vi.fn().mockResolvedValue(0) },
       portalSession: { updateMany: vi.fn() },
       resourceProfile: { upsert: vi.fn().mockResolvedValue({ displayRole: null }) },
       auditEvent: { create: vi.fn() }
@@ -168,6 +168,32 @@ describe("granting a business role (Users › Vai trò nghiệp vụ)", () => {
       await expect(service.updateResourceProfile("Bearer a", "usr-target", { businessRoleCode: "PM" })).rejects.toBeInstanceOf(ForbiddenException);
       expect(tx.roleBinding.upsert).not.toHaveBeenCalled();
     }
+  });
+
+  it("setting a person inactive in one workspace does not suspend their login while another workspace still has them", async () => {
+    const shared = setup({ roleCodes: ["WORKSPACE_ADMIN"] });
+    shared.tx.roleBinding.count.mockResolvedValue(1);
+    await shared.service.updateResourceProfile("Bearer a", "usr-target", { employmentStatus: "INACTIVE" });
+    expect(shared.tx.user.update).not.toHaveBeenCalledWith(expect.objectContaining({ data: { status: "SUSPENDED" } }));
+    expect(shared.tx.roleBinding.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ workspaceId: "twk-1" }), data: { endsAt: expect.any(Date) } }));
+
+    const only = setup({ roleCodes: ["WORKSPACE_ADMIN"] });
+    await only.service.updateResourceProfile("Bearer a", "usr-target", { employmentStatus: "INACTIVE" });
+    expect(only.tx.user.update).toHaveBeenCalledWith({ where: { id: "usr-target" }, data: { status: "SUSPENDED" } });
+  });
+
+  it("restoring an ended Founder/GM membership through the profile needs a Founder/GM, like reactivateUser", async () => {
+    const founderBinding = { id: "rb-old", role: { code: "FOUNDER_GM" }, startsAt: new Date(0), endsAt: new Date(1) };
+    const restore = (roleCodes: string[]) => {
+      const ctx = setup({ roleCodes }, []);
+      const base = ctx.tx.roleBinding.findFirst.getMockImplementation();
+      ctx.tx.roleBinding.findFirst.mockImplementation(async (args: any) => (args.where.role?.code?.notIn ? founderBinding : base(args)));
+      return ctx;
+    };
+    const admin = restore(["WORKSPACE_ADMIN"]);
+    await expect(admin.service.updateResourceProfile("Bearer a", "usr-target", { employmentStatus: "ACTIVE" })).rejects.toBeInstanceOf(ForbiddenException);
+    expect(admin.tx.roleBinding.upsert).not.toHaveBeenCalled();
+    await expect(restore(["FOUNDER_GM"]).service.updateResourceProfile("Bearer a", "usr-target", { employmentStatus: "ACTIVE" })).resolves.toBeTruthy();
   });
 
   it("no self-escalation: only a Founder/GM changes their own business role", async () => {

@@ -62,8 +62,11 @@ describe("project visibility (7.7)", () => {
     expect(visibleTo(as("usr-dx", ["PM"], { viewMode: "user" }))).toEqual(["prj-member", "prj-pic", "prj-assignee", "prj-worklog"]);
   });
 
-  it("portal principals are not narrowed here (their scope is their customer grants)", () => {
-    expect(visibleProjectWhere(as("portal-1", [], { subjectType: "portal_user" }))).toEqual({});
+  it("narrows portal (customer) principals to their granted projects and clients; service accounts see all", () => {
+    expect(visibleProjectWhere(as("portal-1", [], { subjectType: "portal_user", customerProjectIds: ["prj-a"], customerAccountIds: ["acc-b"] })))
+      .toEqual({ OR: [{ id: { in: ["prj-a"] } }, { accountId: { in: ["acc-b"] } }] });
+    expect(visibleProjectWhere(as("portal-2", [], { subjectType: "portal_user" }))).toEqual({ OR: [{ id: { in: [] } }, { accountId: { in: [] } }] });
+    expect(visibleProjectWhere(as("svc", [], { subjectType: "service_account" }))).toEqual({});
   });
 
   it("hides revenue, cost and margin from everyone outside the cost permission group", () => {

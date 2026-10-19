@@ -11,14 +11,18 @@ import { INTERNAL_WORKLOG_PROJECT_TYPE } from "./task-classification";
  * Admin (in admin view): every project of the workspace.
  * User, and an Admin working in user view: the projects they take part in — project member, PIC / owner of any stage,
  * owner or assignee of a task — plus the projects of a client they are the PIC of (the BD in charge of that client).
- * Portal principals are not narrowed here; their scope is their customer grants, as before.
+ * Portal (customer) principals: only the projects and clients of their customer grants. Service accounts see everything.
  */
 export function seesAllProjects(principal: PrincipalContext) {
-  return principal.subjectType !== "internal_user" || (can("project.view_all", principal) && principal.viewMode !== "user");
+  if (principal.subjectType === "service_account") return true;
+  return principal.subjectType === "internal_user" && can("project.view_all", principal) && principal.viewMode !== "user";
 }
 
 export function visibleProjectWhere(principal: PrincipalContext): Prisma.ProjectWhereInput {
   if (seesAllProjects(principal)) return {};
+  if (principal.subjectType !== "internal_user") {
+    return { OR: [{ id: { in: principal.customerProjectIds ?? [] } }, { accountId: { in: principal.customerAccountIds ?? [] } }] };
+  }
   const userId = principal.subjectId;
   return { OR: [
     { members: { some: { userId, workspaceId: principal.workspaceId } } },

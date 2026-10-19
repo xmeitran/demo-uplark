@@ -1391,11 +1391,14 @@ describe("ProjectsService.updateStage", () => {
     const prisma = createStageDeletePrismaMock();
     const service = new ProjectsService(withMutationDependencies(prisma) as any);
 
+    // Clearing the owner of the first stage clears the PIC: a Delivery Lead may not, a PM may (7.7).
+    await expect(service.updateStage("prj-1", "stage-1", { activity: "Renamed stage", ownerUserId: null, plannedEndAt: null }, principal))
+      .rejects.toThrow("đổi PIC");
     await service.updateStage("prj-1", "stage-1", {
       activity: "Renamed stage",
       ownerUserId: null,
       plannedEndAt: null
-    }, principal);
+    }, { ...principal, roleCodes: ["PM", "WORKSPACE_ADMIN", "DELIVERY_LEAD"], heldRoleCodes: ["PM"] });
 
     expect(prisma.projectStage.update).toHaveBeenCalledWith({
       where: { id: "stage-1" },

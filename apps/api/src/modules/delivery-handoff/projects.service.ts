@@ -67,8 +67,8 @@ import {
   DEFAULT_MILESTONE_REVIEWER_MODE,
   normalizeMilestoneReviewerMode
 } from "./milestone-reviewer";
-import { INTERNAL_WORKLOG_PROJECT_TYPE, ISSUE_LOG_TYPES, PROJECT_TYPE_LABELS, isAdminAccount } from "@b2b-crm/contracts";
-import { canSeeProject, visibleProjectWhere, withoutProjectFinancials } from "./project-visibility";
+import { INTERNAL_WORKLOG_PROJECT_TYPE, ISSUE_LOG_TYPES, PROJECT_TYPE_LABELS, can, isAdminAccount } from "@b2b-crm/contracts";
+import { canSeeProject, projectPmUserId, visibleProjectWhere, withoutProjectFinancials } from "./project-visibility";
 import { buildRuleBasedProjectPlan } from "./project-plan-rules";
 import { canCloseProject, canReopenProject, isKnownProjectStatus, normalizeProjectStatus, projectStatusFilterValues, validateProjectStatusChange, PROJECT_STATUS_ALIASES, PROJECT_STATUS_CATALOGUE } from "./project-status";
 import { deriveMemberParticipation, NON_ACTUAL_TIME_ENTRY_STATUSES, participationWindow } from "./member-participation";
@@ -1596,6 +1596,9 @@ export class ProjectsService {
     const statusReason = optionalString(input.statusReason, "statusReason") ?? undefined;
     const closeReasonCode = optionalString(input.closeReasonCode, "closeReasonCode") ?? undefined;
     const statusOnlyRequest = Object.keys(input).every((key) => ["status", "statusReason", "closeReasonCode"].includes(key));
+    if (updatesOwner && (ownerUserId ?? null) !== await projectPmUserId(this.prisma, principal.workspaceId, projectId)) {
+      this.assertCanChangePic(principal);
+    }
 
     const project = await this.prisma.$transaction(async (tx) => {
       await this.permissions.lockProjectMembers(tx, principal.workspaceId, projectId);
@@ -2077,6 +2080,7 @@ export class ProjectsService {
   }
 
   async listStages(projectId: string, query: any, principal: PrincipalContext) {
+    this.permissions.assertInternalTaskPrincipal(principal, "Project stages are internal");
     const project = await this.permissions.ensureProject(projectId, principal.workspaceId);
     const stages = await this.prisma.projectStage.findMany({
       where: { projectId, workspaceId: principal.workspaceId, ...(query.status ? { status: query.status } : {}) },
@@ -2191,6 +2195,11 @@ export class ProjectsService {
     }, { isolationLevel: "Serializable" });
   }
 
+  /** 7.7: "PM và Dx Director đổi PIC" (Founder/GM and Workspace Admin hold every Admin right). */
+  private assertCanChangePic(principal: PrincipalContext) {
+    if (!can("project.pic.change", principal)) throw new ForbiddenException("Chỉ PM, Dx Director hoặc Admin toàn quyền mới đổi PIC dự án.");
+  }
+
   async updateStage(
     projectId: string,
     stageId: string,
@@ -2246,6 +2255,12 @@ export class ProjectsService {
       existingStage.projectId,
       typeof data.ownerUserId === "string" ? [data.ownerUserId] : []
     );
+    if (hasInputKey(input, "ownerUserId")) {
+      // The PIC is the owner of the project's first stage, so changing that owner is a PIC change (7.7).
+      const firstStage = await tx.projectStage.findFirst({ where: { projectId, workspaceId: principal.workspaceId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }], select: { id: true, ownerUserId: true, milestoneId: true } });
+      const touchesFirstStage = firstStage && (firstStage.id === stageId || (options.scope?.trim().toLowerCase() === "milestone" && firstStage.milestoneId === existingStage.milestoneId));
+      if (touchesFirstStage && (optionalString(input.ownerUserId, "ownerUserId") ?? null) !== firstStage.ownerUserId) this.assertCanChangePic(principal);
+    }
 
     if (scope === "milestone") {
       const milestoneData = omitUndefined({ ...data, activity: undefined });
@@ -2462,7 +2477,9 @@ export class ProjectsService {
     const where = {
       workspaceId: principal.workspaceId,
       projectId,
-      ...(artifactType ? { artifactType } : {})
+      ...(artifactType ? { artifactType } : {}),
+      // Customers only ever see documents shared with them.
+      ...(principal.subjectType === "portal_user" ? { customerVisible: true, internalOnly: false } : {})
     };
 
     const [documents, total] = await this.prisma.$transaction([
@@ -2662,6 +2679,7 @@ export class ProjectsService {
   }
 
   async listProjectActivities(projectId: string, query: any, principal: PrincipalContext) {
+    this.permissions.assertInternalTaskPrincipal(principal, "Project activity is internal");
     await this.permissions.ensureProject(projectId, principal.workspaceId);
     const pagination = normalizePagination({ limit: query.limit ?? 10, offset: query.offset });
     const status = optionalString(query.status, "status")?.toLowerCase();
@@ -2812,6 +2830,7 @@ export class ProjectsService {
   }
 
   async listProjectRisks(projectId: string, query: any, principal: PrincipalContext) {
+    this.permissions.assertInternalTaskPrincipal(principal, "Project issue log is internal");
     await this.permissions.ensureProject(projectId, principal.workspaceId);
     const pagination = normalizePagination({ limit: query.limit, offset: query.offset });
     const status = optionalString(query.status, "status");
@@ -3120,6 +3139,7 @@ export class ProjectsService {
     this.permissions.assertInternalTaskPrincipal(principal, "Task changes are internal");
     const scope = await this.normalizeTaskScope(input, principal.workspaceId, true);
     const existing = await this.permissions.ensureTaskForPrincipal(taskId, principal);
+    await this.permissions.assertCanEditTask(this.prisma, existing, principal);
     const stageChanged = scope.stageId !== undefined && scope.stageId !== existing.stageId;
     if (
       (scope.projectId !== undefined && scope.projectId !== existing.projectId)
@@ -3420,6 +3440,7 @@ export class ProjectsService {
   async deleteTask(taskId: string, principal: PrincipalContext) {
     this.permissions.assertInternalTaskPrincipal(principal, "Tasks are internal");
     const task = await this.permissions.ensureTaskForPrincipal(taskId, principal);
+    await this.permissions.assertCanEditTask(this.prisma, task, principal);
 
     if (task.archivedAt) {
       return {
@@ -3588,10 +3609,13 @@ export class ProjectsService {
     // No portal write is intended here: a customer could otherwise set any status string and backdate changedAt.
     this.permissions.assertInternalTaskPrincipal(principal, "Task status can only be changed by internal users");
     const existing = await this.permissions.ensureTaskForPrincipal(taskId, principal);
+    await this.permissions.assertCanEditTask(this.prisma, existing, principal);
     const toStatus = nonEmptyString(input.status, "status");
     // Nothing changed: no history row, no timestamps touched.
     if (toStatus === existing.status) return this.getTask(taskId, principal);
-    const changedAt = optionalDate(input.changedAt, "changedAt") ?? new Date();
+    // Backdating a status change moves completedAt / SLA clocks, so only a project manager or Admin may pass changedAt.
+    const requestedChangedAt = optionalDate(input.changedAt, "changedAt");
+    const changedAt = requestedChangedAt && await this.permissions.canManageProjectOrAdmin(this.prisma, existing.projectId, principal) ? requestedChangedAt : new Date();
 
     const task = await this.prisma.$transaction(async (tx) => {
       await tx.taskStatusHistory.create({
@@ -3873,12 +3897,12 @@ export class ProjectsService {
     }
 
     const parentTaskId = optionalString(input.parentTaskId, "parentTaskId");
+    const parentTask = parentTaskId ? await this.prisma.projectTask.findFirst({ where: { id: parentTaskId, workspaceId } }) : undefined;
     if (parentTaskId) {
-      const parentTask = await this.prisma.projectTask.findFirst({ where: { id: parentTaskId, workspaceId } });
       if (!parentTask) {
         throw new NotFoundException("Parent task not found");
       }
-      if (parentTask.accountId !== accountId || (project && parentTask.projectId !== project.id)) {
+      if (parentTask.accountId !== accountId || (project && parentTask.projectId !== project.id) || (projectId === null && parentTask.projectId)) {
         throw new BadRequestException("Parent task does not belong to the selected account/project");
       }
     }
@@ -3886,7 +3910,8 @@ export class ProjectsService {
     return {
       accountId,
       workspaceId,
-      projectId: projectId === null ? null : project?.id ?? projectId ?? undefined,
+      // A sub-task lives in its parent's project, so the project's visibility and gates apply to it too.
+      projectId: projectId === null ? null : project?.id ?? projectId ?? parentTask?.projectId ?? undefined,
       stageId,
       opportunityId: optionalString(input.opportunityId, "opportunityId"),
       ticketId: optionalString(input.ticketId, "ticketId"),

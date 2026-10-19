@@ -122,7 +122,7 @@ describe("task classification on write (D-02, D-04, matrix 4.3)", () => {
   });
 
   it("updateTask ignores a client-sent Layer 2, fills an empty Layer 1 from the stage and audits the reclassification", async () => {
-    const { prisma, service } = setup();
+    const { prisma, service } = setup({ task: { assigneeUserId: "usr-1" } });
     prisma.pnlPeriod.findMany.mockResolvedValue([{ periodKey: "2026-09" }]);
     await service.updateTask("task-1", { title: "Renamed", taskTypeLayer2: "INTERNAL_PROJECT" } as any, as("usr-1"));
     expect(prisma.projectTask.update.mock.calls[0][0].data).toMatchObject({ taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT" });

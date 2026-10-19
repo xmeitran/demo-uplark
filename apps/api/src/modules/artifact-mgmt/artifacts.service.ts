@@ -1,11 +1,24 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, sep } from "node:path";
 import type { CreateFileDownloadGrantInput, PrincipalContext, UploadFileInput } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
+import { seesAllProjects, visibleProjectWhere } from "../delivery-handoff/project-visibility";
 import { buildPaginationMeta, nonEmptyString, normalizePagination, optionalBoolean, optionalInteger, optionalString } from "../../shared/http/request-context";
 import { optionalStringArray, toIso } from "../../shared/http/api-mappers";
+
+/**
+ * Files and artifacts follow the project they belong to (7.7): an account sees the files of the projects it may see,
+ * plus client-level files (no project). Customers see only files shared with them inside their grants.
+ */
+function visibleFileWhere(principal: PrincipalContext): Record<string, unknown> {
+  if (principal.subjectType === "portal_user") {
+    return { customerVisible: true, internalOnly: false, OR: [{ projectId: { in: principal.customerProjectIds ?? [] } }, { accountId: { in: principal.customerAccountIds ?? [] } }] };
+  }
+  if (seesAllProjects(principal)) return {};
+  return { OR: [{ projectId: null }, { project: visibleProjectWhere(principal) }] };
+}
 
 const DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const DEFAULT_ALLOWED_CONTENT_TYPES = [
@@ -57,7 +70,8 @@ export class ArtifactsService {
       workspaceId: principal.workspaceId,
       ...(optionalString(query.accountId, "accountId") ? { accountId: query.accountId } : {}),
       ...(optionalString(query.projectId, "projectId") ? { projectId: query.projectId } : {}),
-      ...(optionalString(query.artifactType, "artifactType") ? { artifactType: query.artifactType } : {})
+      ...(optionalString(query.artifactType, "artifactType") ? { artifactType: query.artifactType } : {}),
+      AND: [visibleFileWhere(principal)]
     };
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.projectArtifact.findMany({ where, orderBy: [{ updatedAt: "desc" }], take: pagination.limit, skip: pagination.offset }),
@@ -78,7 +92,7 @@ export class ArtifactsService {
   async createArtifact(input: any, principal: PrincipalContext) {
     const account = await this.ensureAccount(nonEmptyString(input.accountId, "accountId"), principal.workspaceId);
     if (input.projectId) {
-      await this.ensureProject(input.projectId, principal.workspaceId, account.id);
+      await this.ensureProject(input.projectId, principal, account.id);
     }
     const code = input.code?.trim() || `${account.code}-ART-${Date.now().toString(36).toUpperCase()}`;
     const artifact = await this.prisma.projectArtifact.create({
@@ -105,7 +119,8 @@ export class ArtifactsService {
       workspaceId: principal.workspaceId,
       ...(optionalString(query.accountId, "accountId") ? { accountId: query.accountId } : {}),
       ...(optionalString(query.projectId, "projectId") ? { projectId: query.projectId } : {}),
-      ...(optionalString(query.status, "status") ? { status: query.status } : {})
+      ...(optionalString(query.status, "status") ? { status: query.status } : {}),
+      AND: [visibleFileWhere(principal)]
     };
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.fileObject.findMany({ where, orderBy: [{ updatedAt: "desc" }], take: pagination.limit, skip: pagination.offset }),
@@ -126,7 +141,7 @@ export class ArtifactsService {
   async createFile(input: UploadFileInput, principal: PrincipalContext) {
     const account = await this.ensureAccount(nonEmptyString(input.accountId, "accountId"), principal.workspaceId);
     if (input.projectId) {
-      await this.ensureProject(input.projectId, principal.workspaceId, account.id);
+      await this.ensureProject(input.projectId, principal, account.id);
     }
     const storageProvider = input.storageProvider ?? "local";
     if (storageProvider === "external") {
@@ -192,7 +207,7 @@ export class ArtifactsService {
   }
 
   async createDownloadGrant(fileObjectId: string, input: CreateFileDownloadGrantInput, principal: PrincipalContext) {
-    const file = await this.prisma.fileObject.findFirst({ where: { id: fileObjectId, workspaceId: principal.workspaceId, status: "active" } });
+    const file = await this.prisma.fileObject.findFirst({ where: { id: fileObjectId, workspaceId: principal.workspaceId, status: "active", AND: [visibleFileWhere(principal)] } });
     if (!file) {
       throw new NotFoundException("File not found");
     }
@@ -277,8 +292,9 @@ export class ArtifactsService {
     return account;
   }
 
-  private async ensureProject(projectId: string, workspaceId: string, accountId: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, workspaceId, accountId } });
+  private async ensureProject(projectId: string, principal: PrincipalContext, accountId: string) {
+    if (principal.subjectType === "portal_user") throw new ForbiddenException("Customers cannot add project files");
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, workspaceId: principal.workspaceId, accountId, AND: [visibleProjectWhere(principal)] } });
     if (!project) {
       throw new BadRequestException("Project does not belong to selected account/workspace");
     }

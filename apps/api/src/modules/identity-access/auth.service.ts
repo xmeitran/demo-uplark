@@ -460,6 +460,9 @@ export class AuthService {
         if (nextSystemRole !== currentSystemRole) {
           assertNotSelfPrivilegeChange(principal, userId);
           assertFounderRoleChangeAllowed(principal.roleCodes, currentSystemRole === "FOUNDER_GM", nextSystemRole === "FOUNDER_GM");
+        } else {
+          // Restoring an ended membership gives its role back: same rule as reactivateUser (only a Founder restores a Founder).
+          assertFounderRoleChangeAllowed(principal.roleCodes, false, nextSystemRole === "FOUNDER_GM");
         }
         if (nextSystemRole !== "FOUNDER_GM") await ensureAnotherFounder(tx, principal.workspaceId, principal.tenantKey, userId);
         const role = await tx.role.findUniqueOrThrow({ where: { code: nextSystemRole } });
@@ -476,8 +479,15 @@ export class AuthService {
       const profile = await tx.resourceProfile.upsert({ where: { userId }, update: { displayRole: input.displayRole, employmentStatus, defaultWeeklyCapacityMinutes: input.weeklyCapacityMinutes, billableTargetPercent: input.billableTargetPercent, active: employmentStatus !== "INACTIVE" }, create: { userId, displayRole: input.displayRole, employmentStatus, defaultWeeklyCapacityMinutes: input.weeklyCapacityMinutes ?? 2400, billableTargetPercent: input.billableTargetPercent ?? 70, skills: [], active: employmentStatus !== "INACTIVE" } });
       const before = { status: user.status, displayRole: user.resourceProfile?.displayRole ?? null, active: user.resourceProfile?.active ?? null, systemRole: currentSystemRole };
       const shouldSuspend = employmentStatus !== "ACTIVE";
-      const nextUser = await tx.user.update({ where: { id: userId }, data: { status: shouldSuspend ? "SUSPENDED" : "ACTIVE" } });
       if (employmentStatus === "INACTIVE") await tx.roleBinding.updateMany({ where: { userId, workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, ...activeMembershipWhere() }, data: { endsAt: new Date() } });
+      // The login is global; like deactivateUser, this workspace only suspends it when no other workspace still has the person.
+      const otherMemberships = shouldSuspend
+        ? await tx.roleBinding.count({ where: { userId, NOT: { workspaceId: principal.workspaceId }, ...activeMembershipWhere() } })
+        : 0;
+      if (shouldSuspend) await tx.portalSession.updateMany({ where: { userId, workspaceId: principal.workspaceId, revokedAt: null }, data: { revokedAt: new Date() } });
+      const nextUser = shouldSuspend && otherMemberships > 0
+        ? user
+        : await tx.user.update({ where: { id: userId }, data: { status: shouldSuspend ? "SUSPENDED" : "ACTIVE" } });
       await tx.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "people.profile_changed", resource: "user", resourceId: userId, before, after: { status: nextUser.status, displayRole: profile.displayRole, systemRole: nextSystemRole, employmentStatus }, requestId: randomUUID() } });
       return { user: nextUser, profile, employmentStatus };
     });

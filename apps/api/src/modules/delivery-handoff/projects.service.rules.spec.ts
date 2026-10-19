@@ -119,7 +119,12 @@ describe("destructive project changes", () => {
   });
 
   it("deleteTask hard-deletes only for a manager or admin; anyone else archives the task", async () => {
-    const member = setup({ member: true });
+    // 7.7: someone who neither owns, is assigned nor manages the task cannot delete or archive it.
+    const stranger = setup({ member: true });
+    await expect(stranger.service.deleteTask("task-1", as("usr-1"))).rejects.toBeInstanceOf(ForbiddenException);
+    expect(stranger.prisma.projectTask.update).not.toHaveBeenCalled();
+
+    const member = setup({ member: true, task: { assigneeUserId: "usr-1" } });
     await expect(member.service.deleteTask("task-1", as("usr-1"))).resolves.toMatchObject({ deleted: false, archived: true });
     expect(member.prisma.projectTask.delete).not.toHaveBeenCalled();
     expect(member.prisma.projectTask.update).toHaveBeenCalledWith({ where: { id: "task-1" }, data: expect.objectContaining({ status: "archived", archivedByUserId: "usr-1" }) });
@@ -134,7 +139,7 @@ describe("destructive project changes", () => {
 
 describe("task rules", () => {
   it("transitionTask writes no history row when the status is unchanged", async () => {
-    const { prisma, service } = setup();
+    const { prisma, service } = setup({ task: { assigneeUserId: "usr-1" } });
     await expect(service.transitionTask("task-1", { status: "todo" } as any, as("usr-1"), "usr-1")).resolves.toMatchObject({ id: "task-1", status: "todo" });
     expect(prisma.taskStatusHistory.create).not.toHaveBeenCalled();
     expect(prisma.projectTask.update).not.toHaveBeenCalled();
@@ -151,9 +156,11 @@ describe("task rules", () => {
     await expect(owner.service.updateTask("task-1", { ownerUserId: "usr-b", assigneeUserIds: ["usr-a"] } as any, as("usr-owner"))).resolves.toMatchObject({ id: "task-1" });
     expect(auditActions(owner.prisma)).toContain("task.assignee_transferred");
 
-    // Ordinary edits by an internal member stay open.
+    // 7.7: a member edits only tasks they own or are assigned to; the assignee may edit, an outsider may not.
     const editor = setup({ member: true, task: current });
-    await expect(editor.service.updateTask("task-1", { title: "Renamed", assigneeUserIds: ["usr-a"], ownerUserId: "usr-owner" } as any, as("usr-1"))).resolves.toMatchObject({ id: "task-1" });
+    await expect(editor.service.updateTask("task-1", { title: "Renamed", assigneeUserIds: ["usr-a"], ownerUserId: "usr-owner" } as any, as("usr-1"))).rejects.toBeInstanceOf(ForbiddenException);
+    const assignee = setup({ member: true, task: current });
+    await expect(assignee.service.updateTask("task-1", { title: "Renamed", assigneeUserIds: ["usr-a"], ownerUserId: "usr-owner" } as any, as("usr-a"))).resolves.toMatchObject({ id: "task-1" });
   });
 
   it("an approved task plan locks start, due and estimate except for the approver roles", async () => {
@@ -165,13 +172,13 @@ describe("task rules", () => {
     }
 
     // Re-sending the approved values with another edit is not a plan change.
-    const same = setup({ member: true, task: approved });
+    const same = setup({ member: true, task: { ...approved, assigneeUserId: "usr-1" } });
     await expect(same.service.updateTask("task-1", { title: "Renamed", dueAt: task.dueAt.toISOString(), plannedStartAt: task.plannedStartAt.toISOString(), estimateMinutes: 240 } as any, as("usr-1"))).resolves.toMatchObject({ id: "task-1" });
 
     const approver = setup({ member: true, task: approved });
     await expect(approver.service.updateTask("task-1", { dueAt: "2026-10-12T10:00:00.000Z" } as any, as("usr-pm", "PM"))).resolves.toMatchObject({ id: "task-1" });
 
-    const draft = setup({ member: true });
+    const draft = setup({ member: true, task: { assigneeUserId: "usr-1" } });
     await expect(draft.service.updateTask("task-1", { dueAt: "2026-10-12T10:00:00.000Z" } as any, as("usr-1"))).resolves.toMatchObject({ id: "task-1" });
   });
 
@@ -199,7 +206,13 @@ describe("task rules", () => {
   it("a planning block can only be created for a member of the task's project", async () => {
     const { prisma, service } = setup({ member: true });
     prisma.projectMember.findMany.mockResolvedValue([]);
-    await expect(service.createTaskPlanningBlock("task-1", { userId: "usr-outsider", startAt: "2026-10-05T02:00:00.000Z", endAt: "2026-10-05T03:00:00.000Z" } as any, as("usr-1"), "usr-1")).rejects.toThrow("chưa là thành viên dự án");
+    await expect(service.createTaskPlanningBlock("task-1", { userId: "usr-outsider", startAt: "2026-10-05T02:00:00.000Z", endAt: "2026-10-05T03:00:00.000Z" } as any, as("usr-1", "DELIVERY_LEAD"), "usr-1")).rejects.toThrow("chưa là thành viên dự án");
+    expect(prisma.taskPlanningBlock.create).not.toHaveBeenCalled();
+  });
+
+  it("a member plans only their own time; planning for a teammate needs a project manager (7.7)", async () => {
+    const { prisma, service } = setup({ member: true });
+    await expect(service.createTaskPlanningBlock("task-1", { userId: "usr-teammate", startAt: "2026-10-05T02:00:00.000Z", endAt: "2026-10-05T03:00:00.000Z" } as any, as("usr-1"), "usr-1")).rejects.toThrow("Chỉ được lập kế hoạch cho chính mình");
     expect(prisma.taskPlanningBlock.create).not.toHaveBeenCalled();
   });
 });
@@ -329,7 +342,7 @@ describe("project warnings", () => {
   const closedWarning = (...actions: string[]) => ({ id: "warn-1", status: "closed", events: actions.map((action) => ({ action })) });
 
   it("does not reopen a manually closed NL-03 on an unrelated edit, and reopens once an owner was set and removed again", async () => {
-    const suppressed = setup({ member: true });
+    const suppressed = setup({ pic: "usr-1" });
     suppressed.prisma.projectWarning.findFirst.mockImplementation(async (args: any) => (args.where.status ? null : closedWarning("opened", MANUAL_CLOSE_ACTION)));
     await suppressed.service.updateTask("task-1", { title: "Still nobody" } as any, as("usr-1"));
     expect(suppressed.prisma.projectWarning.create).not.toHaveBeenCalled();
@@ -341,7 +354,7 @@ describe("project warnings", () => {
     expect(assigned.prisma.projectWarning.update).toHaveBeenCalledWith({ where: { id: "warn-1" }, data: { events: { create: expect.objectContaining({ action: REARM_ACTION }) } } });
 
     // ...so the next time the task is ownerless the warning opens again.
-    const reopened = setup({ member: true });
+    const reopened = setup({ pic: "usr-1" });
     reopened.prisma.projectWarning.findFirst.mockImplementation(async (args: any) => (args.where.status ? null : closedWarning("opened", MANUAL_CLOSE_ACTION, REARM_ACTION)));
     await reopened.service.updateTask("task-1", { title: "Ownerless again" } as any, as("usr-1"));
     expect(reopened.prisma.projectWarning.create).toHaveBeenCalledWith({ data: expect.objectContaining({ dedupeKey: "NL-03:task:task-1" }) });
@@ -357,7 +370,7 @@ describe("project warnings", () => {
   });
 
   it("closes NL-01 once the departed member has no open task left, and writes the warning in the task's transaction", async () => {
-    const { prisma, service } = setup({ member: true, task: { ownerUserId: "usr-2", status: "in_progress" } });
+    const { prisma, service } = setup({ member: true, pic: "usr-1", task: { ownerUserId: "usr-2", status: "in_progress" } });
     prisma.projectWarning.findMany.mockImplementation(async (args: any) => (args.where.typeCode === "NL-01" ? [{ dedupeKey: "NL-01:usr-gone" }] : args.where.dedupeKey === "NL-01:usr-gone" ? [{ id: "warn-nl01" }] : []));
     let insideTransaction = false;
     prisma.$transaction.mockImplementation(async (callback: any) => { insideTransaction = true; try { return await callback(prisma); } finally { insideTransaction = false; } });
@@ -371,7 +384,7 @@ describe("project warnings", () => {
     expect(warningWrites).toEqual([true]);
 
     // Still one open task for that member: the warning stays.
-    const open = setup({ member: true, task: { ownerUserId: "usr-2" } });
+    const open = setup({ member: true, pic: "usr-1", task: { ownerUserId: "usr-2" } });
     open.prisma.projectWarning.findMany.mockImplementation(async (args: any) => (args.where.typeCode === "NL-01" ? [{ dedupeKey: "NL-01:usr-gone" }] : []));
     open.prisma.projectTask.count.mockResolvedValue(1);
     await open.service.transitionTask("task-1", { status: "in_progress" } as any, as("usr-1"), "usr-1");

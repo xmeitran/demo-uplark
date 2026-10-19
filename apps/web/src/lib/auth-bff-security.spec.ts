@@ -18,7 +18,8 @@ describe("auth browser trust boundary", () => {
     expect(redactAuthCredentials({session:{token:"secret",expiresAt:"later"},accepted:true})).toEqual({session:{expiresAt:"later"},accepted:true});
   });
   it("rejects external and browser-normalized redirect paths", () => {
-    for (const path of ["https://evil.test", "//evil.test", "/\\evil.test", "/login", "/\r\nevil"]) expect(safeAuthReturnTo(path)).toBe("/");
+    // A tab, newline or backslash is dropped/normalised by the browser, so "/\t/evil.test" would leave the site.
+    for (const path of ["https://evil.test", "//evil.test", "/\\evil.test", "/login", "/\r\nevil", "/\t/evil.test", "/ /evil.test", "/\u0000/evil.test"]) expect(safeAuthReturnTo(path)).toBe("/");
     expect(safeAuthReturnTo("/settings?tab=security")).toBe("/settings?tab=security");
   });
 });
