@@ -111,8 +111,8 @@ describe("daily scan", () => {
   it("sends 'admins' alerts to every Admin account type, and resolves the PM by the shared first-stage rule", async () => {
     const { prisma, db } = fakePrisma({
       tasks: [task({ assigneeUserId: null, dueAt: vn("2026-10-12") })],
-      // The stage of the LATER milestone has the lower stage order: the owner of the first stage by stage order is the PM.
-      stages: [stage({ id: "s2", sortOrder: 20, ownerUserId: "by-milestone", milestone: { sortOrder: 1 } }), stage({ id: "s1", sortOrder: 10, ownerUserId: "pm", milestone: { sortOrder: 2 } })]
+      // Stage order is numbered per milestone: the first stage is the first one of the FIRST milestone, so its owner is the PM.
+      stages: [stage({ id: "s2", sortOrder: 20, ownerUserId: "pm", milestone: { sortOrder: 1 } }), stage({ id: "s1", sortOrder: 10, ownerUserId: "later-milestone", milestone: { sortOrder: 2 } })]
     });
     const wheres: any[] = [];
     (prisma.user as any).findMany = async (args: any) => { wheres.push(args.where); return [{ id: "admin" }]; };

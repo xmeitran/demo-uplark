@@ -11,7 +11,7 @@ import { isLostDealProject } from "../delivery-handoff/lost-deal";
 import { isGatePassed, projectGatePosition } from "../delivery-handoff/gates";
 import { NON_ACTUAL_TIME_ENTRY_STATUSES } from "../delivery-handoff/member-participation";
 import { normalizeProjectStatus } from "../delivery-handoff/project-status";
-import { firstStageOf } from "../delivery-handoff/project-visibility";
+import { FIRST_STAGE_ORDER, firstStageOf } from "../delivery-handoff/project-visibility";
 import { isInternalWorklogProjectType } from "../delivery-handoff/task-classification";
 import { nextMonthKey, reportDayStart, reportMonthKey, reportMonthStart } from "./pnl-calc";
 import { classifyEntry, computeProjectPnl, type EngineEntry, type ProjectPnl } from "./pnl-engine";
@@ -267,7 +267,7 @@ export async function loadPnlContext(prisma: any, workspaceId: string, scope: Pn
     prisma.projectGate.findMany({ where: { ...inProjects, code: { in: ["G1", closeGate] } } }),
     prisma.projectStatusHistory.findMany({ where: inProjects, select: { projectId: true, fromStatus: true, toStatus: true, closeReasonCode: true, changedAt: true } }),
     prisma.projectPnlRecord.findMany({ where: inProjects }),
-    prisma.projectStage.findMany({ where: inProjects, orderBy: { sortOrder: "asc" }, select: { projectId: true, ownerUserId: true, sortOrder: true, createdAt: true, plannedStartAt: true, plannedEndAt: true } }),
+    prisma.projectStage.findMany({ where: inProjects, orderBy: FIRST_STAGE_ORDER, select: { projectId: true, ownerUserId: true, sortOrder: true, createdAt: true, milestone: { select: { sortOrder: true } }, plannedStartAt: true, plannedEndAt: true } }),
     prisma.projectMilestone.findMany({ where: inProjects, select: { projectId: true, sortOrder: true, gateStatus: true } })
   ]) : [[], [], [], [], [], []];
 

@@ -320,6 +320,12 @@ export function isUnauthorizedLiveProjectsError(error: unknown) {
   return error instanceof LiveProjectsError && error.status === 401;
 }
 
+/** Applies a mutation response that carries fewer fields than the screen holds (PATCH returns a plain summary without
+ * warning counts, status proposal or revenue): a field undefined in `next` keeps the value of `previous`. */
+export function mergeProjectUpdate(previous: Project, next: Project): Project {
+  return { ...previous, ...Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined)) } as Project;
+}
+
 export function mapProjectSummaryToUiProject(project: ProjectSummary): Project {
   const color = project.color || colorForId(project.id);
   const statusCode = resolveProjectStatus(project);

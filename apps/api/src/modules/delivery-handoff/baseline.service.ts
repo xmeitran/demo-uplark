@@ -20,6 +20,7 @@ import {
 } from "@b2b-crm/contracts";
 import { BASELINE_LAYER, baselineTotals, diffBaselines, estimateFindings } from "./baseline";
 import { gateHooks } from "./gates";
+import { FIRST_STAGE_ORDER } from "./project-visibility";
 import { closeProjectWarnings, isWarningSuppressed, openOrRefreshProjectWarning } from "./project-warnings";
 
 export interface BaselineCause {
@@ -158,7 +159,7 @@ export async function syncEstimateNotices(client: any, workspaceId: string, proj
     const [tasks, open, firstStage] = await Promise.all([
       client.projectTask.findMany({ where: { workspaceId, projectId, archivedAt: null }, select: { id: true, title: true, parentTaskId: true, estimateMinutes: true } }),
       client.projectWarning.findMany({ where: { projectId, typeCode: "D-19", status: "open" }, select: { id: true, dedupeKey: true } }),
-      client.projectStage.findFirst({ where: { workspaceId, projectId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }], select: { ownerUserId: true } })
+      client.projectStage.findFirst({ where: { workspaceId, projectId }, orderBy: FIRST_STAGE_ORDER, select: { ownerUserId: true } })
     ]);
     const findings = estimateFindings(tasks);
     const wanted = new Set(findings.map((finding) => finding.dedupeKey));

@@ -38,6 +38,7 @@ import {
   fetchLiveProjects,
   isUnauthorizedLiveProjectsError,
   mapProjectSummaryToUiProject,
+  mergeProjectUpdate,
   PROJECT_PAGE_SIZE,
   formatProjectStatusLabel,
   toBackendProjectStatus,
@@ -1576,11 +1577,13 @@ export default function ProjectsPage() {
           status: values.status === project.status ? undefined : toBackendProjectStatus(values.status),
           projectType: values.projectType,
           scopeSummary: values.scopeSummary || null,
-          ownerUserId,
+          // Only what the user changed: the dates shown are the stages' actual-or-planned days, so re-sending them would
+          // overwrite the planned dates (and the locked baseline); an unchanged PIC is not a PIC change.
+          ownerUserId: ownerUserId === (project.ownerUserId ?? null) ? undefined : ownerUserId,
           memberUserIds,
           isTestProject: values.isTestProject,
-          plannedStartAt: uiProjectDateToIso(values.plannedStartAt),
-          plannedEndAt: uiProjectDateToIso(values.plannedEndAt)
+          plannedStartAt: values.plannedStartAt === project.startDate ? undefined : uiProjectDateToIso(values.plannedStartAt),
+          plannedEndAt: values.plannedEndAt === project.dueDate ? undefined : uiProjectDateToIso(values.plannedEndAt)
         })
       });
 
@@ -1595,7 +1598,7 @@ export default function ProjectsPage() {
       }
 
       const updated = mapProjectSummaryToUiProject(await response.json());
-      setProjectsList(current => current.map(item => item.id === project.id ? updated : item));
+      setProjectsList(current => current.map(item => item.id === project.id ? mergeProjectUpdate(item, updated) : item));
       setEditingProject(null);
     } catch (error) {
       setProjectMutationError(error instanceof Error ? error.message : "Could not update project");
@@ -1620,7 +1623,7 @@ export default function ProjectsPage() {
       }
       if (!response.ok) throw await readApiError(response, "Không đóng được dự án");
       const updated = mapProjectSummaryToUiProject(await response.json());
-      setProjectsList(current => current.map(item => item.id === project.id ? updated : item));
+      setProjectsList(current => current.map(item => item.id === project.id ? mergeProjectUpdate(item, updated) : item));
       setDeleteNeedsClose(false);
       setDeletingProject(null);
     } catch (error) {

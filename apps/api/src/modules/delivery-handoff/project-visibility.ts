@@ -40,16 +40,27 @@ export async function canSeeProject(prisma: { project: { findFirst(args: any): P
 }
 
 /**
- * The one rule for "PM / PIC of the project": the owner of its first stage (stage sortOrder, then creation time).
- * Permissions (ProjectsService.projectPermissions), warning owners, alert recipients and the Lark bots all read it here.
+ * The one rule for "PM / PIC of the project": the owner of its first stage — first milestone, then stage sortOrder
+ * (numbered per milestone), then creation time. Permissions, warning owners, alert recipients, P&L and the Lark bots
+ * all read it through FIRST_STAGE_ORDER / firstStageOf / projectPmUserId.
  */
-export function firstStageOf<T extends { sortOrder: number; createdAt?: Date | string | null }>(stages: readonly T[]): T | undefined {
-  return [...stages].sort((left, right) => left.sortOrder - right.sortOrder || new Date(left.createdAt ?? 0).getTime() - new Date(right.createdAt ?? 0).getTime())[0];
+export const FIRST_STAGE_ORDER: Prisma.ProjectStageOrderByWithRelationInput[] = [{ milestone: { sortOrder: "asc" } }, { sortOrder: "asc" }, { createdAt: "asc" }];
+
+export function firstStageOf<T extends { sortOrder: number; createdAt?: Date | string | null; milestone?: { sortOrder: number } | null }>(stages: readonly T[]): T | undefined {
+  return [...stages].sort((left, right) => (left.milestone?.sortOrder ?? 0) - (right.milestone?.sortOrder ?? 0)
+    || left.sortOrder - right.sortOrder || new Date(left.createdAt ?? 0).getTime() - new Date(right.createdAt ?? 0).getTime())[0];
 }
 
 export async function projectPmUserId(client: any, workspaceId: string, projectId: string): Promise<string | null> {
-  const stage = await client.projectStage.findFirst({ where: { workspaceId, projectId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }], select: { ownerUserId: true } });
+  const stage = await client.projectStage.findFirst({ where: { workspaceId, projectId }, orderBy: FIRST_STAGE_ORDER, select: { ownerUserId: true } });
   return stage?.ownerUserId ?? null;
+}
+
+/** After stages are reordered or deleted, the PIC stays the same person: the new first stage takes over the PIC. */
+export async function keepProjectPic(client: any, workspaceId: string, projectId: string, previousPicUserId: string | null) {
+  if (!previousPicUserId) return;
+  const first = await client.projectStage.findFirst({ where: { workspaceId, projectId }, orderBy: FIRST_STAGE_ORDER, select: { id: true, ownerUserId: true } });
+  if (first && first.ownerUserId !== previousPicUserId) await client.projectStage.update({ where: { id: first.id }, data: { ownerUserId: previousPicUserId } });
 }
 
 /** 7.7: revenue, cost and margin are for the cost permission group only. */

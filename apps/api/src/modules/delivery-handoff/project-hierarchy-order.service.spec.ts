@@ -35,6 +35,7 @@ function hierarchyPrisma(options: {
     },
     projectStage: {
       findMany: vi.fn(),
+      findFirst: vi.fn().mockResolvedValue(null),
       update: vi.fn()
     },
     projectTask: {

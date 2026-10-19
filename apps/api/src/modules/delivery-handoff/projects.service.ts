@@ -68,7 +68,7 @@ import {
   normalizeMilestoneReviewerMode
 } from "./milestone-reviewer";
 import { INTERNAL_WORKLOG_PROJECT_TYPE, ISSUE_LOG_TYPES, PROJECT_TYPE_LABELS, can, isAdminAccount } from "@b2b-crm/contracts";
-import { canSeeProject, projectPmUserId, visibleProjectWhere, withoutProjectFinancials } from "./project-visibility";
+import { FIRST_STAGE_ORDER, canSeeProject, keepProjectPic, projectPmUserId, visibleProjectWhere, withoutProjectFinancials } from "./project-visibility";
 import { buildRuleBasedProjectPlan } from "./project-plan-rules";
 import { canCloseProject, canReopenProject, isKnownProjectStatus, normalizeProjectStatus, projectStatusFilterValues, validateProjectStatusChange, PROJECT_STATUS_ALIASES, PROJECT_STATUS_CATALOGUE } from "./project-status";
 import { deriveMemberParticipation, NON_ACTUAL_TIME_ENTRY_STATUSES, participationWindow } from "./member-participation";
@@ -123,7 +123,7 @@ const projectInclude = {
     }
   },
   stages: {
-    orderBy: [{ sortOrder: "asc" as const }, { createdAt: "asc" as const }],
+    orderBy: FIRST_STAGE_ORDER,
     select: {
       status: true,
       progressPercent: true,
@@ -1689,11 +1689,17 @@ export class ProjectsService {
       if (updatesStageStart || updatesStageEnd || updatesScope || updatesAcceptance || updatesOwner) {
         const stages = await tx.projectStage.findMany({
           where: { projectId, workspaceId: principal.workspaceId },
-          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-          select: { id: true }
+          orderBy: FIRST_STAGE_ORDER,
+          select: { id: true, plannedStartAt: true, plannedEndAt: true }
         });
         const firstStageId = stages[0]?.id;
         const lastStageId = stages[stages.length - 1]?.id;
+        // D-21: once the baseline is locked the project's planned dates move only through "Gia hạn stage".
+        const movesStart = updatesStageStart && stages[0] && !sameInstant(plannedStartAt ?? null, stages[0].plannedStartAt);
+        const movesEnd = updatesStageEnd && stages.length > 0 && !sameInstant(plannedEndAt ?? null, stages[stages.length - 1].plannedEndAt);
+        if ((movesStart || movesEnd) && await isBaselineLocked(tx, projectId)) {
+          throw new ConflictException("Baseline đã khóa: ngày kế hoạch của dự án chỉ đổi qua thao tác Gia hạn stage, có lý do và người duyệt (D-21).");
+        }
 
         if (firstStageId) {
           const firstStage = await tx.projectStage.update({
@@ -1831,7 +1837,7 @@ export class ProjectsService {
           OR: [{ ownerUserId: { not: null } }, { assigneeUserId: { not: null } }, { taskAssignees: { some: {} } }] }
       });
       if (!openTasks) return;
-      const firstStage = await tx.projectStage.findFirst({ where: { workspaceId: principal.workspaceId, projectId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }], select: { ownerUserId: true } });
+      const firstStage = await tx.projectStage.findFirst({ where: { workspaceId: principal.workspaceId, projectId }, orderBy: FIRST_STAGE_ORDER, select: { ownerUserId: true } });
       await openOrRefreshProjectWarning(tx, {
         workspaceId: principal.workspaceId,
         projectId,
@@ -1968,6 +1974,7 @@ export class ProjectsService {
       if (!lockedProject) {
         throw new NotFoundException("Project not found");
       }
+      const picBeforeReorder = await projectPmUserId(tx, principal.workspaceId, projectId);
 
       const currentIds = await this.canonicalHierarchySiblingIds(tx, {
         workspaceId: principal.workspaceId,
@@ -2039,6 +2046,8 @@ export class ProjectsService {
           requestId: `project-hierarchy:${projectId}:${input.expectedVersion}:${input.kind}:${Date.now()}`
         }
       });
+      // Moving another stage or milestone to the front must not hand the project to a different PIC.
+      await keepProjectPic(tx, principal.workspaceId, projectId, picBeforeReorder);
 
       return {
         kind: input.kind,
@@ -2240,7 +2249,7 @@ export class ProjectsService {
       progressPercent: optionalInteger(input.progressPercent, "progressPercent") ?? undefined
     });
     // D-21: after the baseline is locked the stage timeline changes only through "Gia hạn stage" (Admin approval, reason, new baseline version).
-    if ((["plannedStartAt", "plannedEndAt"] as const).some((key) => data[key] !== undefined && !sameInstant(data[key] as Date | null, existingStage[key])) && await isBaselineLocked(tx, projectId)) {
+    if (scope !== "milestone" && (["plannedStartAt", "plannedEndAt"] as const).some((key) => data[key] !== undefined && !sameInstant(data[key] as Date | null, existingStage[key])) && await isBaselineLocked(tx, projectId)) {
       throw new ConflictException("Baseline đã khóa: ngày kế hoạch của stage chỉ đổi qua thao tác Gia hạn stage (tab Điểm chốt & Tài liệu), có lý do và người duyệt (D-21).");
     }
     // V-11: a stage starts only after the gate before it is approved. Starting it also starts its SLA clock.
@@ -2257,13 +2266,37 @@ export class ProjectsService {
     );
     if (hasInputKey(input, "ownerUserId")) {
       // The PIC is the owner of the project's first stage, so changing that owner is a PIC change (7.7).
-      const firstStage = await tx.projectStage.findFirst({ where: { projectId, workspaceId: principal.workspaceId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }], select: { id: true, ownerUserId: true, milestoneId: true } });
+      const firstStage = await tx.projectStage.findFirst({ where: { projectId, workspaceId: principal.workspaceId }, orderBy: FIRST_STAGE_ORDER, select: { id: true, ownerUserId: true, milestoneId: true } });
       const touchesFirstStage = firstStage && (firstStage.id === stageId || (options.scope?.trim().toLowerCase() === "milestone" && firstStage.milestoneId === existingStage.milestoneId));
       if (touchesFirstStage && (optionalString(input.ownerUserId, "ownerUserId") ?? null) !== firstStage.ownerUserId) this.assertCanChangePic(principal);
     }
 
     if (scope === "milestone") {
-      const milestoneData = omitUndefined({ ...data, activity: undefined });
+      // Shared fields (name, owner, description…) go to every stage of the milestone. Status and dates do not: the
+      // milestone's start is its first stage's start and its end its last stage's end, and each stage that starts
+      // passes its own gate (V-11) and gets its own actual start (SLA clock) — never an overwrite of one already set.
+      const { status: milestoneStatus, plannedStartAt: milestoneStart, plannedEndAt: milestoneEnd, actualStartAt: _injectedStart, ...sharedData } = data as typeof data & { actualStartAt?: Date | null };
+      const milestoneData = omitUndefined({ ...sharedData, activity: undefined }) as typeof data;
+      const ordered = (await tx.projectStage.findMany({ where: { projectId, workspaceId: principal.workspaceId, milestoneId: existingStage.milestoneId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] })) ?? [];
+      const firstOfMilestone = ordered[0];
+      const lastOfMilestone = ordered[ordered.length - 1];
+      if (((milestoneStart !== undefined && firstOfMilestone && !sameInstant(milestoneStart as Date | null, firstOfMilestone.plannedStartAt))
+        || (milestoneEnd !== undefined && lastOfMilestone && !sameInstant(milestoneEnd as Date | null, lastOfMilestone.plannedEndAt))) && await isBaselineLocked(tx, projectId)) {
+        throw new ConflictException("Baseline đã khóa: ngày kế hoạch của milestone chỉ đổi qua thao tác Gia hạn stage, có lý do và người duyệt (D-21).");
+      }
+      for (const milestoneStage of ordered) {
+        const perStage: Record<string, unknown> = {};
+        if (typeof milestoneStatus === "string") {
+          perStage.status = milestoneStatus;
+          if (isStartedStageStatus(milestoneStatus) && !isStartedStageStatus(milestoneStage.status)) {
+            await assertStageGateOpen(tx, principal.workspaceId, milestoneStage.id, `bắt đầu stage "${milestoneStage.activity}"`);
+            if (!milestoneStage.actualStartAt) perStage.actualStartAt = new Date();
+          }
+        }
+        if (milestoneStart !== undefined && milestoneStage.id === firstOfMilestone?.id) perStage.plannedStartAt = milestoneStart;
+        if (milestoneEnd !== undefined && milestoneStage.id === lastOfMilestone?.id) perStage.plannedEndAt = milestoneEnd;
+        if (Object.keys(perStage).length) await tx.projectStage.update({ where: { id: milestoneStage.id }, data: perStage });
+      }
       const stage = await (async () => {
         if (requestedPhase) {
           await this.lockProjectHierarchy(tx, projectId, principal.workspaceId);
@@ -2429,7 +2462,19 @@ export class ProjectsService {
       await this.permissions.assertProjectManager(tx, projectId, principal);
       await this.lockProjectHierarchy(tx, projectId, principal.workspaceId);
       const taskIds = await this.collectTaskIdsForStages(tx, stageIds, principal.workspaceId);
+      // "Lịch sử không xóa": logged hours feed P&L and a used gate is the project's approval record, so a stage that
+      // carries either is not deleted (same rule as deleting a project); it can still be renamed or cancelled.
+      const [loggedEntries, plannedBlocks, usedGates] = await Promise.all([
+        taskIds.length ? tx.taskTimeEntry.count({ where: { workspaceId: principal.workspaceId, taskId: { in: taskIds } } }) : 0,
+        taskIds.length ? tx.taskPlanningBlock.count({ where: { workspaceId: principal.workspaceId, taskId: { in: taskIds } } }) : 0,
+        typeof (tx as any).projectGate?.count === "function" ? tx.projectGate.count({ where: { stageId: { in: stageIds }, status: { not: "not_submitted" } } }) : 0
+      ]);
+      if (loggedEntries || plannedBlocks || usedGates) {
+        const reasons = [loggedEntries ? `${loggedEntries} dòng giờ đã ghi` : "", plannedBlocks ? `${plannedBlocks} lịch kế hoạch` : "", usedGates ? "điểm chốt đã nộp/duyệt" : ""].filter(Boolean).join(", ");
+        throw new ConflictException(`Không xóa được ${scope === "milestone" ? "milestone" : "stage"} vì đã có ${reasons}. Đổi trạng thái sang Hủy thay vì xóa.`);
+      }
       deletedTaskIds = taskIds;
+      const picBeforeDelete = await projectPmUserId(tx, principal.workspaceId, projectId);
       await this.deleteTaskSubtree(tx, taskIds, principal.workspaceId);
       await closeProjectWarnings(tx, { projectId, dedupeKey: { in: [...stageIds.map((id) => `NL-03:stage:${id}`), ...taskIds.map((id) => `NL-03:task:${id}`)] } }, principal.subjectId, "Stage/Task đã bị xóa");
       await this.closeResolvedDepartedMemberWarnings(tx, principal, projectId);
@@ -2454,6 +2499,8 @@ export class ProjectsService {
           }
         });
       }
+      // Deleting the first stage keeps the same PIC on what is now the first stage.
+      await keepProjectPic(tx, principal.workspaceId, projectId, picBeforeDelete);
       await tx.project.update({
         where: { id: projectId },
         data: { hierarchyOrderVersion: { increment: 1 } }

@@ -26,6 +26,7 @@ import type { Project } from "../data";
 import {
   fetchLiveProjectById as fetchLiveProjectSummaryById,
   mapProjectSummaryToUiProject,
+  mergeProjectUpdate,
   formatProjectStatusLabel,
   readLiveProjectSnapshot,
   clearLiveProjectSnapshotCache,
@@ -4992,8 +4993,9 @@ export default function ProjectDetailPage() {
       throw new Error(await mutationErrorMessage(response, "Could not update project members"));
     }
 
+    // PATCH returns a plain summary: merge it so the revenue chip, warnings and status proposal stay on screen.
     const updatedProject = mapProjectSummaryToUiProject((await response.json()) as ProjectSummary);
-    setProject(updatedProject);
+    setProject((previous) => mergeProjectUpdate(previous, updatedProject));
     const updatedProjectMembers = updatedProject.id === PROJECT_NOT_FOUND.id
       ? EMPTY_TEAM_MEMBERS
       : dedupeTeamMembers(updatedProject.members.map(toProjectTeamMemberFromProjectMember));
@@ -6047,8 +6049,10 @@ export default function ProjectDetailPage() {
         // An unchanged status is left out: re-sending it must not run the start-stage gate check on a title or date edit.
         status: updated.status !== original?.status ? toApiStageStatus(updated.status) : undefined,
         ownerUserId: owner?.id,
-        plannedStartAt: toApiDateValue(updated.startDate),
-        plannedEndAt: toApiDateValue(updated.dueDate),
+        // The dates shown are actual-or-planned days: re-sending unchanged ones would overwrite the planned dates
+        // (and hit the locked baseline), so only a date the user changed is sent.
+        plannedStartAt: updated.startDate !== original?.startDate ? toApiDateValue(updated.startDate) : undefined,
+        plannedEndAt: updated.dueDate !== original?.dueDate ? toApiDateValue(updated.dueDate) : undefined,
         criteria: updated.description || "Stage completion criteria",
         description: updated.description,
         scopeSummary: updated.description,

@@ -1115,10 +1115,17 @@ export function CreateTaskModal({
     }))
   ];
 
+  // Reset the form when it opens, when its defaults change, or once the client list arrives — never on a mere re-render
+  // of the parent (it passes a new `stages` array every render, which used to wipe what the user was typing).
+  const resetKey = isOpen ? JSON.stringify([defaults?.accountId, defaults?.projectId, defaults?.stageId, defaults?.taskType, defaults?.taskTypeLayer1, defaults?.title, defaults?.description, accounts.length > 0, defaultAssigneeUserId]) : null;
+  const lastResetKey = useRef<string | null>(null);
   useEffect(() => {
     if (!isOpen) {
+      lastResetKey.current = null;
       return;
     }
+    if (lastResetKey.current === resetKey) return;
+    lastResetKey.current = resetKey;
 
     const nextAccountId = defaults?.accountId || accounts[0]?.id || "";
     const nextProjects = projects.filter(p => p.accountId === nextAccountId);
@@ -1144,7 +1151,7 @@ export function CreateTaskModal({
     setDueAt("");
     setEstimateMinutes("");
     setCustomerVisible(false);
-  }, [isOpen, defaults?.accountId, defaults?.projectId, defaults?.stageId, defaults?.taskType, defaults?.taskTypeLayer1, defaults?.title, defaults?.description, accounts, projects, stages, assigneeSelectOptions, defaultAssigneeUserId]);
+  }, [isOpen, resetKey, defaults?.accountId, defaults?.projectId, defaults?.stageId, defaults?.taskType, defaults?.taskTypeLayer1, defaults?.title, defaults?.description, accounts, projects, stages, assigneeSelectOptions, defaultAssigneeUserId]);
 
   const handleAccountChange = (nextAccountId: string) => {
     setAccountId(nextAccountId);
@@ -1393,9 +1400,10 @@ export function EditTaskModal({
       setPriority(task.priority || "medium");
       setTaskType(task.taskType || "implementation");
       setTaskTypeLayer1(task.taskTypeLayer1 || INHERIT_TASK_TYPE_LAYER1);
-      const nextAssigneeUserIds = task.assigneeUserIds?.filter((userId) => assigneeSelectOptions.some((option) => option.value === userId))
-        ?? (task.assigneeUserId && assigneeSelectOptions.some((option) => option.value === task.assigneeUserId) ? [task.assigneeUserId] : []);
-      setAssigneeUserIds(nextAssigneeUserIds.length > 0 ? nextAssigneeUserIds : (assigneeSelectOptions[0]?.value ? [assigneeSelectOptions[0].value] : []));
+      // The task's own assignees, never a stand-in: an empty list (or one whose people left) stays as it is, and
+      // handleEditTask only sends assignees when the user actually changed them.
+      const currentAssigneeUserIds = task.assigneeUserIds?.length ? task.assigneeUserIds : task.assigneeUserId ? [task.assigneeUserId] : [];
+      setAssigneeUserIds(currentAssigneeUserIds.filter((userId) => assigneeSelectOptions.some((option) => option.value === userId)));
       setPlannedStartAt(toVietnamDateInputValue(task.plannedStartAt));
       setDueAt(toVietnamDateInputValue(task.dueAt));
       setEstimateMinutes(task.estimateMinutes?.toString() || "");
@@ -2192,6 +2200,11 @@ export function TasksWorkbench({
   const handleEditTask = async (taskInput: any) => {
     if (!selectedTaskId || !selectedTask) return;
 
+    const previousAssigneeUserIds = selectedTask.assigneeUserIds?.length ? selectedTask.assigneeUserIds : selectedTask.assigneeUserId ? [selectedTask.assigneeUserId] : [];
+    const nextAssigneeUserIds: string[] = taskInput.assigneeUserIds ?? [];
+    const assigneesChanged = [...previousAssigneeUserIds].sort().join("|") !== [...nextAssigneeUserIds].sort().join("|");
+    // The owner follows the primary assignee only where it already did (or was empty); otherwise it is left alone.
+    const ownerFollowsAssignee = !selectedTask.ownerUserId || selectedTask.ownerUserId === selectedTask.assigneeUserId;
     const body = {
       accountId: taskInput.accountId,
       projectId: taskInput.projectId,
@@ -2200,11 +2213,14 @@ export function TasksWorkbench({
       taskType: taskInput.taskType,
       taskTypeLayer1: taskInput.taskTypeLayer1,
       priority: taskInput.priority,
-      ownerUserId: taskInput.assigneeUserId,
-      assigneeUserId: taskInput.assigneeUserId,
-      assigneeUserIds: taskInput.assigneeUserIds,
-      plannedStartAt: taskInput.plannedStartAt,
-      dueAt: taskInput.dueAt,
+      ...(assigneesChanged ? {
+        assigneeUserId: taskInput.assigneeUserId ?? null,
+        assigneeUserIds: nextAssigneeUserIds,
+        ...(ownerFollowsAssignee ? { ownerUserId: taskInput.assigneeUserId ?? null } : {})
+      } : {}),
+      // A cleared date is sent as null: a missing key means "unchanged" to the API.
+      plannedStartAt: taskInput.plannedStartAt || null,
+      dueAt: taskInput.dueAt || null,
       estimateMinutes: taskInput.estimateMinutes,
       customerVisible: taskInput.customerVisible
     };
@@ -2293,6 +2309,8 @@ export function TasksWorkbench({
       ownerUserId: taskInput.assigneeUserId,
       assigneeUserId: taskInput.assigneeUserId,
       assigneeUserIds: taskInput.assigneeUserIds,
+      plannedStartAt: taskInput.plannedStartAt || undefined,
+      dueAt: taskInput.dueAt || undefined,
       estimateMinutes: taskInput.estimateMinutes,
       customerVisible: taskInput.customerVisible
     };

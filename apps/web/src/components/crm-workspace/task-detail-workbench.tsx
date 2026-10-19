@@ -936,8 +936,9 @@ export function TaskDetailWorkbench({
       priority: taskInput.priority,
       assigneeUserId: taskInput.assigneeUserId,
       assigneeUserIds: taskInput.assigneeUserIds,
-      plannedStartAt: taskInput.plannedStartAt,
-      dueAt: taskInput.dueAt,
+      // A cleared date is sent as null: a missing key means "unchanged" to the API.
+      plannedStartAt: taskInput.plannedStartAt ?? null,
+      dueAt: taskInput.dueAt ?? null,
       estimateMinutes: taskInput.estimateMinutes,
       customerVisible: taskInput.customerVisible
     };
@@ -1089,8 +1090,9 @@ export function TaskDetailWorkbench({
       priority: taskInput.priority,
       assigneeUserId: taskInput.assigneeUserId,
       assigneeUserIds: taskInput.assigneeUserIds,
-      plannedStartAt: taskInput.plannedStartAt,
-      dueAt: taskInput.dueAt,
+      // A cleared date is sent as null: a missing key means "unchanged" to the API.
+      plannedStartAt: taskInput.plannedStartAt ?? null,
+      dueAt: taskInput.dueAt ?? null,
       estimateMinutes: taskInput.estimateMinutes,
       customerVisible: taskInput.customerVisible
     };
