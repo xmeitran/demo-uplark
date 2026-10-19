@@ -1792,7 +1792,7 @@ describe("ProjectsService.listProjectActivities", () => {
         {
           id: "task-time:time-1",
           activityType: "work_logged",
-          actionLabel: "Logged actual work",
+          actionLabel: "Đã ghi giờ thực tế",
           occurredTime: "10:00",
           createdByDisplayName: "Nguyen Hung Viet Kha",
           createdByAvatarUrl: "https://example.com/avatar.png"
@@ -1942,7 +1942,7 @@ describe("ProjectsService.createTimeEntry", () => {
         taskId: "task-1",
         fromStatus: "todo",
         toStatus: "in_progress",
-        reason: "Actual work logged"
+        reason: "Đã ghi giờ thực tế"
       })
     });
     expect(prisma.projectTask.update).toHaveBeenCalledWith({

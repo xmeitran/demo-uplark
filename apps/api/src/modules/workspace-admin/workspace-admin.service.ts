@@ -28,7 +28,7 @@ const ADMIN_ROLES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN"]);
 const SLOT_LABELS: Record<WorkspaceReminderSlot["slot"], string> = {
   morning_plan: "Kế hoạch đầu ngày",
   pm_follow_up: "Nhắc lại cho PM",
-  evening_actual: "Actual Hour cuối ngày"
+  evening_actual: "Giờ thực tế cuối ngày"
 };
 const DEFAULT_SLOTS: WorkspaceReminderSlot[] = [
   { slot: "morning_plan", time: getParameter("reminderTimes")[0], label: SLOT_LABELS.morning_plan, enabled: true },
@@ -260,7 +260,7 @@ async function resolveLarkOpenIdByUserId(
 const REMINDER_SLOT_TITLES: Record<WorkspaceReminderSlotCode, string> = {
   morning_plan: "Nhắc nhở hoàn tất kế hoạch Task trước 09:00",
   pm_follow_up: "Danh sách nhân sự chưa hoàn tất kế hoạch Task",
-  evening_actual: "Cập nhật Actual Hour hôm nay"
+  evening_actual: "Cập nhật giờ thực tế hôm nay"
 };
 
 function parseSlots(input: UpdateWorkspaceReminderPolicyInput["slots"]): WorkspaceReminderSlot[] {
@@ -549,15 +549,15 @@ export class WorkspaceAdminService {
         const missingMinutes = Math.max(0, dayMinutes - actualMinutes);
         return [
           `${mention}Chào **${user.displayName}**,`,
-          `Đến 17:00 ngày ${localDate}, dữ liệu Actual Hour của bạn chưa đầy đủ.`,
+          `Đến 17:00 ngày ${localDate}, dữ liệu giờ thực tế của bạn chưa đầy đủ.`,
           "Tổng giờ trong ngày:",
           `• Đã ghi nhận: ${reminderMinutesLabel(actualMinutes)}`,
           `• Giờ tiêu chuẩn: ${reminderMinutesLabel(dayMinutes)}`,
           `• Còn thiếu: ${reminderMinutesLabel(missingMinutes)}`,
           "",
-          "Task chưa có Actual Hour:",
-          ...(missingActualTasks.length ? missingActualTasks.slice(0, 5).map((task, index) => `${index + 1}. **${task.title}**${task.project?.name ? ` · ${task.project.name}` : ""}\n— Estimate Hour: ${reminderMinutesLabel(task.estimateMinutes)}`) : ["• Không có Task nào thiếu Actual Hour; vui lòng bổ sung đủ giờ trong ngày."]),
-          `Vui lòng ghi Actual Hour thực tế đã làm trong ngày. Không tự động sử dụng Estimate Hour thay cho Actual Hour; chuyển Task sang Hoàn tất cũng không thay thế việc ghi giờ. Trường hợp có OT, số giờ vượt 8 giờ chỉ được ghi nhận theo quy tắc đã được phê duyệt.`
+          "Task chưa có giờ thực tế:",
+          ...(missingActualTasks.length ? missingActualTasks.slice(0, 5).map((task, index) => `${index + 1}. **${task.title}**${task.project?.name ? ` · ${task.project.name}` : ""}\n— Giờ kế hoạch: ${reminderMinutesLabel(task.estimateMinutes)}`) : ["• Không có Task nào thiếu giờ thực tế; vui lòng bổ sung đủ giờ trong ngày."]),
+          `Vui lòng ghi giờ thực tế đã làm trong ngày. Không tự động dùng giờ kế hoạch thay cho giờ thực tế; chuyển Task sang Hoàn tất cũng không thay thế việc ghi giờ. Trường hợp có OT, số giờ vượt 8 giờ chỉ được ghi nhận theo quy tắc đã được phê duyệt.`
         ];
       }
       return [
@@ -716,10 +716,10 @@ export class WorkspaceAdminService {
       const missingDeadline = openTasks.filter((task) => !task.dueAt);
       const missingMapping = openTasks.filter((task) => !task.ownerUserId && !task.assigneeUserId);
       if (overdue.length) add(project, "delay_risk", overdue.length >= 10 ? "critical" : "warning", `${overdue.length} task chưa hoàn thành đã quá Deadline.`, overdue.map((task) => task.id), estimateMinutes, actualMinutes);
-      if (estimateMinutes > 0 && actualMinutes >= estimateMinutes * usedThreshold) add(project, "over_estimate", actualMinutes - estimateMinutes > estimateMinutes * 0.2 ? "critical" : "warning", `Actual Hour đạt ${Math.round((actualMinutes / estimateMinutes) * 100)}% Estimate (ngưỡng ${Math.round(usedThreshold * 100)}%); cần xem task gây vượt.`, tasks.map((task) => task.id), estimateMinutes, actualMinutes);
+      if (estimateMinutes > 0 && actualMinutes >= estimateMinutes * usedThreshold) add(project, "over_estimate", actualMinutes - estimateMinutes > estimateMinutes * 0.2 ? "critical" : "warning", `Giờ thực tế đạt ${Math.round((actualMinutes / estimateMinutes) * 100)}% giờ kế hoạch (ngưỡng ${Math.round(usedThreshold * 100)}%); cần xem task gây vượt.`, tasks.map((task) => task.id), estimateMinutes, actualMinutes);
       if (waiting.length) add(project, "waiting_task", "warning", `${waiting.length} task đang chờ; cần cập nhật blocker và người xử lý.`, waiting.map((task) => task.id), estimateMinutes, actualMinutes);
-      if (missingEstimate.length) add(project, "missing_estimate", "info", `${missingEstimate.length} task chưa có Estimate Hour; chưa đủ căn cứ đánh giá hiệu suất.`, missingEstimate.map((task) => task.id), estimateMinutes, actualMinutes);
-      if (startedWithoutActual.length) add(project, "missing_actual", "info", `${startedWithoutActual.length} task đã bắt đầu nhưng chưa có Actual Hour đã ghi nhận.`, startedWithoutActual.map((task) => task.id), estimateMinutes, actualMinutes);
+      if (missingEstimate.length) add(project, "missing_estimate", "info", `${missingEstimate.length} task chưa có giờ kế hoạch; chưa đủ căn cứ đánh giá hiệu suất.`, missingEstimate.map((task) => task.id), estimateMinutes, actualMinutes);
+      if (startedWithoutActual.length) add(project, "missing_actual", "info", `${startedWithoutActual.length} task đã bắt đầu nhưng chưa có giờ thực tế đã ghi nhận.`, startedWithoutActual.map((task) => task.id), estimateMinutes, actualMinutes);
       if (missingDeadline.length) add(project, "missing_deadline", "info", `${missingDeadline.length} task đang mở chưa có Deadline để kiểm soát tiến độ.`, missingDeadline.map((task) => task.id), estimateMinutes, actualMinutes);
       if (missingMapping.length) add(project, "missing_mapping", "info", `${missingMapping.length} task chưa có người phụ trách; cần cập nhật owner hoặc assignee.`, missingMapping.map((task) => task.id), estimateMinutes, actualMinutes);
     }

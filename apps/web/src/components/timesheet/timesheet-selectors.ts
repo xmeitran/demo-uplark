@@ -712,7 +712,7 @@ export function buildProjectReadiness(
         },
         {
           key: "estimate",
-          label: "Task có estimate ≥ 80%",
+          label: "Task có giờ kế hoạch ≥ 80%",
           passed: tasks.length > 0 && withEstimate / tasks.length >= 0.8,
           detail: `${withEstimate}/${tasks.length} task`
         },

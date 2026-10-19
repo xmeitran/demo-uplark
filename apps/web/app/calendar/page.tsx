@@ -212,7 +212,7 @@ function actualEntryToEvent(entry: TaskTimeEntrySummary): CalendarWorkEvent {
     userId: entry.userId,
     userDisplayName: entry.userDisplayName,
     userAvatarUrl: entry.userAvatarUrl,
-    title: entry.taskTitle ?? entry.note ?? "Actual work",
+    title: entry.taskTitle ?? entry.note ?? "Giờ thực tế",
     notes: entry.note,
     startAt: entry.startAt ?? start.toISOString(),
     endAt: entry.endAt ?? end.toISOString(),

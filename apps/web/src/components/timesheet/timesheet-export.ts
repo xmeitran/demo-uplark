@@ -86,7 +86,7 @@ export function buildTimesheetWorkbook(ExcelJS: ExcelJsModule, context: Timeshee
       map.set(key, current);
     }
   }
-  // Estimate of the tasks that were actually logged, so it matches "Giờ estimate task" in Raw Data.
+  // Estimate of the tasks that were actually logged, so it matches "Giờ kế hoạch task" in Raw Data.
   const estimateMinutes = (tasks: Set<string>) => Array.from(tasks).reduce((sum, key) => sum + (taskIndex.get(key)?.estimateMinutes ?? 0), 0);
 
   const workbook = new ExcelJS.Workbook();
@@ -104,7 +104,7 @@ export function buildTimesheetWorkbook(ExcelJS: ExcelJsModule, context: Timeshee
     [],
     ["CHỈ SỐ TỔNG QUAN DỰ ÁN", "Giá trị"],
     ["Tổng số giờ thực tế", hours(total.minutes)],
-    ["Tổng số giờ Estimate", hours(estimateMinutes(total.tasks))],
+    ["Tổng số giờ kế hoạch", hours(estimateMinutes(total.tasks))],
     ["Tổng số dự án", total.projects.size],
     ["Tổng số nhân sự", total.people.size],
     ["Tổng số task", total.tasks.size]
@@ -132,7 +132,7 @@ export function buildTimesheetWorkbook(ExcelJS: ExcelJsModule, context: Timeshee
         estimate > 0 ? round2((data.minutes / estimate) * 100) : 0
       ];
     });
-  addTableSheet(workbook, TIMESHEET_EXPORT_SHEETS[1], ["Tên dự án", "Mã dự án", "Khách hàng / tài khoản", "Trạng thái dự án", "Tổng_số_giờ", "Giờ_Estimate", "Số_nhân_sự", "Số_task", "Tỷ_lệ_so_với_Estimate_(%)"], projectRows, [42, 22, 28, 20, 14, 14, 12, 10, 24]);
+  addTableSheet(workbook, TIMESHEET_EXPORT_SHEETS[1], ["Tên dự án", "Mã dự án", "Khách hàng / tài khoản", "Trạng thái dự án", "Giờ_thực_tế", "Giờ_kế_hoạch", "Số_nhân_sự", "Số_task", "Tỷ_lệ_thực_tế_so_với_kế_hoạch_(%)"], projectRows, [42, 22, 28, 20, 14, 14, 12, 10, 34]);
 
   // 3 · Theo nhân sự
   const personRows: Cell[][] = Array.from(byPerson.entries())
@@ -150,13 +150,13 @@ export function buildTimesheetWorkbook(ExcelJS: ExcelJsModule, context: Timeshee
         data.dates.size ? round2(data.minutes / 60 / data.dates.size) : 0
       ];
     });
-  addTableSheet(workbook, TIMESHEET_EXPORT_SHEETS[2], ["Nhân sự", "Vai trò", "Phòng ban", "Tổng_số_giờ", "Số_dự_án", "Số_task", "Ngày_làm_việc_đã_log", "Trung_bình_giờ/ngày"], personRows, [28, 24, 20, 14, 12, 10, 22, 20]);
+  addTableSheet(workbook, TIMESHEET_EXPORT_SHEETS[2], ["Nhân sự", "Vai trò", "Phòng ban", "Tổng_số_giờ_thực_tế", "Số_dự_án", "Số_task", "Ngày_làm_việc_đã_log", "Trung_bình_giờ/ngày"], personRows, [28, 24, 20, 22, 12, 10, 22, 20]);
 
   // 4 · Tiến độ theo Ngày (only days that have logs)
   const dayRows: Cell[][] = Array.from(byDate.entries())
     .sort((left, right) => left[0].localeCompare(right[0]))
     .map(([date, data]) => [excelDate(date), hours(data.minutes), data.people.size, data.projects.size, data.tasks.size]);
-  addTableSheet(workbook, TIMESHEET_EXPORT_SHEETS[3], ["Ngày", "Tổng_số_giờ", "Số_nhân_sự", "Số_dự_án", "Số_task"], dayRows, [14, 14, 14, 12, 10], { 1: "dd/mm/yyyy" });
+  addTableSheet(workbook, TIMESHEET_EXPORT_SHEETS[3], ["Ngày", "Tổng_số_giờ_thực_tế", "Số_nhân_sự", "Số_dự_án", "Số_task"], dayRows, [14, 22, 14, 12, 10], { 1: "dd/mm/yyyy" });
 
   // 5 · Raw Data: one row per time entry
   const rawRows: Cell[][] = logs
@@ -193,7 +193,7 @@ export function buildTimesheetWorkbook(ExcelJS: ExcelJsModule, context: Timeshee
   addTableSheet(
     workbook,
     TIMESHEET_EXPORT_SHEETS[4],
-    ["Ngày", "User ID", "Nhân sự", "Phòng ban", "Vai trò", "Project ID", "Mã dự án", "Tên dự án", "Khách hàng / tài khoản", "Trạng thái dự án", "Milestone", "Giai đoạn", "Task ID", "Task", "Trạng thái task", "Nhóm công việc", "Lớp 2 không khớp", "Số phút", "Số giờ", "Giờ estimate task", "Ghi chú"],
+    ["Ngày", "User ID", "Nhân sự", "Phòng ban", "Vai trò", "Project ID", "Mã dự án", "Tên dự án", "Khách hàng / tài khoản", "Trạng thái dự án", "Milestone", "Giai đoạn", "Task ID", "Task", "Trạng thái task", "Nhóm công việc", "Lớp 2 không khớp", "Số phút", "Giờ thực tế", "Giờ kế hoạch task", "Ghi chú"],
     rawRows,
     [12, 26, 24, 18, 24, 28, 22, 34, 26, 18, 26, 26, 28, 42, 18, 22, 18, 12, 12, 18, 42],
     { 1: "dd/mm/yyyy" }

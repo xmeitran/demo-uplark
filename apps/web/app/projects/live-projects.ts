@@ -369,6 +369,7 @@ export function mapProjectSummaryToUiProject(project: ProjectSummary): Project {
     projectType,
     scopeSummary: project.scopeSummary,
     budgetCurrency: project.budgetCurrency,
+    projectValue: project.projectValue,
     tasks: { total: taskCount, done: completedTaskCount },
     plannedHours: minutesToHours(project.plannedMinutes),
     loggedHours: minutesToHours(project.loggedMinutes),

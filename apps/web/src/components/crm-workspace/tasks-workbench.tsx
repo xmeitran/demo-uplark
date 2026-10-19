@@ -1900,7 +1900,7 @@ export function LogWorkModal({
                 </div>
                 <h3 className="text-sm font-bold text-slate-800 mb-1.5">Lên kế hoạch dự kiến</h3>
                 <p className="text-[11px] text-slate-400 font-normal leading-normal max-w-[200px]">
-                  Đặt/Cập nhật thời gian làm dự tính (Estimate) để lập kế hoạch phân bổ thời gian.
+                  Đặt/Cập nhật giờ kế hoạch để lập kế hoạch phân bổ thời gian.
                 </p>
               </div>
             </button>

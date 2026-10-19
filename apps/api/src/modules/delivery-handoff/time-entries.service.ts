@@ -389,7 +389,7 @@ export class TimeEntriesService {
     if (endAt <= startAt) {
       throw new BadRequestException("Giờ kết thúc phải sau giờ bắt đầu.");
     }
-    assertRangeWithinLimit(startAt, endAt, "Actual work calendar range");
+    assertRangeWithinLimit(startAt, endAt, "Khoảng lịch giờ thực tế");
 
     const where: Prisma.TaskTimeEntryWhereInput = {
       workspaceId: principal.workspaceId,
@@ -1033,7 +1033,7 @@ export class TimeEntriesService {
         toStatus: "in_progress",
         changedByUserId: input.changedByUserId,
         changedAt: input.occurredAt,
-        reason: "Actual work logged"
+        reason: "Đã ghi giờ thực tế"
       }
     });
 

@@ -23,6 +23,10 @@ import { CrmMultiSelect, CrmSelect } from "@/components/crm-workspace/crm-select
 import { useAuth } from "@/lib/auth";
 import { canViewCostFigures, isAdminView } from "@/lib/auth-role";
 import { MoneyAmount } from "@/components/money-amount";
+import { pnlRequest } from "@/components/pnl/pnl-ui";
+import { parseVndAmount } from "@/components/pnl/pnl-project-edit";
+import { formatMoneyInput } from "@/components/pnl/pnl-cost-shared";
+import { formatVnd } from "@/lib/currency";
 import {
   getPushedProjectsOwnerKey,
   readPushedProjectIds,
@@ -1205,6 +1209,8 @@ export default function ProjectsPage() {
   const [client, setClient] = useState("");
   const [priority, setPriority] = useState<Project["priority"]>("Medium");
   const [isTestProject, setIsTestProject] = useState(false);
+  const [projectValueText, setProjectValueText] = useState("");
+  const createErrorRef = useRef<HTMLDivElement | null>(null);
   const [createProjectType, setCreateProjectType] = useState("");
   const [startDate, setStartDate] = useState(defaultProjectStartDate);
   const [dueDate, setDueDate] = useState(defaultProjectDueDate);
@@ -1423,6 +1429,9 @@ export default function ProjectsPage() {
 
   const selectedMilestoneTemplate = milestoneTemplates.find((template) => template.key === milestoneTemplateKey) ?? milestoneTemplates.find((template) => template.key === "pilot-v1");
 
+  // The alert sits at the top of a long modal; without this a failed Create looks like nothing happened.
+  useEffect(() => { if (projectsError && isCreateOpen) createErrorRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, [projectsError, isCreateOpen]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || createSubmittingRef.current) return;
@@ -1434,6 +1443,11 @@ export default function ProjectsPage() {
     }
     if (!createProjectType) {
       setProjectsError("Chọn Loại dự án: Khách hàng, Nội bộ hoặc Đào tạo.");
+      return;
+    }
+    const projectValueAmount = parseVndAmount(projectValueText);
+    if (projectValueText.trim() && projectValueAmount === null) {
+      setProjectsError("Doanh thu dự kiến là số tiền VND nguyên, lớn hơn 0 (ví dụ 67.200.000).");
       return;
     }
 
@@ -1483,6 +1497,12 @@ export default function ProjectsPage() {
 
       const created = await response.json();
       createAttempt.current = {};
+      // PL-13: doanh thu dự kiến is the project's "Giá trị dự án", saved through the P&L endpoint (same rules and audit trail).
+      let projectValueError: string | null = null;
+      if (projectValueAmount !== null) {
+        await pnlRequest(`/api/pnl/projects/${encodeURIComponent(created.id)}/project-value`, { method: "PUT", body: { amount: projectValueAmount } })
+          .catch((error) => { projectValueError = `Đã tạo dự án nhưng chưa lưu được doanh thu dự kiến: ${error instanceof Error ? error.message : "lỗi không rõ"}. Nhập lại ở trang P&L của dự án.`; });
+      }
       setProjectsList(current => [mapProjectSummaryToUiProject(created), ...current].slice(0, PROJECT_PAGE_SIZE));
       setProjectPagination(current => {
         const total = current.total + 1;
@@ -1497,8 +1517,11 @@ export default function ProjectsPage() {
       setProjectPage(1);
       closeCreateProject();
 
+      if (projectValueError) setProjectsError(projectValueError);
+
       // Reset Form
       setName("");
+      setProjectValueText("");
       setCreateProjectType("");
       setDescription("");
       setClient(accountOptions[0]?.value ?? "");
@@ -1968,7 +1991,7 @@ export default function ProjectsPage() {
                 <div className="flex min-h-0 flex-1">
                 <form onSubmit={handleSubmit} className="min-w-0 flex-1 overflow-y-auto p-6 space-y-4">
                   <input ref={aiImportInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleAiImport(file); }} />
-                  {projectsError && <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{projectsError}{accountOptions.length === 0 && <button type="button" className="ml-2 underline" onClick={() => setAccountLoadRevision(value => value + 1)}>Retry loading clients</button>}</div>}
+                  {projectsError && <div ref={createErrorRef} role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{projectsError}{accountOptions.length === 0 && <button type="button" className="ml-2 underline" onClick={() => setAccountLoadRevision(value => value + 1)}>Retry loading clients</button>}</div>}
                   {loadingAccounts && <p role="status">Loading clients…</p>}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Project Name */}
@@ -1978,6 +2001,7 @@ export default function ProjectsPage() {
                         id="create-project-name"
                         type="text"
                         required
+                        autoComplete="off"
                         value={name}
                         onChange={e => setName(e.target.value)}
                         placeholder="e.g. Mobile App Redesign"
@@ -2047,6 +2071,23 @@ export default function ProjectsPage() {
                         onChange={setDueDate}
                       />
                     </div>
+
+                    {/* PL-13: doanh thu dự kiến = "Giá trị dự án" of the P&L; cost viewers only, optional here (required before G1). */}
+                    {showMoney && (
+                      <div className="space-y-1.5">
+                        <label htmlFor="create-project-value" className="text-xs font-semibold text-muted-foreground">Doanh thu dự kiến (VND)</label>
+                        <input
+                          id="create-project-value"
+                          inputMode="numeric"
+                          autoComplete="off"
+                          value={projectValueText}
+                          onChange={e => setProjectValueText(formatMoneyInput(e.target.value))}
+                          placeholder="67.200.000"
+                          className="w-full px-3.5 py-2.5 bg-background border border-input rounded-xl text-sm text-foreground focus:outline-none focus:border-primary transition-colors"
+                        />
+                        {parseVndAmount(projectValueText) !== null && <p className="text-[11px] text-muted-foreground">= {formatVnd(parseVndAmount(projectValueText))}</p>}
+                      </div>
+                    )}
                   </div>
 
                   {/* Description */}

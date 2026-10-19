@@ -134,7 +134,7 @@ export function LogDrawer({
         <>
           <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/30 px-4 py-2.5">
             <SummaryChip icon={FileText} label="dòng ghi nhận" value={`${rows.length}`} />
-            <SummaryChip icon={Clock} label="tổng giờ" value={formatHours(totals.minutes)} tone="primary" />
+            <SummaryChip icon={Clock} label="giờ thực tế" value={formatHours(totals.minutes)} tone="primary" />
             <SummaryChip icon={Users} label="nhân sự" value={`${totals.people}`} />
             <SummaryChip icon={Briefcase} label="dự án" value={`${totals.projects}`} />
           </div>
@@ -284,7 +284,7 @@ function TimeLogDetail({
         <DetailRow label="Stage" value={task?.stageName ?? log.stageId} />
         <DetailRow label="Task" value={task ? `${task.taskCode} — ${task.taskName}` : log.taskId} />
         <DetailRow label="Trạng thái task" value={task ? NODE_STATUS_LABELS[task.status] : "Chưa mapping"} />
-        <DetailRow label="Estimate" value={task && task.estimateMinutes > 0 ? formatHours(task.estimateMinutes) : "Chưa có estimate"} />
+        <DetailRow label="Giờ kế hoạch" value={task && task.estimateMinutes > 0 ? formatHours(task.estimateMinutes) : "Chưa có giờ kế hoạch"} />
       </DetailSection>
 
       <DetailSection title="Ghi chú">

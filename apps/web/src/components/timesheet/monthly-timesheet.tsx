@@ -328,7 +328,7 @@ function PersonDayDetailDrawer({
       {row ? (
         <div className="space-y-4 p-4">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <DayMetric label="Tổng giờ" value={formatHours(row.totalMinutes)} tone="primary" />
+            <DayMetric label="Giờ thực tế" value={formatHours(row.totalMinutes)} tone="primary" />
             <DayMetric label="Đã ghi nhận" value={`${loggedDays} ngày`} />
             <DayMetric label="Thiếu log" value={`${missingDays} ngày`} tone={missingDays > 0 ? "warning" : "success"} />
             <DayMetric label="Ngày nghỉ / off" value={`${offDays} ngày`} />

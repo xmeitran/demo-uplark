@@ -74,6 +74,7 @@ import { canCloseProject, canReopenProject, isKnownProjectStatus, normalizeProje
 import { deriveMemberParticipation, NON_ACTUAL_TIME_ENTRY_STATUSES, participationWindow } from "./member-participation";
 import { projectLifecycleHooks } from "../lark-integration/lark-hooks";
 import { ResourceControlsService } from "../resource-controls/resource-controls.service";
+import { canEditProjectSetup, canViewCost } from "../resource-controls/cost-permissions";
 import { deriveTaskTypeLayer2, isInternalWorklogProjectType, isTaskTypeLayer1, resolveTaskTypeLayer1, taskTypeLayer1Label, taskTypeLayer2Label } from "./task-classification";
 import { closeProjectWarnings, isWarningSuppressed, MANUAL_CLOSE_ACTION, mapProjectWarning, openOrRefreshProjectWarning, rearmManuallyClosedWarning } from "./project-warnings";
 import type { IssueLogTransitionInput } from "@b2b-crm/contracts";
@@ -765,12 +766,12 @@ function mapTimeEntryToProjectActivity(entry: any): ProjectActivityFeedItem {
     projectId: entry.projectId,
     project: entry.task?.project ?? null,
     activityType: "work_logged",
-    subject: `Logged actual work: ${taskTitle}`,
-    note: [`${timeWindow} - Logged ${minutesLabel} actual work as ${workType}`, entry.note].filter(Boolean).join("\n"),
+    subject: `Đã ghi giờ thực tế: ${taskTitle}`,
+    note: [`${timeWindow} - Ghi ${minutesLabel} giờ thực tế (${workType})`, entry.note].filter(Boolean).join("\n"),
     target: `${minutesLabel} - ${taskTitle}`,
     occurredAt,
     occurredTime: time,
-    actionLabel: "Logged actual work",
+    actionLabel: "Đã ghi giờ thực tế",
     entityType: "task",
     entityId: entry.taskId,
     status: "active",
@@ -964,7 +965,21 @@ export class ProjectsService {
       throw new NotFoundException("Project not found");
     }
 
-    return { ...withoutProjectFinancials(mapProjectSummary(project), principal), ...(await this.currentStatusContext(project)), ...(await this.pendingProposalFor(project.id, principal)) };
+    return { ...withoutProjectFinancials(mapProjectSummary(project), principal), ...(await this.projectValueFor(project.id, principal)), ...(await this.currentStatusContext(project)), ...(await this.pendingProposalFor(project.id, principal)) };
+  }
+
+  /**
+   * PL-13 "Giá trị dự án" (doanh thu dự kiến) for the detail header, with the same view/edit rules as the P&L screen
+   * (cost-permission holders see it, PM/Founder/Workspace Admin edit it; after G1 a change needs a reason).
+   */
+  private async projectValueFor(projectId: string, principal: PrincipalContext) {
+    if (!canViewCost(principal) || typeof (this.prisma as any).projectPnlRecord?.findUnique !== "function") return {};
+    const [record, position] = await Promise.all([
+      this.prisma.projectPnlRecord.findUnique({ where: { projectId }, select: { projectValueAmount: true } }),
+      loadProjectGatePosition(this.prisma, principal.workspaceId, projectId)
+    ]);
+    const amount = record?.projectValueAmount == null ? null : Number(record.projectValueAmount);
+    return { projectValue: { amount, canEdit: canEditProjectSetup(principal), reasonRequired: position.g1Passed && amount !== null } };
   }
 
   /** 7.7: the pending status proposal, for those who may confirm it (PIC / PM / Admin) only. */
@@ -3089,7 +3104,7 @@ export class ProjectsService {
           subject: `Đã tạo task: ${taskResult.title}`,
           note: [
             `Phân loại: ${taskTypeLayer1Label(taskResult.taskTypeLayer1)} / ${taskTypeLayer2Label(taskResult.taskTypeLayer2)}`,
-            taskResult.estimateMinutes ? `Estimate: ${taskResult.estimateMinutes} phút` : undefined
+            taskResult.estimateMinutes ? `Giờ kế hoạch: ${taskResult.estimateMinutes} phút` : undefined
           ].filter(Boolean).join(" · "),
           target: taskResult.title,
           occurredAt: new Date(),
@@ -3242,7 +3257,7 @@ export class ProjectsService {
           || (nextDue !== undefined && !sameInstant(nextDue, current.dueAt))
           || (nextEstimate !== undefined && nextEstimate !== current.estimateMinutes);
         if (planChanged) {
-          throw new ConflictException("Kế hoạch của task đã được duyệt và khóa. Hãy gửi yêu cầu thay đổi timeline (Timeline Change Request) để đổi ngày bắt đầu, hạn hoàn thành hoặc estimate.");
+          throw new ConflictException("Kế hoạch của task đã được duyệt và khóa. Hãy gửi yêu cầu thay đổi timeline (Timeline Change Request) để đổi ngày bắt đầu, hạn hoàn thành hoặc giờ kế hoạch.");
         }
       }
       const destinationProjectId = scope.projectId === undefined ? current.projectId : scope.projectId;
@@ -3365,7 +3380,7 @@ export class ProjectsService {
         const fieldLabels: Record<string, string> = {
           title: "tên", description: "mô tả", taskType: "loại công việc", taskTypeLayer1: "Lớp 1 (vai trò đóng góp)",
           taskTypeLayer2: "Lớp 2 (bối cảnh công việc)", stageId: "stage", status: "trạng thái", priority: "ưu tiên", ownerUserId: "owner",
-          assigneeUserId: "người phụ trách", plannedStartAt: "ngày bắt đầu", dueAt: "deadline", estimateMinutes: "estimate"
+          assigneeUserId: "người phụ trách", plannedStartAt: "ngày bắt đầu", dueAt: "deadline", estimateMinutes: "giờ kế hoạch"
           ,assigneeUserIds: "người đồng phụ trách"
         };
         await tx.projectActivity.create({

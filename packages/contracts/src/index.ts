@@ -491,6 +491,8 @@ export interface ProjectSummary {
   projectType?: string;
   scopeSummary?: string;
   marginPercent?: number;
+  /** PL-13 "Giá trị dự án" (VND, doanh thu dự kiến); detail payload only, cost-permission holders only. Same field as the P&L screen. */
+  projectValue?: { amount: number | null; canEdit: boolean; reasonRequired: boolean };
   priority?: ProjectPriority;
   tags?: string[];
   color?: string;
@@ -3206,7 +3208,7 @@ export const ANALYTICS_METRIC_DEFINITIONS: Record<AnalyticsMetricKey, AnalyticsM
   },
   estimateMinutes: {
     key: "estimateMinutes",
-    label: "Task estimate",
+    label: "Giờ kế hoạch task",
     formula: "SUM(ProjectTask.estimateMinutes) for eligible leaf tasks in scope",
     numerator: "estimate minutes",
     denominator: "—",
@@ -3261,7 +3263,7 @@ export const ANALYTICS_METRIC_DEFINITIONS: Record<AnalyticsMetricKey, AnalyticsM
   },
   estimateVarianceMinutes: {
     key: "estimateVarianceMinutes",
-    label: "Chênh lệch estimate",
+    label: "Chênh lệch thực tế so với kế hoạch",
     formula: "actualMinutes − estimate minutes for eligible tasks with estimate > 0",
     numerator: "actual − estimate",
     denominator: "estimate (percentage form only when estimate > 0)",
@@ -3294,7 +3296,7 @@ export const ANALYTICS_METRIC_DEFINITIONS: Record<AnalyticsMetricKey, AnalyticsM
   },
   overdueEstimateMinutes: {
     key: "overdueEstimateMinutes",
-    label: "Estimate của task quá hạn",
+    label: "Giờ kế hoạch của task quá hạn",
     formula: "SUM(estimateMinutes) of overdue open eligible tasks",
     numerator: "estimate minutes",
     denominator: "—",

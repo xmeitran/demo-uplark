@@ -1306,7 +1306,7 @@ export class WorkforceAnalyticsService {
         numerator: reviewed,
         denominator: facts.tasks.estimateMinutes,
         deltaPercent: null,
-        warnings: facts.tasks.estimateMinutes > 0 ? undefined : ["Không có estimate > 0 trong phạm vi; chỉ hiển thị chênh lệch tuyệt đối."]
+        warnings: facts.tasks.estimateMinutes > 0 ? undefined : ["Không có giờ kế hoạch > 0 trong phạm vi; chỉ hiển thị chênh lệch tuyệt đối."]
       },
       {
         key: "medianCycleTimeDays",

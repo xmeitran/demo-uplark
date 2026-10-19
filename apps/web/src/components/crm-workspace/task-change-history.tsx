@@ -60,7 +60,7 @@ function fieldLabel(key: string) {
     assigneeUserIds: "Người đồng phụ trách",
     plannedStartAt: "Ngày bắt đầu",
     dueAt: "Hạn chót",
-    estimateMinutes: "Estimate"
+    estimateMinutes: "Giờ kế hoạch"
   };
   return labels[key] || key;
 }

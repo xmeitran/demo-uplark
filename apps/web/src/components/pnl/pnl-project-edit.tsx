@@ -23,7 +23,7 @@ export function parseVndAmount(text: string): number | null {
  * PL-13 / D-22 — "Sửa" trên ô Doanh thu: PM nhập doanh thu dự án (VND) theo số liệu BD. Sau G1, đổi một giá trị đã có
  * phải ghi lý do; mỗi lần lưu vào "Lịch sử thay đổi số liệu". The API enforces every rule; this form only mirrors them.
  */
-export function ProjectValueModal({ projectId, revenue, reload, onClose }: Readonly<{ projectId: string; revenue: Revenue; reload: () => Promise<void>; onClose: () => void }>) {
+export function ProjectValueModal({ projectId, revenue, reload, onClose }: Readonly<{ projectId: string; revenue: Pick<Revenue, "projectValueAmount" | "reasonRequired">; reload: () => Promise<void>; onClose: () => void }>) {
   const save = useSave(reload);
   const current = revenue.projectValueAmount;
   const [amountText, setAmountText] = useState(current === null ? "" : current.toLocaleString("vi-VN"));

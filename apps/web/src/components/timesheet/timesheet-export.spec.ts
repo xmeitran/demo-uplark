@@ -34,10 +34,10 @@ describe("buildTimesheetWorkbook", () => {
     expect(reopened.worksheets.map((worksheet) => worksheet.name)).toEqual(["Tổng quan", "Theo dự án", "Theo nhân sự", "Tiến độ theo Ngày", "Raw Data"]);
 
     // Headers exactly as in the template.
-    expect(header("Theo dự án")).toEqual(["Tên dự án", "Mã dự án", "Khách hàng / tài khoản", "Trạng thái dự án", "Tổng_số_giờ", "Giờ_Estimate", "Số_nhân_sự", "Số_task", "Tỷ_lệ_so_với_Estimate_(%)"]);
-    expect(header("Theo nhân sự")).toEqual(["Nhân sự", "Vai trò", "Phòng ban", "Tổng_số_giờ", "Số_dự_án", "Số_task", "Ngày_làm_việc_đã_log", "Trung_bình_giờ/ngày"]);
-    expect(header("Tiến độ theo Ngày")).toEqual(["Ngày", "Tổng_số_giờ", "Số_nhân_sự", "Số_dự_án", "Số_task"]);
-    expect(header("Raw Data")).toEqual(["Ngày", "User ID", "Nhân sự", "Phòng ban", "Vai trò", "Project ID", "Mã dự án", "Tên dự án", "Khách hàng / tài khoản", "Trạng thái dự án", "Milestone", "Giai đoạn", "Task ID", "Task", "Trạng thái task", "Nhóm công việc", "Lớp 2 không khớp", "Số phút", "Số giờ", "Giờ estimate task", "Ghi chú"]);
+    expect(header("Theo dự án")).toEqual(["Tên dự án", "Mã dự án", "Khách hàng / tài khoản", "Trạng thái dự án", "Giờ_thực_tế", "Giờ_kế_hoạch", "Số_nhân_sự", "Số_task", "Tỷ_lệ_thực_tế_so_với_kế_hoạch_(%)"]);
+    expect(header("Theo nhân sự")).toEqual(["Nhân sự", "Vai trò", "Phòng ban", "Tổng_số_giờ_thực_tế", "Số_dự_án", "Số_task", "Ngày_làm_việc_đã_log", "Trung_bình_giờ/ngày"]);
+    expect(header("Tiến độ theo Ngày")).toEqual(["Ngày", "Tổng_số_giờ_thực_tế", "Số_nhân_sự", "Số_dự_án", "Số_task"]);
+    expect(header("Raw Data")).toEqual(["Ngày", "User ID", "Nhân sự", "Phòng ban", "Vai trò", "Project ID", "Mã dự án", "Tên dự án", "Khách hàng / tài khoản", "Trạng thái dự án", "Milestone", "Giai đoạn", "Task ID", "Task", "Trạng thái task", "Nhóm công việc", "Lớp 2 không khớp", "Số phút", "Giờ thực tế", "Giờ kế hoạch task", "Ghi chú"]);
 
     // Raw Data keeps every filtered log; dates are real dates.
     expect(sheet("Raw Data").rowCount).toBe(logs.length + 1);
@@ -50,7 +50,7 @@ describe("buildTimesheetWorkbook", () => {
     expect([overview.getCell("A1").value, overview.getCell("A2").value, overview.getCell("A4").value, overview.getCell("B4").value]).toEqual(["Từ ngày", "Đến ngày", "CHỈ SỐ TỔNG QUAN DỰ ÁN", "Giá trị"]);
     expect((overview.getCell("B1").value as Date).toISOString().slice(0, 10)).toBe("2026-07-01");
     expect((overview.getCell("B2").value as Date).toISOString().slice(0, 10)).toBe("2026-07-31");
-    expect(["A5", "A6", "A7", "A8", "A9"].map((address) => overview.getCell(address).value)).toEqual(["Tổng số giờ thực tế", "Tổng số giờ Estimate", "Tổng số dự án", "Tổng số nhân sự", "Tổng số task"]);
+    expect(["A5", "A6", "A7", "A8", "A9"].map((address) => overview.getCell(address).value)).toEqual(["Tổng số giờ thực tế", "Tổng số giờ kế hoạch", "Tổng số dự án", "Tổng số nhân sự", "Tổng số task"]);
 
     // Every summary sheet adds up to the same total hours as the raw rows.
     const totalHours = sum(logs.map((log) => Math.round((log.minutes / 60) * 100) / 100));

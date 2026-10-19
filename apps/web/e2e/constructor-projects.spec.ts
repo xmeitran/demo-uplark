@@ -2203,7 +2203,7 @@ test("project detail loads live data and switches workspace tabs", async ({ page
   }
   await expect(page.getByText("Live kickoff note from API")).toBeVisible();
   await expect(activityFeed.getByText("Live time entry")).toBeVisible();
-  await expect(activityFeed.getByText("0.8h actual")).toBeVisible();
+  await expect(activityFeed.getByText("0.8h thực tế")).toBeVisible();
   await expect(activityFeed.getByText("09:00 · GMT+7 · Jul 2, 2026")).toBeVisible();
   await expect(activityFeed.getByText("07:00 · GMT+7 · Jul 2, 2026")).toBeVisible();
   await expect(activityFeed.getByTestId("project-activity-row")).toHaveCount(10);
