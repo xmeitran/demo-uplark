@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CreateTaskTimeEntryResponse, ProjectTaskSummary, ResourceListResponse, TaskTimeEntrySummary } from "@b2b-crm/contracts";
 import { ShopifyAppShell, ShopifyBanner, ShopifyPage, ShopifySection } from "../shopify-ui";
+import { isActualTimeEntry } from "@/lib/time-entry-actual";
 import { CrmSelect } from "./crm-select";
 import { LAYER2_MISMATCH_LABEL } from "@/lib/task-classification";
 
@@ -220,11 +221,12 @@ function adaptTimeEntry(entry: TaskTimeEntrySummary): TimeEntry {
     consultant: entry.userDisplayName || entry.userEmail || entry.userId,
     project: entry.projectName || "Project",
     stage: entry.taskTitle || entry.taskId,
-    hours: entry.minutes / 60,
+    hours: Math.round((entry.minutes / 60) * 100) / 100,
     workType: entry.workType,
     billable: entry.billable,
     note: entry.note || "",
-    status: (["submitted", "approved", "rejected"] as const).includes(entry.approvalStatus as "submitted" | "approved" | "rejected") ? entry.approvalStatus as TimeEntry["status"] : "draft",
+    // V-07: a saved log is recorded (no approval step); only rejected / cancelled / planned rows do not count.
+    status: isActualTimeEntry(entry) ? "approved" : "rejected",
     taskId: entry.taskId,
     layer2Mismatch: entry.layer2Mismatch,
     updatedAt: entry.updatedAt || entry.createdAt

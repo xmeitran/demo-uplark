@@ -5,7 +5,7 @@ import { allowedPerformers } from "@/lib/task-people-policy";
 import { defaultWorkLogDate } from "@/lib/work-log-date";
 import {
   TASK_TYPE_LAYER1_FIELD_LABEL, TASK_TYPE_LAYER1_OPTIONS, TASK_TYPE_LAYER2_FIELD_LABEL, TASK_TYPE_PENDING_LABEL,
-  layer2OptionsForTask, taskTypeLayer1Label, taskTypeLayer2Label, type TaskTypeLayer1
+  defaultSelectedLayer2, layer2OptionsForTask, taskTypeLayer1Label, taskTypeLayer2Label, type TaskTypeLayer1
 } from "@/lib/task-classification";
 import { useTaskPeople } from "@/hooks/use-task-people";
 
@@ -1736,6 +1736,8 @@ export function LogWorkModal({
   const [workType, setWorkType] = useState("delivery");
   const [billable, setBillable] = useState(true);
   const [completeTask, setCompleteTask] = useState(false);
+  // P&L spec 12/10 point 5: the logger picks Layer 2; it starts as the task's own and a different pick is flagged.
+  const [layer2, setLayer2] = useState<string>("");
   const [userId, setUserId] = useState("none");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -1758,6 +1760,7 @@ export function LogWorkModal({
       setMinutes(task.estimateMinutes?.toString() || "60");
       setWorkDate(defaultWorkLogDate(selectedWorkDate, task.plannedStartAt));
       setWorkType(task.taskType || "delivery");
+      setLayer2(defaultSelectedLayer2(task.taskTypeLayer2));
       setNote("");
       setBillable(true);
       setCompleteTask(false);
@@ -1839,7 +1842,8 @@ export function LogWorkModal({
         endTime: useTimeSlot ? endTime : undefined,
         startAt,
         endAt,
-        timeZone: VIETNAM_TIME_ZONE
+        timeZone: VIETNAM_TIME_ZONE,
+        selectedTaskTypeLayer2: step === "actual" && layer2 ? layer2 : undefined
       });
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "Không thể lưu thao tác. Vui lòng thử lại.");
@@ -2015,6 +2019,19 @@ export function LogWorkModal({
           </div>
           {people.principalUserId && userId === people.principalUserId ? (
             <p className="-mt-2 mb-3 text-[11px] text-slate-500">Mặc định là tài khoản đang đăng nhập. Bạn có thể đổi người thực hiện nếu có quyền.</p>
+          ) : null}
+          {step === "actual" ? (
+            <>
+              <CustomDropdown
+                label={TASK_TYPE_LAYER2_FIELD_LABEL}
+                value={layer2}
+                options={layer2OptionsForTask(task?.taskTypeLayer1).map((option) => ({ value: option.value, label: option.label }))}
+                onChange={setLayer2}
+              />
+              {layer2 && task?.taskTypeLayer2 && layer2 !== task.taskTypeLayer2 ? (
+                <p className="-mt-2 mb-3 text-[11px] font-semibold text-amber-700">Khác Lớp 2 của task ({taskTypeLayer2Label(task.taskTypeLayer2)}): giờ này sẽ ở trạng thái Chờ xử lý cho tới khi PM xem lại.</p>
+              ) : null}
+            </>
           ) : null}
 
           <div className="flex flex-col gap-2.5 my-1 bg-slate-50 p-3.5 rounded-xl border border-slate-100">

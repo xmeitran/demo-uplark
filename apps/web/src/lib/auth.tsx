@@ -16,6 +16,8 @@ export interface AuthUser {
   avatarUrl?: string;
   role: string;
   roleCodes?: string[];
+  /** Roles actually bound to the account (roleCodes adds what they imply). */
+  heldRoleCodes?: string[];
   /** Derived by the API from the roles held ("Hai loại tài khoản: Admin và User"). */
   accountType?: "ADMIN" | "USER";
   /** 7.7: an Admin may work in user view. */
@@ -36,6 +38,7 @@ interface SessionPrincipal {
   email?: string;
   avatarUrl?: string;
   roleCodes?: string[];
+  heldRoleCodes?: string[];
   accountType?: "ADMIN" | "USER";
   viewMode?: "admin" | "user";
   subjectId?: string;
@@ -58,6 +61,7 @@ function authUserFromPrincipal(principal: SessionPrincipal): AuthUser {
     avatarUrl: principal.avatarUrl,
     role: primaryAuthRole(principal.roleCodes),
     roleCodes: principal.roleCodes ?? [],
+    heldRoleCodes: principal.heldRoleCodes,
     accountType: principal.accountType ?? accountTypeOf(principal.roleCodes ?? []),
     viewMode: principal.viewMode ?? "admin"
   };

@@ -82,7 +82,7 @@ function ManualCostForm({ projectId, itemCode, months, initial, onSaved, onCance
       <label>
         <span className={labelClass}>Tháng phát sinh</span>
         <select value={draft.periodKey} onChange={(event) => setDraft({ ...draft, periodKey: event.target.value })} className={inputClass}>
-          {months.map((month) => <option key={month} value={month}>{formatMonth(month)}</option>)}
+          {(draft.periodKey && !months.includes(draft.periodKey) ? [draft.periodKey, ...months] : months).map((month) => <option key={month} value={month}>{formatMonth(month)}</option>)}
         </select>
       </label>
       <label>

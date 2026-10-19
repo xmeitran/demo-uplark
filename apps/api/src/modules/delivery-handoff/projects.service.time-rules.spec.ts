@@ -259,11 +259,10 @@ describe("legacy Layer 2 metadata on time logs", () => {
   const billable = { taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT" };
   const warningsOpened = (prisma: any) => prisma.projectWarning.create.mock.calls.map((call: any[]) => call[0].data);
 
-  it("allows a log without Layer 2 while still rejecting invalid legacy values", async () => {
+  it("a log without a Layer 2 pick takes the task's Layer 2 (never 'chưa chọn'); invalid values are still rejected", async () => {
     const { prisma, service } = setup({ task: billable });
-    const entry = await service.createTimeEntry("task-1", { ...log(), selectedTaskTypeLayer2: undefined }, as("usr-1"), "usr-1");
-    expect(entry.selectedTaskTypeLayer2).toBeUndefined();
-    expect(prisma.taskTimeEntry.create).toHaveBeenCalled();
+    await service.createTimeEntry("task-1", { ...log(), selectedTaskTypeLayer2: undefined }, as("usr-1"), "usr-1");
+    expect(prisma.taskTimeEntry.create.mock.calls[0][0].data).toMatchObject({ selectedTaskTypeLayer2: "CUSTOMER_PROJECT" });
 
     const invalid = setup({ task: billable });
     await expect(invalid.service.createTimeEntry("task-1", { ...log(), selectedTaskTypeLayer2: "DAY_OFF_COMPANY" }, as("usr-1"), "usr-1")).rejects.toBeInstanceOf(BadRequestException);

@@ -21,7 +21,7 @@ import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilte
 import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
 import { CrmMultiSelect, CrmSelect } from "@/components/crm-workspace/crm-select";
 import { useAuth } from "@/lib/auth";
-import { canViewCostFigures, isAdminView } from "@/lib/auth-role";
+import { canEditProjectSetup, canViewCostFigures, isAdminView } from "@/lib/auth-role";
 import { MoneyAmount } from "@/components/money-amount";
 import { pnlRequest } from "@/components/pnl/pnl-ui";
 import { parseVndAmount } from "@/components/pnl/pnl-project-edit";
@@ -948,6 +948,8 @@ export default function ProjectsPage() {
   const [projectPagination, setProjectPagination] = useState<ResourceListPaginationMeta>(EMPTY_PROJECT_PAGINATION);
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [projectsError, setProjectsError] = useState<string | null>(null);
+  // Kept apart from projectsError: the client list loads in parallel, and its success must not hide a failed project load.
+  const [accountsError, setAccountsError] = useState<string | null>(null);
   const [usingLocalProjectFallback, setUsingLocalProjectFallback] = useState(false);
   const [savingProject, setSavingProject] = useState(false);
   const createSubmittingRef = useRef(false);
@@ -1128,7 +1130,7 @@ export default function ProjectsPage() {
         const accounts = await fetchAccountOptions(controller.signal);
         if (controller.signal.aborted) return;
         setAccountOptions(accounts);
-        setProjectsError(null);
+        setAccountsError(null);
       } catch (error) {
         if (controller.signal.aborted) return;
         if (isUnauthorizedLiveProjectsError(error)) {
@@ -1137,7 +1139,7 @@ export default function ProjectsPage() {
         }
         setAccountOptions([]);
         if (process.env.NODE_ENV === "production") {
-          setProjectsError(error instanceof Error ? error.message : "Could not load CRM accounts");
+          setAccountsError(error instanceof Error ? error.message : "Could not load CRM accounts");
         }
       } finally { if (!controller.signal.aborted) setLoadingAccounts(false); }
     }
@@ -1994,7 +1996,7 @@ export default function ProjectsPage() {
                 <div className="flex min-h-0 flex-1">
                 <form onSubmit={handleSubmit} className="min-w-0 flex-1 overflow-y-auto p-6 space-y-4">
                   <input ref={aiImportInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleAiImport(file); }} />
-                  {projectsError && <div ref={createErrorRef} role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{projectsError}{accountOptions.length === 0 && <button type="button" className="ml-2 underline" onClick={() => setAccountLoadRevision(value => value + 1)}>Retry loading clients</button>}</div>}
+                  {(projectsError || accountsError) && <div ref={createErrorRef} role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{projectsError ?? accountsError}{accountOptions.length === 0 && <button type="button" className="ml-2 underline" onClick={() => setAccountLoadRevision(value => value + 1)}>Retry loading clients</button>}</div>}
                   {loadingAccounts && <p role="status">Loading clients…</p>}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Project Name */}
@@ -2076,7 +2078,7 @@ export default function ProjectsPage() {
                     </div>
 
                     {/* PL-13: doanh thu dự kiến = "Giá trị dự án" of the P&L; cost viewers only, optional here (required before G1). */}
-                    {showMoney && (
+                    {showMoney && canEditProjectSetup(user) && (
                       <div className="space-y-1.5">
                         <label htmlFor="create-project-value" className="text-xs font-semibold text-muted-foreground">Doanh thu dự kiến (VND)</label>
                         <input

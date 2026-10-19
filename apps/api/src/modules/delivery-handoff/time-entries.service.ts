@@ -632,7 +632,8 @@ export class TimeEntriesService {
       throw new BadRequestException("workType must be 80 characters or fewer");
     }
     const note = optionalString(input.note, "note") ?? undefined;
-    const selectedTaskTypeLayer2 = this.parseSelectedLayer2(input.selectedTaskTypeLayer2, task.taskTypeLayer1);
+    // The logger may pick Layer 2 (P&L spec 12/10 point 5); without a pick it is the task's own Layer 2, not "chưa chọn".
+    const selectedTaskTypeLayer2 = this.parseSelectedLayer2(input.selectedTaskTypeLayer2, task.taskTypeLayer1) ?? (isTaskTypeLayer2(task.taskTypeLayer2) ? task.taskTypeLayer2 : null);
 
     const result = await this.prisma.$transaction((tx) => this.writeTimeEntry(tx, principal, task, {
       userId, startAt, endAt, workDate, timeZone, minutes, workType, note, selectedTaskTypeLayer2,

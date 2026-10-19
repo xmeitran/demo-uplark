@@ -3,7 +3,8 @@
 import { taskTypeLayer1Label, taskTypeLayer2Label } from "@/lib/task-classification";
 import { useEffect, useMemo, useState } from "react";
 import type { WorkspaceUserOption } from "@/lib/workspace-users";
-import { getPriorityLabel, getStatusLabel, getTaskTypeLabel } from "./task-display-helpers";
+import { formatTaskMinutes, getPriorityLabel, getStatusLabel, getTaskTypeLabel } from "./task-display-helpers";
+import { formatVietnamDate } from "@/lib/vietnam-time";
 
 type HistoryValue = Record<string, unknown> | null | undefined;
 
@@ -38,9 +39,11 @@ function formatValue(key: string, value: unknown, people: WorkspaceUserOption[])
   if (["ownerUserId", "assigneeUserId", "changedByUserId"].includes(key)) {
     return people.find((person) => person.id === String(value))?.name || String(value);
   }
+  // Minutes are stored; people read hours. Dates are shown in Vietnam time whatever the browser's zone.
+  if (key === "estimateMinutes" && Number.isFinite(Number(value))) return formatTaskMinutes(Number(value));
   if (["plannedStartAt", "dueAt"].includes(key)) {
     const date = new Date(String(value));
-    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString("vi-VN");
+    return Number.isNaN(date.getTime()) ? String(value) : formatVietnamDate(date);
   }
   const text = String(value);
   return text.length > 48 ? `${text.slice(0, 48)}…` : text;

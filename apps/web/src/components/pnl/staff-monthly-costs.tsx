@@ -260,7 +260,7 @@ function StaffCostModal({ target, locked, reload, onClose }: Readonly<{ target: 
 
   return (
     <PnlModal title={`Chi phí ${month}${target.displayName ? ` · ${target.displayName}` : ""}`} onClose={onClose} onSubmit={() => void submit()}
-      footer={<>{target.status === "DRAFT" ? <button type="button" className="mr-auto text-sm font-semibold text-destructive hover:underline" disabled={save.busy} onClick={() => void removeDraft()}>Xóa bản nháp</button> : null}<ModalActions onCancel={onClose} busy={save.busy} disabled={locked} submitLabel="Lưu bản nháp" /></>}>
+      footer={<>{target.status === "DRAFT" && !locked ? <button type="button" className="mr-auto text-sm font-semibold text-destructive hover:underline" disabled={save.busy} onClick={() => void removeDraft()}>Xóa bản nháp</button> : null}<ModalActions onCancel={onClose} busy={save.busy} disabled={locked} submitLabel="Lưu bản nháp" /></>}>
       <Field label="Đơn giá giờ (đồng/giờ)" htmlFor="staff-cost-hourly-rate">
         <input id="staff-cost-hourly-rate" inputMode="numeric" autoComplete="off" disabled={locked} value={hourlyCostRate} placeholder="Ví dụ: 150.000" onChange={(event) => setHourlyCostRate(formatMoneyInput(event.target.value))} className={`${inputClass} text-right font-mono tabular-nums`} />
       </Field>

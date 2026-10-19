@@ -17,7 +17,7 @@ import type {
   ArAgingSummaryResponse
 } from "@b2b-crm/contracts";
 import { SALES_WON_REASONS } from "@b2b-crm/contracts";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { OpportunityActivitiesResponse } from "../../lib/api";
 import { getPipelineStats, parseVndInput, toDraft } from "./utils";
 import type {
@@ -69,6 +69,8 @@ export function useOpportunityWorkbench({
   });
   const [handoffModalOpen, setHandoffModalOpen] = useState(false);
   const [financeOpen, setFinanceOpen] = useState(false);
+  const activitiesRequest = useRef(0);
+  const financeRequest = useRef(0);
   const [financeLoading, setFinanceLoading] = useState(false);
   const [paymentSchedules, setPaymentSchedules] = useState<PaymentScheduleDetail[]>([]);
   const [arAging, setArAging] = useState<ArAgingSummaryResponse["data"]>([]);
@@ -147,6 +149,8 @@ export function useOpportunityWorkbench({
   }
 
   async function loadFinance(record: OpportunitySummary) {
+    const request = ++financeRequest.current;
+    const stale = () => request !== financeRequest.current;
     setFinanceLoading(true);
     try {
       const [scheduleResponse, arAgingResponse] = await Promise.all([
@@ -154,6 +158,7 @@ export function useOpportunityWorkbench({
         fetch(`/api/payments/ar-aging?principal=${encodeURIComponent(principal)}`)
       ]);
 
+      if (stale()) return;
       if (!scheduleResponse.ok || !arAgingResponse.ok) {
         setPaymentSchedules([]);
         setArAging([]);
@@ -179,6 +184,7 @@ export function useOpportunityWorkbench({
         })
       );
 
+      if (stale()) return;
       const visibleDetails = scheduleDetails.filter((schedule): schedule is PaymentScheduleDetail => Boolean(schedule));
       const accountAging = arAgingBody.data.filter((item) => item.accountId === record.accountId);
       setPaymentSchedules(visibleDetails);
@@ -204,27 +210,31 @@ export function useOpportunityWorkbench({
       });
       setMessage(`Đã tải tín hiệu tài chính cho ${record.accountName}.`);
     } catch {
+      if (stale()) return;
       setPaymentSchedules([]);
       setArAging([]);
       setMessage("Chưa có dữ liệu tài chính.");
     }
-    setFinanceLoading(false);
+    if (!stale()) setFinanceLoading(false);
   }
 
   async function loadActivities(opportunityId: string) {
+    // Only the latest request may write: switching deals quickly must not show the previous deal's activities.
+    const request = ++activitiesRequest.current;
     setLoading(true);
-    const response = await fetch(`/api/opportunities/${encodeURIComponent(opportunityId)}/activities?principal=${encodeURIComponent(principal)}`);
-    if (!response.ok) {
+    try {
+      const response = await fetch(`/api/opportunities/${encodeURIComponent(opportunityId)}/activities?principal=${encodeURIComponent(principal)}`);
+      const body = response.ok ? (await response.json()) as OpportunityActivitiesResponse : null;
+      if (request !== activitiesRequest.current) return;
+      setActivities(body?.data ?? []);
+      setMessage(body ? `Đã tải ${body.data.length} hoạt động.` : "Chưa thể mở danh sách hoạt động cho cơ hội này.");
+    } catch {
+      if (request !== activitiesRequest.current) return;
       setActivities([]);
       setMessage("Chưa thể mở danh sách hoạt động cho cơ hội này.");
-      setLoading(false);
-      return;
+    } finally {
+      if (request === activitiesRequest.current) setLoading(false);
     }
-
-    const body = (await response.json()) as OpportunityActivitiesResponse;
-    setActivities(body.data);
-    setMessage(`Đã tải ${body.data.length} hoạt động.`);
-    setLoading(false);
   }
 
   function cancelEditing() {
