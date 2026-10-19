@@ -317,6 +317,8 @@ export function planGateAction(
 
   // exception (V-11). It waives the documents and the customer wait, never the data condition: G7 closes the project P&L.
   if (definition.code === "G7" && facts.pnlPending?.blocked) throw fail([{ text: g7PendingHoursMessage(facts.pnlPending), waivable: false }]);
+  // D-22: "Giá trị dự án" is required before G1 (level Chặn) — the revenue of the P&L, not a document an exception waives.
+  if (definition.code === "G1" && facts.chargeable && !facts.projectValueReady) throw fail([{ text: "Chưa nhập Giá trị dự án (màn P&L dự án, ô Doanh thu).", waivable: false }]);
   const reason = required(input.reason, "Mở điểm chốt theo ngoại lệ bắt buộc ghi lý do.");
   return {
     toStatus: "exception",

@@ -24,6 +24,7 @@ import {
   buildPersonProjectRows,
   filterLogs,
   periodParamsForRange,
+  leaveFraction,
   standardMinutesFor,
   sum,
   type TimesheetFilters
@@ -290,9 +291,9 @@ export function PersonalTimesheet() {
   // "Ngày còn trống" ignores the project and text filters: a day with hours on another project is not empty.
   const periodMatrix = useMemo(() => buildPersonDayMatrix(personalDataset, periodFilters, periodLogs), [periodFilters, periodLogs, personalDataset]);
   const workingDays = period.start <= today ? eachDate(period.start, period.end < today ? period.end : today).filter((date) => isWorkingDay(date, dataset.holidays)) : [];
-  const standardMinutes = person ? standardMinutesFor(person, workingDays.length) : 0;
+  const standardMinutes = person ? standardMinutesFor(person, workingDays.length - sum(workingDays.map((date) => leaveFraction(dataset, person.id, date)))) : 0;
   const actualMinutes = sum(personalLogs.map((log) => log.minutes));
-  const missingDays = periodMatrix.rows[0]?.cells.filter((cell) => cell.isWorkingDay && cell.date <= today && cell.minutes === 0) ?? [];
+  const missingDays = periodMatrix.rows[0]?.cells.filter((cell) => cell.isWorkingDay && cell.date <= today && cell.minutes === 0 && !(person && leaveFraction(dataset, person.id, cell.date) >= 1)) ?? [];
   const periodLabel = formatFilterPeriod(filters);
   const activeFilterCount = (filters.projectIds?.length ? 1 : 0) + (search ? 1 : 0) + (from || to || month !== defaultMonth ? 1 : 0);
   const datePresets = [

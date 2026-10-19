@@ -712,12 +712,14 @@ export class PnlService {
   // -------------------------------------------------------------------------
 
   /** Giờ tính P&L of the month per project that takes a share: chargeable projects with counted hours, never a trial project. */
-  private fundBasis(ctx: PnlContext, periodKey: string, fund: { eligibility: string; eligibleProjectIds: string[] }) {
+  private fundBasis(ctx: PnlContext, periodKey: string, fund: { eligibility: string; eligibleProjectIds: string[]; targetItemCode: string }) {
     const minutes = new Map<string, number>();
     for (const entry of ctx.entries) {
       if (entry.periodKey !== periodKey || entry.status !== "included" || !entry.projectId) continue;
       const project = ctx.projects.get(entry.projectId);
       if (!project || project.isTest || project.consumable || project.internalWorklog) continue;
+      // A project whose template (or override) switches the fund's target item off would drop its share: it takes none.
+      if (project.disabledCodes?.has(fund.targetItemCode)) continue;
       if (fund.eligibility === "selected_projects" && !fund.eligibleProjectIds.includes(project.id)) continue;
       minutes.set(project.id, (minutes.get(project.id) ?? 0) + entry.minutes);
     }
@@ -889,11 +891,13 @@ export class PnlService {
     if (ctx.params.number("standardDayHours", null, periodKey) === undefined) missingParameters.push("Giờ chuẩn một ngày");
     if (!ctx.params.resolve("pnlCloseGate", null, periodKey)) missingParameters.push("Mốc đóng P&L dự án");
     if (ctx.params.number("commissionPercent", null, periodKey) === undefined) missingParameters.push("Tỷ lệ hoa hồng");
-    const loggers = [...new Set(ofMonth.map((entry) => entry.userId))];
+    // PL-02: a trial project is out of every warning and total; its hours do not hold the month open — neither the
+    // pending hours nor the "no approved cost" check of someone who only logged on a trial project.
+    const counted = ofMonth.filter((entry) => !(entry.projectId && ctx.projects.get(entry.projectId)?.isTest));
+    const loggers = [...new Set(counted.map((entry) => entry.userId))];
     return periodChecklist({
       periodKey, missingParameters,
-      // PL-02: a trial project is out of every warning and total; its hours do not hold the month open.
-      entries: ofMonth.filter((entry) => !(entry.projectId && ctx.projects.get(entry.projectId)?.isTest)),
+      entries: counted,
       userNames: new Map(loggers.map((userId) => [userId, ctx.userName(userId) as string])),
       usersWithoutApprovedCost: loggers.filter((userId) => ctx.staffCosts.get(rateKey(userId, periodKey))?.status !== "APPROVED"),
       funds: periodRows.map((period) => ({ name: fundRows.find((fund) => fund.id === period.fundId)?.name ?? period.fundId, amount: num(period.amount), allocatedAmount: sum(allocationRows.filter((row) => row.fundPeriodId === period.id).map((row) => num(row.amount))), confirmed: period.status === "allocated" })),

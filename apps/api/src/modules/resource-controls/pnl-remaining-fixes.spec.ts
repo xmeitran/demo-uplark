@@ -228,3 +228,35 @@ describe("4 · PIC của dự án trên tab P&L = PIC ở mọi nơi khác (ch�
     expect((await s.project()).header).toMatchObject({ picUserId: null, picName: null });
   });
 });
+
+describe("review 19/10/2026 — P&L numbers (group C)", () => {
+  it("C2 · a drafted method change of an item with locked numbers is refused when applied, not only when saved", async () => {
+    const s = scenario();
+    await s.config.saveItem({ code: "CP.WELFARE", name: "Welfare related", parentCode: "CHIPHI", method: "FUND" } as any, founder);
+    expect(s.db.table("pnlCostItem").find((row) => row.code === "CP.WELFARE")?.draft).toMatchObject({ method: "FUND" }); // saved while nothing was locked
+    await s.approveCost("u-b", "2026-09", 25_200_000);
+    await s.pnl.confirmFund("fund-ai", "2026-09", founder);
+    await s.pnl.lockPeriod("2026-08", founder);
+    await s.pnl.lockPeriod("2026-09", founder);
+    await expect(s.config.applyItemDrafts({ periodKey: "2026-10" }, founder)).rejects.toThrow("đã có số ở kỳ đã khóa");
+  });
+
+  it("C5 · a project that switched the fund's target item off takes no share of the fund", async () => {
+    const s = scenario();
+    await s.config.setTemplateOverride("p-a", { disabledCodes: ["CP.FUNCOP.AI"], reason: "không dùng AI" }, founder);
+    // p-a is the only project with hours in 09: with its share refused there is nobody left to split the AI fund to.
+    await expect(s.pnl.confirmFund("fund-ai", "2026-09", founder)).rejects.toThrow("Chưa có giờ tính P&L");
+  });
+
+  it("C6 · an approved monthly cost keeps no frozen rate: the rate follows the month's standard hours until the lock", async () => {
+    const s = scenario();
+    await s.config.setStaffCost({ userId: "u-b", periodKey: "2026-09", baseSalaryAmount: 25_200_000 }, founder);
+    await s.config.approveStaffCosts({ periodKey: "2026-09" }, founder);
+    expect(s.db.table("resourceMonthlyCost").find((row) => row.userId === "u-b" && row.periodKey === "2026-09")).toMatchObject({ status: "APPROVED", hourlyCostRate: null });
+  });
+
+  it("C13 · revenue is the project's Giá trị dự án, never a manual cost line", async () => {
+    const s = scenario();
+    await expect(s.config.createManualCost("p-a", { itemCode: "DOANHTHU.GHINHAN", periodKey: "2026-09", label: "Doanh thu", amount: 50_000_000 }, founder)).rejects.toThrow(/Giá trị dự án|Nhập tay/);
+  });
+});

@@ -145,10 +145,15 @@ export function TimesheetWorkbench() {
         logs: selfId ? datasetWithDirectoryPeople.logs.filter((log) => log.personId === selfId) : []
       };
     }
+    const managedProjects = datasetWithDirectoryPeople.projects.filter((project) => user?.id && (project.picId === user.id || project.members.some((member) => member.personId === user.id)));
+    const managedProjectIds = new Set(managedProjects.map((project) => project.id));
+    // People of the managed projects only: everyone else has no hours in this scope and would show as "chưa ghi giờ".
+    const managedPeopleIds = new Set(managedProjects.flatMap((project) => [project.picId, ...project.members.map((member) => member.personId)]));
     return {
       ...datasetWithDirectoryPeople,
-      projects: datasetWithDirectoryPeople.projects.filter((project) => user?.id && (project.picId === user.id || project.members.some((member) => member.personId === user.id))),
-      logs: datasetWithDirectoryPeople.logs.filter((log) => datasetWithDirectoryPeople.projects.some((project) => project.id === log.projectId && user?.id && (project.picId === user.id || project.members.some((member) => member.personId === user.id))))
+      people: availablePeople.filter((person) => managedPeopleIds.has(person.id)),
+      projects: managedProjects,
+      logs: datasetWithDirectoryPeople.logs.filter((log) => managedProjectIds.has(log.projectId))
     };
   }, [availablePeople, dataset, scope, user?.id]);
 

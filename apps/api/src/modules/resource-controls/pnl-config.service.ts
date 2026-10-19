@@ -314,6 +314,15 @@ export class PnlConfigService {
     if (!hasDraft) throw new BadRequestException("Không có bản nháp để áp dụng.");
     // A month may have been locked since the draft was saved: this is where the change reaches the P&L.
     for (const row of rows) if (row.draft) this.assertItemChangeAllowed(ctx, row, row.draft as object);
+    // Same guard as saveItem, checked again here: a locked month reads the live item definition, so switching the way an
+    // item is computed (e.g. Nhập tay → Quỹ) would change locked figures.
+    for (const row of rows as any[]) {
+      const draft = row.draft as { method?: string } | null;
+      if (row.status === "active" && draft?.method && draft.method !== row.method && row.code !== SYSTEM_ITEM_CODES.revenue
+        && [...ctx.lockedKeys].some((key) => !row.effectiveFromPeriod || key >= row.effectiveFromPeriod)) {
+        throw new ConflictException(`Khoản mục ${row.name ?? row.code} đã có số ở kỳ đã khóa: không đổi cách lấy số, hãy tạo khoản mục mới.`);
+      }
+    }
     const check = checkCostTree(drafted.map((row) => this.toDef(row)));
     if (check.cycleCodes.length) throw new ConflictException(`Còn tham chiếu vòng giữa các khoản mục: ${check.cycleCodes.join(", ")}.`);
     if (!check.ok) throw new ConflictException(`Cấu hình chưa hợp lệ: ${[...check.groupErrors, ...check.errors].join(" ")}`);
@@ -700,15 +709,13 @@ export class PnlConfigService {
     this.assertOpenPeriod(ctx, periodKey, "mở lại kỳ trước khi duyệt chi phí tháng");
     const drafts: any[] = (await this.prisma.resourceMonthlyCost.findMany({ where: { workspaceId: principal.workspaceId, periodKey, status: { not: "APPROVED" } } }))
       .filter((row: any) => !input.userIds || input.userIds.includes(row.userId));
-    const standardMinutes = ctx.standardMinutes(periodKey);
     const now = this.pnl.now();
     await this.prisma.$transaction(async (tx: any) => {
       for (const row of drafts) {
-        // New rows already contain the direct rate. Rows from the old monthly flow have null and keep the legacy fallback.
-        const hourlyCostRate = row.hourlyCostRate === null || row.hourlyCostRate === undefined
-          ? (standardMinutes > 0 ? Math.round(((num(row.totalMonthlyIncome) * 60) / standardMinutes) * 100) / 100 : null)
-          : num(row.hourlyCostRate);
-        await tx.resourceMonthlyCost.update({ where: { id: row.id }, data: { status: "APPROVED", approvedAt: now, approvedByUserId: principal.subjectId, approvedByName: principal.displayName, hourlyCostRate } });
+        // A directly entered rate is kept as entered. A row from the monthly-total flow keeps no stored rate: PL-09 derives
+        // it from the month's standard hours, which can still change (a day off added) until the month is locked — the
+        // lock snapshot is what freezes it.
+        await tx.resourceMonthlyCost.update({ where: { id: row.id }, data: { status: "APPROVED", approvedAt: now, approvedByUserId: principal.subjectId, approvedByName: principal.displayName } });
         await this.audit(principal, "pnl.resource_monthly_cost_approved", "resource_monthly_cost", row.userId, { periodKey, status: row.status, totalAmount: num(row.totalMonthlyIncome) }, { periodKey, status: "APPROVED", totalAmount: num(row.totalMonthlyIncome) }, tx);
       }
     });
@@ -841,6 +848,8 @@ export class PnlConfigService {
     if (!project) throw new NotFoundException("Dự án không thuộc workspace hiện tại.");
     const item = ctx.tree.find((row) => row.code === input?.itemCode);
     if (!item || item.method !== "MANUAL") throw new BadRequestException("Chọn một khoản mục có cách lấy số Nhập tay.");
+    // Revenue is the project's one "Giá trị dự án" (PL-13), entered on its own field — never a monthly cost line.
+    if (item.code === SYSTEM_ITEM_CODES.revenue) throw new BadRequestException("Doanh thu dự án nhập ở ô Giá trị dự án, không nhập như một dòng chi phí.");
     if (project.disabledCodes.has(item.code)) throw new BadRequestException(`Khoản mục ${item.name} đang tắt ở mẫu của dự án này.`);
     const occurredOn = text(input.occurredOn) ?? (text(input.periodKey) ? `${requirePeriodKey(input.periodKey)}-01` : undefined);
     if (!occurredOn || !/^\d{4}-\d{2}-\d{2}$/.test(occurredOn) || Number.isNaN(Date.parse(`${occurredOn}T00:00:00.000Z`))) throw new BadRequestException("Chọn tháng phát sinh (periodKey YYYY-MM) hoặc ngày phát sinh (occurredOn YYYY-MM-DD).");

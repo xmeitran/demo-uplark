@@ -50,6 +50,12 @@ describe("bước 6 — chia quỹ chung (PL-17)", () => {
     expect(shares.map((row) => row.amount)).toEqual([33, 33, 34]);
   });
 
+  it("rounding never hands out more than the fund: no row, and not the last one, goes negative", () => {
+    const shares = splitFund(3, ["A", "B", "C", "D", "E"].map((projectId) => ({ projectId, minutes: 60 })));
+    expect(shares.map((row) => row.amount)).toEqual([1, 1, 1, 0, 0]);
+    expect(shares.every((row) => row.amount >= 0)).toBe(true);
+  });
+
   it("no counted hour → nothing is split (the fund stays Chưa chia); projects without hours take no share", () => {
     expect(splitFund(5_260_000, [])).toEqual([]);
     expect(splitFund(1_000, [{ projectId: "A", minutes: 0 }, { projectId: "B", minutes: 30 }])).toEqual([{ projectId: "B", minutes: 30, sharePercent: 100, amount: 1_000, takesRemainder: true }]);

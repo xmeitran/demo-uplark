@@ -210,6 +210,27 @@ describe("task rules", () => {
     expect(prisma.taskPlanningBlock.create).not.toHaveBeenCalled();
   });
 
+  it("refuses a time log that overlaps one of the person's counted logs (it would be paid twice)", async () => {
+    const { prisma, service } = setup({ member: true, task: { assigneeUserId: "usr-1" } });
+    prisma.taskTimeEntry.findFirst.mockImplementation(async (args: any) => (args?.where?.startAt?.lt
+      ? { startAt: new Date("2026-07-14T02:00:00.000Z"), endAt: new Date("2026-07-14T04:00:00.000Z") } : null));
+    await expect(service.createTimeEntry("task-1", { minutes: 120, workDate: "2026-07-14T03:00:00.000Z", startAt: "2026-07-14T03:00:00.000Z", endAt: "2026-07-14T05:00:00.000Z", selectedTaskTypeLayer2: "CUSTOMER_PROJECT" } as any, as("usr-1"), "usr-1")).rejects.toThrow("trùng với giờ đã ghi");
+    expect(prisma.taskTimeEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("after G7 or once the project is closed, only an Admin deletes a time log", async () => {
+    const entry = { id: "te-1", userId: "usr-1", taskId: "task-1", projectId: "prj-1", minutes: 60, workDate: new Date("2026-07-14T02:00:00.000Z"), approvalStatus: "approved", billable: true, reviewedByUserId: null };
+    const afterG7 = setup({ member: true });
+    afterG7.prisma.taskTimeEntry.findFirst.mockResolvedValue(entry);
+    afterG7.prisma.projectGate.findFirst.mockResolvedValue({ status: "approved" });
+    await expect(afterG7.service.deleteTaskTimeEntry("te-1", as("usr-1"))).rejects.toThrow("chỉ Admin mới xóa được");
+    expect(afterG7.prisma.taskTimeEntry.delete).not.toHaveBeenCalled();
+
+    const closed = setup({ member: true, project: { status: "closed" } });
+    closed.prisma.taskTimeEntry.findFirst.mockResolvedValue(entry);
+    await expect(closed.service.deleteTaskTimeEntry("te-1", as("usr-1"))).rejects.toThrow("chỉ Admin mới xóa được");
+  });
+
   it("a member plans only their own time; planning for a teammate needs a project manager (7.7)", async () => {
     const { prisma, service } = setup({ member: true });
     await expect(service.createTaskPlanningBlock("task-1", { userId: "usr-teammate", startAt: "2026-10-05T02:00:00.000Z", endAt: "2026-10-05T03:00:00.000Z" } as any, as("usr-1"), "usr-1")).rejects.toThrow("Chỉ được lập kế hoạch cho chính mình");

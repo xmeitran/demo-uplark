@@ -36,6 +36,17 @@ describe("payments (A1)", () => {
   });
 });
 
+describe("AR aging (C9)", () => {
+  it("subtracts what every invoice of the milestone collected, not only the latest invoice", async () => {
+    const prisma: any = { paymentMilestone: { findMany: vi.fn().mockResolvedValue([{
+      id: "ms-1", accountId: "acc-1", account: { name: "A" }, code: "M1", label: "Đợt 1", amount: 100_000_000, dueAt: new Date("2026-09-01"), paymentStatus: "PARTIALLY_PAID",
+      invoices: [{ id: "inv-2", paidAmount: 0, currency: "VND" }, { id: "inv-1", paidAmount: 40_000_000, currency: "VND" }], arFollowUps: []
+    }]) } };
+    const aging = await new PaymentsService(prisma).arAging(as({ roleCodes: ["COST_VIEW"] }));
+    expect(aging.data[0].outstandingAmount).toBe(60_000_000);
+  });
+});
+
 describe("proposal approvals (A2)", () => {
   function setup(request: Record<string, unknown> = {}) {
     const prisma: any = {

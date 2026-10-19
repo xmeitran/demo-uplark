@@ -216,6 +216,11 @@ describe("exception path (V-11)", () => {
     expect(result.history).toMatchObject({ action: "exception", label: "Ngoại lệ", note: "Khách cần go-live gấp", byUserId: "director" });
   });
 
+  it("never waives the 'Giá trị dự án' of a customer project at G1 (D-22, level Chặn)", () => {
+    expect(() => plan("G1", {}, director, { action: "exception", reason: "Khách ký sau" }, { projectValueReady: false })).toThrow(/Giá trị dự án/);
+    expect(plan("G1", {}, director, { action: "exception", reason: "Nội bộ" }, { projectValueReady: false, chargeable: false })).toMatchObject({ toStatus: "exception" });
+  });
+
   it("offers nothing once the gate is open", () => {
     expect(allowedGateActions(PROJECT_GATE_CATALOGUE.G3, state("G3", { status: "approved" }), facts("G3"), director)).toEqual([]);
     expect(allowedGateActions(PROJECT_GATE_CATALOGUE.G3, state("G3", { status: "exception" }), facts("G3"), director)).toEqual([]);

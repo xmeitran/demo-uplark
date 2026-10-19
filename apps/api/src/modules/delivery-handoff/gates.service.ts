@@ -29,6 +29,7 @@ import { loadStageExtensions, stageExtensionState } from "./stage-extension";
 import { customerWaitWorkingDays, stageSlaState } from "./stage-sla";
 import { CUSTOMER_BLOCKER_REASON, CUSTOMER_WAIT_REASON, isProgressBlockingCustomerBlocker, canDecideStatusProposal, computeProjectStatus, planStatusSync, statusProposalLabel, type ProjectStatusFacts } from "./status-proposal";
 import { isCustomerProjectType } from "./task-classification";
+import { NON_ACTUAL_TIME_ENTRY_STATUSES } from "./member-participation";
 import { CLOSED_WORK_STATUSES } from "./task-status";
 
 const DAY_MS = 86_400_000;
@@ -322,7 +323,7 @@ async function loadStatusFacts(client: any, workspaceId: string, project: { id: 
   const hasTimeLog = async (code: string) => {
     const stageId = gates.find((gate) => gate.code === code)?.stageId;
     if (!stageId || !hasModel(client, "taskTimeEntry", "findFirst")) return false;
-    return Boolean(await client.taskTimeEntry.findFirst({ where: { workspaceId, projectId: project.id, task: { stageId } }, select: { id: true } }));
+    return Boolean(await client.taskTimeEntry.findFirst({ where: { workspaceId, projectId: project.id, task: { stageId }, approvalStatus: { notIn: NON_ACTUAL_TIME_ENTRY_STATUSES } }, select: { id: true } }));
   };
   // "Quá hạn": the due day has passed (Vietnam time) and the task is still open.
   const startOfToday = new Date(Math.floor((now.getTime() + 7 * 3_600_000) / DAY_MS) * DAY_MS - 7 * 3_600_000);
@@ -343,7 +344,7 @@ async function loadStatusFacts(client: any, workspaceId: string, project: { id: 
     const rows: any[] = await client.projectMilestone.findMany({ where: { workspaceId, projectId: project.id }, select: { gateStatus: true } });
     const started = rows.length > 0 && Boolean(
       (hasModel(client, "projectStage", "findFirst") && await client.projectStage.findFirst({ where: { workspaceId, projectId: project.id, status: { not: "not_started" } }, select: { id: true } }))
-      || (hasModel(client, "taskTimeEntry", "findFirst") && await client.taskTimeEntry.findFirst({ where: { workspaceId, projectId: project.id }, select: { id: true } }))
+      || (hasModel(client, "taskTimeEntry", "findFirst") && await client.taskTimeEntry.findFirst({ where: { workspaceId, projectId: project.id, approvalStatus: { notIn: NON_ACTUAL_TIME_ENTRY_STATUSES } }, select: { id: true } }))
     );
     milestones = { total: rows.length, approved: rows.filter((row) => row.gateStatus === "approved").length, started };
   }

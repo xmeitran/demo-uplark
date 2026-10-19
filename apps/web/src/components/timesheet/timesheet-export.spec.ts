@@ -2,7 +2,7 @@ import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
 import { buildTimesheetWorkbook } from "./timesheet-export";
 import { getTimesheetDataset } from "./timesheet-dataset.fixture";
-import { filterLogs, type TimesheetFilters } from "./timesheet-selectors";
+import { buildProjectSummaries, filterLogs, type TimesheetFilters } from "./timesheet-selectors";
 
 describe("buildTimesheetWorkbook", () => {
   it("follows the dashboard template: five sheets, one table per sheet, all reconciling with Raw Data", async () => {
@@ -65,5 +65,13 @@ describe("buildTimesheetWorkbook", () => {
     // Projects and people are ordered by hours, highest first.
     const projectHours = column("Theo dự án", 5);
     expect(projectHours).toEqual([...projectHours].sort((left, right) => right - left));
+
+    // Plan and ratio are the screen's ("Theo dự án": Giờ kế hoạch, Tỷ lệ thực tế so với kế hoạch) for the same filters.
+    const summaries = new Map(buildProjectSummaries(dataset, logs, dataset.generatedAt).map((row) => [row.project.code, row]));
+    for (let row = 2; row <= sheet("Theo dự án").rowCount; row += 1) {
+      const summary = summaries.get(String(sheet("Theo dự án").getCell(row, 2).value))!;
+      expect(sheet("Theo dự án").getCell(row, 6).value).toBeCloseTo(summary.estimateMinutes / 60, 2);
+      if (summary.estimateMinutes > 0) expect(sheet("Theo dự án").getCell(row, 9).value).toBeCloseTo(summary.consumptionPercent, 1);
+    }
   });
 });

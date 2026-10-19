@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checklistRow, configCheckParts, filterTree, formulaText, importResultText, mapStaffCostSheet, nextFormulaStep, parseDecimalInput, setupTabOf, visibleTreeRows } from "./pnl-cost-shared";
+import { checklistRow, configCheckParts, filterTree, formulaText, importResultText, mapStaffCostSheet, nextFormulaStep, parseDecimalInput, setupTabOf, visibleTreeRows, formatDecimalInput } from "./pnl-cost-shared";
 
 describe("P&L setup input", () => {
   it("reads typed numbers", () => {
@@ -108,5 +108,12 @@ describe("filterTree", () => {
 
   it("survives a parent cycle", () => {
     expect(filterTree([{ code: "A", parentCode: "B" }, { code: "B", parentCode: "A" }], (item) => item.code === "A").map((item) => item.code)).toEqual(["A", "B"]);
+  });
+});
+
+describe("formatDecimalInput (review 19/10: C19)", () => {
+  it("prefills a stored number so it reads back unchanged, decimals included", () => {
+    for (const value of [12.345, 26.3, 400000, 0.125, 5]) expect(parseDecimalInput(formatDecimalInput(value))).toBe(value);
+    expect(formatDecimalInput(null)).toBe("");
   });
 });

@@ -1,3 +1,4 @@
+import { localDateKey } from "../../shared/working-days";
 import { isActualTimeEntry } from "./member-participation";
 
 const COMPLETED_TASK_STATUSES = new Set(["done", "completed", "closed"]);
@@ -64,7 +65,8 @@ function dateKey(value: Date | string | null | undefined): string | undefined {
   if (!value) return undefined;
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return undefined;
-  return date.toISOString().slice(0, 10);
+  // The day in Vietnam time: between 00:00 and 07:00 local the UTC date is still yesterday.
+  return localDateKey(date);
 }
 
 function hasActualTimeOutsidePlan(input: DeriveTaskStatusInput): boolean {

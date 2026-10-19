@@ -177,14 +177,16 @@ export class PaymentsService {
         paymentStatus: { in: ["UNPAID", "PARTIALLY_PAID", "OVERDUE", "DISPUTED"] as any },
         dueAt: { not: null }
       },
-      include: { account: true, invoices: { orderBy: { createdAt: "desc" }, take: 1 }, arFollowUps: { orderBy: { createdAt: "desc" }, take: 1 } },
+      include: { account: true, invoices: { orderBy: { createdAt: "desc" } }, arFollowUps: { orderBy: { createdAt: "desc" }, take: 1 } },
       orderBy: [{ dueAt: "asc" }]
     });
 
     return {
       data: rows.map((row) => {
         const invoice = row.invoices[0];
-        const outstanding = money(row.amount) - money(invoice?.paidAmount);
+        // Every invoice of the milestone counts, as on the schedule screen (mapSchedule): not only the latest one.
+        const paid = row.invoices.reduce((sum: number, item: any) => sum + money(item.paidAmount), 0);
+        const outstanding = Math.max(money(row.amount) - paid, 0);
         return {
           accountId: row.accountId,
           accountName: row.account.name,

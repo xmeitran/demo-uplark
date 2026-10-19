@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMonthlyKpis, buildPersonMonthSummaries, buildPersonProjectRows, buildProjectMemberRows, buildProjectSummaries, filterLogs, filterPeriod, peopleInScope, periodParamsForRange } from "./timesheet-selectors";
+import { attendanceLogs, buildMonthlyKpis, buildPersonMonthSummaries, buildPersonDayMatrix, buildPersonProjectRows, buildProjectMemberRows, buildProjectSummaries, filterLogs, filterPeriod, peopleInScope, periodParamsForRange } from "./timesheet-selectors";
 import type { ProjectNode, TaskNode, TimesheetDataset } from "./timesheet-types";
 
 const dataset: TimesheetDataset = {
@@ -183,5 +183,31 @@ describe("per-person figures", () => {
     const kpis = buildMonthlyKpis(scoped, septemberFilters, logs, summaries);
     expect(kpis.actualMinutes).toBe(420);
     expect(kpis.missingMinutes).toBe(kpis.standardMinutes - 240);
+  });
+});
+
+describe("attendance (review 19/10: C4, C7)", () => {
+  const base = { month: "2026-09", dateFrom: "2026-09-01", dateTo: "2026-09-02", departmentId: "all" as const, personId: "all" as const, personIds: [], projectId: "all" as const, workGroup: "all" as const };
+  const day = (id: string, personId: string, projectId: string, date: string) => ({ ...dataset.logs[0], id, personId, projectId, date, minutes: 480 });
+
+  it("a project filter picks whose attendance is shown, but completeness counts all their hours", () => {
+    const withTwoProjects: TimesheetDataset = {
+      ...dataset,
+      logs: [day("a-1", "p-1", "pr-1", "2026-09-01"), day("a-2", "p-1", "pr-2", "2026-09-02"), day("b-1", "p-2", "pr-2", "2026-09-01"), day("b-2", "p-2", "pr-2", "2026-09-02")]
+    };
+    const filters = { ...base, projectId: "pr-1" };
+    expect(peopleInScope(withTwoProjects, filters).map((person) => person.id)).toEqual(["p-1"]); // p-2 never worked on pr-1
+    const summary = buildPersonMonthSummaries(withTwoProjects, filters, attendanceLogs(withTwoProjects, filters))[0];
+    expect(summary).toMatchObject({ actualMinutes: 960, missingDays: [], daysLogged: 2 }); // the pr-2 day is not "missing"
+  });
+
+  it("approved leave lowers the standard and a full day of leave is not a missing day", () => {
+    const onLeave: TimesheetDataset = { ...dataset, logs: [day("l-x", "p-1", "pr-1", "2026-09-01")], leave: { "p-1|2026-09-02": 1, "p-2|2026-09-02": 0.5 } };
+    const filters = { ...base, personIds: ["p-1", "p-2"], personId: "multiple" };
+    const [p1, p2] = buildPersonMonthSummaries(onLeave, filters, attendanceLogs(onLeave, filters));
+    expect(p1).toMatchObject({ standardMinutes: 480, missingDays: [], workingDays: 1, missingMinutes: 0 });
+    expect(p2).toMatchObject({ standardMinutes: 720, missingDays: ["2026-09-01", "2026-09-02"] });
+    const matrix = buildPersonDayMatrix(onLeave, filters, attendanceLogs(onLeave, filters));
+    expect(matrix.rows.find((row) => row.person.id === "p-1")).toMatchObject({ standardMinutes: 480, emptyWorkingDays: 0 });
   });
 });

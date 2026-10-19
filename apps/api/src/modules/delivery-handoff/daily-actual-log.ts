@@ -35,11 +35,12 @@ export function getDailyActualLogWindow(attributedAt: Date): DailyActualLogWindo
   };
 }
 
-export function buildDailyActualLogStatus(localDate: string, totalMinutes: number): DailyActualLogStatus {
+/** targetMinutes: that person's standard hours of the day (workspace "Giờ chuẩn một ngày" minus approved leave). */
+export function buildDailyActualLogStatus(localDate: string, totalMinutes: number, targetMinutes: number = DAILY_ACTUAL_LOG_TARGET_MINUTES): DailyActualLogStatus {
   let state: DailyActualLogState = "below_target";
-  if (totalMinutes === DAILY_ACTUAL_LOG_TARGET_MINUTES) {
+  if (totalMinutes === targetMinutes) {
     state = "target_met";
-  } else if (totalMinutes > DAILY_ACTUAL_LOG_TARGET_MINUTES) {
+  } else if (totalMinutes > targetMinutes) {
     state = "over_target";
   }
 
@@ -47,7 +48,7 @@ export function buildDailyActualLogStatus(localDate: string, totalMinutes: numbe
     localDate,
     timeZone: DAILY_ACTUAL_LOG_TIME_ZONE,
     totalMinutes,
-    targetMinutes: DAILY_ACTUAL_LOG_TARGET_MINUTES,
+    targetMinutes,
     state
   };
 }

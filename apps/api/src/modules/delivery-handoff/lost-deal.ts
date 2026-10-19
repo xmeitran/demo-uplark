@@ -1,3 +1,4 @@
+import { reportMonthKey } from "../resource-controls/pnl-calc";
 /**
  * D-07 (v2, chốt 13/10): Pre-sale hours belong to their project from the start; when the project is closed with the
  * reason "Thua deal" they leave the project P&L for the company-level cost line "Chi phí Pre-sale".
@@ -26,7 +27,7 @@ export interface LostDealPreSaleEntry {
 export function summarizeLostDealPreSale(entries: readonly LostDealPreSaleEntry[]) {
   const months = new Map<string, { month: string; minutes: number; projects: Map<string, { projectId: string; projectCode: string; projectName: string; minutes: number }> }>();
   for (const entry of entries) {
-    const month = new Date(entry.workDate).toISOString().slice(0, 7);
+    const month = reportMonthKey(new Date(entry.workDate)); // the month in Vietnam time, as every P&L month
     const bucket = months.get(month) ?? { month, minutes: 0, projects: new Map() };
     const project = bucket.projects.get(entry.projectId) ?? { projectId: entry.projectId, projectCode: entry.projectCode, projectName: entry.projectName, minutes: 0 };
     project.minutes += entry.minutes;

@@ -1,4 +1,5 @@
-import type { TimesheetFilters } from "./timesheet-selectors";
+import { buildProjectSummaries, type TimesheetFilters } from "./timesheet-selectors";
+import { isWorkingDay } from "./timesheet-dates";
 import { formatDepartmentLabel } from "@/lib/department-labels";
 import { projectStatusLabel } from "@/lib/project-status";
 import { addExcelTableSheet, excelDate, styleExcelHeaderCells, type ExcelCell } from "@/lib/excel-table-sheet";
@@ -86,8 +87,10 @@ export function buildTimesheetWorkbook(ExcelJS: ExcelJsModule, context: Timeshee
       map.set(key, current);
     }
   }
-  // Estimate of the tasks that were actually logged, so it matches "Giờ kế hoạch task" in Raw Data.
-  const estimateMinutes = (tasks: Set<string>) => Array.from(tasks).reduce((sum, key) => sum + (taskIndex.get(key)?.estimateMinutes ?? 0), 0);
+  // Plan figures come from the same rollup as the "Theo dự án" screen (whole-project plan of the counted tasks, and
+  // used = actual to date ÷ plan), so a sheet and the screen agree for the same filters.
+  const summaryByProject = new Map(buildProjectSummaries(dataset, logs, dataset.generatedAt).map((row) => [row.project.id, row]));
+  const projectPlanMinutes = (projectId: string) => summaryByProject.get(projectId)?.estimateMinutes ?? 0;
 
   const workbook = new ExcelJS.Workbook();
 
@@ -104,7 +107,7 @@ export function buildTimesheetWorkbook(ExcelJS: ExcelJsModule, context: Timeshee
     [],
     ["CHỈ SỐ TỔNG QUAN DỰ ÁN", "Giá trị"],
     ["Tổng số giờ thực tế", hours(total.minutes)],
-    ["Tổng số giờ kế hoạch", hours(estimateMinutes(total.tasks))],
+    ["Tổng số giờ kế hoạch", hours(Array.from(total.projects).reduce((sum, projectId) => sum + projectPlanMinutes(projectId), 0))],
     ["Tổng số dự án", total.projects.size],
     ["Tổng số nhân sự", total.people.size],
     ["Tổng số task", total.tasks.size]
@@ -119,7 +122,8 @@ export function buildTimesheetWorkbook(ExcelJS: ExcelJsModule, context: Timeshee
     .sort((left, right) => right[1].minutes - left[1].minutes)
     .map(([projectId, data]) => {
       const project = projectsById.get(projectId);
-      const estimate = estimateMinutes(data.tasks);
+      const estimate = projectPlanMinutes(projectId);
+      const summary = summaryByProject.get(projectId);
       return [
         project?.name ?? "Chưa xác định",
         project?.code ?? projectId,
@@ -129,7 +133,7 @@ export function buildTimesheetWorkbook(ExcelJS: ExcelJsModule, context: Timeshee
         hours(estimate),
         data.people.size,
         data.tasks.size,
-        estimate > 0 ? round2((data.minutes / estimate) * 100) : 0
+        estimate > 0 ? round2(summary?.consumptionPercent ?? 0) : 0
       ];
     });
   addTableSheet(workbook, TIMESHEET_EXPORT_SHEETS[1], ["Tên dự án", "Mã dự án", "Khách hàng / tài khoản", "Trạng thái dự án", "Giờ_thực_tế", "Giờ_kế_hoạch", "Số_nhân_sự", "Số_task", "Tỷ_lệ_thực_tế_so_với_kế_hoạch_(%)"], projectRows, [42, 22, 28, 20, 14, 14, 12, 10, 34]);
@@ -139,6 +143,8 @@ export function buildTimesheetWorkbook(ExcelJS: ExcelJsModule, context: Timeshee
     .sort((left, right) => right[1].minutes - left[1].minutes)
     .map(([personId, data]) => {
       const person = peopleById.get(personId);
+      // Working days only (no weekend or holiday), as "Ngày ghi nhận" on the screen.
+      const workingDaysLogged = Array.from(data.dates).filter((date) => isWorkingDay(date, dataset.holidays)).length;
       return [
         person?.name ?? personId,
         person?.role ?? "—",
@@ -146,8 +152,8 @@ export function buildTimesheetWorkbook(ExcelJS: ExcelJsModule, context: Timeshee
         hours(data.minutes),
         data.projects.size,
         data.tasks.size,
-        data.dates.size,
-        data.dates.size ? round2(data.minutes / 60 / data.dates.size) : 0
+        workingDaysLogged,
+        workingDaysLogged ? round2(data.minutes / 60 / workingDaysLogged) : 0
       ];
     });
   addTableSheet(workbook, TIMESHEET_EXPORT_SHEETS[2], ["Nhân sự", "Vai trò", "Phòng ban", "Tổng_số_giờ_thực_tế", "Số_dự_án", "Số_task", "Ngày_làm_việc_đã_log", "Trung_bình_giờ/ngày"], personRows, [28, 24, 20, 22, 12, 10, 22, 20]);
