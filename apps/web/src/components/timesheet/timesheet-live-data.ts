@@ -20,7 +20,7 @@ import { resolveProjectStatus } from "@/lib/project-status";
 import { isActualTimeEntry } from "@/lib/time-entry-actual";
 import { toVietnamDateKey, vietnamDayStartIso } from "@/lib/vietnam-time";
 import { isClosedNodeStatus, isPausedTaskStatus, normalizeNodeStatus } from "./timesheet-status";
-import { monthBounds } from "./timesheet-dates";
+import { eachDate, monthBounds } from "./timesheet-dates";
 import { workGroupOfLayer2 } from "./timesheet-types";
 import { taskTypeLayer2Label } from "@/lib/task-classification";
 import type { ProjectMemberParticipationItem } from "@b2b-crm/contracts";
@@ -75,7 +75,12 @@ type ApiTask = {
   completedAt?: string;
   estimateMinutes?: number;
   taskTypeLayer2?: string;
+  parentTaskId?: string;
+  cancelledAt?: string;
+  archivedAt?: string;
 };
+
+type ApiLeave = { userId: string; startDate: string; endDate: string; startHalfDay?: boolean; endHalfDay?: boolean; status?: string };
 
 type ApiTimeEntry = {
   id: string;
@@ -240,7 +245,7 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
   const now = new Date();
   const today = toVietnamDateKey(now);
   const windowStart = timesheetWindowStart(now);
-  const [projects, entries, users, dayOffResponses, apiTasks] = await Promise.all([
+  const [projects, entries, users, dayOffResponses, apiTasks, leaveRows] = await Promise.all([
     loadPaged<ApiProject>("/api/projects", signal),
     loadTimeEntriesAcrossHistory(now, signal),
     readJson<ApiResponse<ApiUser>>("/api/workspace/users?principal=founder", signal),
@@ -251,7 +256,10 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
     // Keep the full task hierarchy separate from the time-entry slice. The
     // entry endpoint intentionally omits milestone/stage metadata, which made
     // every live row fall back to the generic "Time log" bucket.
-    loadPaged<ApiTask>("/api/tasks?includeArchived=true", signal)
+    loadPaged<ApiTask>("/api/tasks?includeArchived=true", signal),
+    // Approved personal leave lowers that day's standard hours and is not a missing day (rules §543).
+    // ponytail: the list is Admin-only, so a non-Admin's own view counts no leave; add a self-scoped endpoint if needed.
+    readJson<ApiResponse<ApiLeave>>(`/api/admin/personal-leave?from=${windowStart}&principal=founder`, signal).then((response) => response.data ?? []).catch(() => [] as ApiLeave[])
   ]);
 
   // The time-entry contract carries the task title, ID, canonical task status
@@ -288,6 +296,10 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
     });
   }
   const tasks: ApiTask[] = [...taskByKey.values()];
+  // "Giờ kế hoạch" is the estimate of the lowest-level tasks that still count, as in the P&L (pnl.service): a task with
+  // sub-tasks carries no plan of its own (its sub-tasks do), and a cancelled or archived task plans nothing.
+  const parentTaskIds = new Set(tasks.map((task) => task.parentTaskId).filter(Boolean));
+  for (const task of tasks) if (parentTaskIds.has(task.id) || task.cancelledAt || task.archivedAt) task.estimateMinutes = 0;
   const projectById = new Map(projects.map((project) => [project.id, project]));
   const usersById = new Map((users.data ?? []).map((user) => [user.id, user]));
   const projectMembers = new Map<string, Set<string>>();
@@ -471,7 +483,17 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
   const months = selectableTimesheetMonths(logs.map((log) => log.date), windowStart, today);
   const holidays = [...new Set(dayOffResponses.flatMap((response) => response.data ?? []).filter((item) => item.isActive !== false && item.date).flatMap((item) => dateOnly(item.date) ?? []))];
 
-  return { generatedAt: today, windowStart, departments, people: [...peopleById.values()], projects: projectNodes, logs, holidays, months };
+  const leave: Record<string, number> = {};
+  for (const row of leaveRows) {
+    if (row.status && row.status !== "approved") continue;
+    for (const date of eachDate(row.startDate, row.endDate)) {
+      const half = (date === row.startDate && row.startHalfDay) || (date === row.endDate && row.endHalfDay);
+      const key = `${row.userId}|${date}`;
+      leave[key] = Math.min(1, (leave[key] ?? 0) + (half ? 0.5 : 1));
+    }
+  }
+
+  return { generatedAt: today, windowStart, departments, people: [...peopleById.values()], projects: projectNodes, logs, holidays, leave, months };
 }
 
 export function emptyTimesheetDataset(): TimesheetDataset {

@@ -609,6 +609,11 @@ export class LarkAuthService {
 
   private assertLarkTenantAllowed(larkTenantKey?: string) {
     const allowed = csv(process.env.LARK_ALLOWED_TENANT_KEYS);
+    // Without an allowlist any Lark tenant that can authorize the app may sign in; production should always set one.
+    if (!allowed.length && process.env.NODE_ENV === "production" && !warnedNoTenantAllowlist) {
+      warnedNoTenantAllowlist = true;
+      console.warn("[lark-auth] LARK_ALLOWED_TENANT_KEYS is empty: Lark logins are accepted from any tenant. Set it to your Lark tenant key.");
+    }
     if (allowed.length && (!larkTenantKey || !allowed.includes(larkTenantKey))) {
       throw new ForbiddenException("Lark tenant is not allowed for this CRM workspace");
     }
@@ -682,8 +687,11 @@ function normalizeScopes(value: string) {
   return [...new Set(value.split(/\s+/).map((item) => item.trim()).filter(Boolean))].join(" ");
 }
 
+let warnedNoTenantAllowlist = false;
+
 function safeReturnTo(value?: string | null) {
-  if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/login")) {
+  // Browsers strip tab/newline and read "\\" as "/" while parsing, so "/\t/evil.com" would leave the site.
+  if (!value || !/^\/(?![/\\])[^\u0000-\u0020\u007F\\]*$/.test(value) || value.startsWith("/login")) {
     return "/";
   }
 

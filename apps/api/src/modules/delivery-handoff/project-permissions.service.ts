@@ -79,6 +79,26 @@ export class ProjectPermissionsService {
     return isWorkspaceAdmin(principal.roleCodes) || this.canManageProject(client, projectId, principal);
   }
 
+  /**
+   * 7.7: a User changes only the tasks they own or are assigned to (incl. as co-assignee); the PIC, the project's
+   * managers and workspace Admins change any task of the project.
+   */
+  async canEditTask(client: Prisma.TransactionClient, task: { id: string; projectId: string | null; ownerUserId: string | null; assigneeUserId: string | null; parentTaskId?: string | null }, principal: PrincipalContext) {
+    if (principal.subjectType !== "internal_user") return false;
+    if (task.ownerUserId === principal.subjectId || task.assigneeUserId === principal.subjectId) return true;
+    if (typeof (client as any).projectTaskAssignee?.findFirst === "function"
+      && await client.projectTaskAssignee.findFirst({ where: { taskId: task.id, workspaceId: principal.workspaceId, userId: principal.subjectId }, select: { id: true } })) return true;
+    // The person responsible for a task also manages its sub-tasks.
+    if (task.parentTaskId && await client.projectTask.findFirst({ where: { id: task.parentTaskId, workspaceId: principal.workspaceId, OR: [{ ownerUserId: principal.subjectId }, { assigneeUserId: principal.subjectId }] }, select: { id: true } })) return true;
+    return this.canManageProjectOrAdmin(client, task.projectId, principal);
+  }
+
+  async assertCanEditTask(client: Prisma.TransactionClient, task: { id: string; projectId: string | null; ownerUserId: string | null; assigneeUserId: string | null; parentTaskId?: string | null }, principal: PrincipalContext) {
+    if (!(await this.canEditTask(client, task, principal))) {
+      throw new ForbiddenException("Chỉ người phụ trách task, PIC / quản lý dự án hoặc Admin mới sửa được task này.");
+    }
+  }
+
   async assertProjectManagerOrAdmin(client: Prisma.TransactionClient, projectId: string, principal: PrincipalContext) {
     if (!(await this.canManageProjectOrAdmin(client, projectId, principal))) {
       throw new ForbiddenException("Chỉ PIC dự án, Delivery Lead của dự án, Workspace Admin hoặc Founder/GM mới được thực hiện thao tác này");

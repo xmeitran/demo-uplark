@@ -60,6 +60,7 @@ export const config = {
     "/projects", "/projects/:path*",
     "/admin", "/admin/:path*",
     "/users",    "/users/:path*",
+    "/people",   "/people/:path*",
     "/tasks",    "/tasks/:path*",
     "/notes",    "/notes/:path*",
     "/files",    "/files/:path*",
@@ -98,7 +99,7 @@ function isMatchedBusinessPrefix(pathname: string) {
     "/accounts", "/activity", "/analytics", "/calendar", "/chats", "/clients", "/constructor-x", "/data",
     "/delivery", "/files", "/finance", "/invoices", "/knowledge", "/mail", "/management",
     "/messenger", "/notes", "/pipeline", "/policy", "/portal", "/project-controls", "/projects",
-    "/proposals", "/resource-mgmt", "/settings", "/support", "/tasks", "/timesheet", "/pnl", "/admin", "/users"
+    "/proposals", "/resource-mgmt", "/settings", "/support", "/tasks", "/timesheet", "/pnl", "/admin", "/users", "/people"
   ].some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 

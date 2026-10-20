@@ -242,6 +242,13 @@ export async function runAlertScan(prisma: any, workspaceId: string, options: Al
 
   for (const warning of before) if (RETIRED_TRIGGER_CODES.includes(warning.typeCode)) bump(result.closed, warning.typeCode);
   await closeProjectWarnings(prisma, { workspaceId, typeCode: { in: RETIRED_TRIGGER_CODES } }, null, "Loại cảnh báo đã bỏ khỏi danh mục");
+  // A trigger an Admin switched off no longer owns its open warnings: close them instead of leaving them open forever
+  // (they would keep feeding the status proposal).
+  const switchedOff = SCAN_OWNED_CODES.filter((code) => !enabled(code));
+  if (switchedOff.length) {
+    for (const warning of before) if (switchedOff.includes(warning.typeCode)) bump(result.closed, warning.typeCode);
+    await closeProjectWarnings(prisma, { workspaceId, typeCode: { in: [...switchedOff] } }, null, "Admin đã tắt điểm kích hoạt");
+  }
   // BRI-02 (overdue) is a function of the clock: re-evaluate every open issue-log record.
   if (ISSUE_LOG_CODES.some(enabled)) for (const projectId of projectIds) await refreshProjectIssueLogWarnings(prisma, workspaceId, projectId, now);
   const after = await prisma.projectWarning.findMany({ where: { workspaceId, status: "open" }, select: { id: true, typeCode: true } });

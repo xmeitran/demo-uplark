@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PROJECT_TYPE_OPTIONS, projectKindOf, type CreateProjectInput, type ProjectPlanPreviewResponse, type ProjectStageSummary, type ProjectSummary, type UpdateProjectInput } from "@b2b-crm/contracts";
 import { CustomDropdown, DatePickerField, FormField, FormTextArea, Modal, type TaskSelectOption } from "./tasks-workbench";
 
@@ -80,10 +80,17 @@ export default function DeliveryCreateProjectModal({
   const [planPreviewError, setPlanPreviewError] = useState("");
   const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
 
+  // Reset when the modal opens for a project (or once the lists arrive), not on every re-render of the parent, which
+  // rebuilds `initialStage` each time and used to wipe the form while the user typed.
+  const resetKey = isOpen ? JSON.stringify([initialProject?.id ?? null, initialStage?.id ?? null, accounts.length > 0, resourceOptions.length > 0]) : null;
+  const lastResetKey = useRef<string | null>(null);
   useEffect(() => {
     if (!isOpen) {
+      lastResetKey.current = null;
       return;
     }
+    if (lastResetKey.current === resetKey) return;
+    lastResetKey.current = resetKey;
 
     setAccountId(initialProject?.accountId || accounts[0]?.id || "");
     setCode(initialProject?.code || "");
@@ -102,7 +109,7 @@ export default function DeliveryCreateProjectModal({
     setUsingGeneratedTemplate(false);
     setPlanPreview(null);
     setPlanPreviewError("");
-  }, [accounts, initialProject, initialStage, isOpen, resourceOptions]);
+  }, [accounts, initialProject, initialStage, isOpen, resetKey, resourceOptions]);
 
   const buildPlanPreviewInput = () => ({
     name: name.trim(),

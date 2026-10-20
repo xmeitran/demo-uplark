@@ -88,10 +88,16 @@ describe("task status semantics", () => {
       expect(
         deriveTaskStatus({
           rawStatus: "in_progress",
-          dueAt: "2026-10-13T23:59:00.000Z",
+          dueAt: "2026-10-13T16:59:00.000Z", // 23:59 on 13/10 in Vietnam time, as the app stores a due day
           now,
         }),
       ).toBe("overdue");
+    });
+
+    it("judges 'today' in Vietnam time: overdue from 00:00 local, not from 07:00 when the UTC date turns", () => {
+      const dueAt = "2026-10-13T16:59:00.000Z";
+      expect(deriveTaskStatus({ rawStatus: "in_progress", dueAt, now: new Date("2026-10-13T17:30:00.000Z") })).toBe("overdue"); // 00:30 on 14/10 local
+      expect(deriveTaskStatus({ rawStatus: "in_progress", dueAt, now: new Date("2026-10-13T16:30:00.000Z") })).not.toBe("overdue"); // 23:30 on 13/10 local
     });
 
     it("marks a task overdue when actual time was logged outside its plan", () => {

@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fakePrisma } from "./fake-prisma.testing";
 import { gateHooks } from "./gates";
-import { actOnProjectGate, listProjectGates } from "./gates.service";
+import { actOnProjectGate, decideStatusProposal, listProjectGates } from "./gates.service";
 
 const principal = { subjectType: "internal_user", subjectId: "usr-director", displayName: "Dx Director", workspaceId: "w", tenantKey: "prod", roleCodes: ["DX_DIRECTOR", "WORKSPACE_ADMIN"] } as any;
 
@@ -51,5 +51,33 @@ describe("G7 (findings 5, 6)", () => {
     // Only the Dx Director (or Founder/GM, Workspace Admin) is offered the exception.
     expect(list.canException).toBe(true);
     expect((await listProjectGates({ ...ctx, actor: { ...ctx.actor, canGrantGateException: false } }, { id: "p1" })).canException).toBe(false);
+  });
+});
+
+describe("status proposal decisions (review 19/10: D7)", () => {
+  const row = () => ({ id: "sp-1", projectId: "p1", workspaceId: "w", fromStatus: "in_progress", proposedStatus: "on_hold", basis: [], status: "pending", createdAt: new Date() });
+  function setup() {
+    let current: any = row();
+    const prisma = { projectStatusProposal: {
+      findFirst: vi.fn(async () => ({ ...current })),
+      updateMany: vi.fn(async ({ where, data }: any) => (current.status === where.status ? (current = { ...current, ...data }, { count: 1 }) : { count: 0 })),
+      update: vi.fn(async ({ data }: any) => (current = { ...current, ...data }))
+    } };
+    const ctx = { prisma, principal: { workspaceId: "w", subjectId: "usr-pm" }, actor: { isPm: true, isAdmin: true } };
+    return { ctx, prisma, current: () => current };
+  }
+
+  it("a confirm and a decline sent together: the second finds the proposal already decided", async () => {
+    const { ctx } = setup();
+    const apply = vi.fn(async () => undefined);
+    await decideStatusProposal(ctx, "p1", "sp-1", { decision: "confirm" } as any, apply);
+    // The decline was checked on a stale read: the conditional claim refuses it instead of overwriting "confirmed".
+    await expect(decideStatusProposal({ ...ctx, prisma: { projectStatusProposal: { ...ctx.prisma.projectStatusProposal, findFirst: vi.fn(async () => row()) } } }, "p1", "sp-1", { decision: "decline", reason: "x" } as any, apply)).rejects.toThrow("đã được xử lý");
+  });
+
+  it("a confirm whose status change is refused leaves the proposal pending", async () => {
+    const { ctx, current } = setup();
+    await expect(decideStatusProposal(ctx, "p1", "sp-1", { decision: "confirm" } as any, async () => { throw new Error("cần lý do"); })).rejects.toThrow("cần lý do");
+    expect(current().status).toBe("pending");
   });
 });

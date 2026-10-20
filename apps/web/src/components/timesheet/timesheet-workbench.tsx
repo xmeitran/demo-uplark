@@ -22,7 +22,7 @@ import { MonthlyTimesheet } from "./monthly-timesheet";
 import { ProjectTimesheet } from "./project-timesheet";
 import { useAuth } from "@/lib/auth";
 import { fetchWorkspaceUserOptions } from "@/lib/workspace-users";
-import { exportTimesheetWorkbook } from "./timesheet-export";
+import { TIMESHEET_EXPORT_SHEETS, exportTimesheetWorkbook } from "./timesheet-export";
 import { canViewTimesheetGroup, resolveTimesheetScope } from "./timesheet-access";
 import { buildTimesheetAlerts } from "./timesheet-alerts";
 import { TimesheetViewNav } from "./timesheet-view-nav";
@@ -145,10 +145,15 @@ export function TimesheetWorkbench() {
         logs: selfId ? datasetWithDirectoryPeople.logs.filter((log) => log.personId === selfId) : []
       };
     }
+    const managedProjects = datasetWithDirectoryPeople.projects.filter((project) => user?.id && (project.picId === user.id || project.members.some((member) => member.personId === user.id)));
+    const managedProjectIds = new Set(managedProjects.map((project) => project.id));
+    // People of the managed projects only: everyone else has no hours in this scope and would show as "chưa ghi giờ".
+    const managedPeopleIds = new Set(managedProjects.flatMap((project) => [project.picId, ...project.members.map((member) => member.personId)]));
     return {
       ...datasetWithDirectoryPeople,
-      projects: datasetWithDirectoryPeople.projects.filter((project) => user?.id && (project.picId === user.id || project.members.some((member) => member.personId === user.id))),
-      logs: datasetWithDirectoryPeople.logs.filter((log) => datasetWithDirectoryPeople.projects.some((project) => project.id === log.projectId && user?.id && (project.picId === user.id || project.members.some((member) => member.personId === user.id))))
+      people: availablePeople.filter((person) => managedPeopleIds.has(person.id)),
+      projects: managedProjects,
+      logs: datasetWithDirectoryPeople.logs.filter((log) => managedProjectIds.has(log.projectId))
     };
   }, [availablePeople, dataset, scope, user?.id]);
 
@@ -186,7 +191,7 @@ export function TimesheetWorkbench() {
         scopeLabel: VIEWER_SCOPE_LABELS[scope],
         view: view === "project" ? "Theo dự án" : "Theo tháng"
       });
-      setExportMessage(`Đã xuất ${result.logCount} dòng raw · 2 sheet`);
+      setExportMessage(`Đã xuất ${result.logCount} dòng raw · ${TIMESHEET_EXPORT_SHEETS.length} sheet`);
       window.setTimeout(() => setExportMessage(null), 5000);
     } catch (error) {
       setExportError(error instanceof Error ? error.message : "Không thể tạo file Excel.");

@@ -56,7 +56,6 @@ import {
   mapTaskSummary
 } from "./delivery.mapper";
 import { DEFAULT_PROJECT_STAGE_TEMPLATE, PILOT_PROJECT_MILESTONE_TEMPLATE } from "./stage-template";
-import { dateOnlyToUtcDate, getLocalDateKeysForTimeRange, lockWorkspaceDayOffDates } from "../workspace-calendar/day-off-time";
 import { CLOSED_WORK_STATUSES, isCancelledTaskStatus, isCompletedTaskStatus } from "./task-status";
 import {
   countMilestoneEvidence,
@@ -67,13 +66,14 @@ import {
   DEFAULT_MILESTONE_REVIEWER_MODE,
   normalizeMilestoneReviewerMode
 } from "./milestone-reviewer";
-import { INTERNAL_WORKLOG_PROJECT_TYPE, ISSUE_LOG_TYPES, PROJECT_TYPE_LABELS, isAdminAccount } from "@b2b-crm/contracts";
-import { canSeeProject, visibleProjectWhere, withoutProjectFinancials } from "./project-visibility";
+import { INTERNAL_WORKLOG_PROJECT_TYPE, ISSUE_LOG_TYPES, PROJECT_TYPE_LABELS, can, isAdminAccount } from "@b2b-crm/contracts";
+import { FIRST_STAGE_ORDER, canSeeProject, keepProjectPic, projectPmUserId, visibleProjectWhere, withoutProjectFinancials } from "./project-visibility";
 import { buildRuleBasedProjectPlan } from "./project-plan-rules";
 import { canCloseProject, canReopenProject, isKnownProjectStatus, normalizeProjectStatus, projectStatusFilterValues, validateProjectStatusChange, PROJECT_STATUS_ALIASES, PROJECT_STATUS_CATALOGUE } from "./project-status";
 import { deriveMemberParticipation, NON_ACTUAL_TIME_ENTRY_STATUSES, participationWindow } from "./member-participation";
 import { projectLifecycleHooks } from "../lark-integration/lark-hooks";
 import { ResourceControlsService } from "../resource-controls/resource-controls.service";
+import { canEditProjectSetup, canViewCost } from "../resource-controls/cost-permissions";
 import { deriveTaskTypeLayer2, isInternalWorklogProjectType, isTaskTypeLayer1, resolveTaskTypeLayer1, taskTypeLayer1Label, taskTypeLayer2Label } from "./task-classification";
 import { closeProjectWarnings, isWarningSuppressed, MANUAL_CLOSE_ACTION, mapProjectWarning, openOrRefreshProjectWarning, rearmManuallyClosedWarning } from "./project-warnings";
 import type { IssueLogTransitionInput } from "@b2b-crm/contracts";
@@ -84,7 +84,7 @@ import type { DecideProjectStatusProposalInput, ProjectGateActionInput, UpdateTa
 import { isStartedStageStatus } from "./gates";
 import { AUTOMATIC_PROJECT_STATUSES } from "./status-proposal";
 import { actOnProjectGate, assertStageGateOpen, createProjectGate, decideStatusProposal, listProjectGates, pendingStatusProposal, projectIdsWithPendingProposal, loadProjectGatePosition, projectUsesStageGates, syncProjectStatus, type StatusSyncContext } from "./gates.service";
-import { PROJECT_HIERARCHY_EDIT_ROLE_CODES, BUILTIN_MILESTONE_TEMPLATE_KEY, TASK_PLAN_APPROVER_ROLES, workspaceDayOffMessage, taskPlanningBlockInclude, taskTimeEntryInclude, isPrismaWriteConflict, normalizeMilestoneEvidenceMode, mapMilestoneGateSummary, omitUndefined, hasInputKey, optionalEnum, validateTaskEstimateMinutes, templateTaskTypeLayer1, assertTaskTypePair, normalizeTemplateTasks, normalizeMilestoneTemplateMilestones } from "./projects.shared";
+import { PROJECT_HIERARCHY_EDIT_ROLE_CODES, BUILTIN_MILESTONE_TEMPLATE_KEY, TASK_PLAN_APPROVER_ROLES, taskPlanningBlockInclude, taskTimeEntryInclude, isPrismaWriteConflict, normalizeMilestoneEvidenceMode, mapMilestoneGateSummary, omitUndefined, hasInputKey, optionalEnum, validateTaskEstimateMinutes, templateTaskTypeLayer1, assertTaskTypePair, normalizeTemplateTasks, normalizeMilestoneTemplateMilestones } from "./projects.shared";
 import { PROJECT_MANAGE_FORBIDDEN_MESSAGE, ProjectPermissionsService } from "./project-permissions.service";
 import { TimeEntriesService } from "./time-entries.service";
 import { MilestoneGatesService } from "./milestone-gates.service";
@@ -122,7 +122,7 @@ const projectInclude = {
     }
   },
   stages: {
-    orderBy: [{ sortOrder: "asc" as const }, { createdAt: "asc" as const }],
+    orderBy: FIRST_STAGE_ORDER,
     select: {
       status: true,
       progressPercent: true,
@@ -240,16 +240,11 @@ type ProjectActivityFeedItem = {
 };
 const COMMENT_VISIBILITIES = new Set(["internal", "customer"]);
 const COMMENT_STATUSES = new Set(["active", "deleted"]);
-const WORKSPACE_DAY_OFF_OVERRIDE_ROLES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN"]);
 const PROJECT_PRIORITIES = new Set(["critical", "high", "medium", "low"]);
 const CANONICAL_PROJECT_ACTIVITY_TYPES = new Set(["work_logged", "work_planned", "task_status_changed"]);
 const ACTIVITY_DISPLAY_TIME_ZONE = "Asia/Ho_Chi_Minh";
 const TASK_ARCHIVE_STATUS = "archived";
 
-/** Only for a task's planned date range. Planning blocks and time logs are blocked on a day off for everyone (D-09). */
-function canOverrideWorkspaceDayOff(principal: PrincipalContext) {
-  return principal.roleCodes.some((roleCode) => WORKSPACE_DAY_OFF_OVERRIDE_ROLES.has(roleCode));
-}
 
 const taskInclude = {
   account: true,
@@ -765,12 +760,12 @@ function mapTimeEntryToProjectActivity(entry: any): ProjectActivityFeedItem {
     projectId: entry.projectId,
     project: entry.task?.project ?? null,
     activityType: "work_logged",
-    subject: `Logged actual work: ${taskTitle}`,
-    note: [`${timeWindow} - Logged ${minutesLabel} actual work as ${workType}`, entry.note].filter(Boolean).join("\n"),
+    subject: `Đã ghi giờ thực tế: ${taskTitle}`,
+    note: [`${timeWindow} - Ghi ${minutesLabel} giờ thực tế (${workType})`, entry.note].filter(Boolean).join("\n"),
     target: `${minutesLabel} - ${taskTitle}`,
     occurredAt,
     occurredTime: time,
-    actionLabel: "Logged actual work",
+    actionLabel: "Đã ghi giờ thực tế",
     entityType: "task",
     entityId: entry.taskId,
     status: "active",
@@ -964,7 +959,21 @@ export class ProjectsService {
       throw new NotFoundException("Project not found");
     }
 
-    return { ...withoutProjectFinancials(mapProjectSummary(project), principal), ...(await this.currentStatusContext(project)), ...(await this.pendingProposalFor(project.id, principal)) };
+    return { ...withoutProjectFinancials(mapProjectSummary(project), principal), ...(await this.projectValueFor(project.id, principal)), ...(await this.currentStatusContext(project)), ...(await this.pendingProposalFor(project.id, principal)) };
+  }
+
+  /**
+   * PL-13 "Giá trị dự án" (doanh thu dự kiến) for the detail header, with the same view/edit rules as the P&L screen
+   * (cost-permission holders see it, PM/Founder/Workspace Admin edit it; after G1 a change needs a reason).
+   */
+  private async projectValueFor(projectId: string, principal: PrincipalContext) {
+    if (!canViewCost(principal) || typeof (this.prisma as any).projectPnlRecord?.findUnique !== "function") return {};
+    const [record, position] = await Promise.all([
+      this.prisma.projectPnlRecord.findUnique({ where: { projectId }, select: { projectValueAmount: true } }),
+      loadProjectGatePosition(this.prisma, principal.workspaceId, projectId)
+    ]);
+    const amount = record?.projectValueAmount == null ? null : Number(record.projectValueAmount);
+    return { projectValue: { amount, canEdit: canEditProjectSetup(principal), reasonRequired: position.g1Passed && amount !== null } };
   }
 
   /** 7.7: the pending status proposal, for those who may confirm it (PIC / PM / Admin) only. */
@@ -1581,6 +1590,9 @@ export class ProjectsService {
     const statusReason = optionalString(input.statusReason, "statusReason") ?? undefined;
     const closeReasonCode = optionalString(input.closeReasonCode, "closeReasonCode") ?? undefined;
     const statusOnlyRequest = Object.keys(input).every((key) => ["status", "statusReason", "closeReasonCode"].includes(key));
+    if (updatesOwner && (ownerUserId ?? null) !== await projectPmUserId(this.prisma, principal.workspaceId, projectId)) {
+      this.assertCanChangePic(principal);
+    }
 
     const project = await this.prisma.$transaction(async (tx) => {
       await this.permissions.lockProjectMembers(tx, principal.workspaceId, projectId);
@@ -1671,11 +1683,17 @@ export class ProjectsService {
       if (updatesStageStart || updatesStageEnd || updatesScope || updatesAcceptance || updatesOwner) {
         const stages = await tx.projectStage.findMany({
           where: { projectId, workspaceId: principal.workspaceId },
-          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-          select: { id: true }
+          orderBy: FIRST_STAGE_ORDER,
+          select: { id: true, plannedStartAt: true, plannedEndAt: true }
         });
         const firstStageId = stages[0]?.id;
         const lastStageId = stages[stages.length - 1]?.id;
+        // D-21: once the baseline is locked the project's planned dates move only through "Gia hạn stage".
+        const movesStart = updatesStageStart && stages[0] && !sameInstant(plannedStartAt ?? null, stages[0].plannedStartAt);
+        const movesEnd = updatesStageEnd && stages.length > 0 && !sameInstant(plannedEndAt ?? null, stages[stages.length - 1].plannedEndAt);
+        if ((movesStart || movesEnd) && await isBaselineLocked(tx, projectId)) {
+          throw new ConflictException("Baseline đã khóa: ngày kế hoạch của dự án chỉ đổi qua thao tác Gia hạn stage, có lý do và người duyệt (D-21).");
+        }
 
         if (firstStageId) {
           const firstStage = await tx.projectStage.update({
@@ -1813,7 +1831,7 @@ export class ProjectsService {
           OR: [{ ownerUserId: { not: null } }, { assigneeUserId: { not: null } }, { taskAssignees: { some: {} } }] }
       });
       if (!openTasks) return;
-      const firstStage = await tx.projectStage.findFirst({ where: { workspaceId: principal.workspaceId, projectId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }], select: { ownerUserId: true } });
+      const firstStage = await tx.projectStage.findFirst({ where: { workspaceId: principal.workspaceId, projectId }, orderBy: FIRST_STAGE_ORDER, select: { ownerUserId: true } });
       await openOrRefreshProjectWarning(tx, {
         workspaceId: principal.workspaceId,
         projectId,
@@ -1950,6 +1968,7 @@ export class ProjectsService {
       if (!lockedProject) {
         throw new NotFoundException("Project not found");
       }
+      const picBeforeReorder = await projectPmUserId(tx, principal.workspaceId, projectId);
 
       const currentIds = await this.canonicalHierarchySiblingIds(tx, {
         workspaceId: principal.workspaceId,
@@ -2021,6 +2040,8 @@ export class ProjectsService {
           requestId: `project-hierarchy:${projectId}:${input.expectedVersion}:${input.kind}:${Date.now()}`
         }
       });
+      // Moving another stage or milestone to the front must not hand the project to a different PIC.
+      await keepProjectPic(tx, principal.workspaceId, projectId, picBeforeReorder);
 
       return {
         kind: input.kind,
@@ -2062,6 +2083,7 @@ export class ProjectsService {
   }
 
   async listStages(projectId: string, query: any, principal: PrincipalContext) {
+    this.permissions.assertInternalTaskPrincipal(principal, "Project stages are internal");
     const project = await this.permissions.ensureProject(projectId, principal.workspaceId);
     const stages = await this.prisma.projectStage.findMany({
       where: { projectId, workspaceId: principal.workspaceId, ...(query.status ? { status: query.status } : {}) },
@@ -2176,6 +2198,11 @@ export class ProjectsService {
     }, { isolationLevel: "Serializable" });
   }
 
+  /** 7.7: "PM và Dx Director đổi PIC" (Founder/GM and Workspace Admin hold every Admin right). */
+  private assertCanChangePic(principal: PrincipalContext) {
+    if (!can("project.pic.change", principal)) throw new ForbiddenException("Chỉ PM, Dx Director hoặc Admin toàn quyền mới đổi PIC dự án.");
+  }
+
   async updateStage(
     projectId: string,
     stageId: string,
@@ -2216,7 +2243,7 @@ export class ProjectsService {
       progressPercent: optionalInteger(input.progressPercent, "progressPercent") ?? undefined
     });
     // D-21: after the baseline is locked the stage timeline changes only through "Gia hạn stage" (Admin approval, reason, new baseline version).
-    if ((["plannedStartAt", "plannedEndAt"] as const).some((key) => data[key] !== undefined && !sameInstant(data[key] as Date | null, existingStage[key])) && await isBaselineLocked(tx, projectId)) {
+    if (scope !== "milestone" && (["plannedStartAt", "plannedEndAt"] as const).some((key) => data[key] !== undefined && !sameInstant(data[key] as Date | null, existingStage[key])) && await isBaselineLocked(tx, projectId)) {
       throw new ConflictException("Baseline đã khóa: ngày kế hoạch của stage chỉ đổi qua thao tác Gia hạn stage (tab Điểm chốt & Tài liệu), có lý do và người duyệt (D-21).");
     }
     // V-11: a stage starts only after the gate before it is approved. Starting it also starts its SLA clock.
@@ -2231,9 +2258,39 @@ export class ProjectsService {
       existingStage.projectId,
       typeof data.ownerUserId === "string" ? [data.ownerUserId] : []
     );
+    if (hasInputKey(input, "ownerUserId")) {
+      // The PIC is the owner of the project's first stage, so changing that owner is a PIC change (7.7).
+      const firstStage = await tx.projectStage.findFirst({ where: { projectId, workspaceId: principal.workspaceId }, orderBy: FIRST_STAGE_ORDER, select: { id: true, ownerUserId: true, milestoneId: true } });
+      const touchesFirstStage = firstStage && (firstStage.id === stageId || (options.scope?.trim().toLowerCase() === "milestone" && firstStage.milestoneId === existingStage.milestoneId));
+      if (touchesFirstStage && (optionalString(input.ownerUserId, "ownerUserId") ?? null) !== firstStage.ownerUserId) this.assertCanChangePic(principal);
+    }
 
     if (scope === "milestone") {
-      const milestoneData = omitUndefined({ ...data, activity: undefined });
+      // Shared fields (name, owner, description…) go to every stage of the milestone. Status and dates do not: the
+      // milestone's start is its first stage's start and its end its last stage's end, and each stage that starts
+      // passes its own gate (V-11) and gets its own actual start (SLA clock) — never an overwrite of one already set.
+      const { status: milestoneStatus, plannedStartAt: milestoneStart, plannedEndAt: milestoneEnd, actualStartAt: _injectedStart, ...sharedData } = data as typeof data & { actualStartAt?: Date | null };
+      const milestoneData = omitUndefined({ ...sharedData, activity: undefined }) as typeof data;
+      const ordered = (await tx.projectStage.findMany({ where: { projectId, workspaceId: principal.workspaceId, milestoneId: existingStage.milestoneId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] })) ?? [];
+      const firstOfMilestone = ordered[0];
+      const lastOfMilestone = ordered[ordered.length - 1];
+      if (((milestoneStart !== undefined && firstOfMilestone && !sameInstant(milestoneStart as Date | null, firstOfMilestone.plannedStartAt))
+        || (milestoneEnd !== undefined && lastOfMilestone && !sameInstant(milestoneEnd as Date | null, lastOfMilestone.plannedEndAt))) && await isBaselineLocked(tx, projectId)) {
+        throw new ConflictException("Baseline đã khóa: ngày kế hoạch của milestone chỉ đổi qua thao tác Gia hạn stage, có lý do và người duyệt (D-21).");
+      }
+      for (const milestoneStage of ordered) {
+        const perStage: Record<string, unknown> = {};
+        if (typeof milestoneStatus === "string") {
+          perStage.status = milestoneStatus;
+          if (isStartedStageStatus(milestoneStatus) && !isStartedStageStatus(milestoneStage.status)) {
+            await assertStageGateOpen(tx, principal.workspaceId, milestoneStage.id, `bắt đầu stage "${milestoneStage.activity}"`);
+            if (!milestoneStage.actualStartAt) perStage.actualStartAt = new Date();
+          }
+        }
+        if (milestoneStart !== undefined && milestoneStage.id === firstOfMilestone?.id) perStage.plannedStartAt = milestoneStart;
+        if (milestoneEnd !== undefined && milestoneStage.id === lastOfMilestone?.id) perStage.plannedEndAt = milestoneEnd;
+        if (Object.keys(perStage).length) await tx.projectStage.update({ where: { id: milestoneStage.id }, data: perStage });
+      }
       const stage = await (async () => {
         if (requestedPhase) {
           await this.lockProjectHierarchy(tx, projectId, principal.workspaceId);
@@ -2399,7 +2456,19 @@ export class ProjectsService {
       await this.permissions.assertProjectManager(tx, projectId, principal);
       await this.lockProjectHierarchy(tx, projectId, principal.workspaceId);
       const taskIds = await this.collectTaskIdsForStages(tx, stageIds, principal.workspaceId);
+      // "Lịch sử không xóa": logged hours feed P&L and a used gate is the project's approval record, so a stage that
+      // carries either is not deleted (same rule as deleting a project); it can still be renamed or cancelled.
+      const [loggedEntries, plannedBlocks, usedGates] = await Promise.all([
+        taskIds.length ? tx.taskTimeEntry.count({ where: { workspaceId: principal.workspaceId, taskId: { in: taskIds } } }) : 0,
+        taskIds.length ? tx.taskPlanningBlock.count({ where: { workspaceId: principal.workspaceId, taskId: { in: taskIds } } }) : 0,
+        typeof (tx as any).projectGate?.count === "function" ? tx.projectGate.count({ where: { stageId: { in: stageIds }, status: { not: "not_submitted" } } }) : 0
+      ]);
+      if (loggedEntries || plannedBlocks || usedGates) {
+        const reasons = [loggedEntries ? `${loggedEntries} dòng giờ đã ghi` : "", plannedBlocks ? `${plannedBlocks} lịch kế hoạch` : "", usedGates ? "điểm chốt đã nộp/duyệt" : ""].filter(Boolean).join(", ");
+        throw new ConflictException(`Không xóa được ${scope === "milestone" ? "milestone" : "stage"} vì đã có ${reasons}. Đổi trạng thái sang Hủy thay vì xóa.`);
+      }
       deletedTaskIds = taskIds;
+      const picBeforeDelete = await projectPmUserId(tx, principal.workspaceId, projectId);
       await this.deleteTaskSubtree(tx, taskIds, principal.workspaceId);
       await closeProjectWarnings(tx, { projectId, dedupeKey: { in: [...stageIds.map((id) => `NL-03:stage:${id}`), ...taskIds.map((id) => `NL-03:task:${id}`)] } }, principal.subjectId, "Stage/Task đã bị xóa");
       await this.closeResolvedDepartedMemberWarnings(tx, principal, projectId);
@@ -2424,6 +2493,8 @@ export class ProjectsService {
           }
         });
       }
+      // Deleting the first stage keeps the same PIC on what is now the first stage.
+      await keepProjectPic(tx, principal.workspaceId, projectId, picBeforeDelete);
       await tx.project.update({
         where: { id: projectId },
         data: { hierarchyOrderVersion: { increment: 1 } }
@@ -2447,7 +2518,9 @@ export class ProjectsService {
     const where = {
       workspaceId: principal.workspaceId,
       projectId,
-      ...(artifactType ? { artifactType } : {})
+      ...(artifactType ? { artifactType } : {}),
+      // Customers only ever see documents shared with them.
+      ...(principal.subjectType === "portal_user" ? { customerVisible: true, internalOnly: false } : {})
     };
 
     const [documents, total] = await this.prisma.$transaction([
@@ -2647,6 +2720,7 @@ export class ProjectsService {
   }
 
   async listProjectActivities(projectId: string, query: any, principal: PrincipalContext) {
+    this.permissions.assertInternalTaskPrincipal(principal, "Project activity is internal");
     await this.permissions.ensureProject(projectId, principal.workspaceId);
     const pagination = normalizePagination({ limit: query.limit ?? 10, offset: query.offset });
     const status = optionalString(query.status, "status")?.toLowerCase();
@@ -2797,6 +2871,7 @@ export class ProjectsService {
   }
 
   async listProjectRisks(projectId: string, query: any, principal: PrincipalContext) {
+    this.permissions.assertInternalTaskPrincipal(principal, "Project issue log is internal");
     await this.permissions.ensureProject(projectId, principal.workspaceId);
     const pagination = normalizePagination({ limit: query.limit, offset: query.offset });
     const status = optionalString(query.status, "status");
@@ -2927,17 +3002,8 @@ export class ProjectsService {
     const plannedStartAt = optionalDate(input.plannedStartAt, "plannedStartAt");
     const dueAt = optionalDate(input.dueAt, "dueAt");
     assertTaskDateRange(plannedStartAt, dueAt);
-    if (!canOverrideWorkspaceDayOff(principal) && (plannedStartAt || dueAt) && typeof this.prisma.workspaceDayOff?.findFirst === "function") {
-      const scheduleStart = plannedStartAt ?? dueAt!;
-      const scheduleEnd = dueAt ?? plannedStartAt!;
-      const dayOffKeys = getLocalDateKeysForTimeRange(scheduleStart, scheduleEnd, scheduleStart);
-      const blockedDay = await this.prisma.workspaceDayOff.findFirst({
-        where: { workspaceId: principal.workspaceId, isActive: true, date: { in: dayOffKeys.map(dateOnlyToUtcDate) } },
-        select: { date: true, name: true },
-        orderBy: { date: "asc" }
-      });
-      if (blockedDay) throw new ConflictException(workspaceDayOffMessage(blockedDay));
-    }
+    // A holiday locks time logging and planning blocks (D-09), not a task's date range: a task from 01/09 to 03/09 may
+    // span 02/09 (rules 2.4 "Ngày lễ khóa ghi giờ").
 
     const normalized = await this.normalizeTaskScope(input, principal.workspaceId);
     // 7.7 / V-03: a task is added only in a project the account takes part in (Admin: any project).
@@ -3089,7 +3155,7 @@ export class ProjectsService {
           subject: `Đã tạo task: ${taskResult.title}`,
           note: [
             `Phân loại: ${taskTypeLayer1Label(taskResult.taskTypeLayer1)} / ${taskTypeLayer2Label(taskResult.taskTypeLayer2)}`,
-            taskResult.estimateMinutes ? `Estimate: ${taskResult.estimateMinutes} phút` : undefined
+            taskResult.estimateMinutes ? `Giờ kế hoạch: ${taskResult.estimateMinutes} phút` : undefined
           ].filter(Boolean).join(" · "),
           target: taskResult.title,
           occurredAt: new Date(),
@@ -3105,6 +3171,7 @@ export class ProjectsService {
     this.permissions.assertInternalTaskPrincipal(principal, "Task changes are internal");
     const scope = await this.normalizeTaskScope(input, principal.workspaceId, true);
     const existing = await this.permissions.ensureTaskForPrincipal(taskId, principal);
+    await this.permissions.assertCanEditTask(this.prisma, existing, principal);
     const stageChanged = scope.stageId !== undefined && scope.stageId !== existing.stageId;
     if (
       (scope.projectId !== undefined && scope.projectId !== existing.projectId)
@@ -3198,22 +3265,6 @@ export class ProjectsService {
         include: { taskAssignees: { select: { userId: true, isPrimary: true } } }
       });
       if (!current) throw new NotFoundException("Task not found");
-      if (!canOverrideWorkspaceDayOff(principal) && typeof tx.workspaceDayOff?.findFirst === "function") {
-        const nextPlannedStartAt = hasInputKey(input, "plannedStartAt") ? optionalDate(input.plannedStartAt, "plannedStartAt") : current.plannedStartAt;
-        const nextDueAt = hasInputKey(input, "dueAt") ? optionalDate(input.dueAt, "dueAt") : current.dueAt;
-        if (nextPlannedStartAt || nextDueAt) {
-          const scheduleStart = nextPlannedStartAt ?? nextDueAt!;
-          const scheduleEnd = nextDueAt ?? nextPlannedStartAt!;
-          const dayOffKeys = getLocalDateKeysForTimeRange(scheduleStart, scheduleEnd, scheduleStart);
-          await lockWorkspaceDayOffDates(tx, principal.workspaceId, dayOffKeys);
-          const blockedDay = await tx.workspaceDayOff.findFirst({
-            where: { workspaceId: principal.workspaceId, isActive: true, date: { in: dayOffKeys.map(dateOnlyToUtcDate) } },
-            select: { date: true, name: true },
-            orderBy: { date: "asc" }
-          });
-          if (blockedDay) throw new ConflictException(workspaceDayOffMessage(blockedDay));
-        }
-      }
       const currentAssigneeUserIds = Array.from(new Set([
         ...(current.taskAssignees ?? []).map((row) => row.userId),
         ...(current.assigneeUserId ? [current.assigneeUserId] : [])
@@ -3242,7 +3293,7 @@ export class ProjectsService {
           || (nextDue !== undefined && !sameInstant(nextDue, current.dueAt))
           || (nextEstimate !== undefined && nextEstimate !== current.estimateMinutes);
         if (planChanged) {
-          throw new ConflictException("Kế hoạch của task đã được duyệt và khóa. Hãy gửi yêu cầu thay đổi timeline (Timeline Change Request) để đổi ngày bắt đầu, hạn hoàn thành hoặc estimate.");
+          throw new ConflictException("Kế hoạch của task đã được duyệt và khóa. Hãy gửi yêu cầu thay đổi timeline (Timeline Change Request) để đổi ngày bắt đầu, hạn hoàn thành hoặc giờ kế hoạch.");
         }
       }
       const destinationProjectId = scope.projectId === undefined ? current.projectId : scope.projectId;
@@ -3365,7 +3416,7 @@ export class ProjectsService {
         const fieldLabels: Record<string, string> = {
           title: "tên", description: "mô tả", taskType: "loại công việc", taskTypeLayer1: "Lớp 1 (vai trò đóng góp)",
           taskTypeLayer2: "Lớp 2 (bối cảnh công việc)", stageId: "stage", status: "trạng thái", priority: "ưu tiên", ownerUserId: "owner",
-          assigneeUserId: "người phụ trách", plannedStartAt: "ngày bắt đầu", dueAt: "deadline", estimateMinutes: "estimate"
+          assigneeUserId: "người phụ trách", plannedStartAt: "ngày bắt đầu", dueAt: "deadline", estimateMinutes: "giờ kế hoạch"
           ,assigneeUserIds: "người đồng phụ trách"
         };
         await tx.projectActivity.create({
@@ -3405,6 +3456,7 @@ export class ProjectsService {
   async deleteTask(taskId: string, principal: PrincipalContext) {
     this.permissions.assertInternalTaskPrincipal(principal, "Tasks are internal");
     const task = await this.permissions.ensureTaskForPrincipal(taskId, principal);
+    await this.permissions.assertCanEditTask(this.prisma, task, principal);
 
     if (task.archivedAt) {
       return {
@@ -3573,10 +3625,13 @@ export class ProjectsService {
     // No portal write is intended here: a customer could otherwise set any status string and backdate changedAt.
     this.permissions.assertInternalTaskPrincipal(principal, "Task status can only be changed by internal users");
     const existing = await this.permissions.ensureTaskForPrincipal(taskId, principal);
+    await this.permissions.assertCanEditTask(this.prisma, existing, principal);
     const toStatus = nonEmptyString(input.status, "status");
     // Nothing changed: no history row, no timestamps touched.
     if (toStatus === existing.status) return this.getTask(taskId, principal);
-    const changedAt = optionalDate(input.changedAt, "changedAt") ?? new Date();
+    // Backdating a status change moves completedAt / SLA clocks, so only a project manager or Admin may pass changedAt.
+    const requestedChangedAt = optionalDate(input.changedAt, "changedAt");
+    const changedAt = requestedChangedAt && await this.permissions.canManageProjectOrAdmin(this.prisma, existing.projectId, principal) ? requestedChangedAt : new Date();
 
     const task = await this.prisma.$transaction(async (tx) => {
       await tx.taskStatusHistory.create({
@@ -3858,12 +3913,12 @@ export class ProjectsService {
     }
 
     const parentTaskId = optionalString(input.parentTaskId, "parentTaskId");
+    const parentTask = parentTaskId ? await this.prisma.projectTask.findFirst({ where: { id: parentTaskId, workspaceId } }) : undefined;
     if (parentTaskId) {
-      const parentTask = await this.prisma.projectTask.findFirst({ where: { id: parentTaskId, workspaceId } });
       if (!parentTask) {
         throw new NotFoundException("Parent task not found");
       }
-      if (parentTask.accountId !== accountId || (project && parentTask.projectId !== project.id)) {
+      if (parentTask.accountId !== accountId || (project && parentTask.projectId !== project.id) || (projectId === null && parentTask.projectId)) {
         throw new BadRequestException("Parent task does not belong to the selected account/project");
       }
     }
@@ -3871,7 +3926,8 @@ export class ProjectsService {
     return {
       accountId,
       workspaceId,
-      projectId: projectId === null ? null : project?.id ?? projectId ?? undefined,
+      // A sub-task lives in its parent's project, so the project's visibility and gates apply to it too.
+      projectId: projectId === null ? null : project?.id ?? projectId ?? parentTask?.projectId ?? undefined,
       stageId,
       opportunityId: optionalString(input.opportunityId, "opportunityId"),
       ticketId: optionalString(input.ticketId, "ticketId"),

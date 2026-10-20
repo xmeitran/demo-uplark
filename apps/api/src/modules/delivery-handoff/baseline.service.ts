@@ -20,7 +20,8 @@ import {
 } from "@b2b-crm/contracts";
 import { BASELINE_LAYER, baselineTotals, diffBaselines, estimateFindings } from "./baseline";
 import { gateHooks } from "./gates";
-import { closeProjectWarnings, isWarningSuppressed, openOrRefreshProjectWarning } from "./project-warnings";
+import { FIRST_STAGE_ORDER } from "./project-visibility";
+import { closeProjectWarnings, isWarningSuppressed, openOrRefreshProjectWarning, rearmManuallyClosedWarning } from "./project-warnings";
 
 export interface BaselineCause {
   type: BaselineCauseType;
@@ -158,11 +159,14 @@ export async function syncEstimateNotices(client: any, workspaceId: string, proj
     const [tasks, open, firstStage] = await Promise.all([
       client.projectTask.findMany({ where: { workspaceId, projectId, archivedAt: null }, select: { id: true, title: true, parentTaskId: true, estimateMinutes: true } }),
       client.projectWarning.findMany({ where: { projectId, typeCode: "D-19", status: "open" }, select: { id: true, dedupeKey: true } }),
-      client.projectStage.findFirst({ where: { workspaceId, projectId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }], select: { ownerUserId: true } })
+      client.projectStage.findFirst({ where: { workspaceId, projectId }, orderBy: FIRST_STAGE_ORDER, select: { ownerUserId: true } })
     ]);
     const findings = estimateFindings(tasks);
     const wanted = new Set(findings.map((finding) => finding.dedupeKey));
     for (const warning of open) if (!wanted.has(warning.dedupeKey)) await closeProjectWarnings(client, { projectId, id: warning.id }, actorUserId, "Giờ dự kiến các sub-task đã nằm trong giờ của task");
+    // Estimates fit again: a D-19 closed by hand may open again if they stop fitting later.
+    const everRaised: Array<{ dedupeKey: string }> = await client.projectWarning.findMany({ where: { projectId, typeCode: "D-19", status: { not: "open" } }, select: { dedupeKey: true }, distinct: ["dedupeKey"] });
+    for (const { dedupeKey } of everRaised) if (!wanted.has(dedupeKey)) await rearmManuallyClosedWarning(client, projectId, dedupeKey, actorUserId, "Giờ dự kiến đã nằm trong giờ của task");
     for (const finding of findings) {
       if (await isWarningSuppressed(client, projectId, finding.dedupeKey)) continue;
       await openOrRefreshProjectWarning(client, { workspaceId, projectId, typeCode: "D-19", severity: "low", ...finding, ownerUserId: firstStage?.ownerUserId ?? null, actorUserId });

@@ -161,7 +161,7 @@ export interface FundShare { projectId: string; minutes: number; sharePercent: n
 
 /**
  * Phần của dự án = số tiền quỹ × giờ tính P&L của dự án trong tháng ÷ tổng giờ tính P&L của các dự án nhận chia.
- * Each share is rounded to the đồng; the last row takes whatever rounding left over so the rows total the fund exactly.
+ * Each share is rounded to the đồng (never past what is left of the fund); the last row takes whatever rounding left over so the rows total the fund exactly.
  * No eligible hours → nothing to split (an empty list): the fund stays "Chưa chia".
  */
 export function splitFund(amount: number, projects: ReadonlyArray<{ projectId: string; minutes: number }>): FundShare[] {
@@ -171,7 +171,8 @@ export function splitFund(amount: number, projects: ReadonlyArray<{ projectId: s
   let allocated = 0;
   return rows.map((row, index) => {
     const last = index === rows.length - 1;
-    const share = last ? amount - allocated : Math.round((amount * row.minutes) / totalMinutes);
+    // Rounded per row (spec example), but never past what is left, so the last row's remainder is never negative.
+    const share = last ? amount - allocated : Math.min(Math.round((amount * row.minutes) / totalMinutes), Math.max(amount - allocated, 0));
     allocated += share;
     return { projectId: row.projectId, minutes: row.minutes, sharePercent: Math.round((row.minutes / totalMinutes) * 10000) / 100, amount: share, takesRemainder: last };
   });

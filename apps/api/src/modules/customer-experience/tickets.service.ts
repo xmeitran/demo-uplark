@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import type { CreateTicketInput, PrincipalContext, UpdateTicketInput } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { buildPaginationMeta, nonEmptyString, normalizePagination, optionalDate, optionalInteger, optionalString } from "../../shared/http/request-context";
@@ -8,9 +8,16 @@ const ticketInclude = {
   statusHistory: { orderBy: { createdAt: "desc" as const }, take: 50 }
 };
 
+/** A customer (portal) account sees only the tickets of the clients/projects it was granted. */
+function ticketScope(principal: PrincipalContext) {
+  return principal.subjectType === "portal_user"
+    ? { OR: [{ accountId: { in: principal.customerAccountIds ?? [] } }, { projectId: { in: principal.customerProjectIds ?? [] } }] }
+    : {};
+}
+
 @Injectable()
 export class TicketsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async list(query: any, principal: PrincipalContext) {
     const pagination = normalizePagination({ limit: query.limit, offset: query.offset });
@@ -19,7 +26,8 @@ export class TicketsService {
       ...(optionalString(query.accountId, "accountId") ? { accountId: query.accountId } : {}),
       ...(optionalString(query.projectId, "projectId") ? { projectId: query.projectId } : {}),
       ...(optionalString(query.status, "status") ? { status: query.status } : {}),
-      ...(optionalString(query.priority, "priority") ? { priority: query.priority } : {})
+      ...(optionalString(query.priority, "priority") ? { priority: query.priority } : {}),
+      ...ticketScope(principal)
     };
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.ticket.findMany({
@@ -33,7 +41,7 @@ export class TicketsService {
     ]);
 
     return {
-      data: rows.map((row) => this.mapTicket(row)),
+      data: rows.map((row) => this.mapTicket(row, principal)),
       meta: {
         principal,
         rowScope: "workspace",
@@ -44,22 +52,26 @@ export class TicketsService {
   }
 
   async get(ticketId: string, principal: PrincipalContext) {
-    const ticket = await this.findTicket(ticketId, principal.workspaceId);
-    return this.mapTicket(ticket);
+    const ticket = await this.findTicket(ticketId, principal);
+    return this.mapTicket(ticket, principal);
   }
 
   async create(input: CreateTicketInput, principal: PrincipalContext) {
     const account = await this.ensureAccount(nonEmptyString(input.accountId, "accountId"), principal.workspaceId);
+    if (principal.subjectType === "portal_user" && !(principal.customerAccountIds ?? []).includes(account.id)
+      && !(input.projectId && (principal.customerProjectIds ?? []).includes(input.projectId))) {
+      throw new NotFoundException("Account not found");
+    }
     if (input.projectId) {
       await this.ensureProject(input.projectId, principal.workspaceId, account.id);
     }
     if (input.idempotencyKey) {
       const existing = await this.prisma.ticket.findFirst({
-        where: { workspaceId: principal.workspaceId, idempotencyKey: input.idempotencyKey },
+        where: { workspaceId: principal.workspaceId, idempotencyKey: input.idempotencyKey, ...ticketScope(principal) },
         include: ticketInclude
       });
       if (existing) {
-        return this.mapTicket(existing);
+        return this.mapTicket(existing, principal);
       }
     }
 
@@ -80,7 +92,7 @@ export class TicketsService {
           priority: input.priority?.trim() || "medium",
           status: "open",
           customerVisibleNote: optionalString(input.customerVisibleSummary, "customerVisibleSummary") ?? undefined,
-          internalNote: optionalString(input.internalNote, "internalNote") ?? undefined,
+          internalNote: principal.subjectType === "portal_user" ? undefined : optionalString(input.internalNote, "internalNote") ?? undefined,
           idempotencyKey: optionalString(input.idempotencyKey, "idempotencyKey") ?? undefined
         }
       });
@@ -100,11 +112,13 @@ export class TicketsService {
       return tx.ticket.findUniqueOrThrow({ where: { id: created.id }, include: ticketInclude });
     });
 
-    return this.mapTicket(ticket);
+    return this.mapTicket(ticket, principal);
   }
 
   async update(ticketId: string, input: UpdateTicketInput, principal: PrincipalContext) {
-    const existing = await this.findTicket(ticketId, principal.workspaceId);
+    // Triage, internal notes and status belong to the internal team; customers comment through new tickets.
+    if (principal.subjectType === "portal_user") throw new ForbiddenException("Customers cannot change tickets");
+    const existing = await this.findTicket(ticketId, principal);
     const nextStatus = optionalString(input.status, "status") ?? undefined;
     const ticket = await this.prisma.$transaction(async (tx) => {
       if (nextStatus && nextStatus !== existing.status) {
@@ -151,11 +165,11 @@ export class TicketsService {
       });
     });
 
-    return this.mapTicket(ticket);
+    return this.mapTicket(ticket, principal);
   }
 
-  private async findTicket(ticketId: string, workspaceId: string) {
-    const ticket = await this.prisma.ticket.findFirst({ where: { id: ticketId, workspaceId }, include: ticketInclude });
+  private async findTicket(ticketId: string, principal: PrincipalContext) {
+    const ticket = await this.prisma.ticket.findFirst({ where: { id: ticketId, workspaceId: principal.workspaceId, ...ticketScope(principal) }, include: ticketInclude });
     if (!ticket) {
       throw new NotFoundException("Ticket not found");
     }
@@ -178,7 +192,8 @@ export class TicketsService {
     return project;
   }
 
-  private mapTicket(row: any) {
+  private mapTicket(row: any, principal?: PrincipalContext) {
+    const internal = principal?.subjectType !== "portal_user";
     return {
       id: row.id,
       accountId: row.accountId,
@@ -195,7 +210,7 @@ export class TicketsService {
       firstResponseDueAt: toIso(row.firstResponseDueAt),
       resolutionDueAt: toIso(row.resolutionDueAt),
       customerVisibleNote: row.customerVisibleNote ?? undefined,
-      internalNote: row.internalNote ?? undefined,
+      internalNote: internal ? row.internalNote ?? undefined : undefined,
       resolutionSummary: row.resolutionSummary ?? undefined,
       resolutionType: row.resolutionType ?? undefined,
       closureReason: row.closureReason ?? undefined,
@@ -222,7 +237,7 @@ export class TicketsService {
         changedByUserId: history.changedByUserId ?? undefined,
         reason: history.reason ?? undefined,
         customerVisibleNote: history.customerVisibleNote ?? undefined,
-        internalNote: history.internalNote ?? undefined,
+        internalNote: internal ? history.internalNote ?? undefined : undefined,
         createdAt: toIso(history.createdAt)!
       }))
     };

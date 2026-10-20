@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { Check, Info, Search } from "lucide-react";
 import { ShopifyIcon, type ShopifyIconName } from "../shopify-ui";
 import { portalMenuStyle } from "./crm-select-position";
-import { matchesSearch } from "./crm-select-search";
+import { matchesSearch, toggleVisibleSelection } from "./crm-select-search";
 
 export type CrmSelectOption = {
   value: string;
@@ -364,7 +364,7 @@ export function CrmMultiSelect({
           <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-2 py-2">
             <span className="truncate text-[10px] font-bold uppercase tracking-wider text-slate-500">{label ?? "Lựa chọn"} · {selectedCountLabel(selectedOptions.length)}</span>
             <div className="flex shrink-0 items-center gap-2">
-              {showSelectAll && filteredOptions.length > 0 ? <button type="button" className="text-[11px] font-semibold text-blue-600 hover:text-blue-700" onClick={() => onChange(allVisibleSelected ? [] : filteredOptions.map((option) => option.value))}>{allVisibleSelected ? "Bỏ chọn tất cả" : "Chọn tất cả"}</button> : null}
+              {showSelectAll && filteredOptions.length > 0 ? <button type="button" className="text-[11px] font-semibold text-blue-600 hover:text-blue-700" onClick={() => onChange(toggleVisibleSelection(values, filteredOptions.map((option) => option.value), allVisibleSelected))}>{allVisibleSelected ? "Bỏ chọn tất cả" : "Chọn tất cả"}</button> : null}
               {selectedOptions.length > 0 ? <button type="button" className="text-[11px] font-semibold text-slate-500 hover:text-slate-700" onClick={() => onClear ? onClear() : onChange([])}>Xóa lọc</button> : null}
             </div>
           </div>

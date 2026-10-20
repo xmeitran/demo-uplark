@@ -5,7 +5,7 @@ import { useState } from "react";
 import type { PnlFundAmountInput, PnlFundInput, PnlFundsResponse, PnlFundSummary } from "@b2b-crm/contracts";
 import { CrmSelect } from "@/components/crm-workspace/crm-select";
 import { MonthFilter } from "@/components/filters";
-import { inputClass, parseDecimalInput } from "./pnl-cost-shared";
+import { formatDecimalInput, inputClass, parseDecimalInput } from "./pnl-cost-shared";
 import { formatDay, formatHoursValue, formatMonth, formatPercent, formatVndAmount } from "./pnl-format";
 import { fixTargetHref } from "./pnl-query";
 import { Field, linkClass, LoadingBlock, ModalActions, numberCellClass, PnlModal, ReadOnlyNote, SaveFeedback, smallButton, Strip, tableCellClass, tableHeadClass, toneClass, useSave } from "./pnl-setup-ui";
@@ -136,7 +136,7 @@ export function PnlSetupFunds({ periodKey, onPeriodChange }: Readonly<{ periodKe
 
 function AmountForm({ fund, busy, onCancel, onSubmit }: Readonly<{ fund: PnlFundSummary; busy: boolean; onCancel: () => void; onSubmit: (body: PnlFundAmountInput) => void }>) {
   const [currency, setCurrency] = useState<"VND" | "USD">(fund.period?.sourceCurrency ?? "VND");
-  const [amount, setAmount] = useState(fund.period?.sourceAmount != null ? String(fund.period.sourceAmount) : "");
+  const [amount, setAmount] = useState(formatDecimalInput(fund.period?.sourceAmount));
   const [invoiceRef, setInvoiceRef] = useState(fund.period?.invoiceRef ?? "");
   const [error, setError] = useState<string | null>(null);
   return (

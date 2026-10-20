@@ -11,14 +11,18 @@ import { INTERNAL_WORKLOG_PROJECT_TYPE } from "./task-classification";
  * Admin (in admin view): every project of the workspace.
  * User, and an Admin working in user view: the projects they take part in — project member, PIC / owner of any stage,
  * owner or assignee of a task — plus the projects of a client they are the PIC of (the BD in charge of that client).
- * Portal principals are not narrowed here; their scope is their customer grants, as before.
+ * Portal (customer) principals: only the projects and clients of their customer grants. Service accounts see everything.
  */
 export function seesAllProjects(principal: PrincipalContext) {
-  return principal.subjectType !== "internal_user" || (can("project.view_all", principal) && principal.viewMode !== "user");
+  if (principal.subjectType === "service_account") return true;
+  return principal.subjectType === "internal_user" && can("project.view_all", principal) && principal.viewMode !== "user";
 }
 
 export function visibleProjectWhere(principal: PrincipalContext): Prisma.ProjectWhereInput {
   if (seesAllProjects(principal)) return {};
+  if (principal.subjectType !== "internal_user") {
+    return { OR: [{ id: { in: principal.customerProjectIds ?? [] } }, { accountId: { in: principal.customerAccountIds ?? [] } }] };
+  }
   const userId = principal.subjectId;
   return { OR: [
     { members: { some: { userId, workspaceId: principal.workspaceId } } },
@@ -36,16 +40,27 @@ export async function canSeeProject(prisma: { project: { findFirst(args: any): P
 }
 
 /**
- * The one rule for "PM / PIC of the project": the owner of its first stage (stage sortOrder, then creation time).
- * Permissions (ProjectsService.projectPermissions), warning owners, alert recipients and the Lark bots all read it here.
+ * The one rule for "PM / PIC of the project": the owner of its first stage — first milestone, then stage sortOrder
+ * (numbered per milestone), then creation time. Permissions, warning owners, alert recipients, P&L and the Lark bots
+ * all read it through FIRST_STAGE_ORDER / firstStageOf / projectPmUserId.
  */
-export function firstStageOf<T extends { sortOrder: number; createdAt?: Date | string | null }>(stages: readonly T[]): T | undefined {
-  return [...stages].sort((left, right) => left.sortOrder - right.sortOrder || new Date(left.createdAt ?? 0).getTime() - new Date(right.createdAt ?? 0).getTime())[0];
+export const FIRST_STAGE_ORDER: Prisma.ProjectStageOrderByWithRelationInput[] = [{ milestone: { sortOrder: "asc" } }, { sortOrder: "asc" }, { createdAt: "asc" }];
+
+export function firstStageOf<T extends { sortOrder: number; createdAt?: Date | string | null; milestone?: { sortOrder: number } | null }>(stages: readonly T[]): T | undefined {
+  return [...stages].sort((left, right) => (left.milestone?.sortOrder ?? 0) - (right.milestone?.sortOrder ?? 0)
+    || left.sortOrder - right.sortOrder || new Date(left.createdAt ?? 0).getTime() - new Date(right.createdAt ?? 0).getTime())[0];
 }
 
 export async function projectPmUserId(client: any, workspaceId: string, projectId: string): Promise<string | null> {
-  const stage = await client.projectStage.findFirst({ where: { workspaceId, projectId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }], select: { ownerUserId: true } });
+  const stage = await client.projectStage.findFirst({ where: { workspaceId, projectId }, orderBy: FIRST_STAGE_ORDER, select: { ownerUserId: true } });
   return stage?.ownerUserId ?? null;
+}
+
+/** After stages are reordered or deleted, the PIC stays the same person: the new first stage takes over the PIC. */
+export async function keepProjectPic(client: any, workspaceId: string, projectId: string, previousPicUserId: string | null) {
+  if (!previousPicUserId) return;
+  const first = await client.projectStage.findFirst({ where: { workspaceId, projectId }, orderBy: FIRST_STAGE_ORDER, select: { id: true, ownerUserId: true } });
+  if (first && first.ownerUserId !== previousPicUserId) await client.projectStage.update({ where: { id: first.id }, data: { ownerUserId: previousPicUserId } });
 }
 
 /** 7.7: revenue, cost and margin are for the cost permission group only. */

@@ -9,6 +9,7 @@ import type {
 } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { isBaselineLocked, recordBaselineChange } from "../delivery-handoff/baseline.service";
+import { projectPmUserId, visibleProjectWhere } from "../delivery-handoff/project-visibility";
 
 // The roles that approve task plans and timeline change requests: the Admin accounts of the role catalogue (D-21).
 // Kế toán (FINANCE_ADMIN) is a User-type role and approves no plan — same list as TASK_PLAN_APPROVER_ROLES in projects.service.ts.
@@ -33,14 +34,20 @@ export class BrdGovernanceService {
     if (!isManager(principal)) throw new ForbiddenException("PM, BD Lead, Dx Director or Founder/GM role is required");
   }
 
+  /** 7.7: only tasks of projects the account may see (tasks outside any project stay workspace-wide). */
   private async taskForWorkspace(taskId: string, principal: PrincipalContext) {
-    const task = await this.prisma.projectTask.findFirst({ where: { id: taskId, workspaceId: principal.workspaceId } });
+    const task = await this.prisma.projectTask.findFirst({ where: { id: taskId, workspaceId: principal.workspaceId, OR: [{ projectId: null }, { project: visibleProjectWhere(principal) }] } });
     if (!task) throw new NotFoundException("Task not found in workspace");
     return task;
   }
 
   async submitTaskPlan(taskId: string, input: SubmitTaskPlanInput, principal: PrincipalContext) {
     const task = await this.taskForWorkspace(taskId, principal);
+    // The person responsible for the task submits its plan; the PIC and the Admin roles may submit on their behalf.
+    const responsible = task.ownerUserId === principal.subjectId || task.assigneeUserId === principal.subjectId;
+    if (!responsible && !isManager(principal) && (!task.projectId || await projectPmUserId(this.prisma, principal.workspaceId, task.projectId) !== principal.subjectId)) {
+      throw new ForbiddenException("Chỉ người phụ trách task, PIC hoặc Admin mới nộp kế hoạch của task này.");
+    }
     if (task.planApprovalStatus === "APPROVED") throw new ConflictException("Approved plan is locked; create a timeline change request");
     const estimate = input.estimateMinutes ?? task.estimateMinutes;
     if (!Number.isInteger(estimate) || estimate < 0) throw new BadRequestException("estimateMinutes must be a non-negative integer");
@@ -105,13 +112,14 @@ export class BrdGovernanceService {
         return { data: rejected, meta: { timelineLocked: true } };
       }
       const next = await tx.projectTask.update({ where: { id: task.id }, data: {
-        plannedStartAt: request.proposedStartAt, dueAt: request.proposedEndAt, estimateMinutes: request.proposedEstimateMinutes ?? task.estimateMinutes,
-        baselineStartAt: request.proposedStartAt, baselineEndAt: request.proposedEndAt, baselineEstimateMinutes: request.proposedEstimateMinutes ?? task.estimateMinutes,
+        // A date the request did not propose keeps its current value instead of being cleared.
+        plannedStartAt: request.proposedStartAt ?? task.plannedStartAt, dueAt: request.proposedEndAt ?? task.dueAt, estimateMinutes: request.proposedEstimateMinutes ?? task.estimateMinutes,
+        baselineStartAt: request.proposedStartAt ?? task.baselineStartAt ?? task.plannedStartAt, baselineEndAt: request.proposedEndAt ?? task.baselineEndAt ?? task.dueAt, baselineEstimateMinutes: request.proposedEstimateMinutes ?? task.estimateMinutes,
         planApprovalStatus: "APPROVED", planApprovedAt: now, planApprovedByUserId: principal.subjectId
       } });
       const approved = await tx.taskTimelineChangeRequest.update({ where: { id: requestId }, data: { status: "APPROVED", reviewedByUserId: principal.subjectId, reviewedAt: now, reviewNote: input.reviewNote?.trim() } });
       const previousHistory = await tx.taskPlanHistory.findFirst({ where: { taskId: task.id }, orderBy: { version: "desc" }, select: { version: true } });
-      await tx.taskPlanHistory.create({ data: { workspaceId: principal.workspaceId, projectId: task.projectId, taskId: task.id, version: (previousHistory?.version ?? 0) + 1, action: "TIMELINE_CHANGE_APPROVED", reason: request.reason, before: { plannedStartAt: task.plannedStartAt, dueAt: task.dueAt, estimateMinutes: task.estimateMinutes }, after: { plannedStartAt: request.proposedStartAt, dueAt: request.proposedEndAt, estimateMinutes: request.proposedEstimateMinutes ?? task.estimateMinutes }, changedByUserId: request.requestedByUserId, approvedByUserId: principal.subjectId } });
+      await tx.taskPlanHistory.create({ data: { workspaceId: principal.workspaceId, projectId: task.projectId, taskId: task.id, version: (previousHistory?.version ?? 0) + 1, action: "TIMELINE_CHANGE_APPROVED", reason: request.reason, before: { plannedStartAt: task.plannedStartAt, dueAt: task.dueAt, estimateMinutes: task.estimateMinutes }, after: { plannedStartAt: request.proposedStartAt ?? task.plannedStartAt, dueAt: request.proposedEndAt ?? task.dueAt, estimateMinutes: request.proposedEstimateMinutes ?? task.estimateMinutes }, changedByUserId: request.requestedByUserId, approvedByUserId: principal.subjectId } });
       // D-20 / D-21: on a project whose baseline is locked, the approved change is the next baseline version, linked to this request.
       if (task.projectId && !task.parentTaskId) {
         await recordBaselineChange(tx, { workspaceId: principal.workspaceId, projectId: task.projectId, cause: { type: "timeline_change", id: request.id, reason: request.reason }, actor: { userId: principal.subjectId, displayName: principal.displayName } });
@@ -125,6 +133,13 @@ export class BrdGovernanceService {
     if (userId !== principal.subjectId && !isManager(principal)) throw new ForbiddenException("Only managers can create an OT plan for another employee");
     if (!Number.isInteger(input.plannedMinutes) || input.plannedMinutes <= 0) throw new BadRequestException("plannedMinutes must be greater than zero");
     const workDate = isoDate(input.workDate, "workDate", true);
+    if (typeof input.reason !== "string" || !input.reason.trim()) throw new BadRequestException("reason is required");
+    if (input.projectId != null && !(await this.prisma.project.findFirst({ where: { id: String(input.projectId), workspaceId: principal.workspaceId, AND: [visibleProjectWhere(principal)] }, select: { id: true } }))) {
+      throw new NotFoundException("Project not found in workspace");
+    }
+    if (!(await this.prisma.roleBinding.findFirst({ where: { userId, workspaceId: principal.workspaceId, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] }, select: { id: true } }))) {
+      throw new BadRequestException("userId is not a member of this workspace");
+    }
     const row = await this.prisma.overtimePlan.create({ data: { workspaceId: principal.workspaceId, projectId: input.projectId, userId, workDate, plannedMinutes: input.plannedMinutes, reason: input.reason.trim(), requestedByUserId: principal.subjectId } });
     return { data: row, meta: { approvalStatus: "PENDING", includedInPnl: false } };
   }
@@ -134,6 +149,9 @@ export class BrdGovernanceService {
     if (!input || !["APPROVED", "REJECTED"].includes(input.decision)) throw new BadRequestException("decision must be APPROVED or REJECTED");
     const plan = await this.prisma.overtimePlan.findFirst({ where: { id: planId, workspaceId: principal.workspaceId } });
     if (!plan) throw new NotFoundException("Overtime plan not found");
+    // OT counts in P&L once approved, so nobody approves their own OT and a decision is final.
+    if (plan.userId === principal.subjectId || plan.requestedByUserId === principal.subjectId) throw new ForbiddenException("Không tự duyệt kế hoạch OT của chính mình.");
+    if (plan.approvalStatus !== "PENDING") throw new ConflictException("Kế hoạch OT này đã được duyệt hoặc từ chối.");
     return this.prisma.overtimePlan.update({ where: { id: planId }, data: { approvalStatus: input.decision, approvedByUserId: principal.subjectId, approvedAt: new Date(), reviewNote: input.note?.trim() } });
   }
 }

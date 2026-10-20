@@ -63,7 +63,7 @@ export interface PnlLoad<T> {
 
 /** GET `url` whenever it changes (null = do not load). */
 export function usePnlLoad<T>(url: string | null, fallback?: string): PnlLoad<T> {
-  const [state, setState] = useState<{ data: T | null; error: PnlApiError | null; loading: boolean }>({ data: null, error: null, loading: Boolean(url) });
+  const [state, setState] = useState<{ data: T | null; dataUrl: string | null; error: PnlApiError | null; loading: boolean }>({ data: null, dataUrl: null, error: null, loading: Boolean(url) });
   const latest = useRef(0);
   const reload = useCallback(async () => {
     if (!url) return;
@@ -71,13 +71,15 @@ export function usePnlLoad<T>(url: string | null, fallback?: string): PnlLoad<T>
     setState((current) => ({ ...current, loading: true }));
     try {
       const data = await pnlRequest<T>(url, undefined, fallback);
-      if (request === latest.current) setState({ data, error: null, loading: false });
+      if (request === latest.current) setState({ data, dataUrl: url, error: null, loading: false });
     } catch (reason) {
-      if (request === latest.current) setState((current) => ({ data: current.data, error: reason instanceof PnlApiError ? reason : new PnlApiError(0, "Không kết nối được máy chủ."), loading: false }));
+      // A failed re-read of the SAME view keeps its figures next to the error; a failed read of another view (another
+      // period, scope or filter) drops them, so the controls never sit above numbers of a different selection.
+      if (request === latest.current) setState((current) => ({ data: current.dataUrl === url ? current.data : null, dataUrl: current.dataUrl === url ? url : null, error: reason instanceof PnlApiError ? reason : new PnlApiError(0, "Không kết nối được máy chủ."), loading: false }));
     }
   }, [url, fallback]);
   useEffect(() => { void reload(); }, [reload]);
-  return { ...state, reload };
+  return { data: state.data, error: state.error, loading: state.loading, reload };
 }
 
 /**

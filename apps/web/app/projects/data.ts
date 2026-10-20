@@ -46,6 +46,8 @@ export interface Project {
   projectType?: string;
   scopeSummary?: string;
   budgetCurrency?: string;
+  /** Doanh thu dự kiến (VND) = P&L "Giá trị dự án" — only on the detail payload, only for cost viewers. */
+  projectValue?: { amount: number | null; canEdit: boolean; reasonRequired: boolean };
   tasks: { total: number; done: number };
   plannedHours?: number;
   loggedHours?: number;

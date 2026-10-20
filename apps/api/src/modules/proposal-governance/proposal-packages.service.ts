@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import type {
   AddProposalDocumentInput,
   CreateProposalPackageInput,
@@ -22,9 +22,11 @@ const includeProposal = {
   }
 };
 
+const EDITABLE_PROPOSAL_STATUSES = new Set(["DRAFT", "WITHDRAWN"]);
+
 @Injectable()
 export class ProposalPackagesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async list(query: any, principal: PrincipalContext) {
     const pagination = normalizePagination({ limit: query.limit, offset: query.offset });
@@ -101,6 +103,10 @@ export class ProposalPackagesService {
 
   async update(proposalPackageId: string, input: UpdateProposalPackageInput, principal: PrincipalContext) {
     await this.findProposal(proposalPackageId, principal.workspaceId);
+    // Review, approval, sending and acceptance have their own steps and checks; a plain edit may only park or withdraw.
+    if (input.status && !EDITABLE_PROPOSAL_STATUSES.has(String(toPrismaEnum(input.status)))) {
+      throw new BadRequestException("Trạng thái này chỉ đổi qua bước gửi duyệt, duyệt hoặc gửi khách hàng.");
+    }
     const proposal = await this.prisma.proposalPackage.update({
       where: { id: proposalPackageId },
       data: {
@@ -182,10 +188,22 @@ export class ProposalPackagesService {
     if (!request) {
       throw new NotFoundException("Approval request not found");
     }
+    if (principal.subjectType !== "internal_user" || !principal.roleCodes.includes(request.requiredRoleCode)) {
+      throw new ForbiddenException(`Chỉ ${request.requiredRoleCode} mới quyết định được yêu cầu phê duyệt này.`);
+    }
+    if (request.requestedByUserId && request.requestedByUserId === principal.subjectId) {
+      throw new ForbiddenException("Người gửi duyệt không tự quyết định yêu cầu của mình.");
+    }
 
     const status = input.decision === "approved" ? "APPROVED" : input.decision === "rejected" ? "REJECTED" : "REVISION_REQUESTED";
-    await this.prisma.$transaction([
-      this.prisma.dealApprovalDecision.create({
+    await this.prisma.$transaction(async (tx) => {
+      // Conditional on the request still being open, so two concurrent decisions cannot both land.
+      const decided = await tx.dealApprovalRequest.updateMany({
+        where: { id: approvalRequestId, workspaceId: principal.workspaceId, status: { in: ["DRAFT", "SUBMITTED"] as any } },
+        data: { status: status as any, decidedAt: new Date() }
+      });
+      if (decided.count === 0) throw new ConflictException("Yêu cầu phê duyệt này đã có quyết định.");
+      await tx.dealApprovalDecision.create({
         data: {
           workspaceId: principal.workspaceId,
           approvalRequestId,
@@ -194,19 +212,15 @@ export class ProposalPackagesService {
           comment: optionalString(input.comment, "comment") ?? undefined,
           larkTaskId: optionalString(input.larkTaskId, "larkTaskId") ?? undefined
         }
-      }),
-      this.prisma.dealApprovalRequest.update({
-        where: { id: approvalRequestId },
-        data: { status: status as any, decidedAt: new Date() }
-      }),
-      this.prisma.proposalPackage.update({
+      });
+      await tx.proposalPackage.update({
         where: { id: proposalPackageId },
         data: {
           status: input.decision === "approved" ? ("INTERNALLY_APPROVED" as any) : input.decision === "rejected" ? ("WITHDRAWN" as any) : ("REVISION_REQUIRED" as any),
           approvedAt: input.decision === "approved" ? new Date() : undefined
         }
-      })
-    ]);
+      });
+    });
 
     return this.get(proposalPackageId, principal);
   }

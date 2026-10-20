@@ -84,6 +84,12 @@ function assertRangeWithinLimit(startAt: Date, endAt: Date, fieldName: string) {
 export type RecomputeStatusProposal = (projectId: string, principal?: PrincipalContext) => Promise<unknown>;
 
 /** Time entries and planning blocks: list / create / delete / review / Layer-2 correction, the write rules and the daily cap (split out of ProjectsService). */
+function formatLogWindow(startAt: Date | null, endAt: Date | null) {
+  const time = (value: Date | null) => value ? new Intl.DateTimeFormat("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" }).format(value) : "?";
+  const day = startAt ? new Intl.DateTimeFormat("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", day: "2-digit", month: "2-digit" }).format(startAt) : "";
+  return `${time(startAt)}–${time(endAt)} ${day}`.trim();
+}
+
 @Injectable()
 export class TimeEntriesService {
   constructor(
@@ -145,6 +151,13 @@ export class TimeEntriesService {
     };
   }
 
+  /** 7.7: a User plans and logs only their own time; a time reviewer or the project's managers act for others. */
+  private async assertMayActForUser(userId: string, projectId: string | null, principal: PrincipalContext) {
+    if (userId === principal.subjectId || principal.roleCodes.some((roleCode) => TIME_REVIEW_ROLE_CODES.has(roleCode))) return;
+    if (await this.permissions.canManageProjectOrAdmin(this.prisma, projectId, principal)) return;
+    throw new ForbiddenException("Chỉ được lập kế hoạch cho chính mình; PIC / quản lý dự án mới lập thay người khác.");
+  }
+
   async createTaskPlanningBlock(taskId: string, input: CreateTaskPlanningBlockInput, principal: PrincipalContext, fallbackUserId?: string) {
     this.permissions.assertInternalTaskPrincipal(principal, "Task planning blocks are internal");
     const task = await this.permissions.ensureTaskForPrincipal(taskId, principal);
@@ -152,6 +165,7 @@ export class TimeEntriesService {
     if (!userId) {
       throw new BadRequestException("userId is required");
     }
+    await this.assertMayActForUser(userId, task.projectId, principal);
 
     const startAt = optionalDate(input.startAt, "startAt");
     const endAt = optionalDate(input.endAt, "endAt");
@@ -275,6 +289,7 @@ export class TimeEntriesService {
     if (!existing) {
       throw new NotFoundException("Task planning block not found");
     }
+    await this.assertMayActForUser(existing.userId, existing.projectId, principal);
 
     // D-09: nobody works a plan on a workspace day off; with no Admin bypass left, cancelling must stay possible.
     if (targetStatus !== "cancelled" && typeof this.prisma.workspaceDayOff?.findFirst === "function") {
@@ -389,7 +404,7 @@ export class TimeEntriesService {
     if (endAt <= startAt) {
       throw new BadRequestException("Giờ kết thúc phải sau giờ bắt đầu.");
     }
-    assertRangeWithinLimit(startAt, endAt, "Actual work calendar range");
+    assertRangeWithinLimit(startAt, endAt, "Khoảng lịch giờ thực tế");
 
     const where: Prisma.TaskTimeEntryWhereInput = {
       workspaceId: principal.workspaceId,
@@ -464,6 +479,21 @@ export class TimeEntriesService {
       throw new NotFoundException("Task time entry not found");
     }
     await this.assertTimeEntryPeriodOpen(principal.workspaceId, [entry.workDate]);
+    // After G7 the project P&L is closed and a closed project's hours are final: deleting one would silently change a
+    // closed result, so — as for a Layer 2 change after G7 — only an Admin account may still do it (and it is audited).
+    if (entry.projectId && !isAdminAccount(principal)) {
+      const [g7, project] = await Promise.all([
+        typeof (this.prisma as any).projectGate?.findFirst === "function"
+          ? this.prisma.projectGate.findFirst({ where: { workspaceId: principal.workspaceId, projectId: entry.projectId, code: "G7" }, select: { status: true } })
+          : null,
+        typeof (this.prisma as any).project?.findFirst === "function"
+          ? this.prisma.project.findFirst({ where: { id: entry.projectId, workspaceId: principal.workspaceId }, select: { status: true } })
+          : null
+      ]);
+      if (isGatePassed(g7?.status) || isClosedProjectStatus(project?.status)) {
+        throw new ConflictException("Dự án đã qua G7 hoặc đã đóng nên giờ đã ghi là số chốt: chỉ Admin mới xóa được.");
+      }
+    }
 
     await this.prisma.$transaction(async (tx) => {
       // Founder/GM, Workspace Admin and the project's manager may delete any entry; the author until a reviewer has approved it
@@ -602,7 +632,8 @@ export class TimeEntriesService {
       throw new BadRequestException("workType must be 80 characters or fewer");
     }
     const note = optionalString(input.note, "note") ?? undefined;
-    const selectedTaskTypeLayer2 = this.parseSelectedLayer2(input.selectedTaskTypeLayer2, task.taskTypeLayer1);
+    // The logger may pick Layer 2 (P&L spec 12/10 point 5); without a pick it is the task's own Layer 2, not "chưa chọn".
+    const selectedTaskTypeLayer2 = this.parseSelectedLayer2(input.selectedTaskTypeLayer2, task.taskTypeLayer1) ?? (isTaskTypeLayer2(task.taskTypeLayer2) ? task.taskTypeLayer2 : null);
 
     const result = await this.prisma.$transaction((tx) => this.writeTimeEntry(tx, principal, task, {
       userId, startAt, endAt, workDate, timeZone, minutes, workType, note, selectedTaskTypeLayer2,
@@ -654,7 +685,7 @@ export class TimeEntriesService {
   async syncLayer2MismatchWarning(tx: Prisma.TransactionClient, workspaceId: string, projectId: string | null | undefined, actorUserId: string | null) {
     if (!projectId || typeof tx.taskTimeEntry?.findMany !== "function") return;
     const [rows, project] = await Promise.all([
-      tx.taskTimeEntry.findMany({ where: { workspaceId, projectId, selectedTaskTypeLayer2: { not: null } }, select: { minutes: true, taskTypeLayer2: true, selectedTaskTypeLayer2: true } }),
+      tx.taskTimeEntry.findMany({ where: { workspaceId, projectId, selectedTaskTypeLayer2: { not: null }, approvalStatus: { notIn: NON_ACTUAL_TIME_ENTRY_STATUSES } }, select: { minutes: true, taskTypeLayer2: true, selectedTaskTypeLayer2: true } }),
       typeof tx.project?.findFirst === "function" ? tx.project.findFirst({ where: { id: projectId, workspaceId }, select: { isTestProject: true } }) : null
     ]);
     const mismatched = (rows ?? []).filter((row) => isLayer2Mismatch(row.selectedTaskTypeLayer2, row.taskTypeLayer2));
@@ -798,6 +829,16 @@ export class TimeEntriesService {
     // capacity and push the daily total past the 8-hour limit.
     const dailyLogLockScope = JSON.stringify([principal.workspaceId, userId, dailyLogWindow.localDate]);
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${dailyLogLockScope}, 0))::text`;
+    // One person cannot work two time windows at once: a log overlapping one of their counted logs would be paid twice.
+    if (startAt && endAt && typeof tx.taskTimeEntry.findFirst === "function") {
+      const overlapping = await tx.taskTimeEntry.findFirst({
+        where: { workspaceId: principal.workspaceId, userId, approvalStatus: { notIn: NON_ACTUAL_TIME_ENTRY_STATUSES }, startAt: { lt: endAt }, endAt: { gt: startAt } },
+        select: { startAt: true, endAt: true }
+      });
+      if (overlapping?.startAt && overlapping.endAt) {
+        throw new ConflictException(`Khung giờ này trùng với giờ đã ghi ${formatLogWindow(overlapping.startAt, overlapping.endAt)}. Sửa giờ bắt đầu/kết thúc rồi lưu lại.`);
+      }
+    }
     const dailyMinutes = typeof tx.taskTimeEntry.aggregate === "function" ? await tx.taskTimeEntry.aggregate({
       where: {
         workspaceId: principal.workspaceId,
@@ -924,7 +965,8 @@ export class TimeEntriesService {
       entry: created,
       dailyActualLog: buildDailyActualLogStatus(
         dailyLogWindow.localDate,
-        dailyActualLogAggregate._sum.minutes ?? 0
+        dailyActualLogAggregate._sum.minutes ?? 0,
+        dayCapMinutes
       )
     };
   }
@@ -1033,7 +1075,7 @@ export class TimeEntriesService {
         toStatus: "in_progress",
         changedByUserId: input.changedByUserId,
         changedAt: input.occurredAt,
-        reason: "Actual work logged"
+        reason: "Đã ghi giờ thực tế"
       }
     });
 

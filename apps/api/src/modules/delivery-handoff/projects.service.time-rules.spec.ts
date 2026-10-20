@@ -122,7 +122,7 @@ describe("task classification on write (D-02, D-04, matrix 4.3)", () => {
   });
 
   it("updateTask ignores a client-sent Layer 2, fills an empty Layer 1 from the stage and audits the reclassification", async () => {
-    const { prisma, service } = setup();
+    const { prisma, service } = setup({ task: { assigneeUserId: "usr-1" } });
     prisma.pnlPeriod.findMany.mockResolvedValue([{ periodKey: "2026-09" }]);
     await service.updateTask("task-1", { title: "Renamed", taskTypeLayer2: "INTERNAL_PROJECT" } as any, as("usr-1"));
     expect(prisma.projectTask.update.mock.calls[0][0].data).toMatchObject({ taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT" });
@@ -182,6 +182,13 @@ describe("time log rules (D-03, D-09, D-13, D-14, D-16, V-07)", () => {
 
     const fits = setup({ logged: { minutes: STANDARD_DAY_MINUTES - 120 } });
     await expect(fits.service.createTimeEntry("task-1", log(120), actor, "usr-1")).resolves.toMatchObject({ id: "time-1" });
+  });
+
+  it("a holiday inside a task's date range does not block creating or editing the task (only logging and planning)", async () => {
+    const { prisma, service } = setup({ dayOff: { name: "Nghỉ lễ" }, task: { assigneeUserId: "usr-1" } });
+    await expect(service.createTask({ ...newTask, plannedStartAt: "2026-10-05T02:00:00.000Z", dueAt: "2026-10-07T10:00:00.000Z" }, as("usr-1"))).resolves.toBeTruthy();
+    await expect(service.updateTask("task-1", { title: "Renamed", dueAt: "2026-10-07T10:00:00.000Z" } as any, as("usr-1"))).resolves.toBeTruthy();
+    expect(prisma.projectTask.create).toHaveBeenCalled();
   });
 
   it("overtime minutes already logged that day do not use up the standard-hours cap (D-14)", async () => {
@@ -252,11 +259,10 @@ describe("legacy Layer 2 metadata on time logs", () => {
   const billable = { taskTypeLayer1: "DELIVERY", taskTypeLayer2: "CUSTOMER_PROJECT" };
   const warningsOpened = (prisma: any) => prisma.projectWarning.create.mock.calls.map((call: any[]) => call[0].data);
 
-  it("allows a log without Layer 2 while still rejecting invalid legacy values", async () => {
+  it("a log without a Layer 2 pick takes the task's Layer 2 (never 'chưa chọn'); invalid values are still rejected", async () => {
     const { prisma, service } = setup({ task: billable });
-    const entry = await service.createTimeEntry("task-1", { ...log(), selectedTaskTypeLayer2: undefined }, as("usr-1"), "usr-1");
-    expect(entry.selectedTaskTypeLayer2).toBeUndefined();
-    expect(prisma.taskTimeEntry.create).toHaveBeenCalled();
+    await service.createTimeEntry("task-1", { ...log(), selectedTaskTypeLayer2: undefined }, as("usr-1"), "usr-1");
+    expect(prisma.taskTimeEntry.create.mock.calls[0][0].data).toMatchObject({ selectedTaskTypeLayer2: "CUSTOMER_PROJECT" });
 
     const invalid = setup({ task: billable });
     await expect(invalid.service.createTimeEntry("task-1", { ...log(), selectedTaskTypeLayer2: "DAY_OFF_COMPANY" }, as("usr-1"), "usr-1")).rejects.toBeInstanceOf(BadRequestException);

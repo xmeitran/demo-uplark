@@ -35,3 +35,9 @@ const COST_VIEW_ROLE_CODES = ["FOUNDER_GM", "COST_VIEW", "COST_EDIT", "COST_APPR
 export function canViewCostFigures(user: { role: string; roleCodes?: string[] } | null | undefined) {
   return hasAnyAuthRole(user, COST_VIEW_ROLE_CODES);
 }
+
+/** Mirrors the API's canEditProjectSetup: "Giá trị dự án" is edited by a bound PM, Founder/GM or Workspace Admin. */
+const PROJECT_SETUP_EDIT_ROLES = new Set(["PM", "FOUNDER_GM", "WORKSPACE_ADMIN"]);
+export function canEditProjectSetup(user: { roleCodes?: string[]; heldRoleCodes?: string[] } | null | undefined) {
+  return (user?.heldRoleCodes ?? user?.roleCodes ?? []).some((role) => PROJECT_SETUP_EDIT_ROLES.has(role));
+}

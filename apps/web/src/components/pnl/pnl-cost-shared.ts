@@ -43,6 +43,12 @@ export function monthDateRange(periodKey: string) {
   return { startDate: `${periodKey}-01`, endDate: `${periodKey}-${String(lastDay).padStart(2, "0")}` };
 }
 
+/** A stored number as the viewer types it (vi-VN: comma for decimals, no grouping), so parseDecimalInput reads it back
+ *  unchanged — String(12.345) would be "12.345", which reads as twelve thousand three hundred forty-five. */
+export function formatDecimalInput(value: number | null | undefined): string {
+  return value == null || !Number.isFinite(value) ? "" : String(value).replace(".", ",");
+}
+
 /** "26.300", "5,5", "400000" → number; anything else → undefined. */
 export function parseDecimalInput(value: string): number | undefined {
   const text = value.replace(/\s/g, "");

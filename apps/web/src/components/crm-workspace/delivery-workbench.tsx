@@ -922,6 +922,7 @@ function DeliveryWorkbench({ config, projectId }: Readonly<{ config: BusinessFun
       priority: taskInput.priority,
       ownerUserId: taskInput.assigneeUserId,
       assigneeUserId: taskInput.assigneeUserId,
+      assigneeUserIds: taskInput.assigneeUserIds,
       plannedStartAt: taskInput.plannedStartAt,
       dueAt: taskInput.dueAt,
       estimateMinutes: taskInput.estimateMinutes,

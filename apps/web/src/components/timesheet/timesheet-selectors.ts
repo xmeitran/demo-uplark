@@ -107,12 +107,28 @@ export function filterLogs(dataset: TimesheetDataset, filters: TimesheetFilters)
 export function peopleInScope(dataset: TimesheetDataset, filters: TimesheetFilters): Person[] {
   const personIds = selectedPersonIds(filters);
   const departmentIds = selectedDepartmentIds(filters);
+  // A project filter picks WHOSE attendance is shown (members and people who logged there); their completeness is then
+  // judged on all their hours (see attendanceLogs), not only the filtered project's.
+  const projectIds = selectedProjectIds(filters);
+  const inSelectedProjects = projectIds.length > 0
+    ? new Set([
+        ...dataset.projects.filter((project) => projectIds.includes(project.id)).flatMap((project) => [project.picId, ...project.members.map((member) => member.personId)]),
+        ...dataset.logs.filter((log) => projectIds.includes(log.projectId)).map((log) => log.personId)
+      ])
+    : null;
   return dataset.people.filter((person) => {
     if (!person.active) return false;
     if (departmentIds.length > 0 && !departmentIds.includes(person.departmentId)) return false;
     if (personIds.length > 0 && !personIds.includes(person.id)) return false;
+    if (inSelectedProjects && !inSelectedProjects.has(person.id)) return false;
     return true;
   });
+}
+
+/** Logs that count for attendance (standard hours, missing days, day load): every log of the period and people in
+ *  scope, whatever project / work-group / search filter narrows the other views. */
+export function attendanceLogs(dataset: TimesheetDataset, filters: TimesheetFilters): TimeLog[] {
+  return filterLogs(dataset, { ...filters, projectIds: [], workGroups: [], search: "" });
 }
 
 /* ── Calendar / standard hours ──────────────────────────────────────────── */
@@ -130,6 +146,11 @@ function workingDaysInFilterRange(filters: TimesheetFilters, holidays: readonly 
   const end = upToISO && upToISO < requestedEnd ? upToISO : requestedEnd;
   if (start > end) return [];
   return eachDate(start, end).filter((iso) => isWorkingDay(iso, holidays));
+}
+
+/** Approved personal leave of a person on a day: 1 = full day, 0.5 = half day, 0 = none. */
+export function leaveFraction(dataset: Pick<TimesheetDataset, "leave">, personId: string, date: string): number {
+  return dataset.leave?.[`${personId}|${date}`] ?? 0;
 }
 
 /** MTS-01: 8h × working days × contract ratio. */
@@ -173,9 +194,12 @@ export function buildPersonMonthSummaries(
     .map((person) => {
       const personLogs = logsByPerson.get(person.id) ?? [];
       const actualMinutes = sum(personLogs.map((log) => log.minutes));
-      const standardMinutes = standardMinutesFor(person, workingDays.length);
+      // Approved leave lowers the standard (half a day for a half-day leave) and a full day of leave is not "missing".
+      const leaveDays = sum(workingDays.map((iso) => leaveFraction(dataset, person.id, iso)));
+      const personWorkingDays = workingDays.filter((iso) => leaveFraction(dataset, person.id, iso) < 1);
+      const standardMinutes = standardMinutesFor(person, workingDays.length - leaveDays);
       const loggedDays = new Set(personLogs.map((log) => log.date));
-      const missingDays = workingDays.filter((iso) => !loggedDays.has(iso));
+      const missingDays = personWorkingDays.filter((iso) => !loggedDays.has(iso));
       const completionPercent = standardMinutes > 0 ? (actualMinutes / standardMinutes) * 100 : 0;
 
       const byWorkGroup = emptyWorkGroupTotals();
@@ -188,8 +212,8 @@ export function buildPersonMonthSummaries(
         completionPercent,
         missingMinutes: Math.max(0, standardMinutes - actualMinutes),
         // Working days only, so "x/y ngày" can never exceed y because of weekend logs.
-        daysLogged: workingDays.length - missingDays.length,
-        workingDays: workingDays.length,
+        daysLogged: personWorkingDays.length - missingDays.length,
+        workingDays: personWorkingDays.length,
         missingDays,
         projectCount: new Set(personLogs.map((log) => log.projectId)).size,
         billableMinutes: sum(personLogs.filter((log) => log.billable).map((log) => log.minutes)),
@@ -226,7 +250,7 @@ export function buildMonthlyKpis(
   // users stay in the total but must not fill anyone else's standard hours.
   const scopedActualMinutes = sum(summaries.map((item) => item.actualMinutes));
   const standardMinutes = sum(summaries.map((item) => item.standardMinutes));
-  const possibleDays = summaries.length * workingDays.length;
+  const possibleDays = sum(summaries.map((item) => item.workingDays));
   const loggedDays = sum(summaries.map((item) => item.daysLogged));
 
   return {
@@ -331,14 +355,16 @@ export function buildPersonDayMatrix(
       });
 
       const workingCells = cells.filter((cell) => cell.isWorkingDay);
+      const leaveDays = sum(workingCells.map((cell) => leaveFraction(dataset, person.id, cell.date)));
       return {
         person,
         cells,
         totalMinutes: sum(cells.map((cell) => cell.minutes)),
-        standardMinutes: Math.round(standardDay * workingCells.length),
+        standardMinutes: Math.round(standardDay * (workingCells.length - leaveDays)),
         daysLogged: cells.filter((cell) => cell.minutes > 0).length,
         overloadedDays: workingCells.filter((cell) => cell.loadPercent > OVERLOAD_THRESHOLD_PERCENT).length,
-        emptyWorkingDays: workingCells.filter((cell) => cell.minutes === 0).length,
+        // A full day of approved leave is not an empty day.
+        emptyWorkingDays: workingCells.filter((cell) => cell.minutes === 0 && leaveFraction(dataset, person.id, cell.date) < 1).length,
         peakMinutes: cells.reduce((acc, cell) => Math.max(acc, cell.minutes), 0)
       } satisfies PersonDayRow;
     })
@@ -712,7 +738,7 @@ export function buildProjectReadiness(
         },
         {
           key: "estimate",
-          label: "Task có estimate ≥ 80%",
+          label: "Task có giờ kế hoạch ≥ 80%",
           passed: tasks.length > 0 && withEstimate / tasks.length >= 0.8,
           detail: `${withEstimate}/${tasks.length} task`
         },

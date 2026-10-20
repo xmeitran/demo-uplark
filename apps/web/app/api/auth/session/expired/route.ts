@@ -1,3 +1,4 @@
+import { isSafeReturnPath } from "@/lib/safe-return-path";
 import { resolveAuthPublicOrigin } from "@/lib/auth-bff-security";
 import { NextResponse } from "next/server";
 import { clearCrmSessionCookies } from "../../../../../src/lib/session-cookie";
@@ -26,7 +27,7 @@ export async function GET(request: Request) {
 }
 
 function safeReturnTo(value: string | null) {
-  if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/login")) {
+  if (!isSafeReturnPath(value) || value.startsWith("/login")) {
     return "/";
   }
 

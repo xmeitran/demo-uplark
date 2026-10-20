@@ -33,7 +33,9 @@ function createPrismaMock(overrides: Record<string, any> = {}) {
     dueAt: null,
     estimateMinutes: 60,
     taskTypeLayer1: null,
-    taskTypeLayer2: null
+    taskTypeLayer2: null,
+    ownerUserId: null,
+    assigneeUserId: "usr-member"
   };
   const prisma: Record<string, any> = {
     projectTask: {
@@ -76,7 +78,8 @@ function createPrismaMock(overrides: Record<string, any> = {}) {
       update: vi.fn().mockImplementation(async ({ data }: any) => { pnlPeriodStatus = data.status ?? pnlPeriodStatus; return { id: "period-1", status: pnlPeriodStatus, ...data }; }),
       delete: vi.fn().mockResolvedValue({ id: "period-1" })
     },
-    auditEvent: { create: vi.fn().mockResolvedValue({ id: "audit-1" }) }
+    auditEvent: { create: vi.fn().mockResolvedValue({ id: "audit-1" }) },
+    projectStage: { findFirst: vi.fn().mockResolvedValue({ ownerUserId: "usr-pic" }) }
   };
   prisma.$transaction = vi.fn(async (operation: any) => typeof operation === "function" ? operation(prisma) : Promise.all(operation));
   for (const [delegate, value] of Object.entries(overrides)) {
@@ -117,6 +120,15 @@ describe("BrdGovernanceService — EV-029/EV-061/EV-006/EV-007", () => {
 
     await expect(service.submitTaskPlan("task-1", { ...base, plannedStartAt: "2026-09-03", dueAt: "2026-09-01" }, member)).rejects.toThrow("dueAt must be on or after plannedStartAt");
     expect(prisma.projectTask.update).not.toHaveBeenCalled();
+  });
+
+  it("only the task's assignee/owner, the project PIC or an Admin role submits a task plan (7.7)", async () => {
+    const prisma = createPrismaMock();
+    const service = new BrdGovernanceService(prisma as any);
+    const stranger = { ...member, subjectId: "usr-other" };
+    await expect(service.submitTaskPlan("task-1", { estimateMinutes: 60 } as any, stranger)).rejects.toThrow("Chỉ người phụ trách task");
+    await expect(service.submitTaskPlan("task-1", { estimateMinutes: 60 } as any, { ...member, subjectId: "usr-pic" })).resolves.toBeTruthy();
+    expect(prisma.projectTask.update).toHaveBeenCalledTimes(1);
   });
 
   it("approves a submitted plan, locks its planning blocks, and snapshots the baseline", async () => {

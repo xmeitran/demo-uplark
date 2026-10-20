@@ -7,7 +7,7 @@ import { captureBaseline } from "./baseline.service";
 import { fakePrisma } from "./fake-prisma.testing";
 import { syncProjectStatus } from "./gates.service";
 import { issueLogHooks, runHooks } from "./issue-log.service";
-import { ProjectVisibilityGuard, firstStageOf, projectPmUserId, visibleProjectWhere } from "./project-visibility";
+import { ProjectVisibilityGuard, firstStageOf, keepProjectPic, projectPmUserId, visibleProjectWhere } from "./project-visibility";
 import { ProjectsService } from "./projects.service";
 
 /** Every model method exists and answers "nothing found"; a test overrides only what its rule depends on. */
@@ -268,15 +268,26 @@ describe("11 · issue-log side effects", () => {
 });
 
 describe("12 · PM of a project: one rule", () => {
-  it("is the owner of the first stage by stage order, then creation time — whatever the milestone order", async () => {
+  it("is the owner of the first stage: first milestone, then stage order (numbered per milestone), then creation time", async () => {
     const stages = [
-      { id: "late", sortOrder: 20, createdAt: new Date("2026-01-01"), ownerUserId: "u-late", milestone: { sortOrder: 1 } },
-      { id: "first", sortOrder: 10, createdAt: new Date("2026-02-01"), ownerUserId: "u-pm", milestone: { sortOrder: 9 } },
-      { id: "twin", sortOrder: 10, createdAt: new Date("2026-03-01"), ownerUserId: "u-twin", milestone: { sortOrder: 1 } }
+      { id: "m2-first", sortOrder: 10, createdAt: new Date("2026-01-01"), ownerUserId: "u-m2", milestone: { sortOrder: 20 } },
+      { id: "m1-second", sortOrder: 20, createdAt: new Date("2026-01-02"), ownerUserId: "u-late", milestone: { sortOrder: 10 } },
+      { id: "m1-first", sortOrder: 10, createdAt: new Date("2026-02-01"), ownerUserId: "u-pm", milestone: { sortOrder: 10 } }
     ];
     expect(firstStageOf(stages)?.ownerUserId).toBe("u-pm");
     const findFirst = vi.fn().mockResolvedValue({ ownerUserId: "u-pm" });
     await expect(projectPmUserId({ projectStage: { findFirst } }, "w", "p1")).resolves.toBe("u-pm");
-    expect(findFirst).toHaveBeenCalledWith({ where: { workspaceId: "w", projectId: "p1" }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }], select: { ownerUserId: true } });
+    expect(findFirst).toHaveBeenCalledWith({ where: { workspaceId: "w", projectId: "p1" }, orderBy: [{ milestone: { sortOrder: "asc" } }, { sortOrder: "asc" }, { createdAt: "asc" }], select: { ownerUserId: true } });
+  });
+
+  it("keeps the same PIC when another stage becomes the first one", async () => {
+    const update = vi.fn();
+    const client = { projectStage: { findFirst: vi.fn().mockResolvedValue({ id: "s-new-first", ownerUserId: null }), update } };
+    await keepProjectPic(client, "w", "p1", "u-pm");
+    expect(update).toHaveBeenCalledWith({ where: { id: "s-new-first" }, data: { ownerUserId: "u-pm" } });
+    update.mockClear();
+    client.projectStage.findFirst.mockResolvedValue({ id: "s-first", ownerUserId: "u-pm" });
+    await keepProjectPic(client, "w", "p1", "u-pm");
+    expect(update).not.toHaveBeenCalled();
   });
 });

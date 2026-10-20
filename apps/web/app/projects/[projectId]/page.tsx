@@ -1,5 +1,7 @@
 "use client";
 import { useProjectPeople } from "@/hooks/use-project-people";
+import { formatVnd } from "@/lib/currency";
+import { ProjectValueModal } from "@/components/pnl/pnl-project-edit";
 
 
 import React, { useState, useCallback, useMemo, useRef, useEffect, useLayoutEffect } from "react";
@@ -24,6 +26,7 @@ import type { Project } from "../data";
 import {
   fetchLiveProjectById as fetchLiveProjectSummaryById,
   mapProjectSummaryToUiProject,
+  mergeProjectUpdate,
   formatProjectStatusLabel,
   readLiveProjectSnapshot,
   clearLiveProjectSnapshotCache,
@@ -718,7 +721,7 @@ function buildWorkLogActivityItems(tasks: TaskItem[]): ActivityLogItem[] {
       id: `work-log-${task.id}-${entry.id}`,
       icon: Clock,
       color: entry.userColor || C.success,
-      text: entry.description || `${entry.userName ?? "User"} logged actual work`,
+      text: entry.description || `${entry.userName ?? "User"} đã ghi giờ thực tế`,
       target: task.stageName ? `${task.title} · ${task.stageName}` : task.title,
       time: entry.activityTime || entry.date,
       sortAt: entry.occurredAt || entry.date,
@@ -729,7 +732,7 @@ function buildWorkLogActivityItems(tasks: TaskItem[]): ActivityLogItem[] {
       userInitials: entry.userInitials,
       userAvatarUrl: entry.userAvatarUrl,
       hours: entry.actualHours,
-      badge: `${formatHours(entry.actualHours)}h actual`
+      badge: `${formatHours(entry.actualHours)}h thực tế`
     }))
   );
 }
@@ -1235,7 +1238,7 @@ function ProjectSheetPanel({
           { label: "Tiến độ", value: `${project.progress}%`, icon: TrendingUp, tone: "text-emerald-600 bg-emerald-50" },
           { label: "Task hoàn tất", value: `${doneTasks}/${rows.length}`, icon: ListChecks, tone: "text-blue-600 bg-blue-50" },
           { label: "Plan hour", value: `${formatHours(plannedHours)}h`, icon: Calendar, tone: "text-blue-600 bg-blue-50" },
-          { label: "Actual hour", value: `${formatHours(actualHours)}h`, icon: Clock, tone: "text-purple-600 bg-purple-50" },
+          { label: "Giờ thực tế", value: `${formatHours(actualHours)}h`, icon: Clock, tone: "text-purple-600 bg-purple-50" },
           { label: "Variance", value: `${varianceHours > 0 ? "+" : ""}${formatHours(varianceHours)}h`, icon: BarChart2, tone: varianceHours > 0 ? "text-red-600 bg-red-50" : "text-emerald-600 bg-emerald-50" },
           { label: "Cảnh báo", value: String(alertCount), icon: AlertCircle, tone: alertCount ? "text-red-600 bg-red-50" : "text-emerald-600 bg-emerald-50" }
         ].map((item) => (
@@ -2066,7 +2069,7 @@ function ProjectDeliveryWireframePanels({
 
       <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4"><div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Delivery execution</p><h3 className="mt-1 text-base font-black text-foreground">Task Board</h3><p className="mt-1 text-xs text-muted-foreground">Milestone → Stage → Task · kế hoạch, thực tế và sai lệch.</p></div><button type="button" onClick={onOpenTasks} className="text-xs font-semibold text-primary hover:underline">Mở toàn bộ Task Board →</button></div>
-        {previewTasks.length === 0 ? <div className="px-5 py-10 text-center text-xs text-muted-foreground">Chưa có task trong milestone đang chạy.</div> : <div className="overflow-x-auto"><div className="min-w-[760px]"><div className="grid grid-cols-[minmax(0,1fr)_150px_100px_100px_110px] gap-3 border-b border-border bg-muted/30 px-5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><span>Milestone / Stage / Task</span><span>Phụ trách</span><span>Trạng thái</span><span>Plan / Actual</span><span>Due</span></div>{previewTasks.map(({ task, stageName }) => { const owner = taskOwner(task); const variance = roundHours((task.actualHours ?? 0) - (task.plannedHours ?? 0)); return <div key={task.id} className="grid grid-cols-[minmax(0,1fr)_150px_100px_100px_110px] items-center gap-3 border-b border-border px-5 py-3 last:border-b-0"><div className="min-w-0"><p className="truncate text-xs font-semibold text-foreground"><span className="mr-1 text-muted-foreground">{activeMilestone?.name} / {stageName} /</span>{task.title}</p></div><div className="flex min-w-0 items-center gap-2">{owner ? <TeamMemberAvatar member={owner} /> : <span className="h-6 w-6 rounded-full bg-muted" />}<span className="truncate text-[11px] text-muted-foreground">{owner?.name ?? task.assignee ?? "Chưa phân công"}</span></div><span className="w-fit rounded-full px-2 py-1 text-[10px] font-bold" style={{ backgroundColor: TASK_STATUS[task.status].bg, color: TASK_STATUS[task.status].color }}>{TASK_STATUS[task.status].label}</span><span className="text-[11px] font-semibold text-foreground">{formatHours(task.plannedHours ?? 0)}h / {formatHours(task.actualHours ?? 0)}h <span className={variance > 0 ? "text-rose-600" : "text-muted-foreground"}>({variance > 0 ? "+" : ""}{formatHours(variance)}h)</span></span><span className="truncate text-[11px] text-muted-foreground">{task.due || "TBD"}</span></div>})}</div></div>}
+        {previewTasks.length === 0 ? <div className="px-5 py-10 text-center text-xs text-muted-foreground">Chưa có task trong milestone đang chạy.</div> : <div className="overflow-x-auto"><div className="min-w-[760px]"><div className="grid grid-cols-[minmax(0,1fr)_150px_100px_100px_110px] gap-3 border-b border-border bg-muted/30 px-5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><span>Milestone / Stage / Task</span><span>Phụ trách</span><span>Trạng thái</span><span>Kế hoạch / Thực tế</span><span>Due</span></div>{previewTasks.map(({ task, stageName }) => { const owner = taskOwner(task); const variance = roundHours((task.actualHours ?? 0) - (task.plannedHours ?? 0)); return <div key={task.id} className="grid grid-cols-[minmax(0,1fr)_150px_100px_100px_110px] items-center gap-3 border-b border-border px-5 py-3 last:border-b-0"><div className="min-w-0"><p className="truncate text-xs font-semibold text-foreground"><span className="mr-1 text-muted-foreground">{activeMilestone?.name} / {stageName} /</span>{task.title}</p></div><div className="flex min-w-0 items-center gap-2">{owner ? <TeamMemberAvatar member={owner} /> : <span className="h-6 w-6 rounded-full bg-muted" />}<span className="truncate text-[11px] text-muted-foreground">{owner?.name ?? task.assignee ?? "Chưa phân công"}</span></div><span className="w-fit rounded-full px-2 py-1 text-[10px] font-bold" style={{ backgroundColor: TASK_STATUS[task.status].bg, color: TASK_STATUS[task.status].color }}>{TASK_STATUS[task.status].label}</span><span className="text-[11px] font-semibold text-foreground">{formatHours(task.plannedHours ?? 0)}h / {formatHours(task.actualHours ?? 0)}h <span className={variance > 0 ? "text-rose-600" : "text-muted-foreground"}>({variance > 0 ? "+" : ""}{formatHours(variance)}h)</span></span><span className="truncate text-[11px] text-muted-foreground">{task.due || "TBD"}</span></div>})}</div></div>}
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
@@ -4769,6 +4772,7 @@ export default function ProjectDetailPage() {
   const params    = useParams<{ projectId: string }>();
   const projectId = params?.projectId ?? "p1";
   const { user } = useAuth();
+  const router = useRouter();
   const pushedProjectOwnerKey = getPushedProjectsOwnerKey(user);
   const [initialProjectSnapshot] = useState(() => readLiveProjectSnapshot(projectId, pushedProjectOwnerKey));
 
@@ -4907,6 +4911,7 @@ export default function ProjectDetailPage() {
   const [isHoveredPush, setIsHoveredPush] = useState(false);
   const [isHoveredEdit, setIsHoveredEdit] = useState(false);
   const [isHoveredMore, setIsHoveredMore] = useState(false);
+  const canManageProjectActions = isAdminView(user);
 
   // Overview and Tasks each keep their own task filters (same shape, see task-filters.ts).
   const [overviewFilters, setOverviewFilters] = useState(EMPTY_PROJECT_TASK_FILTERS);
@@ -4988,8 +4993,9 @@ export default function ProjectDetailPage() {
       throw new Error(await mutationErrorMessage(response, "Could not update project members"));
     }
 
+    // PATCH returns a plain summary: merge it so the revenue chip, warnings and status proposal stay on screen.
     const updatedProject = mapProjectSummaryToUiProject((await response.json()) as ProjectSummary);
-    setProject(updatedProject);
+    setProject((previous) => mergeProjectUpdate(previous, updatedProject));
     const updatedProjectMembers = updatedProject.id === PROJECT_NOT_FOUND.id
       ? EMPTY_TEAM_MEMBERS
       : dedupeTeamMembers(updatedProject.members.map(toProjectTeamMemberFromProjectMember));
@@ -5064,6 +5070,7 @@ export default function ProjectDetailPage() {
   // Milestone and task hierarchy state.
   const [milestones, setMilestones] = useState<Milestone[]>(EMPTY_MILESTONES);
   const [showMilestoneModal, setShowMilestoneModal] = useState(false);
+  const [editingProjectValue, setEditingProjectValue] = useState(false);
   const [milestoneGroups, setMilestoneGroups] = useState<MilestoneGroup[]>(EMPTY_MILESTONE_GROUPS);
   // Re-read after anything that can open or close a gate: a milestone's gate status or a stage's status changing.
   const stageGateRefreshKey = `${milestones.map((milestone) => `${milestone.id}:${milestone.gateStatus ?? ""}:${milestone.status}`).join("|")}#${milestoneGroups.map((group) => group.stages.map((stage) => `${stage.id}:${stage.status ?? ""}`).join(",")).join("|")}`;
@@ -6042,8 +6049,10 @@ export default function ProjectDetailPage() {
         // An unchanged status is left out: re-sending it must not run the start-stage gate check on a title or date edit.
         status: updated.status !== original?.status ? toApiStageStatus(updated.status) : undefined,
         ownerUserId: owner?.id,
-        plannedStartAt: toApiDateValue(updated.startDate),
-        plannedEndAt: toApiDateValue(updated.dueDate),
+        // The dates shown are actual-or-planned days: re-sending unchanged ones would overwrite the planned dates
+        // (and hit the locked baseline), so only a date the user changed is sent.
+        plannedStartAt: updated.startDate !== original?.startDate ? toApiDateValue(updated.startDate) : undefined,
+        plannedEndAt: updated.dueDate !== original?.dueDate ? toApiDateValue(updated.dueDate) : undefined,
         criteria: updated.description || "Stage completion criteria",
         description: updated.description,
         scopeSummary: updated.description,
@@ -6428,7 +6437,8 @@ export default function ProjectDetailPage() {
                 <span>{isPushed ? "Pushed to Menu" : "Push to Menu"}</span>
               </button>
               <button
-                type="button" disabled aria-label="Edit project unavailable on this page" title="Edit the project from the Projects list"
+                type="button" disabled={!canManageProjectActions} aria-label={canManageProjectActions ? "Edit project" : "Edit project unavailable"} title={canManageProjectActions ? "Edit project" : "Only Workspace Admin can edit this project"}
+                onClick={() => canManageProjectActions && router.push(`/projects?edit=${encodeURIComponent(projectId)}`)}
                 onMouseEnter={() => setIsHoveredEdit(true)}
                 onMouseLeave={() => setIsHoveredEdit(false)}
                 className="min-h-11 min-w-11 p-2 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed"
@@ -6441,7 +6451,8 @@ export default function ProjectDetailPage() {
                 <Edit3 className="w-3.5 h-3.5" />
               </button>
               <button
-                type="button" disabled aria-label="More project actions unavailable" title="Additional actions are not available"
+                type="button" disabled={!canManageProjectActions} aria-label={canManageProjectActions ? "Delete project" : "Delete project unavailable"} title={canManageProjectActions ? "Delete project" : "Only Workspace Admin can delete this project"}
+                onClick={() => canManageProjectActions && router.push(`/projects?delete=${encodeURIComponent(projectId)}`)}
                 onMouseEnter={() => setIsHoveredMore(true)}
                 onMouseLeave={() => setIsHoveredMore(false)}
                 className="min-h-11 min-w-11 p-2 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed"
@@ -6516,6 +6527,25 @@ export default function ProjectDetailPage() {
                   <Icon className="w-3.5 h-3.5" />{label}
                 </span>
               ))}
+              {/* PL-13: same "Giá trị dự án" as the P&L screen; edited through the same modal and endpoint, so both stay in sync. */}
+              {project.projectValue && (
+                <span className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/30 px-2.5 py-1 text-[11px] text-muted-foreground">
+                  <TrendingUp className="w-3.5 h-3.5" />Doanh thu dự kiến: <strong className="font-semibold text-foreground">{project.projectValue.amount === null ? "Chưa nhập" : formatVnd(project.projectValue.amount)}</strong>
+                  {project.projectValue.canEdit && (
+                    <button type="button" onClick={() => setEditingProjectValue(true)} aria-label="Sửa doanh thu dự kiến" title="Sửa doanh thu dự kiến" className="ml-0.5 rounded p-0.5 hover:bg-muted hover:text-foreground">
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                  )}
+                </span>
+              )}
+              {editingProjectValue && project.projectValue && (
+                <ProjectValueModal
+                  projectId={projectId}
+                  revenue={{ projectValueAmount: project.projectValue.amount, reasonRequired: project.projectValue.reasonRequired }}
+                  reload={refreshProject}
+                  onClose={() => setEditingProjectValue(false)}
+                />
+              )}
             </div>
 
           </div>
@@ -6697,7 +6727,7 @@ export default function ProjectDetailPage() {
                       <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
                         <div className="flex items-center justify-between mb-2"><span className="text-xs font-semibold text-muted-foreground">Giờ kế hoạch</span><Calendar className="h-4 w-4 text-blue-600" /></div>
                         <p className="text-2xl font-black font-mono tracking-tight text-foreground">{formatHours(sumHours(filteredTasks.map((task) => task.plannedHours || 0)))}h</p>
-                        <p className="text-[10px] text-muted-foreground mt-1">Tổng estimate của bộ lọc</p>
+                        <p className="text-[10px] text-muted-foreground mt-1">Tổng giờ kế hoạch của bộ lọc</p>
                       </div>
                       <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
                         <div className="flex items-center justify-between mb-2"><span className="text-xs font-semibold text-muted-foreground">Giờ thực tế</span><Clock className="h-4 w-4 text-purple-600" /></div>
@@ -7147,7 +7177,7 @@ export default function ProjectDetailPage() {
                                     <div className="min-w-0">
                                       <p className={`truncate text-xs ${row.member.id === user?.id ? "font-bold text-primary" : "font-semibold text-foreground"}`}>{row.member.name}</p>
                                       <p className="text-[10px] font-mono text-muted-foreground">
-                                        {formatHours(row.actualHours)}h actual / {formatHours(row.plannedHours)}h plan
+                                        {formatHours(row.actualHours)}h thực tế / {formatHours(row.plannedHours)}h kế hoạch
                                       </p>
                                     </div>
                                   </div>
@@ -7823,7 +7853,7 @@ export default function ProjectDetailPage() {
                             {[
                               { label:"Events", value:projectActivityFeed.length },
                               { label:"Users", value:activityUserKeys.size },
-                              { label:"Actual", value:`${actualWorkActivityHours}h` },
+                              { label:"Giờ thực tế", value:`${actualWorkActivityHours}h` },
                             ].map(stat => (
                               <div key={stat.label} className="rounded-lg border border-border bg-muted/25 px-3 py-2">
                                 <p className="font-mono text-sm font-black text-foreground">{stat.value}</p>

@@ -94,17 +94,22 @@ export const TASK_REMINDER_SCHEDULE: ReadonlyArray<{ slot: TaskReminderSlot; min
 
 export function normalizeReminderSchedule(value: unknown): ReadonlyArray<{ slot: TaskReminderSlot; minute: number }> {
   if (!Array.isArray(value)) return TASK_REMINDER_SCHEDULE;
+  let validSlots = 0;
   const slots = value.flatMap((candidate) => {
     if (!candidate || typeof candidate !== "object") return [];
     const item = candidate as { slot?: unknown; time?: unknown; enabled?: unknown };
-    if (item.enabled === false || typeof item.slot !== "string" || typeof item.time !== "string") return [];
+    if (typeof item.slot !== "string" || typeof item.time !== "string") return [];
+    if (item.enabled === false) { validSlots += 1; return []; }
     const match = /^(\d{2}):(\d{2})$/.exec(item.time);
     if (!match) return [];
     const hour = Number(match[1]);
     const minute = Number(match[2]);
     if (hour > 23 || minute > 59 || !["morning_plan", "pm_follow_up", "evening_actual"].includes(item.slot)) return [];
+    validSlots += 1;
     return [{ slot: item.slot as TaskReminderSlot, minute: hour * 60 + minute }];
   });
+  // Every slot switched off by an Admin means "send nothing", not "fall back to the defaults".
+  if (!slots.length && validSlots > 0) return [];
   return slots.length ? slots.sort((left, right) => left.minute - right.minute) : TASK_REMINDER_SCHEDULE;
 }
 

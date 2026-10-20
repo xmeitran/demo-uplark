@@ -69,7 +69,7 @@ export function WorkGroupDonut({ data, compact = false }: { data: WorkGroupSlice
                     {formatHours(total)}
                   </text>
                   <text x={box.cx} y={box.cy + 12} textAnchor="middle" fill="var(--color-muted-foreground)" fontSize={11}>
-                    Tổng giờ
+                    Giờ thực tế
                   </text>
                 </g>
               );

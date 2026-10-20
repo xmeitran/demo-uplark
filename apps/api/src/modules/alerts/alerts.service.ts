@@ -35,7 +35,7 @@ import { larkAlertDelivery } from "../lark-integration/lark-hooks";
 const REMINDER_SLOTS = [
   { slot: "morning_plan", label: "Kế hoạch đầu ngày" },
   { slot: "pm_follow_up", label: "Nhắc lại cho PM" },
-  { slot: "evening_actual", label: "Actual Hour cuối ngày" }
+  { slot: "evening_actual", label: "Giờ thực tế cuối ngày" }
 ] as const;
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);

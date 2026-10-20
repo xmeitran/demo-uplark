@@ -1,5 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import type { AddPaymentEvidenceInput, AddPaymentMilestoneInput, CreatePaymentScheduleInput, PrincipalContext } from "@b2b-crm/contracts";
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { can, type AddPaymentEvidenceInput, type AddPaymentMilestoneInput, type CreatePaymentScheduleInput, type PrincipalContext } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { buildPaginationMeta, nonEmptyString, normalizePagination, optionalBoolean, optionalDate, optionalInteger, optionalNumber, optionalString } from "../../shared/http/request-context";
 import { money, optionalStringArray, toApiEnum, toIso, toPrismaEnum } from "../../shared/http/api-mappers";
@@ -24,9 +24,17 @@ const scheduleInclude = {
 
 @Injectable()
 export class PaymentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+
+  /** Payment schedules, invoices and AR are revenue figures: internal accounts holding a cost permission only (7.7, PL-26). */
+  private assertFinanceAccess(principal: PrincipalContext) {
+    if (principal.subjectType !== "internal_user" || !can("project.financials.view", principal)) {
+      throw new ForbiddenException("Lịch thu và công nợ chỉ dành cho nhóm quyền chi phí.");
+    }
+  }
 
   async listSchedules(query: any, principal: PrincipalContext) {
+    this.assertFinanceAccess(principal);
     const pagination = normalizePagination({ limit: query.limit, offset: query.offset });
     const where = {
       workspaceId: principal.workspaceId,
@@ -57,17 +65,27 @@ export class PaymentsService {
   }
 
   async getSchedule(paymentScheduleId: string, principal: PrincipalContext) {
+    this.assertFinanceAccess(principal);
     const schedule = await this.findSchedule(paymentScheduleId, principal.workspaceId);
     return this.mapSchedule(schedule, true);
   }
 
   async createSchedule(input: CreatePaymentScheduleInput, principal: PrincipalContext) {
+    this.assertFinanceAccess(principal);
     const account = await this.ensureAccount(nonEmptyString(input.accountId, "accountId"), principal.workspaceId);
     if (input.projectId) {
       await this.ensureProject(input.projectId, principal.workspaceId, account.id);
     }
     if (input.opportunityId) {
       await this.ensureOpportunity(input.opportunityId, principal.workspaceId, account.id);
+    }
+    const contractId = optionalString(input.contractId, "contractId") ?? undefined;
+    if (contractId && !(await this.prisma.contract.findFirst({ where: { id: contractId, workspaceId: principal.workspaceId }, select: { id: true } }))) {
+      throw new BadRequestException("Contract does not belong to this workspace");
+    }
+    const proposalPackageId = optionalString(input.proposalPackageId, "proposalPackageId") ?? undefined;
+    if (proposalPackageId && !(await this.prisma.proposalPackage.findFirst({ where: { id: proposalPackageId, workspaceId: principal.workspaceId }, select: { id: true } }))) {
+      throw new BadRequestException("Proposal package does not belong to this workspace");
     }
 
     const code = input.code?.trim() || `${account.code}-PAY-${Date.now().toString(36).toUpperCase()}`;
@@ -76,10 +94,10 @@ export class PaymentsService {
         data: {
           workspaceId: principal.workspaceId,
           accountId: account.id,
-          contractId: optionalString(input.contractId, "contractId") ?? undefined,
+          contractId,
           opportunityId: optionalString(input.opportunityId, "opportunityId") ?? undefined,
           projectId: optionalString(input.projectId, "projectId") ?? undefined,
-          proposalPackageId: optionalString(input.proposalPackageId, "proposalPackageId") ?? undefined,
+          proposalPackageId,
           code,
           title: nonEmptyString(input.title, "title"),
           status: toPrismaEnum(input.status ?? "draft") as any,
@@ -104,6 +122,7 @@ export class PaymentsService {
   }
 
   async listMilestones(paymentScheduleId: string, principal: PrincipalContext) {
+    this.assertFinanceAccess(principal);
     const schedule = await this.findSchedule(paymentScheduleId, principal.workspaceId);
     return {
       data: schedule.milestones.map((milestone: any) => this.mapMilestone(milestone)),
@@ -112,6 +131,7 @@ export class PaymentsService {
   }
 
   async addMilestone(paymentScheduleId: string, input: AddPaymentMilestoneInput, principal: PrincipalContext) {
+    this.assertFinanceAccess(principal);
     const schedule = await this.findSchedule(paymentScheduleId, principal.workspaceId);
     const latest = await this.prisma.paymentMilestone.findFirst({
       where: { scheduleId: schedule.id, workspaceId: principal.workspaceId },
@@ -128,6 +148,7 @@ export class PaymentsService {
   }
 
   async addEvidence(milestoneId: string, input: AddPaymentEvidenceInput, principal: PrincipalContext) {
+    this.assertFinanceAccess(principal);
     const milestone = await this.findMilestone(milestoneId, principal.workspaceId);
     const evidence = await this.prisma.paymentEvidence.create({
       data: {
@@ -148,6 +169,7 @@ export class PaymentsService {
   }
 
   async arAging(principal: PrincipalContext) {
+    this.assertFinanceAccess(principal);
     const now = new Date();
     const rows = await this.prisma.paymentMilestone.findMany({
       where: {
@@ -155,14 +177,16 @@ export class PaymentsService {
         paymentStatus: { in: ["UNPAID", "PARTIALLY_PAID", "OVERDUE", "DISPUTED"] as any },
         dueAt: { not: null }
       },
-      include: { account: true, invoices: { orderBy: { createdAt: "desc" }, take: 1 }, arFollowUps: { orderBy: { createdAt: "desc" }, take: 1 } },
+      include: { account: true, invoices: { orderBy: { createdAt: "desc" } }, arFollowUps: { orderBy: { createdAt: "desc" }, take: 1 } },
       orderBy: [{ dueAt: "asc" }]
     });
 
     return {
       data: rows.map((row) => {
         const invoice = row.invoices[0];
-        const outstanding = money(row.amount) - money(invoice?.paidAmount);
+        // Every invoice of the milestone counts, as on the schedule screen (mapSchedule): not only the latest one.
+        const paid = row.invoices.reduce((sum: number, item: any) => sum + money(item.paidAmount), 0);
+        const outstanding = Math.max(money(row.amount) - paid, 0);
         return {
           accountId: row.accountId,
           accountName: row.account.name,

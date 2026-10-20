@@ -212,7 +212,7 @@ function actualEntryToEvent(entry: TaskTimeEntrySummary): CalendarWorkEvent {
     userId: entry.userId,
     userDisplayName: entry.userDisplayName,
     userAvatarUrl: entry.userAvatarUrl,
-    title: entry.taskTitle ?? entry.note ?? "Actual work",
+    title: entry.taskTitle ?? entry.note ?? "Giờ thực tế",
     notes: entry.note,
     startAt: entry.startAt ?? start.toISOString(),
     endAt: entry.endAt ?? end.toISOString(),
@@ -630,8 +630,9 @@ export default function CalendarPage() {
       const results = await Promise.allSettled(chunks.map(chunk => fetchAllResourcePages<T>(
         path,
         new URLSearchParams(chunk),
-        200,
-        25,
+        // The API caps a page at 100 rows: ask for what it returns, with the page budget sized for a busy 89-day chunk.
+        100,
+        50,
         controller.signal
       )));
       const data = new Map<string, T>();

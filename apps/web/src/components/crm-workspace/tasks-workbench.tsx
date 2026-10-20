@@ -5,7 +5,7 @@ import { allowedPerformers } from "@/lib/task-people-policy";
 import { defaultWorkLogDate } from "@/lib/work-log-date";
 import {
   TASK_TYPE_LAYER1_FIELD_LABEL, TASK_TYPE_LAYER1_OPTIONS, TASK_TYPE_LAYER2_FIELD_LABEL, TASK_TYPE_PENDING_LABEL,
-  layer2OptionsForTask, taskTypeLayer1Label, taskTypeLayer2Label, type TaskTypeLayer1
+  defaultSelectedLayer2, layer2OptionsForTask, taskTypeLayer1Label, taskTypeLayer2Label, type TaskTypeLayer1
 } from "@/lib/task-classification";
 import { useTaskPeople } from "@/hooks/use-task-people";
 
@@ -1115,10 +1115,17 @@ export function CreateTaskModal({
     }))
   ];
 
+  // Reset the form when it opens, when its defaults change, or once the client list arrives — never on a mere re-render
+  // of the parent (it passes a new `stages` array every render, which used to wipe what the user was typing).
+  const resetKey = isOpen ? JSON.stringify([defaults?.accountId, defaults?.projectId, defaults?.stageId, defaults?.taskType, defaults?.taskTypeLayer1, defaults?.title, defaults?.description, accounts.length > 0, defaultAssigneeUserId]) : null;
+  const lastResetKey = useRef<string | null>(null);
   useEffect(() => {
     if (!isOpen) {
+      lastResetKey.current = null;
       return;
     }
+    if (lastResetKey.current === resetKey) return;
+    lastResetKey.current = resetKey;
 
     const nextAccountId = defaults?.accountId || accounts[0]?.id || "";
     const nextProjects = projects.filter(p => p.accountId === nextAccountId);
@@ -1144,7 +1151,7 @@ export function CreateTaskModal({
     setDueAt("");
     setEstimateMinutes("");
     setCustomerVisible(false);
-  }, [isOpen, defaults?.accountId, defaults?.projectId, defaults?.stageId, defaults?.taskType, defaults?.taskTypeLayer1, defaults?.title, defaults?.description, accounts, projects, stages, assigneeSelectOptions, defaultAssigneeUserId]);
+  }, [isOpen, resetKey, defaults?.accountId, defaults?.projectId, defaults?.stageId, defaults?.taskType, defaults?.taskTypeLayer1, defaults?.title, defaults?.description, accounts, projects, stages, assigneeSelectOptions, defaultAssigneeUserId]);
 
   const handleAccountChange = (nextAccountId: string) => {
     setAccountId(nextAccountId);
@@ -1393,9 +1400,10 @@ export function EditTaskModal({
       setPriority(task.priority || "medium");
       setTaskType(task.taskType || "implementation");
       setTaskTypeLayer1(task.taskTypeLayer1 || INHERIT_TASK_TYPE_LAYER1);
-      const nextAssigneeUserIds = task.assigneeUserIds?.filter((userId) => assigneeSelectOptions.some((option) => option.value === userId))
-        ?? (task.assigneeUserId && assigneeSelectOptions.some((option) => option.value === task.assigneeUserId) ? [task.assigneeUserId] : []);
-      setAssigneeUserIds(nextAssigneeUserIds.length > 0 ? nextAssigneeUserIds : (assigneeSelectOptions[0]?.value ? [assigneeSelectOptions[0].value] : []));
+      // The task's own assignees, never a stand-in: an empty list (or one whose people left) stays as it is, and
+      // handleEditTask only sends assignees when the user actually changed them.
+      const currentAssigneeUserIds = task.assigneeUserIds?.length ? task.assigneeUserIds : task.assigneeUserId ? [task.assigneeUserId] : [];
+      setAssigneeUserIds(currentAssigneeUserIds.filter((userId) => assigneeSelectOptions.some((option) => option.value === userId)));
       setPlannedStartAt(toVietnamDateInputValue(task.plannedStartAt));
       setDueAt(toVietnamDateInputValue(task.dueAt));
       setEstimateMinutes(task.estimateMinutes?.toString() || "");
@@ -1728,6 +1736,8 @@ export function LogWorkModal({
   const [workType, setWorkType] = useState("delivery");
   const [billable, setBillable] = useState(true);
   const [completeTask, setCompleteTask] = useState(false);
+  // P&L spec 12/10 point 5: the logger picks Layer 2; it starts as the task's own and a different pick is flagged.
+  const [layer2, setLayer2] = useState<string>("");
   const [userId, setUserId] = useState("none");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -1750,6 +1760,7 @@ export function LogWorkModal({
       setMinutes(task.estimateMinutes?.toString() || "60");
       setWorkDate(defaultWorkLogDate(selectedWorkDate, task.plannedStartAt));
       setWorkType(task.taskType || "delivery");
+      setLayer2(defaultSelectedLayer2(task.taskTypeLayer2));
       setNote("");
       setBillable(true);
       setCompleteTask(false);
@@ -1831,7 +1842,8 @@ export function LogWorkModal({
         endTime: useTimeSlot ? endTime : undefined,
         startAt,
         endAt,
-        timeZone: VIETNAM_TIME_ZONE
+        timeZone: VIETNAM_TIME_ZONE,
+        selectedTaskTypeLayer2: step === "actual" && layer2 ? layer2 : undefined
       });
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "Không thể lưu thao tác. Vui lòng thử lại.");
@@ -1900,7 +1912,7 @@ export function LogWorkModal({
                 </div>
                 <h3 className="text-sm font-bold text-slate-800 mb-1.5">Lên kế hoạch dự kiến</h3>
                 <p className="text-[11px] text-slate-400 font-normal leading-normal max-w-[200px]">
-                  Đặt/Cập nhật thời gian làm dự tính (Estimate) để lập kế hoạch phân bổ thời gian.
+                  Đặt/Cập nhật giờ kế hoạch để lập kế hoạch phân bổ thời gian.
                 </p>
               </div>
             </button>
@@ -2007,6 +2019,19 @@ export function LogWorkModal({
           </div>
           {people.principalUserId && userId === people.principalUserId ? (
             <p className="-mt-2 mb-3 text-[11px] text-slate-500">Mặc định là tài khoản đang đăng nhập. Bạn có thể đổi người thực hiện nếu có quyền.</p>
+          ) : null}
+          {step === "actual" ? (
+            <>
+              <CustomDropdown
+                label={TASK_TYPE_LAYER2_FIELD_LABEL}
+                value={layer2}
+                options={layer2OptionsForTask(task?.taskTypeLayer1).map((option) => ({ value: option.value, label: option.label }))}
+                onChange={setLayer2}
+              />
+              {layer2 && task?.taskTypeLayer2 && layer2 !== task.taskTypeLayer2 ? (
+                <p className="-mt-2 mb-3 text-[11px] font-semibold text-amber-700">Khác Lớp 2 của task ({taskTypeLayer2Label(task.taskTypeLayer2)}): giờ này sẽ ở trạng thái Chờ xử lý cho tới khi PM xem lại.</p>
+              ) : null}
+            </>
           ) : null}
 
           <div className="flex flex-col gap-2.5 my-1 bg-slate-50 p-3.5 rounded-xl border border-slate-100">
@@ -2192,6 +2217,11 @@ export function TasksWorkbench({
   const handleEditTask = async (taskInput: any) => {
     if (!selectedTaskId || !selectedTask) return;
 
+    const previousAssigneeUserIds = selectedTask.assigneeUserIds?.length ? selectedTask.assigneeUserIds : selectedTask.assigneeUserId ? [selectedTask.assigneeUserId] : [];
+    const nextAssigneeUserIds: string[] = taskInput.assigneeUserIds ?? [];
+    const assigneesChanged = [...previousAssigneeUserIds].sort().join("|") !== [...nextAssigneeUserIds].sort().join("|");
+    // The owner follows the primary assignee only where it already did (or was empty); otherwise it is left alone.
+    const ownerFollowsAssignee = !selectedTask.ownerUserId || selectedTask.ownerUserId === selectedTask.assigneeUserId;
     const body = {
       accountId: taskInput.accountId,
       projectId: taskInput.projectId,
@@ -2200,11 +2230,14 @@ export function TasksWorkbench({
       taskType: taskInput.taskType,
       taskTypeLayer1: taskInput.taskTypeLayer1,
       priority: taskInput.priority,
-      ownerUserId: taskInput.assigneeUserId,
-      assigneeUserId: taskInput.assigneeUserId,
-      assigneeUserIds: taskInput.assigneeUserIds,
-      plannedStartAt: taskInput.plannedStartAt,
-      dueAt: taskInput.dueAt,
+      ...(assigneesChanged ? {
+        assigneeUserId: taskInput.assigneeUserId ?? null,
+        assigneeUserIds: nextAssigneeUserIds,
+        ...(ownerFollowsAssignee ? { ownerUserId: taskInput.assigneeUserId ?? null } : {})
+      } : {}),
+      // A cleared date is sent as null: a missing key means "unchanged" to the API.
+      plannedStartAt: taskInput.plannedStartAt || null,
+      dueAt: taskInput.dueAt || null,
       estimateMinutes: taskInput.estimateMinutes,
       customerVisible: taskInput.customerVisible
     };
@@ -2293,6 +2326,8 @@ export function TasksWorkbench({
       ownerUserId: taskInput.assigneeUserId,
       assigneeUserId: taskInput.assigneeUserId,
       assigneeUserIds: taskInput.assigneeUserIds,
+      plannedStartAt: taskInput.plannedStartAt || undefined,
+      dueAt: taskInput.dueAt || undefined,
       estimateMinutes: taskInput.estimateMinutes,
       customerVisible: taskInput.customerVisible
     };

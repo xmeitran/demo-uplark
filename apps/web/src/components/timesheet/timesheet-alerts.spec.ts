@@ -58,7 +58,9 @@ describe("buildTimesheetAlerts", () => {
   });
 
   it("limits overdue and blocked counts to the filtered project", () => {
-    expect(buildTimesheetAlerts(dataset, [], dataset.generatedAt, { ...filters, projectId: "another" }).map((alert) => alert.id)).toEqual(["missing-logs"]);
+    // A project filter also picks whose attendance counts: nobody belongs to "another", so nobody is listed as missing logs.
+    expect(buildTimesheetAlerts(dataset, [], dataset.generatedAt, { ...filters, projectId: "another" }).map((alert) => alert.id)).toEqual([]);
+    expect(buildTimesheetAlerts(dataset, [], dataset.generatedAt, filters).map((alert) => alert.id)).toContain("missing-logs");
   });
 
   it("flags over-plan on all-time hours, not the period's, and never for a project without estimate", () => {

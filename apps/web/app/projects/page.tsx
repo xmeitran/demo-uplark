@@ -21,8 +21,12 @@ import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilte
 import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
 import { CrmMultiSelect, CrmSelect } from "@/components/crm-workspace/crm-select";
 import { useAuth } from "@/lib/auth";
-import { canViewCostFigures, isAdminView } from "@/lib/auth-role";
+import { canEditProjectSetup, canViewCostFigures, isAdminView } from "@/lib/auth-role";
 import { MoneyAmount } from "@/components/money-amount";
+import { pnlRequest } from "@/components/pnl/pnl-ui";
+import { parseVndAmount } from "@/components/pnl/pnl-project-edit";
+import { formatMoneyInput } from "@/components/pnl/pnl-cost-shared";
+import { formatVnd } from "@/lib/currency";
 import {
   getPushedProjectsOwnerKey,
   readPushedProjectIds,
@@ -34,6 +38,7 @@ import {
   fetchLiveProjects,
   isUnauthorizedLiveProjectsError,
   mapProjectSummaryToUiProject,
+  mergeProjectUpdate,
   PROJECT_PAGE_SIZE,
   formatProjectStatusLabel,
   toBackendProjectStatus,
@@ -943,6 +948,8 @@ export default function ProjectsPage() {
   const [projectPagination, setProjectPagination] = useState<ResourceListPaginationMeta>(EMPTY_PROJECT_PAGINATION);
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [projectsError, setProjectsError] = useState<string | null>(null);
+  // Kept apart from projectsError: the client list loads in parallel, and its success must not hide a failed project load.
+  const [accountsError, setAccountsError] = useState<string | null>(null);
   const [usingLocalProjectFallback, setUsingLocalProjectFallback] = useState(false);
   const [savingProject, setSavingProject] = useState(false);
   const createSubmittingRef = useRef(false);
@@ -1082,6 +1089,39 @@ export default function ProjectsPage() {
   }, [projectPage, filterKey, pushedProjectOwnerKey]);
 
   useEffect(() => {
+    const action = searchParams.get("edit") ? "edit" : searchParams.get("delete") ? "delete" : null;
+    const projectId = action === "edit" ? searchParams.get("edit")?.trim() : searchParams.get("delete")?.trim();
+    if (!action || !projectId || loadingProjects) return;
+    const targetProjectId = projectId;
+
+    let cancelled = false;
+    const clearAction = () => {
+      const next = new URLSearchParams(projectListSearch);
+      next.delete("edit");
+      next.delete("delete");
+      const query = next.toString();
+      router.replace(query ? `/projects?${query}` : "/projects", { scroll: false });
+    };
+
+    async function openProjectAction() {
+      const listed = projectsList.find((project) => project.id === targetProjectId);
+      const target = listed ?? await fetchLiveProjectById(targetProjectId).catch(() => null);
+      if (cancelled) return;
+      clearAction();
+      if (!target) {
+        setProjectsError("Không tìm thấy dự án để thực hiện thao tác.");
+        return;
+      }
+      setProjectMutationError(null);
+      if (action === "edit") setEditingProject(target);
+      else setDeletingProject(target);
+    }
+
+    void openProjectAction();
+    return () => { cancelled = true; };
+  }, [loadingProjects, projectListSearch, projectsList, router, searchParams]);
+
+  useEffect(() => {
     const controller = new AbortController();
 
     async function loadAccountOptions() {
@@ -1090,7 +1130,7 @@ export default function ProjectsPage() {
         const accounts = await fetchAccountOptions(controller.signal);
         if (controller.signal.aborted) return;
         setAccountOptions(accounts);
-        setProjectsError(null);
+        setAccountsError(null);
       } catch (error) {
         if (controller.signal.aborted) return;
         if (isUnauthorizedLiveProjectsError(error)) {
@@ -1099,7 +1139,7 @@ export default function ProjectsPage() {
         }
         setAccountOptions([]);
         if (process.env.NODE_ENV === "production") {
-          setProjectsError(error instanceof Error ? error.message : "Could not load CRM accounts");
+          setAccountsError(error instanceof Error ? error.message : "Could not load CRM accounts");
         }
       } finally { if (!controller.signal.aborted) setLoadingAccounts(false); }
     }
@@ -1172,6 +1212,8 @@ export default function ProjectsPage() {
   const [client, setClient] = useState("");
   const [priority, setPriority] = useState<Project["priority"]>("Medium");
   const [isTestProject, setIsTestProject] = useState(false);
+  const [projectValueText, setProjectValueText] = useState("");
+  const createErrorRef = useRef<HTMLDivElement | null>(null);
   const [createProjectType, setCreateProjectType] = useState("");
   const [startDate, setStartDate] = useState(defaultProjectStartDate);
   const [dueDate, setDueDate] = useState(defaultProjectDueDate);
@@ -1390,6 +1432,9 @@ export default function ProjectsPage() {
 
   const selectedMilestoneTemplate = milestoneTemplates.find((template) => template.key === milestoneTemplateKey) ?? milestoneTemplates.find((template) => template.key === "pilot-v1");
 
+  // The alert sits at the top of a long modal; without this a failed Create looks like nothing happened.
+  useEffect(() => { if (projectsError && isCreateOpen) createErrorRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, [projectsError, isCreateOpen]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || createSubmittingRef.current) return;
@@ -1401,6 +1446,11 @@ export default function ProjectsPage() {
     }
     if (!createProjectType) {
       setProjectsError("Chọn Loại dự án: Khách hàng, Nội bộ hoặc Đào tạo.");
+      return;
+    }
+    const projectValueAmount = parseVndAmount(projectValueText);
+    if (projectValueText.trim() && projectValueAmount === null) {
+      setProjectsError("Doanh thu dự kiến là số tiền VND nguyên, lớn hơn 0 (ví dụ 67.200.000).");
       return;
     }
 
@@ -1450,6 +1500,12 @@ export default function ProjectsPage() {
 
       const created = await response.json();
       createAttempt.current = {};
+      // PL-13: doanh thu dự kiến is the project's "Giá trị dự án", saved through the P&L endpoint (same rules and audit trail).
+      let projectValueError: string | null = null;
+      if (projectValueAmount !== null) {
+        await pnlRequest(`/api/pnl/projects/${encodeURIComponent(created.id)}/project-value`, { method: "PUT", body: { amount: projectValueAmount } })
+          .catch((error) => { projectValueError = `Đã tạo dự án nhưng chưa lưu được doanh thu dự kiến: ${error instanceof Error ? error.message : "lỗi không rõ"}. Nhập lại ở trang P&L của dự án.`; });
+      }
       setProjectsList(current => [mapProjectSummaryToUiProject(created), ...current].slice(0, PROJECT_PAGE_SIZE));
       setProjectPagination(current => {
         const total = current.total + 1;
@@ -1464,8 +1520,11 @@ export default function ProjectsPage() {
       setProjectPage(1);
       closeCreateProject();
 
+      if (projectValueError) setProjectsError(projectValueError);
+
       // Reset Form
       setName("");
+      setProjectValueText("");
       setCreateProjectType("");
       setDescription("");
       setClient(accountOptions[0]?.value ?? "");
@@ -1520,11 +1579,13 @@ export default function ProjectsPage() {
           status: values.status === project.status ? undefined : toBackendProjectStatus(values.status),
           projectType: values.projectType,
           scopeSummary: values.scopeSummary || null,
-          ownerUserId,
+          // Only what the user changed: the dates shown are the stages' actual-or-planned days, so re-sending them would
+          // overwrite the planned dates (and the locked baseline); an unchanged PIC is not a PIC change.
+          ownerUserId: ownerUserId === (project.ownerUserId ?? null) ? undefined : ownerUserId,
           memberUserIds,
           isTestProject: values.isTestProject,
-          plannedStartAt: uiProjectDateToIso(values.plannedStartAt),
-          plannedEndAt: uiProjectDateToIso(values.plannedEndAt)
+          plannedStartAt: values.plannedStartAt === project.startDate ? undefined : uiProjectDateToIso(values.plannedStartAt),
+          plannedEndAt: values.plannedEndAt === project.dueDate ? undefined : uiProjectDateToIso(values.plannedEndAt)
         })
       });
 
@@ -1539,7 +1600,7 @@ export default function ProjectsPage() {
       }
 
       const updated = mapProjectSummaryToUiProject(await response.json());
-      setProjectsList(current => current.map(item => item.id === project.id ? updated : item));
+      setProjectsList(current => current.map(item => item.id === project.id ? mergeProjectUpdate(item, updated) : item));
       setEditingProject(null);
     } catch (error) {
       setProjectMutationError(error instanceof Error ? error.message : "Could not update project");
@@ -1564,7 +1625,7 @@ export default function ProjectsPage() {
       }
       if (!response.ok) throw await readApiError(response, "Không đóng được dự án");
       const updated = mapProjectSummaryToUiProject(await response.json());
-      setProjectsList(current => current.map(item => item.id === project.id ? updated : item));
+      setProjectsList(current => current.map(item => item.id === project.id ? mergeProjectUpdate(item, updated) : item));
       setDeleteNeedsClose(false);
       setDeletingProject(null);
     } catch (error) {
@@ -1935,7 +1996,7 @@ export default function ProjectsPage() {
                 <div className="flex min-h-0 flex-1">
                 <form onSubmit={handleSubmit} className="min-w-0 flex-1 overflow-y-auto p-6 space-y-4">
                   <input ref={aiImportInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleAiImport(file); }} />
-                  {projectsError && <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{projectsError}{accountOptions.length === 0 && <button type="button" className="ml-2 underline" onClick={() => setAccountLoadRevision(value => value + 1)}>Retry loading clients</button>}</div>}
+                  {(projectsError || accountsError) && <div ref={createErrorRef} role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{projectsError ?? accountsError}{accountOptions.length === 0 && <button type="button" className="ml-2 underline" onClick={() => setAccountLoadRevision(value => value + 1)}>Retry loading clients</button>}</div>}
                   {loadingAccounts && <p role="status">Loading clients…</p>}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Project Name */}
@@ -1945,6 +2006,7 @@ export default function ProjectsPage() {
                         id="create-project-name"
                         type="text"
                         required
+                        autoComplete="off"
                         value={name}
                         onChange={e => setName(e.target.value)}
                         placeholder="e.g. Mobile App Redesign"
@@ -2014,6 +2076,23 @@ export default function ProjectsPage() {
                         onChange={setDueDate}
                       />
                     </div>
+
+                    {/* PL-13: doanh thu dự kiến = "Giá trị dự án" of the P&L; cost viewers only, optional here (required before G1). */}
+                    {showMoney && canEditProjectSetup(user) && (
+                      <div className="space-y-1.5">
+                        <label htmlFor="create-project-value" className="text-xs font-semibold text-muted-foreground">Doanh thu dự kiến (VND)</label>
+                        <input
+                          id="create-project-value"
+                          inputMode="numeric"
+                          autoComplete="off"
+                          value={projectValueText}
+                          onChange={e => setProjectValueText(formatMoneyInput(e.target.value))}
+                          placeholder="67.200.000"
+                          className="w-full px-3.5 py-2.5 bg-background border border-input rounded-xl text-sm text-foreground focus:outline-none focus:border-primary transition-colors"
+                        />
+                        {parseVndAmount(projectValueText) !== null && <p className="text-[11px] text-muted-foreground">= {formatVnd(parseVndAmount(projectValueText))}</p>}
+                      </div>
+                    )}
                   </div>
 
                   {/* Description */}

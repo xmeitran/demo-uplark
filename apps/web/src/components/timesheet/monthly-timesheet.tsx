@@ -8,6 +8,7 @@ import { ArrowRight, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, Circ
 import {
   buildMonthlyKpis,
   buildPersonDayMatrix,
+  attendanceLogs,
   buildPersonMonthSummaries,
   buildPersonProjectRows,
   buildWorkGroupSplit,
@@ -68,7 +69,7 @@ const LOG_LINK_CLASS = "underline decoration-dotted underline-offset-2 hover:dec
 export function MonthlyTimesheet({
   dataset,
   filters,
-  logs,
+  logs: filteredLogs,
   currentUserId
 }: {
   dataset: TimesheetDataset;
@@ -76,6 +77,9 @@ export function MonthlyTimesheet({
   logs: TimeLog[];
   currentUserId?: string;
 }) {
+  // Attendance (hours vs standard, missing days, day load, a person's log drawers) counts every log of the people shown;
+  // the project / work-group / search filters only narrow the work-group split and the per-project breakdown.
+  const logs = useMemo(() => attendanceLogs(dataset, filters), [dataset, filters]);
   const [expandedPersonId, setExpandedPersonId] = useState<string | null>(null);
   const [dayDetailPersonId, setDayDetailPersonId] = useState<string | null>(null);
   const [drawerRequest, setDrawerRequest] = useState<LogDrawerRequest | null>(null);
@@ -83,7 +87,7 @@ export function MonthlyTimesheet({
   const summaries = useMemo(() => buildPersonMonthSummaries(dataset, filters, logs), [dataset, filters, logs]);
   const kpis = useMemo(() => buildMonthlyKpis(dataset, filters, logs, summaries), [dataset, filters, logs, summaries]);
   const personDayMatrix = useMemo(() => buildPersonDayMatrix(dataset, filters, logs), [dataset, filters, logs]);
-  const workGroupSplit = useMemo(() => buildWorkGroupSplit(logs), [logs]);
+  const workGroupSplit = useMemo(() => buildWorkGroupSplit(filteredLogs), [filteredLogs]);
 
   const pagedPeople = usePagination(summaries, PEOPLE_PAGE_SIZE);
 
@@ -328,7 +332,7 @@ function PersonDayDetailDrawer({
       {row ? (
         <div className="space-y-4 p-4">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <DayMetric label="Tổng giờ" value={formatHours(row.totalMinutes)} tone="primary" />
+            <DayMetric label="Giờ thực tế" value={formatHours(row.totalMinutes)} tone="primary" />
             <DayMetric label="Đã ghi nhận" value={`${loggedDays} ngày`} />
             <DayMetric label="Thiếu log" value={`${missingDays} ngày`} tone={missingDays > 0 ? "warning" : "success"} />
             <DayMetric label="Ngày nghỉ / off" value={`${offDays} ngày`} />

@@ -2058,6 +2058,9 @@ test("projects page can edit and delete a project through the persisted API", as
 
 test("dashboard redirects to login instead of rendering seed data when projects API is unauthorized", async ({ page }) => {
   await page.unrouteAll({ behavior: "ignoreErrors" });
+  // An expired session answers 401 on /auth/me too. (A 5xx there means "API unreachable": the app then waits and retries
+  // instead of sending a signed-in user to the login page.)
+  await page.route("**/api/auth/me", (route) => route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ message: "Bearer session is required" }) }));
   await page.route("**/api/projects**", async (route) => {
     await route.fulfill({
       status: 401,
@@ -2073,6 +2076,13 @@ test("dashboard redirects to login instead of rendering seed data when projects 
 
   await expect(page).toHaveURL(/\/login\?returnTo=%2F/);
   await expect(page.locator("main").getByText("CRM Platform v2.0")).toHaveCount(0);
+});
+
+test("an API outage on the session check does not send a signed-in user to the login page (review D4)", async ({ page }) => {
+  await page.route("**/api/auth/me", (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ message: "Máy chủ CRM tạm thời không phản hồi." }) }));
+  await page.goto("/projects?status=active");
+  await page.waitForTimeout(4000); // past the first retry
+  await expect(page).not.toHaveURL(/\/login/);
 });
 
 test("project detail loads live data and switches workspace tabs", async ({ page }) => {
@@ -2203,7 +2213,7 @@ test("project detail loads live data and switches workspace tabs", async ({ page
   }
   await expect(page.getByText("Live kickoff note from API")).toBeVisible();
   await expect(activityFeed.getByText("Live time entry")).toBeVisible();
-  await expect(activityFeed.getByText("0.8h actual")).toBeVisible();
+  await expect(activityFeed.getByText("0.8h thực tế")).toBeVisible();
   await expect(activityFeed.getByText("09:00 · GMT+7 · Jul 2, 2026")).toBeVisible();
   await expect(activityFeed.getByText("07:00 · GMT+7 · Jul 2, 2026")).toBeVisible();
   await expect(activityFeed.getByTestId("project-activity-row")).toHaveCount(10);

@@ -1,5 +1,5 @@
 import { isWorkingDay, monthBounds } from "./timesheet-dates";
-import { buildProjectSummaries, peopleInScope, projectTasks, selectedProjectIds, type TimesheetFilters } from "./timesheet-selectors";
+import { buildProjectSummaries, leaveFraction, peopleInScope, projectTasks, selectedProjectIds, type TimesheetFilters } from "./timesheet-selectors";
 import { isTaskOverdue } from "./timesheet-status";
 import type { TimeLog, TimesheetDataset } from "./timesheet-types";
 
@@ -40,11 +40,13 @@ export function buildTimesheetAlerts(dataset: TimesheetDataset, logs: TimeLog[],
   const periodStart = filters.dateFrom || monthRange.start;
   const periodEnd = filters.dateTo || monthRange.end;
   const todayInPeriod = today >= periodStart && today <= periodEnd && isWorkingDay(today, dataset.holidays);
-  const missingPeople = todayInPeriod ? peopleInScope(dataset, filters).filter((person) => !loggedToday.has(person.id)).length : 0;
+  // Nobody on a full day of approved leave is asked to log (rules §543: leave turns off missing-log reminders).
+  const missingToday = (person: { id: string }) => !loggedToday.has(person.id) && leaveFraction(dataset, person.id, today) < 1;
+  const missingPeople = todayInPeriod ? peopleInScope(dataset, filters).filter(missingToday).length : 0;
 
   const missingLogItems: TimesheetAlertItem[] = todayInPeriod
     ? peopleInScope(dataset, filters)
-        .filter((person) => !loggedToday.has(person.id))
+        .filter(missingToday)
         .map((person) => ({
           id: person.id,
           title: person.name,

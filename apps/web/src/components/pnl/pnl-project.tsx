@@ -174,7 +174,7 @@ function ProjectStatement({ data, meta, projectId, onChanged, onEditValue, onOve
           <p className="!mt-0.5 text-xs text-muted-foreground">Từng dòng doanh thu, chi phí, cộng dồn cả dự án (đồng). Nhập chi phí riêng của dự án ở dòng “Nhập tay”.</p>
           <p className="!mt-0.5 text-xs text-muted-foreground">
             Mẫu khoản mục: <span className="font-semibold text-foreground">{data.template.name}</span>
-            {data.template.override ? ` · dự án ghi đè mẫu · ${data.template.override.byName ?? "—"} · ${formatDay(data.template.override.at.slice(0, 10))} · lý do: ${data.template.override.reason}` : null}
+            {data.template.override ? ` · dự án ghi đè mẫu · ${data.template.override.byName ?? "—"} · ${formatDay(data.template.override.at)} · lý do: ${data.template.override.reason}` : null}
             {data.template.canOverride ? <>{" · "}<button type="button" onClick={onOverrideTemplate} className="font-semibold text-foreground underline underline-offset-2 hover:text-primary">Ghi đè mẫu</button></> : null}
           </p>
         </div>
@@ -182,7 +182,8 @@ function ProjectStatement({ data, meta, projectId, onChanged, onEditValue, onOve
           <button type="button" aria-expanded={itemsOpen} aria-controls="pnl-items-panel" onClick={() => setItemsOpen(!itemsOpen)} className={`${secondaryButtonClass} !h-9 !text-xs`}>{itemsOpen ? "Thu gọn" : "Xem khoản mục"}</button>
         ) : <span title="Bạn không thuộc nhóm quyền chi phí nên không mở được mục này." className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><Lock className="h-3.5 w-3.5" aria-hidden />Chỉ nhóm quyền chi phí</span>}
       </div>
-      {data.items && itemsOpen ? <ItemTree projectId={projectId} items={data.items} months={monthsBetween(scope.minPeriodKey, scope.maxPeriodKey)} canEdit={meta.canEdit} projectRevenue={totals.revenue} onChanged={onChanged} /> : null}
+      {/* A locked month takes no new manual line (the API would refuse it), so it is not offered. */}
+      {data.items && itemsOpen ? <ItemTree projectId={projectId} items={data.items} months={monthsBetween(scope.minPeriodKey, scope.maxPeriodKey).filter((month) => !data.months.rows.some((row) => row.periodKey === month && row.periodState === "locked"))} canEdit={meta.canEdit} projectRevenue={totals.revenue} onChanged={onChanged} /> : null}
     </section>
   );
 }

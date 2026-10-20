@@ -345,7 +345,7 @@ describe.runIf(safeDatabase)("two-workspace isolation", () => {
         taskId: ids.taskA,
         fromStatus: "todo",
         toStatus: "in_progress",
-        reason: "Actual work logged"
+        reason: "Đã ghi giờ thực tế"
       }
     })).resolves.toBe(1);
     const completedTask = await service.getTask(ids.taskA, principalA());
@@ -441,7 +441,7 @@ describe.runIf(safeDatabase)("two-workspace isolation", () => {
           taskId: task.id,
           fromStatus: "todo",
           toStatus: "in_progress",
-          reason: "Actual work logged"
+          reason: "Đã ghi giờ thực tế"
         }
       })).resolves.toBe(1);
       await expect(prisma.projectTask.findUniqueOrThrow({ where: { id: task.id } })).resolves.toMatchObject({

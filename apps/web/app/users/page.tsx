@@ -11,7 +11,7 @@ import Link from "next/link";
 import { AdminInvitations } from "@/components/auth/admin-access-controls";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
-import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, SearchFilter, datePresets, matchesAny, standardDatePresets, type DateRange } from "@/components/filters";
+import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, SearchFilter, datePresets, formatDay, matchesAny, standardDatePresets, type DateRange } from "@/components/filters";
 import { HeaderButton, HeaderLinkButton, PageHeader, pageMainClassName } from "@/components/page-header";
 import { fetchAllPages } from "@/lib/api-pages";
 import { splitDateRangeIntoChunks } from "@/lib/calendar-event-layout";
@@ -139,6 +139,17 @@ type PeriodTimeEntry = { id: string; userId?: string; minutes?: number };
 // The hours column needs a bounded period (the API takes at most 90 days per request), so "all time" is not offered.
 const PERIOD_PRESETS = standardDatePresets().filter((preset) => preset.from && preset.to);
 const THIS_MONTH: DateRange = (({ from, to }) => ({ from, to }))(datePresets(["this-month"])[0]);
+
+function logworkPeriodLabel(range: DateRange) {
+  if (!range.from || !range.to) return "Tất cả thời gian";
+  const monthKey = range.from.slice(0, 7);
+  const year = Number(monthKey.slice(0, 4));
+  const month = Number(monthKey.slice(5, 7));
+  const lastDay = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+  const isWholeMonth = range.from === `${monthKey}-01` && range.to === lastDay;
+  const periodName = isWholeMonth ? `Tháng ${monthKey.slice(5, 7)}/${monthKey.slice(0, 4)}` : `${formatDay(range.from)} – ${formatDay(range.to)}`;
+  return `${periodName} (${formatDay(range.from)} – ${formatDay(range.to)})`;
+}
 
 /** Minutes logged per user between two Vietnam days: every page of every ≤90-day chunk, each entry counted once. */
 async function loadLoggedMinutes(range: DateRange, signal: AbortSignal) {
@@ -298,6 +309,13 @@ export default function UsersPage() {
               <MultiSelectFilter label="Phòng ban" options={departmentOptions} values={departmentFilter} onChange={setDepartmentFilter} allLabel="Tất cả phòng ban" hideWhenSingle />
             </FilterBar>
 
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/10 px-4 py-2.5 text-xs">
+              <p className="text-muted-foreground">
+                Logwork đang hiển thị cho <span className="font-semibold text-foreground">{logworkPeriodLabel(period)}</span>.
+                <span className="ml-1">Đổi “Kỳ tính giờ” để xem tháng hoặc khoảng ngày khác.</span>
+              </p>
+            </div>
+
             {/* Table */}
             <div className="overflow-x-auto">
               <table className="w-full min-w-[900px]">
@@ -316,7 +334,10 @@ export default function UsersPage() {
                     ))}
                     <th className="py-3 px-4 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">System role</th>
                     <th className="py-3 px-4 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Quyền P&amp;L</th>
-                    <th className="py-3 px-4 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Logwork trong kỳ (h)</th>
+                    <th className="py-3 px-4 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground" title={`Tổng số giờ logwork trong ${logworkPeriodLabel(period)}`}>
+                      <span className="block">Logwork</span>
+                      <span className="mt-0.5 block normal-case tracking-normal text-[10px] font-medium text-muted-foreground">{logworkPeriodLabel(period)} (h)</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>

@@ -5,6 +5,8 @@ import { isActualTimeEntry, ON_HOLD_LOG_REVIEW_LABEL, timeEntryRecordLabel } fro
 import { LAYER2_MISMATCH_LABEL, TASK_TYPE_LAYER1_FIELD_LABEL, TASK_TYPE_LAYER2_FIELD_LABEL, isLayer2ReasonRequired, layer2OptionsForTask, taskTypeLabel, taskTypeLayer2Label } from "@/lib/task-classification";
 import { PersonLink } from "@/components/person-link";
 import { useTaskPeople } from "@/hooks/use-task-people";
+import { useAuth } from "@/lib/auth";
+import { isAdminView } from "@/lib/auth-role";
 import { TaskChangeHistory } from "./task-change-history";
 import { ArrowRight } from "lucide-react";
 import { AppShell } from "@/components/constructor-x/app-shell";
@@ -646,6 +648,11 @@ export function TaskDetailWorkbench({
   const searchParams = useSearchParams();
   const workDateContext = searchParams.get("workDate") ?? undefined;
   const projectPeople = useTaskPeople(currentTask?.projectId, Boolean(currentTask));
+  const { user: signedInUser } = useAuth();
+  // Who may delete or re-classify a time record: its author, the project's managers, or an Admin (the API decides; the
+  // screen only stops offering what would be refused).
+  const canEditTimeRecord = (entry: { userId?: string | null } | null | undefined) =>
+    Boolean(entry && (entry.userId === projectPeople.principalUserId || projectPeople.permissions.canManage || isAdminView(signedInUser)));
   const workspaceAssigneeOptions = projectPeople.members.map(user => ({ value: user.id, label: user.name, subtext: `${user.role || "Workspace User"}${user.email ? ` · ${user.email}` : ""}`, avatarUrl: user.avatarUrl, initials: user.initials, color: user.color }));
 
   const triggerToast = (message: string, type: ToastTone = "success") => {
@@ -936,8 +943,9 @@ export function TaskDetailWorkbench({
       priority: taskInput.priority,
       assigneeUserId: taskInput.assigneeUserId,
       assigneeUserIds: taskInput.assigneeUserIds,
-      plannedStartAt: taskInput.plannedStartAt,
-      dueAt: taskInput.dueAt,
+      // A cleared date is sent as null: a missing key means "unchanged" to the API.
+      plannedStartAt: taskInput.plannedStartAt ?? null,
+      dueAt: taskInput.dueAt ?? null,
       estimateMinutes: taskInput.estimateMinutes,
       customerVisible: taskInput.customerVisible
     };
@@ -1089,8 +1097,9 @@ export function TaskDetailWorkbench({
       priority: taskInput.priority,
       assigneeUserId: taskInput.assigneeUserId,
       assigneeUserIds: taskInput.assigneeUserIds,
-      plannedStartAt: taskInput.plannedStartAt,
-      dueAt: taskInput.dueAt,
+      // A cleared date is sent as null: a missing key means "unchanged" to the API.
+      plannedStartAt: taskInput.plannedStartAt ?? null,
+      dueAt: taskInput.dueAt ?? null,
       estimateMinutes: taskInput.estimateMinutes,
       customerVisible: taskInput.customerVisible
     };
@@ -1372,7 +1381,8 @@ export function TaskDetailWorkbench({
       minutes: logInput.minutes,
       billable: logInput.billable,
       workType: logInput.workType,
-      note: logInput.note
+      note: logInput.note,
+      selectedTaskTypeLayer2: logInput.selectedTaskTypeLayer2
     };
 
     try {
@@ -2452,7 +2462,7 @@ export function TaskDetailWorkbench({
                                           {formatTaskMinutes(entry.minutes)}
                                         </span>
                                         {/* Delete entry button */}
-                                        <button
+                                        {canEditTimeRecord(entry) ? <button
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             setDeleteTimeEntryError(null);
@@ -2471,7 +2481,7 @@ export function TaskDetailWorkbench({
                                           <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                                             <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
                                           </svg>
-                                        </button>
+                                        </button> : null}
                                       </div>
                                     </div>
 
@@ -3123,6 +3133,7 @@ export function TaskDetailWorkbench({
                             <div className="flex flex-wrap items-center gap-2">
                               <select
                                 aria-label="Lớp 2 của giờ log"
+                                disabled={!canEditTimeRecord(ent)}
                                 value={ent.selectedTaskTypeLayer2 ?? ""}
                                 onChange={(event) => void handleChangeEntryLayer2(ent, event.target.value)}
                                 className="h-7 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700"
@@ -3202,7 +3213,7 @@ export function TaskDetailWorkbench({
                         </button>
                       )}
 
-                      {!isPlanned && ent.sourcePlanningBlockId ? (
+                      {!isPlanned && ent.sourcePlanningBlockId && canEditTimeRecord(ent) ? (
                         <button
                           type="button"
                           onClick={() => {
@@ -3217,7 +3228,7 @@ export function TaskDetailWorkbench({
                       ) : null}
 
                       {/* Delete action button */}
-                      <button
+                      {canEditTimeRecord(ent) ? <button
                         onClick={() => {
                           setSelectedTimeEntry(null);
                           setDeleteTimeEntryError(null);
@@ -3229,7 +3240,7 @@ export function TaskDetailWorkbench({
                           <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
                         </svg>
                         {isPlanned ? "Xóa mốc kế hoạch này" : "Xóa mục giờ này"}
-                      </button>
+                      </button> : null}
                     </div>
                   </div>
                 </div>

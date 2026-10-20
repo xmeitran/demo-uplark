@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchesSearch, normalizeSearchText } from "./crm-select-search";
+import { matchesSearch, normalizeSearchText, toggleVisibleSelection } from "./crm-select-search";
 
 describe("normalizeSearchText", () => {
   it("strips Vietnamese diacritics, including đ, and lower-cases", () => {
@@ -18,5 +18,12 @@ describe("matchesSearch", () => {
   it("searches every field passed and treats an empty query as a match", () => {
     expect(matchesSearch("dezon.vn", "Huyền", undefined, "huyen@dezon.vn")).toBe(true);
     expect(matchesSearch("   ", "Huyền")).toBe(true);
+  });
+});
+
+describe("toggleVisibleSelection (review 19/10: E5)", () => {
+  it("adds or removes only the options the search shows", () => {
+    expect(toggleVisibleSelection(["a", "b"], ["c"], false)).toEqual(["a", "b", "c"]);
+    expect(toggleVisibleSelection(["a", "b", "c"], ["c"], true)).toEqual(["a", "b"]);
   });
 });

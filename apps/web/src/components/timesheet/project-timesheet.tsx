@@ -132,11 +132,11 @@ export function ProjectTimesheet({
       {/* ── Headline totals ────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <KpiCard
-          label="Giờ kế hoạch (Estimate)"
+          label="Giờ kế hoạch"
           value={hasPlanData ? formatHours(totals.estimate) : "—"}
           badge={hasPlanData ? `${summaries.length} dự án` : "Chưa có dữ liệu"}
           tone={hasPlanData ? "neutral" : "warning"}
-          hint={hasPlanData ? "Tổng Estimate của các công việc" : "Thiếu Estimate ở các công việc"}
+          hint={hasPlanData ? "Tổng giờ kế hoạch của các công việc" : "Thiếu giờ kế hoạch ở các công việc"}
         />
         <KpiCard
           label={`Giờ thực tế — ${monthLabel}`}
@@ -144,9 +144,9 @@ export function ProjectTimesheet({
           hint={`Lũy kế${loadedNote}: ${formatHours(totals.allTime)}`}
         />
         <KpiCard
-          label="Tỷ lệ sử dụng Estimate"
+          label="Tỷ lệ thực tế so với kế hoạch"
           value={hasPlanData ? formatPercent(totals.consumption) : "—"}
-          badge={!hasPlanData ? "Thiếu Estimate" : totals.consumption > 100 ? "Vượt ngưỡng" : totals.consumption > 85 ? "Cần theo dõi" : "Trong ngưỡng"}
+          badge={!hasPlanData ? "Thiếu giờ kế hoạch" : totals.consumption > 100 ? "Vượt ngưỡng" : totals.consumption > 85 ? "Cần theo dõi" : "Trong ngưỡng"}
           tone={!hasPlanData ? "neutral" : totals.consumption > 100 ? "danger" : totals.consumption > 85 ? "warning" : "success"}
           hint={`Giờ lũy kế${loadedNote} / giờ kế hoạch`}
         />
@@ -183,9 +183,9 @@ export function ProjectTimesheet({
                   <Th>Dự án</Th>
                   <Th align="center">Trạng thái</Th>
                   <Th align="right">Milestone</Th>
-                  <Th align="right">Kế hoạch</Th>
-                  <Th align="right">Giờ {periodShort}</Th>
-                  <Th align="right">Lũy kế</Th>
+                  <Th align="right">Giờ kế hoạch</Th>
+                  <Th align="right">Giờ thực tế {periodShort}</Th>
+                  <Th align="right">Thực tế lũy kế</Th>
                   <Th align="right">Chênh lệch</Th>
                   <Th align="right">Đã dùng</Th>
                   <Th align="right">Có kế hoạch</Th>
@@ -199,7 +199,7 @@ export function ProjectTimesheet({
                   const active = row.project.id === selectedProjectId;
                   const ready = readinessByProject.get(row.project.id);
                   const hasEstimate = row.estimateMinutes > 0;
-                  const usageBasis = `Lũy kế ${formatHours(row.allTimeActualMinutes)} / Estimate ${formatHours(row.estimateMinutes)}${row.coversWholeProject ? "" : ` — chỉ tính dữ liệu đã tải${dataset.windowStart ? ` từ ${formatDate(dataset.windowStart)}` : ""}`}`;
+                  const usageBasis = `Lũy kế ${formatHours(row.allTimeActualMinutes)} / giờ kế hoạch ${formatHours(row.estimateMinutes)}${row.coversWholeProject ? "" : ` — chỉ tính dữ liệu đã tải${dataset.windowStart ? ` từ ${formatDate(dataset.windowStart)}` : ""}`}`;
                   return (
                     <React.Fragment key={row.project.id}>
                     <tr
@@ -240,7 +240,7 @@ export function ProjectTimesheet({
                         <Pill tone={projectStatusTone(row.project.status)}>{projectStatusLabel(row.project.status)}</Pill>
                       </Td>
                       <Td align="right" className="font-mono tabular-nums text-muted-foreground">{row.milestoneCount}</Td>
-                      <Td align="right" className="font-mono tabular-nums text-muted-foreground">{hasEstimate ? formatHours(row.estimateMinutes) : <span title="Chưa công việc nào có Estimate">—</span>}</Td>
+                      <Td align="right" className="font-mono tabular-nums text-muted-foreground">{hasEstimate ? formatHours(row.estimateMinutes) : <span title="Chưa công việc nào có giờ kế hoạch">—</span>}</Td>
                       <Td align="right" className="font-mono font-semibold tabular-nums">
                         <button
                           type="button"
@@ -262,7 +262,7 @@ export function ProjectTimesheet({
                         <span title={row.coversWholeProject ? "Toàn bộ giờ đã ghi của dự án" : usageBasis}>{formatHours(row.allTimeActualMinutes)}</span>
                       </Td>
                       <Td align="right" className={`font-mono tabular-nums ${hasEstimate && row.varianceMinutes > 0 ? "text-destructive" : "text-muted-foreground"}`}>
-                        {hasEstimate ? <span title={usageBasis}>{formatSignedHours(row.varianceMinutes)}</span> : <span title="Thiếu Estimate để tính chênh lệch">—</span>}
+                        {hasEstimate ? <span title={usageBasis}>{formatSignedHours(row.varianceMinutes)}</span> : <span title="Thiếu giờ kế hoạch để tính chênh lệch">—</span>}
                       </Td>
                       <Td align="right">
                         {hasEstimate ? (
@@ -271,9 +271,9 @@ export function ProjectTimesheet({
                             {row.coversWholeProject ? null : <span className="block text-[10.5px] text-muted-foreground">trong dữ liệu đã tải</span>}
                           </span>
                         ) : (
-                          <span className="inline-flex items-center justify-end gap-2" title="Chưa công việc nào có Estimate nên không tính được mức sử dụng">
+                          <span className="inline-flex items-center justify-end gap-2" title="Chưa công việc nào có giờ kế hoạch nên không tính được mức sử dụng">
                             <MiniBar percent={0} tone="neutral" width="w-8" />
-                            <span className="whitespace-nowrap text-[11px] font-semibold text-muted-foreground">Thiếu Estimate</span>
+                            <span className="whitespace-nowrap text-[11px] font-semibold text-muted-foreground">Thiếu giờ kế hoạch</span>
                           </span>
                         )}
                       </Td>
@@ -434,8 +434,8 @@ function ProjectBreakdownTable({
             <Th>Phụ trách</Th>
             <Th align="center">Trạng thái</Th>
             <Th>Thời gian</Th>
-            <Th align="right">Kế hoạch</Th>
-            <Th align="right">Giờ {periodShort}</Th>
+            <Th align="right">Giờ kế hoạch</Th>
+            <Th align="right">Giờ thực tế {periodShort}</Th>
             <Th align="right">Chênh lệch lũy kế</Th>
           </tr>
         </thead>
@@ -465,7 +465,7 @@ function ProjectBreakdownTable({
             <Td align="right" className="font-mono font-bold tabular-nums">{formatHours(sum(nodes.map((node) => node.estimateMinutes)))}</Td>
             <Td align="right" className="font-mono font-bold tabular-nums">{formatHours(sum(nodes.map((node) => node.actualMinutes)))}</Td>
             <Td align="right" className="font-mono font-bold tabular-nums">
-              <span title={`Lũy kế ${formatHours(sum(nodes.map((node) => node.allTimeActualMinutes)))} so với Estimate`}>
+              <span title={`Lũy kế ${formatHours(sum(nodes.map((node) => node.allTimeActualMinutes)))} so với giờ kế hoạch`}>
                 {formatSignedHours(sum(nodes.map((node) => node.allTimeActualMinutes)) - sum(nodes.map((node) => node.estimateMinutes)))}
               </span>
             </Td>
@@ -544,7 +544,7 @@ function BreakdownRow({
         </button>
       </Td>
       <Td align="right" className={`whitespace-nowrap font-mono tabular-nums ${overrun ? "font-semibold text-destructive" : "text-muted-foreground"}`}>
-        {node.variancePercent === null ? "—" : <span title={`Lũy kế ${formatHours(node.allTimeActualMinutes)} / Estimate ${formatHours(node.estimateMinutes)}`}>{formatSignedPercent(node.variancePercent)}</span>}
+        {node.variancePercent === null ? "—" : <span title={`Lũy kế ${formatHours(node.allTimeActualMinutes)} / giờ kế hoạch ${formatHours(node.estimateMinutes)}`}>{formatSignedPercent(node.variancePercent)}</span>}
       </Td>
     </tr>
   );
@@ -613,7 +613,7 @@ function ProjectMemberTable({
             <Th align="center">Trạng thái tham gia</Th>
             {showJoinedAt ? <Th>Tham gia từ</Th> : null}
             <Th align="right">Việc đang mở</Th>
-            <Th align="right">Giờ trong kỳ</Th>
+            <Th align="right">Giờ thực tế trong kỳ</Th>
             <Th>Ghi nhận gần nhất</Th>
             <Th align="center">Chi tiết</Th>
           </tr>

@@ -178,6 +178,8 @@ export interface TimesheetDataset {
   logs: TimeLog[];
   /** Vietnamese public holidays inside the covered range (`YYYY-MM-DD`). */
   holidays: string[];
+  /** Approved personal leave, keyed `${personId}|${YYYY-MM-DD}`: 1 = full day, 0.5 = half day. Empty when not loaded. */
+  leave?: Record<string, number>;
   months: string[];
 }
 

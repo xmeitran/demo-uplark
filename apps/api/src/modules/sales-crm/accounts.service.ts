@@ -162,7 +162,9 @@ export class AccountsService {
   }
 
   async listContacts(accountId: string, query: any, principal: PrincipalContext) {
-    await this.ensureAccount(accountId, principal.workspaceId);
+    // getAccount applies the portal grant scope; a customer only lists contacts of a client it was granted.
+    if (principal.subjectType === "portal_user") await this.getAccount(accountId, principal);
+    else await this.ensureAccount(accountId, principal.workspaceId);
     const pagination = normalizePagination({ limit: query.limit, offset: query.offset });
 
     const [contacts, total] = await this.prisma.$transaction([

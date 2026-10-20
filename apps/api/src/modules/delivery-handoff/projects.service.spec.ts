@@ -1140,9 +1140,11 @@ function createStageDeletePrismaMock() {
       deleteMany: vi.fn().mockResolvedValue({ count: 1 })
     },
     taskPlanningBlock: {
+      count: vi.fn().mockResolvedValue(0),
       deleteMany: vi.fn().mockResolvedValue({ count: 1 })
     },
     taskTimeEntry: {
+      count: vi.fn().mockResolvedValue(0),
       findMany: vi.fn().mockResolvedValue([{ id: "time-1" }]),
       deleteMany: vi.fn().mockResolvedValue({ count: 1 })
     },
@@ -1391,11 +1393,14 @@ describe("ProjectsService.updateStage", () => {
     const prisma = createStageDeletePrismaMock();
     const service = new ProjectsService(withMutationDependencies(prisma) as any);
 
+    // Clearing the owner of the first stage clears the PIC: a Delivery Lead may not, a PM may (7.7).
+    await expect(service.updateStage("prj-1", "stage-1", { activity: "Renamed stage", ownerUserId: null, plannedEndAt: null }, principal))
+      .rejects.toThrow("đổi PIC");
     await service.updateStage("prj-1", "stage-1", {
       activity: "Renamed stage",
       ownerUserId: null,
       plannedEndAt: null
-    }, principal);
+    }, { ...principal, roleCodes: ["PM", "WORKSPACE_ADMIN", "DELIVERY_LEAD"], heldRoleCodes: ["PM"] });
 
     expect(prisma.projectStage.update).toHaveBeenCalledWith({
       where: { id: "stage-1" },
@@ -1410,6 +1415,27 @@ describe("ProjectsService.updateStage", () => {
     expect(updateData).not.toHaveProperty("phase");
     expect(updateData).not.toHaveProperty("sortOrder");
     expect(Object.values(updateData)).not.toContain(undefined);
+  });
+
+  it("editing a milestone: dates go to its first/last stage, status starts each stage once, an existing actual start is kept", async () => {
+    const prisma = createStageDeletePrismaMock();
+    const started = new Date("2026-09-01T02:00:00.000Z");
+    prisma.projectStage.findMany = vi.fn().mockResolvedValue([
+      { id: "stage-1", activity: "Intake", status: "in_progress", actualStartAt: started, plannedStartAt: null, plannedEndAt: null },
+      { id: "stage-2", activity: "Validate", status: "not_started", actualStartAt: null, plannedStartAt: null, plannedEndAt: null }
+    ]);
+    const service = new ProjectsService(withMutationDependencies(prisma) as any);
+    await service.updateStage("prj-1", "stage-1", { status: "in_progress", plannedStartAt: "2026-10-01T00:00:00.000Z", plannedEndAt: "2026-10-31T00:00:00.000Z" }, principal, { scope: "milestone" });
+
+    const updates = prisma.projectStage.update.mock.calls.map((call: any[]) => [call[0].where.id, call[0].data]);
+    expect(updates).toEqual([
+      ["stage-1", { status: "in_progress", plannedStartAt: new Date("2026-10-01T00:00:00.000Z") }],
+      ["stage-2", { status: "in_progress", actualStartAt: expect.any(Date), plannedEndAt: new Date("2026-10-31T00:00:00.000Z") }]
+    ]);
+    const shared = prisma.projectStage.updateMany.mock.calls[0][0].data;
+    expect(shared).not.toHaveProperty("status");
+    expect(shared).not.toHaveProperty("plannedStartAt");
+    expect(shared).not.toHaveProperty("actualStartAt");
   });
 
   it("rejects invalid stage owner ids before Prisma foreign key errors", async () => {
@@ -1639,6 +1665,21 @@ describe("ProjectsService.deleteStage", () => {
     });
   });
 
+  it("refuses to delete a stage whose tasks carry logged hours or plans, or whose gate was used (history is never deleted)", async () => {
+    for (const setupHistory of [
+      (prisma: any) => prisma.taskTimeEntry.count.mockResolvedValue(3),
+      (prisma: any) => prisma.taskPlanningBlock.count.mockResolvedValue(1),
+      (prisma: any) => { prisma.projectGate = { count: vi.fn().mockResolvedValue(1) }; }
+    ]) {
+      const prisma = createStageDeletePrismaMock();
+      setupHistory(prisma);
+      const service = new ProjectsService(withMutationDependencies(prisma) as any);
+      await expect(service.deleteStage("prj-1", "stage-1", principal)).rejects.toThrow("Không xóa được stage");
+      expect(prisma.taskTimeEntry.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.projectStage.deleteMany).not.toHaveBeenCalled();
+    }
+  });
+
   it("denies portal principals before deleting stage or task records", async () => {
     const prisma = createStageDeletePrismaMock();
     const service = new ProjectsService(withMutationDependencies(prisma) as any);
@@ -1792,7 +1833,7 @@ describe("ProjectsService.listProjectActivities", () => {
         {
           id: "task-time:time-1",
           activityType: "work_logged",
-          actionLabel: "Logged actual work",
+          actionLabel: "Đã ghi giờ thực tế",
           occurredTime: "10:00",
           createdByDisplayName: "Nguyen Hung Viet Kha",
           createdByAvatarUrl: "https://example.com/avatar.png"
@@ -1942,7 +1983,7 @@ describe("ProjectsService.createTimeEntry", () => {
         taskId: "task-1",
         fromStatus: "todo",
         toStatus: "in_progress",
-        reason: "Actual work logged"
+        reason: "Đã ghi giờ thực tế"
       })
     });
     expect(prisma.projectTask.update).toHaveBeenCalledWith({

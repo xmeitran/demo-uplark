@@ -111,8 +111,8 @@ describe("daily scan", () => {
   it("sends 'admins' alerts to every Admin account type, and resolves the PM by the shared first-stage rule", async () => {
     const { prisma, db } = fakePrisma({
       tasks: [task({ assigneeUserId: null, dueAt: vn("2026-10-12") })],
-      // The stage of the LATER milestone has the lower stage order: the owner of the first stage by stage order is the PM.
-      stages: [stage({ id: "s2", sortOrder: 20, ownerUserId: "by-milestone", milestone: { sortOrder: 1 } }), stage({ id: "s1", sortOrder: 10, ownerUserId: "pm", milestone: { sortOrder: 2 } })]
+      // Stage order is numbered per milestone: the first stage is the first one of the FIRST milestone, so its owner is the PM.
+      stages: [stage({ id: "s2", sortOrder: 20, ownerUserId: "pm", milestone: { sortOrder: 1 } }), stage({ id: "s1", sortOrder: 10, ownerUserId: "later-milestone", milestone: { sortOrder: 2 } })]
     });
     const wheres: any[] = [];
     (prisma.user as any).findMany = async (args: any) => { wheres.push(args.where); return [{ id: "admin" }]; };
@@ -268,6 +268,13 @@ describe("daily scan", () => {
     const skipped = await scan(off.prisma, WED);
     expect(off.db.warnings).toHaveLength(0);
     expect(skipped.skipped).toContainEqual({ code: "TD-02", reason: "Admin đã tắt điểm kích hoạt" });
+  });
+
+  it("switching a trigger off closes the warnings it still had open (they no longer feed the status proposal)", async () => {
+    const { prisma, db } = fakePrisma({ parameters: [{ key: TRIGGER_OVERRIDES_KEY, value: { "TD-02": { enabled: false } }, createdAt: WED }] });
+    db.warnings.push({ id: "w-td", workspaceId: "w", projectId: "p1", typeCode: "TD-02", dedupeKey: "TD-02:task:t1", status: "open", title: "Task quá hạn", openedAt: WED, events: [] });
+    expect((await scan(prisma, WED)).closed).toMatchObject({ "TD-02": 1 });
+    expect(db.warnings[0]).toMatchObject({ status: "closed", closeReason: "Admin đã tắt điểm kích hoạt" });
   });
 
   it("leaves DL-01 untouched when the run has no pending-hours source", async () => {

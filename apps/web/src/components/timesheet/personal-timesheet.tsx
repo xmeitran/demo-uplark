@@ -24,6 +24,7 @@ import {
   buildPersonProjectRows,
   filterLogs,
   periodParamsForRange,
+  leaveFraction,
   standardMinutesFor,
   sum,
   type TimesheetFilters
@@ -290,9 +291,9 @@ export function PersonalTimesheet() {
   // "Ngày còn trống" ignores the project and text filters: a day with hours on another project is not empty.
   const periodMatrix = useMemo(() => buildPersonDayMatrix(personalDataset, periodFilters, periodLogs), [periodFilters, periodLogs, personalDataset]);
   const workingDays = period.start <= today ? eachDate(period.start, period.end < today ? period.end : today).filter((date) => isWorkingDay(date, dataset.holidays)) : [];
-  const standardMinutes = person ? standardMinutesFor(person, workingDays.length) : 0;
+  const standardMinutes = person ? standardMinutesFor(person, workingDays.length - sum(workingDays.map((date) => leaveFraction(dataset, person.id, date)))) : 0;
   const actualMinutes = sum(personalLogs.map((log) => log.minutes));
-  const missingDays = periodMatrix.rows[0]?.cells.filter((cell) => cell.isWorkingDay && cell.date <= today && cell.minutes === 0) ?? [];
+  const missingDays = periodMatrix.rows[0]?.cells.filter((cell) => cell.isWorkingDay && cell.date <= today && cell.minutes === 0 && !(person && leaveFraction(dataset, person.id, cell.date) >= 1)) ?? [];
   const periodLabel = formatFilterPeriod(filters);
   const activeFilterCount = (filters.projectIds?.length ? 1 : 0) + (search ? 1 : 0) + (from || to || month !== defaultMonth ? 1 : 0);
   const datePresets = [
@@ -351,7 +352,7 @@ export function PersonalTimesheet() {
           <button type="button" onClick={() => commit({ month: "", from: "", to: "", project: "", q: "" })} className="!text-[12px] !font-semibold text-primary hover:underline">Đặt lại bộ lọc</button>
         </div>
       ) : null}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3"><KpiCard label={`Giờ tôi đã ghi — ${periodLabel}`} value={formatHours(actualMinutes)} hint={`so với ${formatHours(standardMinutes)} giờ chuẩn`} badge={standardMinutes > 0 ? formatPercent((actualMinutes / standardMinutes) * 100) : "Chưa có chuẩn"} tone={actualMinutes >= standardMinutes ? "success" : "warning"} /><KpiCard label="Ngày còn trống" value={`${missingDays.length}`} hint={missingDays.length ? missingDays.slice(0, 3).map((cell) => formatDateShort(cell.date)).join(" · ") : "Không còn ngày trống"} badge={missingDays.length ? "Cần ghi bổ sung" : "Đã đủ"} tone={missingDays.length ? "warning" : "success"} /><KpiCard label="Task của tôi đang mở" value={`${openTasks.length}`} hint={`${overdueTasks.length} quá hạn · ${openTasks.filter(({ task }) => task.status === "in_progress").length} đang làm`} badge={openTasks.length ? "Theo dõi" : "Đã hoàn thành"} tone={openTasks.length ? "info" : "success"} /></div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3"><KpiCard label={`Giờ thực tế của tôi — ${periodLabel}`} value={formatHours(actualMinutes)} hint={`so với ${formatHours(standardMinutes)} giờ chuẩn`} badge={standardMinutes > 0 ? formatPercent((actualMinutes / standardMinutes) * 100) : "Chưa có chuẩn"} tone={actualMinutes >= standardMinutes ? "success" : "warning"} /><KpiCard label="Ngày còn trống" value={`${missingDays.length}`} hint={missingDays.length ? missingDays.slice(0, 3).map((cell) => formatDateShort(cell.date)).join(" · ") : "Không còn ngày trống"} badge={missingDays.length ? "Cần ghi bổ sung" : "Đã đủ"} tone={missingDays.length ? "warning" : "success"} /><KpiCard label="Task của tôi đang mở" value={`${openTasks.length}`} hint={`${overdueTasks.length} quá hạn · ${openTasks.filter(({ task }) => task.status === "in_progress").length} đang làm`} badge={openTasks.length ? "Theo dõi" : "Đã hoàn thành"} tone={openTasks.length ? "info" : "success"} /></div>
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]"><CalendarCard month={month} today={today} matrix={matrix} person={person} onDayClick={openDay} /><TodayTasksCard tasks={allTasks} today={today} onLog={openTask} /></div>
       <PersonalProjectTree dataset={personalDataset} logs={personalLogs} />
       <LogDrawer dataset={personalDataset} request={drawer} onClose={() => setDrawer(null)} currentUserId={person.id} />
