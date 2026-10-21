@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checklistRow, configCheckParts, filterTree, formulaText, importResultText, mapStaffCostSheet, nextFormulaStep, parseDecimalInput, setupTabOf, visibleTreeRows, formatDecimalInput } from "./pnl-cost-shared";
+import { checklistRow, configCheckParts, filterTree, formulaText, importResultText, mapStaffCostSheet, nextFormulaStep, parseDecimalInput, setupTabOf, visibleTreeRows, formatDecimalInput, formatMoneyInput, parseImportAmount, parseMoneyInput } from "./pnl-cost-shared";
 
 describe("P&L setup input", () => {
   it("reads typed numbers", () => {
@@ -115,5 +115,20 @@ describe("formatDecimalInput (review 19/10: C19)", () => {
   it("prefills a stored number so it reads back unchanged, decimals included", () => {
     for (const value of [12.345, 26.3, 400000, 0.125, 5]) expect(parseDecimalInput(formatDecimalInput(value))).toBe(value);
     expect(formatDecimalInput(null)).toBe("");
+  });
+});
+
+describe("money typed or imported (21/10/2026)", () => {
+  it("refuses a minus sign or a decimal tail instead of saving another number", () => {
+    expect(parseMoneyInput("150.000")).toBe(150000);
+    expect(parseMoneyInput("-500.000")).toBeUndefined();
+    expect(parseMoneyInput("150.000,5")).toBeUndefined();
+    expect(formatMoneyInput("150.000,5")).toBe("150.000,5");
+  });
+
+  it("reads en-US grouping in an import cell as thousands", () => {
+    expect(parseImportAmount("150,000")).toBe(150000);
+    expect(parseImportAmount("33.333")).toBe(33333);
+    expect(parseImportAmount("5,5")).toBe(5.5);
   });
 });

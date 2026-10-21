@@ -515,15 +515,11 @@ describe("lớp 1 — Hồ sơ nhân sự › Chi phí theo tháng (PL-08, mục
     const result = (await s.config.importStaffCosts({ periodKey: "2026-09", rows: [
       { employeeCode: "NS-027", baseSalaryAmount: 25_200_000 },
       { employeeCode: "NS-044", baseSalaryAmount: 24_000_000, performanceBonusAmount: 4_000_000, resultBonusAmount: 740_000, allowanceAmount: 500_000, overtimeAmount: 0, socialInsuranceAmount: 1_000_000 },
-      { employeeCode: "NS-099", baseSalaryAmount: 10_000_000 },
-      { employeeCode: "NS-027", baseSalaryAmount: 1 },
-      { employeeCode: "NS-044" }
+      { employeeCode: "NS-099", baseSalaryAmount: 10_000_000 }
     ] }, founder)).data;
     expect(result).toMatchObject({ periodKey: "2026-09", byName: "Admin chi phí", validCount: 2 });
     expect(result.errors).toEqual([
-      { rowNumber: 3, employeeCode: "NS-099", reason: "mã NS-099 không tồn tại" },
-      { rowNumber: 4, employeeCode: "NS-027", reason: "mã NS-027 lặp lại trong file" },
-      { rowNumber: 5, employeeCode: "NS-044", reason: "mã NS-044 lặp lại trong file" }
+      { rowNumber: 3, employeeCode: "NS-099", reason: "mã NS-099 không tồn tại" }
     ]);
     const { data } = await s.config.staffCosts({ periodKey: "2026-09" }, founder);
     expect(data.lastImport).toEqual(result);
@@ -531,6 +527,9 @@ describe("lớp 1 — Hồ sơ nhân sự › Chi phí theo tháng (PL-08, mục
     expect(data.rows.find((row) => row.userId === "u-b")).toMatchObject({ employeeCode: "NS-027", status: "DRAFT", waitingMinutes: hours(105.5) });
     const missing = (await s.config.importStaffCosts({ periodKey: "2026-09", rows: [{ employeeCode: "NS-027", allowanceAmount: 1 }] }, founder)).data;
     expect(missing).toMatchObject({ validCount: 0, errors: [{ rowNumber: 1, employeeCode: "NS-027", reason: "thiếu cấu phần bắt buộc: Lương tiêu chuẩn." }] });
+    // A code twice in one file is ambiguous: every line of it is refused, the first one is not silently kept.
+    const twice = (await s.config.importStaffCosts({ periodKey: "2026-09", rows: [{ employeeCode: "NS-044", hourlyCostRate: 200_000 }, { employeeCode: "NS-044", hourlyCostRate: 1 }] }, founder)).data;
+    expect(twice).toMatchObject({ validCount: 0, errors: [{ rowNumber: 1, reason: "mã NS-044 lặp lại trong file" }, { rowNumber: 2, reason: "mã NS-044 lặp lại trong file" }] });
     const template = (await s.config.staffCostTemplate({ periodKey: "2026-09" }, founder)).data;
     expect(template.columns.map((column) => column.label)).toEqual(["Mã NS", "Nhân sự", "Đơn giá giờ (đồng/giờ)"]);
     expect(template.rows.slice(0, 2)).toEqual([{ employeeCode: "NS-027", displayName: "Nhân sự B" }, { employeeCode: "NS-044", displayName: "BD-1" }]);

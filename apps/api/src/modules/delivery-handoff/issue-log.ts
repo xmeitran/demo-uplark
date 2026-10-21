@@ -42,6 +42,8 @@ export interface IssueLogActor {
   isMember: boolean;
   /** V-11: holds Dx Director (or Founder/GM, Workspace Admin) itself — not through PM / BD Lead. Absent = same as isAdmin. */
   canGrantGateException?: boolean;
+  /** V-31 leader seat: holds Dx Director or BD Lead (or Founder/GM, Workspace Admin) itself, not just any Admin such as a PM. Absent = same as isAdmin. */
+  isLeader?: boolean;
 }
 
 export interface IssueLogRecordState {
@@ -253,7 +255,7 @@ export function planTransition(record: IssueLogRecordState, actor: IssueLogActor
       break;
     case "accept": {
       // V-31: two people, the PM and a leader (Dx Director / BD Lead). An admin fills the leader seat first.
-      const leaderSeat = actor.isAdmin && !record.acceptLeaderUserId;
+      const leaderSeat = (actor.isLeader ?? actor.isAdmin) && !record.acceptLeaderUserId;
       if (leaderSeat) data.acceptLeaderUserId = actor.userId;
       else data.acceptPmUserId = actor.userId;
       const pm = leaderSeat ? record.acceptPmUserId : actor.userId;

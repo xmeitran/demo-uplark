@@ -46,8 +46,8 @@ export { loadAlertTriggers, TRIGGER_OVERRIDES_KEY };
 /** Trigger codes this scan decides on its own. BRI-01…03 are decided per issue-log record by issue-log.service. */
 export const SCAN_OWNED_CODES = ["NL-03", "NL-04", "NL-05", "TD-01", "TD-02", "TD-03", "TD-04", "TD-06", "BRI-04", "BRI-05", "DL-01"] as const;
 const ISSUE_LOG_CODES = ["BRI-01", "BRI-02", "BRI-03"];
-/** Triggers that left the catalogue (group YC went with the change-request flow, chốt 13/10): the scan closes what is still open. */
-export const RETIRED_TRIGGER_CODES = ["YC-01"];
+/** Triggers that left the catalogue (group YC went with the change-request flow, chốt 13/10; LARK-GROUP went with automatic Lark group creation): the scan closes what is still open. */
+export const RETIRED_TRIGGER_CODES = ["YC-01", "LARK-GROUP"];
 /** Triggers that close only after N consecutive clear working days. */
 const CLEAR_STREAK_DAYS: Record<string, number> = { "TD-03": 2 };
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -59,7 +59,7 @@ export interface AlertScanOptions {
   /** DL-01 data source: the pending hours of the given projects, from the P&L gate (resource-controls). */
   loadPendingHours?: (workspaceId: string, projectIds: string[]) => Promise<ScanPendingHours[]>;
   deliverLark?: typeof deliverLarkAlert;
-  /** In-app channel: NotificationsService.notifyProjectWarnings. Without it the row is written directly (unit tests). */
+  /** In-app channel. Production passes a no-op (warnings never go to the bell, owner 21/10/2026); without it the row is written directly (unit tests). */
   createNotification?: (input: ProjectWarningNotification) => Promise<unknown>;
   /** V-17: overdue tasks and high delay warnings are a function of the clock, so each scanned project gets its status proposal recomputed (ProjectsService.recomputeStatusProposal). */
   syncProjectStatus?: (projectId: string) => Promise<unknown>;

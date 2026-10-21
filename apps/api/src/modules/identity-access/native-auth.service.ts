@@ -312,6 +312,17 @@ export class NativeAuthService {
     const result = await this.prisma.$transaction(async tx => { if (!principal.workspaceId) throw new ForbiddenException("Workspace required"); await this.assertAdminLocked(tx, authorization, user.id, principal.workspaceId); const result = await tx.portalInvitation.updateMany({ where: { id, workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, status: "PENDING" }, data: { status: "REVOKED", revokedAt: new Date() } }); if (result.count) await this.audit(tx, "auth.invitation.revoked", user.id, principal.workspaceId, id); return result; });
     return { revoked: result.count === 1 };
   }
+  /** The inviter's right is checked again at acceptance: an invitation from someone since deactivated or demoted grants nothing. */
+  private async assertInviterStillAllowed(tx: Prisma.TransactionClient, invitation: { invitedByUserId: string; workspaceId: string; roleCode: string }) {
+    const inviterRoles = (await tx.roleBinding.findMany({
+      where: { userId: invitation.invitedByUserId, workspaceId: invitation.workspaceId, user: { status: "ACTIVE" }, startsAt: { lte: new Date() }, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] },
+      select: { role: { select: { code: true } } }
+    })).map((binding) => binding.role.code);
+    if (!inviterRoles.some((code) => (ADMIN_ROLE_CODES as readonly string[]).includes(code)) || (invitation.roleCode === "FOUNDER_GM" && !inviterRoles.includes("FOUNDER_GM"))) {
+      throw new ForbiddenException("Lời mời không còn hiệu lực vì người mời không còn quyền mời. Hãy xin một lời mời mới.");
+    }
+  }
+
   async activateInvitation(authorization: string | undefined, body: any, metadata: LoginMetadata = {}) {
     await this.security.limit("invite-accept-ip", metadata.ipAddress ?? "unknown", 20);
     const tokenHash = hashAuthToken(stringInput(body?.token ?? body?.invitationToken, "token", 512));
@@ -332,6 +343,7 @@ export class NativeAuthService {
       if (claimed.count !== 1) throw new UnauthorizedException(INVALID);
       const workspace = await tx.tenantWorkspace.findUnique({ where: { id: invitation.workspaceId } });
       if (!workspace || workspace.status !== "active" || workspace.tenantKey !== invitation.tenantKey) throw new UnauthorizedException(INVALID);
+      await this.assertInviterStillAllowed(tx, invitation);
       let user = await tx.user.findUnique({ where: { email: invitation.invitedEmail } });
       if (user) {
         await lockUser(tx, user.id);
@@ -367,6 +379,7 @@ export class NativeAuthService {
       if (!emails.includes(invitation.invitedEmail)) throw new ForbiddenException("SSO email does not match the invitation recipient");
       const activeWorkspace = await tx.tenantWorkspace.findUnique({ where: { id: workspace.workspaceId } });
       if (!activeWorkspace || activeWorkspace.status !== "active") throw new UnauthorizedException(INVALID);
+      await this.assertInviterStillAllowed(tx, invitation);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`invite:${workspace.workspaceId}:${invitation.invitedEmail}`})::bigint)`;
       const claimed = await tx.portalInvitation.updateMany({ where: { id: invitation.id, status: "PENDING", consumedAt: null, expiresAt: { gt: new Date() } }, data: { status: "ACCEPTED", consumedAt: new Date() } });
       if (claimed.count !== 1) throw new UnauthorizedException(INVALID);

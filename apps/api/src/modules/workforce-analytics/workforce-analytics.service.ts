@@ -878,15 +878,17 @@ export class WorkforceAnalyticsService {
       blocked: bigint | number;
       estimate: bigint | number | null;
     }>>(Prisma.sql`
+      -- "Đúng hạn" / "Quá hạn" compare Vietnam calendar days (task-status.ts): finished at 15:00 on the due day is on time,
+      -- and a task due today is not overdue from 07:00. Stored instants are UTC.
       SELECT
         COUNT(*) AS "eligible",
         COUNT(*) FILTER (WHERE t."completedAt" >= ${from} AND t."completedAt" < ${to}) AS "completedInRange",
         COUNT(*) FILTER (WHERE t."status" = 'completed' AND t."completedAt" IS NULL) AS "completedMissingAt",
         COUNT(*) FILTER (WHERE t."status" = 'completed') AS "completedStatusTasks",
         COUNT(*) FILTER (WHERE t."completedAt" >= ${from} AND t."completedAt" < ${to} AND t."dueAt" IS NOT NULL) AS "completedWithDue",
-        COUNT(*) FILTER (WHERE t."completedAt" >= ${from} AND t."completedAt" < ${to} AND t."dueAt" IS NOT NULL AND t."completedAt" <= t."dueAt") AS "onTime",
-        COUNT(*) FILTER (WHERE t."completedAt" IS NULL AND t."status" NOT IN (${Prisma.join(OPEN_TASK_TERMINAL_STATUSES)}) AND t."dueAt" IS NOT NULL AND t."dueAt" < ${asOf}) AS "overdueOpen",
-        SUM(t."estimateMinutes") FILTER (WHERE t."completedAt" IS NULL AND t."status" NOT IN (${Prisma.join(OPEN_TASK_TERMINAL_STATUSES)}) AND t."dueAt" IS NOT NULL AND t."dueAt" < ${asOf}) AS "overdueEstimate",
+        COUNT(*) FILTER (WHERE t."completedAt" >= ${from} AND t."completedAt" < ${to} AND t."dueAt" IS NOT NULL AND (t."completedAt" + interval '7 hours')::date <= (t."dueAt" + interval '7 hours')::date) AS "onTime",
+        COUNT(*) FILTER (WHERE t."completedAt" IS NULL AND t."status" NOT IN (${Prisma.join(OPEN_TASK_TERMINAL_STATUSES)}) AND t."dueAt" IS NOT NULL AND (t."dueAt" + interval '7 hours')::date < (CAST(${asOf} AS timestamptz) AT TIME ZONE 'Asia/Ho_Chi_Minh')::date) AS "overdueOpen",
+        SUM(t."estimateMinutes") FILTER (WHERE t."completedAt" IS NULL AND t."status" NOT IN (${Prisma.join(OPEN_TASK_TERMINAL_STATUSES)}) AND t."dueAt" IS NOT NULL AND (t."dueAt" + interval '7 hours')::date < (CAST(${asOf} AS timestamptz) AT TIME ZONE 'Asia/Ho_Chi_Minh')::date) AS "overdueEstimate",
         COUNT(*) FILTER (WHERE t."completedAt" IS NULL AND t."status" = 'blocked') AS "blocked",
         SUM(t."estimateMinutes") AS "estimate"
       FROM "ProjectTask" t
@@ -915,8 +917,8 @@ export class WorkforceAnalyticsService {
         COUNT(*) FILTER (WHERE t."completedAt" >= ${from} AND t."completedAt" < ${to}) AS "completedInRange",
         COUNT(*) FILTER (WHERE t."status" = 'completed' AND t."completedAt" IS NULL) AS "completedMissingAt",
         COUNT(*) FILTER (WHERE t."completedAt" >= ${from} AND t."completedAt" < ${to} AND t."dueAt" IS NOT NULL) AS "completedWithDue",
-        COUNT(*) FILTER (WHERE t."completedAt" >= ${from} AND t."completedAt" < ${to} AND t."dueAt" IS NOT NULL AND t."completedAt" <= t."dueAt") AS "onTime",
-        COUNT(*) FILTER (WHERE t."completedAt" IS NULL AND t."status" NOT IN (${Prisma.join(OPEN_TASK_TERMINAL_STATUSES)}) AND t."dueAt" IS NOT NULL AND t."dueAt" < ${asOf}) AS "overdueOpen",
+        COUNT(*) FILTER (WHERE t."completedAt" >= ${from} AND t."completedAt" < ${to} AND t."dueAt" IS NOT NULL AND (t."completedAt" + interval '7 hours')::date <= (t."dueAt" + interval '7 hours')::date) AS "onTime",
+        COUNT(*) FILTER (WHERE t."completedAt" IS NULL AND t."status" NOT IN (${Prisma.join(OPEN_TASK_TERMINAL_STATUSES)}) AND t."dueAt" IS NOT NULL AND (t."dueAt" + interval '7 hours')::date < (CAST(${asOf} AS timestamptz) AT TIME ZONE 'Asia/Ho_Chi_Minh')::date) AS "overdueOpen",
         COUNT(*) FILTER (WHERE t."completedAt" IS NULL AND t."status" = 'blocked') AS "blocked",
         SUM(t."estimateMinutes") AS "estimate"
       FROM "ProjectTask" t
@@ -1102,9 +1104,14 @@ export class WorkforceAnalyticsService {
         weeklyByUser.set(profile.userId, profile.weeklyCapacityMinutes);
       }
     }
+    // Workspace days off are not capacity (the Timesheet's standard hours leave them out too).
+    const dayOffKeys = typeof (this.prisma as any).workspaceDayOff?.findMany === "function" && weeklyByUser.size
+      ? new Set((await this.prisma.workspaceDayOff.findMany({ where: { workspaceId: scope.workspaceId, isActive: true, date: { gte: new Date(from.getTime() - 86_400_000), lt: to } }, select: { date: true } }))
+          .map((row) => row.date.toISOString().slice(0, 10)))
+      : undefined;
     for (const [userId, weekly] of weeklyByUser) {
       if (!perUser.has(userId)) {
-        const minutes = prorateWeeklyCapacity(weekly, from, to);
+        const minutes = prorateWeeklyCapacity(weekly, from, to, dayOffKeys);
         if (minutes > 0) perUser.set(userId, minutes);
       }
     }

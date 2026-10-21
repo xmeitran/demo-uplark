@@ -140,7 +140,7 @@ async function notifyEvent(ctx: IssueLogContext, project: any, record: any, even
   }
 }
 
-async function notifyOwner(ctx: IssueLogContext, project: any, record: any, event: "created" | "reassigned") {
+export async function notifyOwner(ctx: IssueLogContext, project: any, record: any, event: "created" | "reassigned") {
   if (!ctx.notifications || !record.ownerUserId || record.ownerUserId === ctx.principal.subjectId) return;
   try {
     await ctx.notifications.notifyProjectRiskOwner({
@@ -162,12 +162,15 @@ async function resolveNotifications(ctx: IssueLogContext, riskId: string) {
 
 /** V-11: "Ngoại lệ chỉ Dx Director (Admin) duyệt"; Founder/GM and Workspace Admin hold every Admin right. */
 const GATE_EXCEPTION_ROLE_CODES = new Set(["DX_DIRECTOR", "FOUNDER_GM", "WORKSPACE_ADMIN"]);
+/** V-31: the leader who co-signs "Chấp nhận" (two PMs, or a PM and the PIC, used to be enough). */
+const ACCEPT_LEADER_ROLE_CODES = new Set(["DX_DIRECTOR", "BD_LEAD", "FOUNDER_GM", "WORKSPACE_ADMIN"]);
 
 export function issueLogActor(principal: PrincipalContext, permissions: { canManage: boolean; isMember: boolean }): IssueLogActor {
   const isAdmin = isWorkspaceAdmin(principal.roleCodes);
   // PM and BD Lead reach WORKSPACE_ADMIN only by implication, so the role actually bound decides (V-11).
   const canGrantGateException = (principal.heldRoleCodes ?? principal.roleCodes).some((code) => GATE_EXCEPTION_ROLE_CODES.has(code));
-  return { userId: principal.subjectId, isAdmin, isPm: isAdmin || permissions.canManage, isBd: permissions.isMember && principal.roleCodes.includes("SALES_OWNER"), isMember: permissions.isMember, canGrantGateException };
+  return { userId: principal.subjectId, isAdmin, isPm: isAdmin || permissions.canManage, isBd: permissions.isMember && principal.roleCodes.includes("SALES_OWNER"), isMember: permissions.isMember, canGrantGateException,
+    isLeader: (principal.heldRoleCodes ?? principal.roleCodes).some((code) => ACCEPT_LEADER_ROLE_CODES.has(code)) };
 }
 
 /** Next code of a type in a project. The counter row is locked by the upsert until the transaction commits and never decreases. */

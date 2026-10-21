@@ -640,8 +640,9 @@ export class PnlConfigService {
   private parseHourlyRate(input: { hourlyCostRate?: number | null }, label = ""): number {
     const raw: unknown = input.hourlyCostRate;
     const value = typeof raw === "string" ? Number(raw) : raw;
-    if (value === undefined || value === null || value === "" || typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > MAX_MONEY) {
-      throw new BadRequestException(`${label}Đơn giá giờ phải là số không âm.`);
+    if (value === undefined || value === null || value === "" || typeof value !== "number" || !Number.isFinite(value) || value <= 0 || value > MAX_MONEY) {
+      // 0 đ/giờ would turn the person's hours into "Được tính" at no cost: a missing rate must stay "Chờ xử lý".
+      throw new BadRequestException(`${label}Đơn giá giờ phải lớn hơn 0.`);
     }
     return Math.round(value);
   }
@@ -690,6 +691,10 @@ export class PnlConfigService {
     }
     const directHourlyRate = input.hourlyCostRate === undefined || input.hourlyCostRate === null ? undefined : this.parseHourlyRate(input);
     const standardMinutes = ctx.standardMinutes(periodKey);
+    // Saving the same rate again must not demote an approved month to Nháp (its hours would fall back to Chờ xử lý).
+    if (existing?.status === "APPROVED" && directHourlyRate !== undefined && num(existing.hourlyCostRate) === directHourlyRate) {
+      return { data: { userId, periodKey, monthlyCostAmount: num(existing.totalMonthlyIncome), hourlyCostRate: directHourlyRate, status: "APPROVED" }, meta: { persisted: false } };
+    }
     const components = directHourlyRate === undefined
       ? this.parseComponents(input)
       : { baseSalaryAmount: Math.round((directHourlyRate * standardMinutes) / 60), performanceBonusAmount: 0, resultBonusAmount: 0, allowanceAmount: 0, overtimeAmount: 0, socialInsuranceAmount: 0 };
@@ -734,22 +739,26 @@ export class PnlConfigService {
     const existing: any[] = await this.prisma.resourceMonthlyCost.findMany({ where: { workspaceId: principal.workspaceId, periodKey } });
     const errors: PnlStaffCostImportResult["errors"] = [];
     const valid: Array<{ userId: string; components: { [K in keyof PnlStaffCostComponents]: number }; hourlyCostRate?: number }> = [];
-    const seen = new Set<string>();
+    // A code that appears twice is ambiguous: every one of its lines is refused, not just the later ones.
+    const codeCount = new Map<string, number>();
+    for (const row of input.rows) { const code = String(row?.employeeCode ?? "").trim().toUpperCase(); if (code) codeCount.set(code, (codeCount.get(code) ?? 0) + 1); }
     input.rows.forEach((row, index) => {
       const employeeCode = String(row?.employeeCode ?? "").trim();
       const fail = (reason: string) => errors.push({ rowNumber: index + 1, employeeCode, reason });
       const userId = userOf.get(employeeCode.toUpperCase());
       if (!employeeCode) return fail("thiếu mã nhân sự");
       if (!userId) return fail(`mã ${employeeCode} không tồn tại`);
-      if (seen.has(userId)) return fail(`mã ${employeeCode} lặp lại trong file`);
+      if ((codeCount.get(employeeCode.toUpperCase()) ?? 0) > 1) return fail(`mã ${employeeCode} lặp lại trong file`);
       if (!canApproveCost(principal) && existing.some((item) => item.userId === userId && item.status === "APPROVED")) return fail("chi phí tháng Đã duyệt, cần quyền Duyệt chi phí (COST_APPROVE) để thay");
       try {
         const hourlyCostRate = row.hourlyCostRate === undefined || row.hourlyCostRate === null ? undefined : this.parseHourlyRate(row);
         const components = hourlyCostRate === undefined
           ? this.parseComponents(row)
           : { baseSalaryAmount: Math.round((hourlyCostRate * ctx.standardMinutes(periodKey)) / 60), performanceBonusAmount: 0, resultBonusAmount: 0, allowanceAmount: 0, overtimeAmount: 0, socialInsuranceAmount: 0 };
+        const current = existing.find((item) => item.userId === userId);
+        // Re-importing a file to fix one line leaves the unchanged approved lines approved.
+        if (current?.status === "APPROVED" && hourlyCostRate !== undefined && num(current.hourlyCostRate) === hourlyCostRate) return;
         valid.push({ userId, components, ...(hourlyCostRate === undefined ? {} : { hourlyCostRate }) });
-        seen.add(userId);
       } catch (error) {
         fail(error instanceof BadRequestException ? String(error.message) : "dòng không hợp lệ");
       }

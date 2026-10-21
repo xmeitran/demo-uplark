@@ -441,7 +441,8 @@ export function computeProjectPnl(input: ProjectPnlInput): ProjectPnl {
   const notComputable: PnlReason[] = [];
   const anyRate = buckets.some((bucket) => bucket.rate);
   // PL-25 "chưa có doanh thu dự án".
-  if (revenueEnabled && baseRevenue === undefined) notComputable.push({ code: "no_project_value", label: "chưa nhập doanh thu dự án", target: "project_value" });
+  // Owner 19/10: a Nội bộ / Đào tạo project MAY carry a value; without one it is a cost-only project, not "Không tính được".
+  if (revenueEnabled && baseRevenue === undefined && !input.consumable) notComputable.push({ code: "no_project_value", label: "chưa nhập doanh thu dự án", target: "project_value" });
   if (buckets.length && !anyRate) notComputable.push({ code: "no_cost_rate", label: "chưa có cost rate nào", target: "staff_costs" });
   if (!input.closePassed && !input.consumable) reasons.push({ code: "not_closed", label: "chưa qua G7", target: "approval" });
   if (input.closePassed && input.acceptanceDateMissing) reasons.push({ code: "missing_acceptance_date", label: "Thiếu ngày nghiệm thu (G7)", target: "project_setup" });

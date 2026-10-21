@@ -8,6 +8,7 @@ import type {
   WorkspaceDayOffCategory
 } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
+import { getStoredParameter } from "../../shared/system-parameters";
 import { dateOnlyToUtcDate, lockWorkspaceDayOffDates, reconcileTimeEntriesWithDayOffDates } from "./day-off-time";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -141,7 +142,8 @@ export class WorkspaceCalendarService {
         total: records.length,
         year: Number(startKey.slice(0, 4)),
         timeZone: "Asia/Ho_Chi_Minh" as const,
-        canManage: principal.roleCodes.some((role) => role === "FOUNDER_GM" || role === "WORKSPACE_ADMIN")
+        canManage: principal.roleCodes.some((role) => role === "FOUNDER_GM" || role === "WORKSPACE_ADMIN"),
+        standardDayHours: await getStoredParameter(this.prisma, principal.workspaceId, "standardDayHours")
       }
     };
   }

@@ -227,7 +227,8 @@ export class AlertsService {
       loadPendingHours: (id, projectIds) => this.pendingHours(id, projectIds),
       syncProjectStatus: this.projects ? (projectId) => this.projects!.recomputeStatusProposal(projectId) : undefined,
       deliverLark: larkAlertDelivery.deliver, // project's internal Lark group first; undefined = the webhook default
-      createNotification: (notification) => this.notifications.notifyProjectWarnings({ ...notification, data: notification.data as Prisma.InputJsonValue })
+      // Owner 21/10/2026: warnings stay on the Overview list and Admin › Cảnh báo; they never go to the bell. Lark delivery is unchanged.
+      createNotification: async () => undefined
     });
   }
 

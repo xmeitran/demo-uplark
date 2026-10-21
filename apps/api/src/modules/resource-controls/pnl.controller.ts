@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Headers, Inject, Param, Patch, Post, Put, Query } from "@nestjs/common";
+import { Body, Controller, Delete, ForbiddenException, Get, Headers, Inject, Param, Patch, Post, Put, Query } from "@nestjs/common";
 import type { PrincipalContext } from "@b2b-crm/contracts";
 import { PrincipalService } from "../identity-access/principal.service";
 import { PnlConfigService } from "./pnl-config.service";
@@ -35,7 +35,11 @@ export class PnlController {
 
   /** What still blocks the G7 approval of the project (mục 7 điểm 6). Readable by any internal account: it carries hours, no money. */
   @Get("projects/:projectId/g7-blockers")
-  g7Blockers(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Param("projectId") projectId: string) { return this.as(auth, fallback, async (p) => ({ data: await this.pnl.pendingHoursBlockingG7(p.workspaceId, projectId) })); }
+  g7Blockers(@Headers("authorization") auth: string | undefined, @Query("principal") fallback: string | undefined, @Param("projectId") projectId: string) { return this.as(auth, fallback, async (p) => {
+    // Internal only (a portal user could read it before); the G7 gate screen of a PM shows it.
+    if (p.subjectType !== "internal_user") throw new ForbiddenException("Chỉ dành cho nội bộ.");
+    return { data: await this.pnl.pendingHoursBlockingG7(p.workspaceId, projectId) };
+  }); }
 
   // --- Layer 1: the "Nhập tay" line ---
   @Post("projects/:projectId/manual-costs")

@@ -221,7 +221,7 @@ export function ItemTree({ projectId, items, months, canEdit, projectRevenue, on
             {open ? (
               <div id={`pnl-item-${item.code}`} className="space-y-3 border-t border-border bg-muted/20 px-4 py-3 sm:px-5">
                 <p className="text-sm text-foreground">Nguồn số: {item.source.description}</p>
-                {isRevenue ? <ProjectValueInlineForm projectId={projectId} revenue={projectRevenue} reload={onChanged} canEdit={canEdit} /> : null}
+                {isRevenue ? <ProjectValueInlineForm projectId={projectId} revenue={projectRevenue} reload={onChanged} /> : null}
                 {!isRevenue && item.source.byMonth.length ? (
                   <p className="text-xs text-muted-foreground">
                     {item.source.byMonth.map((month) => `${formatMonth(month.periodKey)}: ${formatVndAmount(month.amount)}`).join(" · ")}

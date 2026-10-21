@@ -150,7 +150,7 @@ export function WarningRecordsPanel({ legacy }: { legacy: ReactNode }) {
 
   return <section aria-label="Bản ghi cảnh báo" className="grid gap-5">
     {error ? <Notice tone="error">{error}</Notice> : null}
-    {scan ? <Notice tone="ok">Đã quét {scan.projects} dự án lúc {formatDateTime(scan.scannedAt)}. Mở mới: {countsText(scan.opened)}. Làm mới: {countsText(scan.refreshed)}. Đóng: {countsText(scan.closed)}. Thông báo trong ứng dụng: {scan.notifications.inApp}; Lark: {scan.notifications.lark}.</Notice> : null}
+    {scan ? <Notice tone="ok">Đã quét {scan.projects} dự án lúc {formatDateTime(scan.scannedAt)}. Mở mới: {countsText(scan.opened)}. Làm mới: {countsText(scan.refreshed)}. Đóng: {countsText(scan.closed)}. Lark: {scan.notifications.lark}.</Notice> : null}
     <section className="rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5">
       <FilterBar
         onReset={activeCount ? reset : undefined}

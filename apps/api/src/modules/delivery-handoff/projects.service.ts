@@ -366,8 +366,11 @@ function periodEndInclusive(period: { end: Date }) {
   return new Date(period.end.getTime() - 1).toISOString();
 }
 
+/** Same planning day in Vietnam (dates are day-precision): the board sends local midnight, other screens UTC midnight,
+ *  and comparing the exact instant made a plain rename look like a plan change (409 on a locked baseline). */
 function sameInstant(left: Date | null | undefined, right: Date | null | undefined) {
-  return (left?.getTime() ?? null) === (right?.getTime() ?? null);
+  const day = (value: Date | null | undefined) => value ? new Date(new Date(value).getTime() + 7 * 3_600_000).toISOString().slice(0, 10) : null;
+  return day(left) === day(right);
 }
 
 /**
@@ -1063,7 +1066,7 @@ export class ProjectsService {
     await this.permissions.ensureProject(projectId, principal.workspaceId);
     const reason = optionalString(input?.reason, "reason");
     if (!reason) throw new BadRequestException("Đóng cảnh báo bắt buộc phải nhập lý do.");
-    return this.prisma.$transaction(async (tx) => {
+    const closed = await this.prisma.$transaction(async (tx) => {
       await this.permissions.assertProjectManager(tx, projectId, principal);
       const warning = await tx.projectWarning.findFirst({ where: { id: warningId, projectId, workspaceId: principal.workspaceId } });
       if (!warning) throw new NotFoundException("Project warning not found");
@@ -1072,6 +1075,8 @@ export class ProjectsService {
       await this.permissions.auditMutation(tx, principal, "project.warning_closed", "project_warning", warningId, { status: "open" }, { status: "closed", closeReason: reason });
       return mapProjectWarning(await tx.projectWarning.findUniqueOrThrow({ where: { id: warningId }, include: { events: { orderBy: { at: "asc" } } } }));
     });
+    await this.recomputeStatusProposal(projectId, principal); // V-17: a closed high delay warning no longer means "Có rủi ro"
+    return closed;
   }
 
   /** Every warning a task write can change: NL-03 for the task itself and NL-01 for members who left with open tasks. */
@@ -1540,6 +1545,7 @@ export class ProjectsService {
     });
 
     projectLifecycleHooks.onProjectCreated(response, principal); // Kept as a no-op extension point; project creation does not create Lark groups.
+    await this.notifyNewlyAssigned(principal, { entityType: "project", entityId: response.id, name: response.name }, [], await this.projectAssignedUserIds(response.id, principal.workspaceId));
     return response;
   }
 
@@ -1593,6 +1599,7 @@ export class ProjectsService {
     if (updatesOwner && (ownerUserId ?? null) !== await projectPmUserId(this.prisma, principal.workspaceId, projectId)) {
       this.assertCanChangePic(principal);
     }
+    const assignedBefore = updatesOwner || hasInputKey(input, "memberUserIds") ? await this.projectAssignedUserIds(projectId, principal.workspaceId) : null;
 
     const project = await this.prisma.$transaction(async (tx) => {
       await this.permissions.lockProjectMembers(tx, principal.workspaceId, projectId);
@@ -1624,7 +1631,12 @@ export class ProjectsService {
       }
       // 5.1 "Hệ thống tự chuyển": on a G1–G8 project Đã hoàn thành / Đang bảo trì follow G7 / G8. Set by hand, the sync
       // would re-apply the gate's status in this same request and leave two history rows.
-      if (statusChange?.changed && await projectUsesStageGates(tx, principal.workspaceId, projectId)) {
+      // A hand-built plan whose milestones are all approved is Đã hoàn thành by the same rule (status-proposal.ts positionStatus).
+      const systemOwnsCompletion = async () => await projectUsesStageGates(tx, principal.workspaceId, projectId)
+        || await tx.projectMilestone.count({ where: { workspaceId: principal.workspaceId, projectId } }).then(async (total) => total > 0
+          && total === await tx.projectMilestone.count({ where: { workspaceId: principal.workspaceId, projectId, gateStatus: "approved" } }));
+      // Confirming the system's own proposal (e.g. back to Đã hoàn thành after a risk is lifted) is not a hand edit.
+      if (statusChange?.changed && !options.confirmsStatusProposal && await systemOwnsCompletion()) {
         const systemOwned = (code: string) => (AUTOMATIC_PROJECT_STATUSES as readonly string[]).includes(code);
         if (systemOwned(statusChange.to) || (systemOwned(statusChange.from) && !["at_risk", "on_hold", "closed"].includes(statusChange.to))) {
           throw new BadRequestException("Đã hoàn thành và Đang bảo trì do hệ thống tự chuyển khi G7 / G8 được duyệt, không đặt hoặc bỏ bằng tay. Từ hai trạng thái này chỉ chuyển tay sang Có rủi ro, Tạm dừng hoặc Đã đóng.");
@@ -1749,6 +1761,7 @@ export class ProjectsService {
     });
 
     if (nextStatus) await this.recomputeStatusProposal(projectId, principal);
+    if (assignedBefore) await this.notifyNewlyAssigned(principal, { entityType: "project", entityId: projectId, name: project.name }, assignedBefore, await this.projectAssignedUserIds(projectId, principal.workspaceId));
     projectLifecycleHooks.onProjectChanged(projectId); // Kept as a no-op extension point; project changes do not sync Lark groups.
     return withoutProjectFinancials(mapProjectSummary(project), principal);
   }
@@ -1945,7 +1958,7 @@ export class ProjectsService {
   async evaluateProjectMilestoneGate(projectId: string, milestoneId: string, principal: PrincipalContext) { const result = await this.milestoneGates.evaluateProjectMilestoneGate(projectId, milestoneId, principal); await this.recomputeStatusProposal(projectId, principal); return result; } // kept for existing callers
   // V-17: approving a milestone can move the project (all approved → Đã hoàn thành on a project without G1–G8).
   async approveProjectMilestone(projectId: string, milestoneId: string, principal: PrincipalContext) { const result = await this.milestoneGates.approveProjectMilestone(projectId, milestoneId, principal); await this.recomputeStatusProposal(projectId, principal); return result; } // kept for existing callers
-  async requestProjectMilestoneApproval(projectId: string, milestoneId: string, principal: PrincipalContext) { return this.milestoneGates.requestProjectMilestoneApproval(projectId, milestoneId, principal); } // kept for existing callers
+  async requestProjectMilestoneApproval(projectId: string, milestoneId: string, principal: PrincipalContext) { const result = await this.milestoneGates.requestProjectMilestoneApproval(projectId, milestoneId, principal); await this.recomputeStatusProposal(projectId, principal); return result; } // kept for existing callers
 
   async reorderProjectHierarchy(
     projectId: string,
@@ -2435,6 +2448,13 @@ export class ProjectsService {
   }
 
   async deleteStage(projectId: string, stageId: string, principal: PrincipalContext, options: DeleteStageOptions = {}) {
+    const result = await this.deleteStageRecord(projectId, stageId, principal, options);
+    // V-17: removing the last open milestone of a hand-built plan completes it.
+    await this.recomputeStatusProposal(projectId, principal);
+    return result;
+  }
+
+  private async deleteStageRecord(projectId: string, stageId: string, principal: PrincipalContext, options: DeleteStageOptions = {}) {
     this.permissions.assertInternalTaskPrincipal(principal, "Project stages are internal");
     const stage = await this.ensureStage(projectId, stageId, principal.workspaceId);
     const scope = options.scope?.trim().toLowerCase() === "milestone" ? "milestone" : "stage";
@@ -2458,13 +2478,17 @@ export class ProjectsService {
       const taskIds = await this.collectTaskIdsForStages(tx, stageIds, principal.workspaceId);
       // "Lịch sử không xóa": logged hours feed P&L and a used gate is the project's approval record, so a stage that
       // carries either is not deleted (same rule as deleting a project); it can still be renamed or cancelled.
-      const [loggedEntries, plannedBlocks, usedGates] = await Promise.all([
+      // Comments and attachments too: deleting a single task archives it when it has them, a stage used to erase them.
+      const countIf = (model: string) => taskIds.length && typeof (tx as any)[model]?.count === "function" ? (tx as any)[model].count({ where: { taskId: { in: taskIds } } }) : 0;
+      const [loggedEntries, plannedBlocks, usedGates, comments, attachments] = await Promise.all([
         taskIds.length ? tx.taskTimeEntry.count({ where: { workspaceId: principal.workspaceId, taskId: { in: taskIds } } }) : 0,
         taskIds.length ? tx.taskPlanningBlock.count({ where: { workspaceId: principal.workspaceId, taskId: { in: taskIds } } }) : 0,
-        typeof (tx as any).projectGate?.count === "function" ? tx.projectGate.count({ where: { stageId: { in: stageIds }, status: { not: "not_submitted" } } }) : 0
+        typeof (tx as any).projectGate?.count === "function" ? tx.projectGate.count({ where: { stageId: { in: stageIds }, status: { not: "not_submitted" } } }) : 0,
+        countIf("taskComment"),
+        countIf("taskAttachment")
       ]);
-      if (loggedEntries || plannedBlocks || usedGates) {
-        const reasons = [loggedEntries ? `${loggedEntries} dòng giờ đã ghi` : "", plannedBlocks ? `${plannedBlocks} lịch kế hoạch` : "", usedGates ? "điểm chốt đã nộp/duyệt" : ""].filter(Boolean).join(", ");
+      if (loggedEntries || plannedBlocks || usedGates || comments || attachments) {
+        const reasons = [loggedEntries ? `${loggedEntries} dòng giờ đã ghi` : "", plannedBlocks ? `${plannedBlocks} lịch kế hoạch` : "", usedGates ? "điểm chốt đã nộp/duyệt" : "", comments ? `${comments} bình luận` : "", attachments ? `${attachments} tệp đính kèm` : ""].filter(Boolean).join(", ");
         throw new ConflictException(`Không xóa được ${scope === "milestone" ? "milestone" : "stage"} vì đã có ${reasons}. Đổi trạng thái sang Hủy thay vì xóa.`);
       }
       deletedTaskIds = taskIds;
@@ -2615,7 +2639,9 @@ export class ProjectsService {
   async updateProjectDocument(projectId: string, documentId: string, input: UpdateProjectDocumentInput, principal: PrincipalContext) {
     this.permissions.assertInternalTaskPrincipal(principal, "Project documents can only be changed by internal users");
     const project = await this.permissions.ensureProject(projectId, principal.workspaceId);
-    await this.ensureProjectDocument(projectId, documentId, principal.workspaceId);
+    const before = await this.ensureProjectDocument(projectId, documentId, principal.workspaceId);
+    // Renaming, moving to another milestone or sharing with the customer is the PIC's / manager's call (any member could before).
+    if (!(await this.permissions.canManageProjectOrAdmin(this.prisma, project.id, principal))) throw new ForbiddenException("Chỉ PIC / quản lý dự án hoặc Admin mới được sửa hoặc chia sẻ tài liệu.");
     let milestoneId: string | null | undefined;
     if (input.milestoneId !== undefined) {
       milestoneId = optionalString(input.milestoneId, "milestoneId") ?? null;
@@ -2635,8 +2661,21 @@ export class ProjectsService {
       },
       include: projectDocumentInclude
     });
-
+    await this.permissions.auditMutation(this.prisma as any, principal, "project.document_updated", "project_artifact", document.id,
+      { name: before.name, milestoneId: before.milestoneId, customerVisible: before.customerVisible, internalOnly: before.internalOnly },
+      { name: document.name, milestoneId: document.milestoneId, customerVisible: document.customerVisible, internalOnly: document.internalOnly });
+    // The evidence of a milestone changed: its gate is checked again (an approved milestone missing its document reopens).
+    for (const id of new Set([before.milestoneId, document.milestoneId].filter((value): value is string => Boolean(value)))) await this.reevaluateMilestoneEvidence(project.id, id, principal);
     return mapProjectDocumentSummary(document);
+  }
+
+  private async reevaluateMilestoneEvidence(projectId: string, milestoneId: string, principal: PrincipalContext) {
+    try {
+      await this.milestoneGates.evaluateProjectMilestoneGate(projectId, milestoneId, principal);
+      await this.recomputeStatusProposal(projectId, principal);
+    } catch {
+      // A G1–G8 project (or a locked milestone) has no hand-built gate to re-check.
+    }
   }
 
   async createProjectDocumentVersion(
@@ -2715,7 +2754,10 @@ export class ProjectsService {
   async deleteProjectDocument(projectId: string, documentId: string, principal: PrincipalContext) {
     this.permissions.assertInternalTaskPrincipal(principal, "Project documents can only be changed by internal users");
     const document = await this.ensureProjectDocument(projectId, documentId, principal.workspaceId);
+    if (!(await this.permissions.canManageProjectOrAdmin(this.prisma, projectId, principal))) throw new ForbiddenException("Chỉ PIC / quản lý dự án hoặc Admin mới được xóa tài liệu.");
     await this.prisma.projectArtifact.delete({ where: { id: document.id } });
+    await this.permissions.auditMutation(this.prisma as any, principal, "project.document_deleted", "project_artifact", document.id, { name: document.name, milestoneId: document.milestoneId }, undefined);
+    if (document.milestoneId) await this.reevaluateMilestoneEvidence(projectId, document.milestoneId, principal);
     return { deleted: true, id: document.id };
   }
 
@@ -2846,6 +2888,7 @@ export class ProjectsService {
   async updateProjectActivity(projectId: string, activityId: string, input: UpdateProjectActivityInput, principal: PrincipalContext) {
     this.permissions.assertInternalTaskPrincipal(principal, "Project activities can only be changed by internal users");
     await this.ensureProjectActivity(projectId, activityId, principal.workspaceId);
+    await this.assertMayChangeActivity(projectId, principal);
 
     const activity = await this.prisma.projectActivity.update({
       where: { id: activityId },
@@ -2866,8 +2909,14 @@ export class ProjectsService {
   async deleteProjectActivity(projectId: string, activityId: string, principal: PrincipalContext) {
     this.permissions.assertInternalTaskPrincipal(principal, "Project activities can only be changed by internal users");
     const activity = await this.ensureProjectActivity(projectId, activityId, principal.workspaceId);
+    await this.assertMayChangeActivity(projectId, principal);
     await this.prisma.projectActivity.delete({ where: { id: activity.id } });
     return { deleted: true, id: activity.id };
+  }
+
+  /** The activity feed is the project's history: only the PIC / project managers or an Admin edit or remove entries. */
+  private async assertMayChangeActivity(projectId: string, principal: PrincipalContext) {
+    if (!(await this.permissions.canManageProjectOrAdmin(this.prisma, projectId, principal))) throw new ForbiddenException("Chỉ PIC / quản lý dự án hoặc Admin mới được sửa hoặc xóa hoạt động.");
   }
 
   async listProjectRisks(projectId: string, query: any, principal: PrincipalContext) {
@@ -3123,6 +3172,8 @@ export class ProjectsService {
     if (taskResult.projectId && taskResult.stageId) {
       await this.milestoneGates.evaluateMilestoneGateForTask(taskResult, principal);
     }
+    if (taskResult.projectId) await this.recomputeStatusProposal(taskResult.projectId, principal); // V-17: overdue tasks, milestone readiness
+    await this.notifyNewlyAssigned(principal, { entityType: "task", entityId: taskResult.id, name: taskResult.title, projectName: (taskResult as any).project?.name }, [], await this.taskAssignedUserIds(taskResult.id));
 
     await this.prisma.auditEvent.create({
       data: {
@@ -3172,6 +3223,12 @@ export class ProjectsService {
     const scope = await this.normalizeTaskScope(input, principal.workspaceId, true);
     const existing = await this.permissions.ensureTaskForPrincipal(taskId, principal);
     await this.permissions.assertCanEditTask(this.prisma, existing, principal);
+    const assignedBefore = await this.taskAssignedUserIds(taskId);
+    // The same start ≤ due rule as on create, against the dates the task will have after this edit.
+    assertTaskDateRange(
+      hasInputKey(input, "plannedStartAt") ? optionalDate(input.plannedStartAt, "plannedStartAt") : existing.plannedStartAt,
+      hasInputKey(input, "dueAt") ? optionalDate(input.dueAt, "dueAt") : existing.dueAt
+    );
     const stageChanged = scope.stageId !== undefined && scope.stageId !== existing.stageId;
     if (
       (scope.projectId !== undefined && scope.projectId !== existing.projectId)
@@ -3348,6 +3405,15 @@ export class ProjectsService {
         updateData = { ...data, sortOrder: (lastTask?.sortOrder ?? 0) + 10 };
       }
       const updated = await tx.projectTask.update({ where: { id: taskId }, data: updateData, include: taskInclude });
+      if (stageChanged && !current.parentTaskId) {
+        // Sub-tasks travel with their parent: left in the old stage, they vanished once the parent was archived.
+        for (let parents = [taskId]; parents.length;) {
+          const children = await tx.projectTask.findMany({ where: { workspaceId: principal.workspaceId, parentTaskId: { in: parents } }, select: { id: true } });
+          if (!children.length) break;
+          await tx.projectTask.updateMany({ where: { id: { in: children.map((child) => child.id) } }, data: { stageId: updated.stageId } });
+          parents = children.map((child) => child.id);
+        }
+      }
       if (hierarchyMembershipChanged) {
         await tx.project.update({ where: { id: current.projectId! }, data: { hierarchyOrderVersion: { increment: 1 } } });
       }
@@ -3450,10 +3516,20 @@ export class ProjectsService {
     if ((requestedStatus !== undefined || stageChanged) && task.projectId && task.stageId) {
       await this.milestoneGates.evaluateMilestoneGateForTask(task, principal);
     }
+    if (task.projectId) await this.recomputeStatusProposal(task.projectId, principal); // V-17: a done task or a moved due date changes "Quá hạn"
+    await this.notifyNewlyAssigned(principal, { entityType: "task", entityId: task.id, name: task.title, projectName: (task as any).project?.name }, assignedBefore, await this.taskAssignedUserIds(task.id));
     return mapTaskSummary(task);
   }
 
   async deleteTask(taskId: string, principal: PrincipalContext) {
+    this.permissions.assertInternalTaskPrincipal(principal, "Tasks are internal");
+    const projectId = (await this.permissions.ensureTaskForPrincipal(taskId, principal)).projectId;
+    const result = await this.deleteTaskRecord(taskId, principal);
+    if (projectId) await this.recomputeStatusProposal(projectId, principal); // V-17
+    return result;
+  }
+
+  private async deleteTaskRecord(taskId: string, principal: PrincipalContext) {
     this.permissions.assertInternalTaskPrincipal(principal, "Tasks are internal");
     const task = await this.permissions.ensureTaskForPrincipal(taskId, principal);
     await this.permissions.assertCanEditTask(this.prisma, task, principal);
@@ -3665,6 +3741,7 @@ export class ProjectsService {
     if (task.projectId && task.stageId) {
       await this.milestoneGates.evaluateMilestoneGateForTask(task, principal);
     }
+    if (task.projectId) await this.recomputeStatusProposal(task.projectId, principal); // V-17
     return mapTaskSummary(task);
   }
   async listTaskPlanningBlocks(query: any, principal: PrincipalContext) { return this.timeEntries.listTaskPlanningBlocks(query, principal); } // kept for existing callers
@@ -4114,6 +4191,43 @@ export class ProjectsService {
         taskId: task.id
       }
     };
+  }
+
+  /** Members and PIC of a project: the people "assigned" to it. */
+  private async projectAssignedUserIds(projectId: string, workspaceId: string): Promise<string[]> {
+    if (typeof (this.prisma as any).projectMember?.findMany !== "function") return [];
+    const [members, pm] = await Promise.all([
+      this.prisma.projectMember.findMany({ where: { workspaceId, projectId }, select: { userId: true } }),
+      projectPmUserId(this.prisma, workspaceId, projectId)
+    ]);
+    return [...new Set([...members.map((row) => row.userId), ...(pm ? [pm] : [])])];
+  }
+
+  /** Owner, primary assignee and co-assignees of a task. */
+  private async taskAssignedUserIds(taskId: string): Promise<string[]> {
+    if (typeof (this.prisma as any).projectTask?.findUnique !== "function") return [];
+    const task = await this.prisma.projectTask.findUnique({ where: { id: taskId }, select: { ownerUserId: true, assigneeUserId: true, taskAssignees: { select: { userId: true } } } });
+    if (!task) return [];
+    return [...new Set([task.ownerUserId, task.assigneeUserId, ...task.taskAssignees.map((row) => row.userId)].filter((id): id is string => Boolean(id)))];
+  }
+
+  /** Notify the people newly put on a project / task by someone else (never the actor). Never throws into the request. */
+  private async notifyNewlyAssigned(principal: PrincipalContext, target: { entityType: "project" | "task"; entityId: string; name: string; projectId?: string | null; projectName?: string | null }, before: readonly string[], after: readonly string[]) {
+    if (!this.notifications) return;
+    const added = after.filter((id) => !before.includes(id) && id !== principal.subjectId);
+    if (!added.length) return;
+    const by = principal.displayName || "Một thành viên";
+    const isProject = target.entityType === "project";
+    try {
+      await this.notifications.notifyAssignment({
+        workspaceId: principal.workspaceId, actorUserId: principal.subjectId, recipientUserIds: added, entityType: target.entityType, entityId: target.entityId,
+        title: isProject ? "Bạn được thêm vào một dự án" : "Bạn được giao một task",
+        body: isProject ? `${by} đã thêm bạn vào dự án ${target.name}` : `${by} đã giao cho bạn task "${target.name}"${target.projectName ? ` · ${target.projectName}` : ""}`,
+        href: isProject ? `/projects/${encodeURIComponent(target.entityId)}?tab=Overview` : `/tasks/${encodeURIComponent(target.entityId)}`
+      });
+    } catch (error) {
+      console.error("Assignment notification failed", error);
+    }
   }
 
   private async syncTaskAssignees(

@@ -175,6 +175,11 @@ export class TimeEntriesService {
     if (endAt <= startAt) {
       throw new BadRequestException("Giờ kết thúc phải sau giờ bắt đầu.");
     }
+    // D-13: a plan uses the same day window as actual hours (it used to accept 08:00–21:30 and overnight blocks).
+    this.assertTimeEntryWindow(startAt, endAt, DEFAULT_TIME_ENTRY_TIME_ZONE);
+    const requestedStatus = optionalEnum(input.status, "status", PLANNING_STATUSES) ?? "planned";
+    // Creating a block already "completed" for someone else needs the same right as completing it (transition).
+    if (requestedStatus === "completed") this.assertCanMaterializePlanningActual(userId, principal);
 
     const diffMinutes = Math.round((endAt.getTime() - startAt.getTime()) / 60000);
     const plannedMinutes = optionalInteger(input.plannedMinutes, "plannedMinutes") ?? diffMinutes;
@@ -232,7 +237,7 @@ export class TimeEntriesService {
           plannedMinutes,
           billable: optionalBoolean(input.billable, "billable") ?? true,
           workType,
-          status: optionalEnum(input.status, "status", PLANNING_STATUSES) ?? "planned",
+          status: requestedStatus,
           source: "manual",
           createdByUserId: fallbackUserId
         },
@@ -626,7 +631,8 @@ export class TimeEntriesService {
     if (timeZone.length > 80) {
       throw new BadRequestException("timeZone must be 80 characters or fewer");
     }
-    this.assertTimeEntryWindow(startAt, endAt, timeZone);
+    // The 07:00–19:00 rule is Vietnam office hours, whatever time zone the browser reports.
+    this.assertTimeEntryWindow(startAt, endAt, DEFAULT_TIME_ENTRY_TIME_ZONE);
     const workType = optionalString(input.workType, "workType") ?? "delivery";
     if (workType.length > 80) {
       throw new BadRequestException("workType must be 80 characters or fewer");

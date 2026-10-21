@@ -34,7 +34,13 @@ function createPrisma(milestone: Record<string, unknown>, taskStatuses: string[]
       update: vi.fn().mockImplementation(async ({ data }: any) => {
         Object.assign(milestone, data);
         return { ...milestone };
-      })
+      }),
+      updateMany: vi.fn().mockImplementation(async ({ where, data }: any) => {
+        if (where.gateStatus && where.gateStatus !== milestone.gateStatus) return { count: 0 };
+        Object.assign(milestone, data);
+        return { count: 1 };
+      }),
+      findUniqueOrThrow: vi.fn().mockImplementation(async () => ({ ...milestone }))
     },
     projectTask: { findMany: vi.fn().mockResolvedValue(taskStatuses.map((status) => ({ status }))) },
     projectArtifact: { findMany: vi.fn().mockResolvedValue([]) },
@@ -68,7 +74,9 @@ describe("ProjectsService milestone customer confirmation", () => {
 
     const confirmedPrisma = createPrisma({ ...milestone, customerConfirmationAt: new Date("2026-10-02T08:00:00.000Z") });
     const confirmed = await new ProjectsService(confirmedPrisma as any).evaluateProjectMilestoneGate("project-1", "milestone-1", principal);
-    expect(confirmed.gateStatus).toBe("pending_review");
+    // Ready, but "Chờ duyệt" only starts when someone sends the dossier.
+    expect(confirmed.gateStatus).toBe("open");
+    expect(confirmed.satisfied).toBe(true);
     expect(confirmed.confirmationSatisfied).toBe(true);
   });
 
@@ -80,7 +88,8 @@ describe("ProjectsService milestone customer confirmation", () => {
     expect(pending.missingRequirements).toEqual(["Còn 1 task chưa hoàn tất."]);
 
     const approved = await new ProjectsService(createPrisma(milestone, ["done", "completed"]) as any).evaluateProjectMilestoneGate("project-1", "milestone-1", principal);
-    expect(approved.gateStatus).toBe("pending_review");
+    expect(approved.gateStatus).toBe("open");
+    expect(approved.satisfied).toBe(true);
     expect(approved.tasksSatisfied).toBe(true);
   });
 
@@ -126,7 +135,7 @@ describe("ProjectsService milestone customer confirmation", () => {
     }));
   });
 
-  it("moves a document-gated milestone to review after all visible requirements pass", async () => {
+  it("makes a document-gated milestone ready once all visible requirements pass", async () => {
     const milestone = { id: "milestone-1", projectId: "project-1", workspaceId: "workspace-1", sortOrder: 1, gateStatus: "open", requiredDocumentCount: 1, requiredDocumentTypes: ["BRD"], evidenceMode: "file_or_link", customerConfirmationRequired: true, customerConfirmationAt: new Date("2026-10-02T08:00:00.000Z") };
     const prisma = createPrisma(milestone, ["done"]);
     prisma.projectArtifact.findMany.mockResolvedValue([
@@ -135,7 +144,8 @@ describe("ProjectsService milestone customer confirmation", () => {
 
     const result = await new ProjectsService(prisma as any).evaluateProjectMilestoneGate("project-1", "milestone-1", principal);
 
-    expect(result.gateStatus).toBe("pending_review");
+    expect(result.gateStatus).toBe("open");
+    expect(result.satisfied).toBe(true);
     expect(result.documentsSatisfied).toBe(true);
     expect(result.confirmationSatisfied).toBe(true);
     expect(result.missingRequirements).toEqual([]);
@@ -150,20 +160,24 @@ describe("ProjectsService milestone customer confirmation", () => {
 
     const result = await new ProjectsService(prisma as any).evaluateProjectMilestoneGate("project-1", "milestone-1", principal);
 
-    expect(result.gateStatus).toBe("pending_review");
+    expect(result.satisfied).toBe(true);
     expect(result.documentsSatisfied).toBe(true);
     expect(result.missingRequirements).toEqual([]);
   });
 
+  it("puts back to open a milestone left in review without a sent dossier (older data)", async () => {
+    const milestone = { id: "milestone-1", projectId: "project-1", workspaceId: "workspace-1", sortOrder: 1, gateStatus: "pending_review", approvalRequestedAt: null, requiredDocumentCount: 0, requiredDocumentTypes: [], evidenceMode: "file_or_link", customerConfirmationRequired: false, customerConfirmationAt: null };
+    const result = await new ProjectsService(createPrisma(milestone, ["done"]) as any).evaluateProjectMilestoneGate("project-1", "milestone-1", principal);
+    expect(result.gateStatus).toBe("open");
+  });
+
   it("opens the next milestone only after an authorized workspace admin approves", async () => {
-    const milestone = { id: "milestone-1", projectId: "project-1", workspaceId: "workspace-1", sortOrder: 1, gateStatus: "open", requiredDocumentCount: 0, requiredDocumentTypes: [], evidenceMode: "file_or_link", customerConfirmationRequired: false, customerConfirmationAt: null, reviewerMode: "workspace_admin", reviewerUserId: null, reviewerApprovedAt: null, reviewerApprovedByUserId: null };
+    // Sent by the delivery lead (requestProjectMilestoneApproval), reviewed by an admin.
+    const milestone = { id: "milestone-1", projectId: "project-1", workspaceId: "workspace-1", sortOrder: 1, gateStatus: "pending_review", approvalRequestedAt: new Date("2026-10-03T07:00:00.000Z"), approvalRequestedByUserId: principal.subjectId, requiredDocumentCount: 0, requiredDocumentTypes: [], evidenceMode: "file_or_link", customerConfirmationRequired: false, customerConfirmationAt: null, reviewerMode: "workspace_admin", reviewerUserId: null, reviewerApprovedAt: null, reviewerApprovedByUserId: null };
     const nextMilestone = { id: "milestone-2", projectId: "project-1", workspaceId: "workspace-1", sortOrder: 2, gateStatus: "locked" };
     const prisma = createPrisma(milestone, ["done"]);
     prisma.projectMilestone.findFirst.mockImplementation(({ where }: any) => where.sortOrder ? Promise.resolve(nextMilestone) : Promise.resolve(milestone));
     const service = new ProjectsService(prisma as any);
-
-    const pending = await service.evaluateProjectMilestoneGate("project-1", "milestone-1", adminPrincipal);
-    expect(pending.gateStatus).toBe("pending_review");
 
     const approved = await service.approveProjectMilestone("project-1", "milestone-1", adminPrincipal);
 
@@ -172,8 +186,17 @@ describe("ProjectsService milestone customer confirmation", () => {
     expect(prisma.projectMilestone.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "milestone-2" }, data: { gateStatus: "open" } }));
   });
 
+  it("refuses an approval nobody sent, and the sender approving their own dossier (V-12)", async () => {
+    const base = { id: "milestone-1", projectId: "project-1", workspaceId: "workspace-1", sortOrder: 1, requiredDocumentCount: 0, requiredDocumentTypes: [], evidenceMode: "file_or_link", customerConfirmationRequired: false, customerConfirmationAt: null, reviewerMode: "workspace_admin", reviewerUserId: null };
+    const unsent = createPrisma({ ...base, gateStatus: "pending_review", approvalRequestedAt: null }, ["done"]);
+    await expect(new ProjectsService(unsent as any).approveProjectMilestone("project-1", "milestone-1", adminPrincipal)).rejects.toMatchObject({ status: 400 });
+    const own = createPrisma({ ...base, gateStatus: "pending_review", approvalRequestedAt: new Date(), approvalRequestedByUserId: adminPrincipal.subjectId }, ["done"]);
+    await expect(new ProjectsService(own as any).approveProjectMilestone("project-1", "milestone-1", adminPrincipal)).rejects.toMatchObject({ status: 403 });
+    expect(own.projectMilestone.updateMany).not.toHaveBeenCalled();
+  });
+
   it("rejects approval by a non-selected PIC", async () => {
-    const milestone = { id: "milestone-1", projectId: "project-1", workspaceId: "workspace-1", sortOrder: 1, gateStatus: "pending_review", requiredDocumentCount: 0, requiredDocumentTypes: [], evidenceMode: "file_or_link", customerConfirmationRequired: false, customerConfirmationAt: null, reviewerMode: "specific_user", reviewerUserId: "usr-pic", reviewerApprovedAt: null, reviewerApprovedByUserId: null };
+    const milestone = { id: "milestone-1", projectId: "project-1", workspaceId: "workspace-1", sortOrder: 1, gateStatus: "pending_review", approvalRequestedAt: new Date("2026-10-03T07:00:00.000Z"), approvalRequestedByUserId: "usr-lead", requiredDocumentCount: 0, requiredDocumentTypes: [], evidenceMode: "file_or_link", customerConfirmationRequired: false, customerConfirmationAt: null, reviewerMode: "specific_user", reviewerUserId: "usr-pic", reviewerApprovedAt: null, reviewerApprovedByUserId: null };
     const prisma = createPrisma(milestone, ["done"]);
     const service = new ProjectsService(prisma as any);
 
@@ -181,7 +204,7 @@ describe("ProjectsService milestone customer confirmation", () => {
   });
 
   it("allows the selected PIC to approve a specific-user gate", async () => {
-    const milestone = { id: "milestone-1", projectId: "project-1", workspaceId: "workspace-1", sortOrder: 1, gateStatus: "pending_review", requiredDocumentCount: 0, requiredDocumentTypes: [], evidenceMode: "file_or_link", customerConfirmationRequired: false, customerConfirmationAt: null, reviewerMode: "specific_user", reviewerUserId: "usr-pic", reviewerApprovedAt: null, reviewerApprovedByUserId: null };
+    const milestone = { id: "milestone-1", projectId: "project-1", workspaceId: "workspace-1", sortOrder: 1, gateStatus: "pending_review", approvalRequestedAt: new Date("2026-10-03T07:00:00.000Z"), approvalRequestedByUserId: "usr-lead", requiredDocumentCount: 0, requiredDocumentTypes: [], evidenceMode: "file_or_link", customerConfirmationRequired: false, customerConfirmationAt: null, reviewerMode: "specific_user", reviewerUserId: "usr-pic", reviewerApprovedAt: null, reviewerApprovedByUserId: null };
     const prisma = createPrisma(milestone, ["done"]);
     const service = new ProjectsService(prisma as any);
     const picPrincipal = { ...principal, subjectId: "usr-pic", displayName: "PIC" };

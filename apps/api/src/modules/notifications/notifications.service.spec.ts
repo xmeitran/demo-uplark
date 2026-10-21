@@ -131,3 +131,12 @@ describe("NotificationsService project risk notifications", () => {
     }));
   });
 });
+
+describe("NotificationsService assignment", () => {
+  it("notifies the people someone else assigned, never the actor", async () => {
+    const prisma = { appNotification: { upsert: vi.fn().mockResolvedValue({}) } };
+    await new NotificationsService(prisma as never).notifyAssignment({ workspaceId: "w", actorUserId: "usr-me", recipientUserIds: ["usr-me", "usr-other", "usr-other"], entityType: "task", entityId: "t-1", title: "T", body: "B", href: "/tasks/t-1" });
+    expect(prisma.appNotification.upsert).toHaveBeenCalledTimes(1);
+    expect(prisma.appNotification.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ recipientUserId: "usr-other", kind: "task_assignment" }) }));
+  });
+});

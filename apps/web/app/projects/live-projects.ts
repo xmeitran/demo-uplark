@@ -102,7 +102,8 @@ export async function fetchLiveProjects(options: FetchLiveProjectsOptions = {}):
   const payload = (await response.json()) as ResourceListResponse<ProjectSummary>;
   const pagination = normalizeProjectPaginationMeta(payload, limit, offset);
   const projects = payload.data.map(mapProjectSummaryToUiProject);
-  primeLiveProjectSnapshots(projects, options.cacheScope);
+  // List rows are not cached for the detail page: the list leaves out detail-only fields (Doanh thu dự kiến), so a
+  // project opened from the list within the cache window lost its revenue chip.
   return {
     projects,
     accountOptions: buildAccountOptions(payload.data),
@@ -175,12 +176,6 @@ export function clearLiveProjectSnapshotCache() {
   snapshotGeneration += 1;
   liveProjectSnapshots.clear();
   liveProjectRequests.clear();
-}
-
-function primeLiveProjectSnapshots(projects: Project[], cacheScope?: string) {
-  projects.forEach((project) => {
-    writeLiveProjectSnapshot(getLiveProjectCacheKey(project.id, cacheScope), project);
-  });
 }
 
 async function requestLiveProject(projectId: string): Promise<Project | null> {
@@ -367,6 +362,7 @@ export function mapProjectSummaryToUiProject(project: ProjectSummary): Project {
     startIsActual: project.startIsActual === true,
     dueDate: formatUiDate(project.plannedEndAt),
     dueAt: project.plannedEndAt,
+    stageCount: project.stageCount,
     members,
     ownerUserId: project.ownerUserId,
     ownerDisplayName: project.ownerDisplayName,

@@ -251,7 +251,7 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
     readJson<ApiResponse<ApiUser>>("/api/workspace/users?principal=founder", signal),
     // One request per year the window touches; a single "this year" call lost last year's holidays.
     Promise.all(yearsBetween(windowStart, toVietnamDateKey(new Date(now.getTime() + DAY_MS))).map((year) => (
-      readJson<ApiResponse<{ date?: string; isActive?: boolean }>>(`/api/workspace/day-offs?year=${year}&principal=founder`, signal)
+      readJson<ApiResponse<{ date?: string; isActive?: boolean }> & { meta?: { standardDayHours?: number } }>(`/api/workspace/day-offs?year=${year}&principal=founder`, signal)
     ))),
     // Keep the full task hierarchy separate from the time-entry slice. The
     // entry endpoint intentionally omits milestone/stage metadata, which made
@@ -296,6 +296,9 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
     });
   }
   const tasks: ApiTask[] = [...taskByKey.values()];
+  // "Giờ chuẩn một ngày" set by Admin (the logging cap and P&L use it too); 8h only when the API does not say.
+  const standardDayHours = dayOffResponses.map((response) => response.meta?.standardDayHours).find((hours): hours is number => typeof hours === "number" && hours > 0);
+  const standardMinutesPerDay = Math.round((standardDayHours ?? 8) * 60);
   // "Giờ kế hoạch" is the estimate of the lowest-level tasks that still count, as in the P&L (pnl.service): a task with
   // sub-tasks carries no plan of its own (its sub-tasks do), and a cancelled or archived task plans nothing.
   const parentTaskIds = new Set(tasks.map((task) => task.parentTaskId).filter(Boolean));
@@ -354,7 +357,7 @@ export async function loadTimesheetDataset(signal?: AbortSignal): Promise<Timesh
       role: businessRoleFromMember(user ?? {}),
       departmentId,
       teamName: departmentId,
-      standardMinutesPerDay: 480,
+      standardMinutesPerDay,
       contractRatio: 1,
       // Someone who only appears through old time entries (not in the workspace directory) or is
       // suspended is a former user: kept for their hours, never expected to log.

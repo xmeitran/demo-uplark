@@ -198,8 +198,26 @@ describe("project without G1–G8 (hand-built milestones)", () => {
     expect(planStatusSync("planning", computeProjectStatus(own({ total: 2, approved: 0, started: true }))).propose?.proposedStatus).toBe("active");
   });
 
+  it("keeps Đang chạy thử / Đang mở rộng sử dụng a PM set by hand (no Đang triển khai nag)", () => {
+    expect(planStatusSync("pilot", computeProjectStatus(own({ total: 3, approved: 1, started: true }, "pilot")))).toEqual({ apply: [] });
+  });
+
   it("says nothing for a project with no milestones or nothing started", () => {
     expect(computeProjectStatus(own({ total: 0, approved: 0, started: false }))).toBeNull();
     expect(planStatusSync("planning", computeProjectStatus(own({ total: 2, approved: 0, started: false })))).toEqual({ apply: [] });
+  });
+});
+
+describe("hand edits and declines (21/10/2026)", () => {
+  it("never auto-reverts a Có rủi ro a person set: the way back to Đã hoàn thành is a proposal", () => {
+    const plan = planStatusSync("at_risk", computeProjectStatus(facts({ gates: null, milestones: { total: 2, approved: 2, started: true }, currentStatus: "at_risk" })));
+    expect(plan.apply).toEqual([]);
+    expect(plan.propose?.proposedStatus).toBe("completed");
+  });
+
+  it("does not ask again when only a count in the basis changed", () => {
+    const computed = computeProjectStatus(facts({ gates: null, milestones: { total: 2, approved: 1, started: true }, currentStatus: "active", overdueTaskCount: 3 }));
+    expect(computed?.status).toBe("at_risk");
+    expect(planStatusSync("active", computed, { proposedStatus: "at_risk", basis: "2 task Quá hạn" }).propose).toBeUndefined();
   });
 });

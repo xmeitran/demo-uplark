@@ -94,7 +94,9 @@ export function TimesheetWorkbench() {
   }, [reloadToken]);
 
   const availablePeople = useMemo(() => {
-    const byId = new Map(directoryPeople.map((person) => [person.id, person]));
+    // A person known only from the directory gets the workspace's standard day too (not a fixed 8h).
+    const dayMinutes = dataset.people[0]?.standardMinutesPerDay;
+    const byId = new Map(directoryPeople.map((person) => [person.id, dayMinutes ? { ...person, standardMinutesPerDay: dayMinutes } : person]));
     for (const person of dataset.people) byId.set(person.id, { ...byId.get(person.id), ...person });
     return [...byId.values()];
   }, [dataset.people, directoryPeople]);

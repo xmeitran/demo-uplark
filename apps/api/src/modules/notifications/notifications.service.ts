@@ -151,6 +151,20 @@ export class NotificationsService {
     });
   }
 
+  /** Someone else put these people on a project (member / PIC) or a task (owner / assignee). The actor is never notified about their own action. */
+  async notifyAssignment(input: { workspaceId: string; actorUserId: string; recipientUserIds: string[]; entityType: "project" | "task"; entityId: string; title: string; body: string; href: string }) {
+    const recipients = [...new Set(input.recipientUserIds)].filter((id) => id && id !== input.actorUserId);
+    for (const recipientUserId of recipients) {
+      const dedupeKey = `assignment:${input.entityType}:${input.entityId}:${recipientUserId}`;
+      const content = { title: input.title, body: input.body, href: input.href, data: { entityType: input.entityType, entityId: input.entityId, assignedByUserId: input.actorUserId } };
+      await this.prisma.appNotification.upsert({
+        where: { dedupeKey },
+        create: { workspaceId: input.workspaceId, recipientUserId, kind: `${input.entityType}_assignment`, entityType: input.entityType, entityId: input.entityId, status: "pending", dedupeKey, ...content },
+        update: { ...content, status: "pending", readAt: null, actedAt: null }
+      });
+    }
+  }
+
   /** Issue-log events other than "you are the owner": new record for the PM, resolution to confirm, escalation (in-app only). */
   async notifyIssueLogEvent(input: { workspaceId: string; recipientUserIds: string[]; projectId: string; riskId: string; event: string; title: string; body: string }) {
     const href = `/projects/${encodeURIComponent(input.projectId)}?tab=Issues&issueId=${encodeURIComponent(input.riskId)}`;
@@ -165,16 +179,6 @@ export class NotificationsService {
     }
   }
 
-  /** 7.5 / V-37: one merged project-warning message of a daily scan, for one recipient (alerts/alert-scan.ts). */
-  async notifyProjectWarnings(input: { workspaceId: string; recipientUserId: string; dedupeKey: string; title: string; body: string; href: string; warningId: string; data: Prisma.InputJsonValue }) {
-    const { warningId, ...content } = input;
-    return this.prisma.appNotification.upsert({
-      where: { dedupeKey: input.dedupeKey },
-      create: { ...content, kind: "project_warning", entityType: "project_warning", entityId: warningId, status: "pending" },
-      update: {}
-    });
-  }
-
   async resolveProjectRiskNotifications(workspaceId: string, riskId: string) {
     await this.prisma.appNotification.updateMany({
       where: { workspaceId, entityType: "project_risk", entityId: riskId, status: "pending" },
@@ -186,12 +190,12 @@ export class NotificationsService {
     assertInternal(principal);
     const [rows, unreadCount] = await Promise.all([
       this.prisma.appNotification.findMany({
-        where: { workspaceId: principal.workspaceId, recipientUserId: principal.subjectId },
+        where: { workspaceId: principal.workspaceId, recipientUserId: principal.subjectId, kind: { not: "project_warning" } },
         orderBy: { createdAt: "desc" },
         take: 30
       }),
       this.prisma.appNotification.count({
-        where: { workspaceId: principal.workspaceId, recipientUserId: principal.subjectId, readAt: null, status: "pending" }
+        where: { workspaceId: principal.workspaceId, recipientUserId: principal.subjectId, readAt: null, status: "pending", kind: { not: "project_warning" } }
       })
     ]);
     return { data: rows.map(mapNotification), meta: { unreadCount } };
@@ -210,7 +214,7 @@ export class NotificationsService {
   async listApprovalQueue(principal: PrincipalContext): Promise<AdminApprovalsResponse> {
     assertAdmin(principal);
     const rows = await this.prisma.projectMilestone.findMany({
-      where: { workspaceId: principal.workspaceId, gateStatus: "pending_review" },
+      where: { workspaceId: principal.workspaceId, gateStatus: "pending_review", approvalRequestedAt: { not: null } },
       include: { project: { select: { id: true, code: true, name: true } } },
       orderBy: [{ approvalRequestedAt: "asc" }, { updatedAt: "asc" }]
     });
@@ -251,7 +255,8 @@ export class NotificationsService {
           reviewerMode,
           reviewerUserId: row.reviewerUserId,
           principalUserId: principal.subjectId,
-          principalRoleCodes: principal.roleCodes
+          principalRoleCodes: principal.roleCodes,
+          requestedByUserId: row.approvalRequestedByUserId
         })
       };
     });
@@ -304,7 +309,13 @@ export class NotificationsService {
       select: { id: true, displayName: true },
       orderBy: { displayName: "asc" }
     });
-    if (!recipients.length) throw new ForbiddenException("Không tìm thấy người duyệt đang hoạt động trong workspace");
+    // V-12: the person sending the dossier never reviews it.
+    const reviewers = recipients.filter((recipient) => recipient.id !== input.principal.subjectId);
+    if (!reviewers.length) {
+      throw new ForbiddenException(recipients.length
+        ? "Bạn là người duyệt duy nhất của milestone này nên không thể tự gửi và tự duyệt. Đổi người duyệt hoặc nhờ người khác gửi hồ sơ."
+        : "Không tìm thấy người duyệt đang hoạt động trong workspace");
+    }
     if (["locked", "approved"].includes(milestone.gateStatus)) throw new ForbiddenException("Milestone hiện không nhận yêu cầu duyệt");
 
     const requestedAt = new Date();
@@ -313,12 +324,15 @@ export class NotificationsService {
     // absolute URL, so the public origin is added only to the card payload.
     const href = `/projects/${encodeURIComponent(milestone.project.id)}?tab=Overview`;
     const larkHref = `${appPublicOrigin()}${href}`;
-    const reviewerLabel = reviewerMode === "specific_user" ? recipients[0].displayName : "Admin workspace";
-    const requestClaim = milestone.approvalRequestedAt
+    const reviewerLabel = reviewerMode === "specific_user" ? reviewers[0].displayName : "Admin workspace";
+    // Sending the dossier is what puts the milestone in "Chờ duyệt" (the requirement check alone only makes it ready).
+    // The first sender is kept; a re-send only refreshes the notifications.
+    const requestClaim = milestone.approvalRequestedAt && milestone.gateStatus === "pending_review"
       ? { count: 0 }
       : await this.prisma.projectMilestone.updateMany({
-          where: { id: milestone.id, gateStatus: "pending_review", approvalRequestedAt: null },
+          where: { id: milestone.id, gateStatus: { notIn: ["locked", "approved"] } },
           data: {
+            gateStatus: "pending_review",
             approvalRequestedAt: requestedAt,
             approvalRequestedByUserId: input.principal.subjectId,
             approvalRequestedByName: input.principal.displayName
@@ -326,7 +340,7 @@ export class NotificationsService {
         });
 
     let createdOrUpdated = 0;
-    for (const recipient of recipients) {
+    for (const recipient of reviewers) {
       await this.prisma.appNotification.upsert({
         where: { dedupeKey: `milestone-approval:${milestone.id}:${recipient.id}` },
         create: {

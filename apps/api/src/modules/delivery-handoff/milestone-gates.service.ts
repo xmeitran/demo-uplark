@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { activeMembershipWhere } from "../identity-access/active-membership";
 import { Prisma, SubjectStatus } from "@prisma/client";
 import type {
@@ -322,12 +322,11 @@ export class MilestoneGatesService {
     });
     // Evaluation only proves the visible requirements. It must never impersonate
     // the configured reviewer or unlock the next milestone by itself.
+    // Meeting the requirements only makes the milestone ready; "Chờ duyệt" starts when someone sends the dossier
+    // (requestProjectMilestoneApproval). A pending_review that was never sent (older data) goes back to open.
     const reopeningApprovedGate = !evaluation.satisfied && ["approved", "pending_review"].includes(milestone.gateStatus);
-    const nextStatus = evaluation.satisfied && milestone.gateStatus !== "approved"
-      ? "pending_review"
-      : reopeningApprovedGate
-        ? "open"
-        : milestone.gateStatus;
+    const unsentReview = milestone.gateStatus === "pending_review" && !milestone.approvalRequestedAt;
+    const nextStatus = reopeningApprovedGate || unsentReview ? "open" : milestone.gateStatus;
     const updated = await this.prisma.$transaction(async (tx) => {
       const result = await tx.projectMilestone.update({
         where: { id: milestone.id },
@@ -342,8 +341,18 @@ export class MilestoneGatesService {
           } : {})
         }
       });
+      // A reopened milestone closes the door it had opened, as a reviewer change does (updateProjectMilestoneGate).
+      if (reopeningApprovedGate && milestone.gateStatus === "approved") {
+        const next = await tx.projectMilestone.findFirst({
+          where: { projectId: project.id, workspaceId: principal.workspaceId, sortOrder: { gt: milestone.sortOrder } },
+          orderBy: { sortOrder: "asc" }
+        });
+        if (next && next.gateStatus === "open") await tx.projectMilestone.update({ where: { id: next.id }, data: { gateStatus: "locked" } });
+      }
       return result;
     });
+    // The old request no longer exists: its "Duyệt" buttons in the bell would only fail.
+    if (reopeningApprovedGate) await this.notifications?.resolveMilestoneNotifications(milestoneId, principal);
     return {
       ...updated,
       requiredDocumentCount,
@@ -360,7 +369,8 @@ export class MilestoneGatesService {
         reviewerMode: normalizeMilestoneReviewerMode(updated.reviewerMode ?? milestone.reviewerMode),
         reviewerUserId: updated.reviewerUserId ?? milestone.reviewerUserId,
         principalUserId: principal.subjectId,
-        principalRoleCodes: principal.roleCodes
+        principalRoleCodes: principal.roleCodes,
+        requestedByUserId: updated.approvalRequestedByUserId
       })
     };
   }
@@ -370,8 +380,11 @@ export class MilestoneGatesService {
     const project = await this.permissions.ensureProject(projectId, principal.workspaceId);
     const milestone = await this.prisma.projectMilestone.findFirst({ where: { id: milestoneId, projectId: project.id, workspaceId: principal.workspaceId } });
     if (!milestone) throw new NotFoundException("Project milestone not found");
-    if (milestone.gateStatus !== "pending_review") {
-      throw new BadRequestException("Milestone must be evaluated and pending review before approval");
+    if (milestone.gateStatus !== "pending_review" || !milestone.approvalRequestedAt) {
+      throw new BadRequestException("Hồ sơ milestone chưa được gửi duyệt. Bấm “Gửi hồ sơ chờ duyệt” trước.");
+    }
+    if (milestone.approvalRequestedByUserId === principal.subjectId) {
+      throw new ForbiddenException("Người gửi hồ sơ không tự duyệt hồ sơ của mình. Nhờ người duyệt khác.");
     }
 
     const reviewerMode = normalizeMilestoneReviewerMode(milestone.reviewerMode);
@@ -396,14 +409,17 @@ export class MilestoneGatesService {
 
     const approvedAt = new Date();
     const result = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.projectMilestone.update({
-        where: { id: milestone.id },
+      // Two reviewers clicking at once: only the first one approves.
+      const claimed = await tx.projectMilestone.updateMany({
+        where: { id: milestone.id, gateStatus: "pending_review" },
         data: {
           gateStatus: "approved",
           reviewerApprovedAt: approvedAt,
           reviewerApprovedByUserId: principal.subjectId
         }
       });
+      if (!claimed.count) throw new ConflictException("Milestone này vừa được người khác duyệt hoặc đã đổi trạng thái. Tải lại trang.");
+      const updated = await tx.projectMilestone.findUniqueOrThrow({ where: { id: milestone.id } });
       const next = await tx.projectMilestone.findFirst({
         where: { projectId: project.id, workspaceId: principal.workspaceId, sortOrder: { gt: milestone.sortOrder } },
         orderBy: { sortOrder: "asc" }

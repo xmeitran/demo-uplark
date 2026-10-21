@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { ADMIN_ROLE_CODES } from "@b2b-crm/contracts";
 import type {
   CapacitySummaryItem,
   CapacitySummaryResponse,
@@ -20,6 +21,8 @@ export class ResourceControlsService {
   ) {}
 
   async capacitySummary(query: any, principal: PrincipalContext): Promise<CapacitySummaryResponse> {
+    // Staff emails, skills and every client's allocations: internal only (it had no check at all).
+    if (principal.subjectType !== "internal_user") throw new ForbiddenException("Năng lực nhân sự chỉ dành cho nội bộ.");
     const periodStart = startOfDay(parseDate(query.periodStart) ?? startOfWeek(new Date()));
     const periodEnd = startOfDay(parseDate(query.periodEnd) ?? addDays(periodStart, 7));
 
@@ -112,6 +115,10 @@ export class ResourceControlsService {
   }
 
   async createAllocation(body: CreateResourceAllocationInput, principal: PrincipalContext) {
+    // Booking people (and approving an overbooking) is an Admin decision.
+    if (principal.subjectType !== "internal_user" || !principal.roleCodes.some((role) => (ADMIN_ROLE_CODES as readonly string[]).includes(role))) {
+      throw new ForbiddenException("Chỉ Admin mới được phân bổ nhân sự.");
+    }
     const accountId = nonEmptyString(body.accountId, "accountId");
     const userId = nonEmptyString(body.userId, "userId");
     const role = nonEmptyString(body.role, "role");

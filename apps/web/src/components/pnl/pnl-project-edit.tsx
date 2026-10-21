@@ -13,6 +13,8 @@ type Revenue = PnlProjectResponse["data"]["totals"]["revenue"];
 
 /** "67.200.000" as typed → 67200000; anything that is not a whole positive amount → null. */
 export function parseVndAmount(text: string): number | null {
+  // "67.200.000,5" is not a whole amount: refuse it instead of reading 672.000.005.
+  if (/[.,]\d{1,2}\s*(đ|₫)?\s*$/i.test(text.trim())) return null;
   const digits = text.replace(/[\s.,đ₫]/gi, "");
   if (!/^\d{1,15}$/.test(digits)) return null;
   const amount = Number(digits);
@@ -49,7 +51,7 @@ export function ProjectValueModal({ projectId, revenue, reload, onClose }: Reado
 }
 
 /** Inline editor used by the Doanh thu dự án line in the P&L item tree. */
-export function ProjectValueInlineForm({ projectId, revenue, reload, canEdit }: Readonly<{ projectId: string; revenue: Revenue; reload: () => Promise<void>; canEdit: boolean }>) {
+export function ProjectValueInlineForm({ projectId, revenue, reload }: Readonly<{ projectId: string; revenue: Revenue; reload: () => Promise<void> }>) {
   const save = useSave(reload);
   const current = revenue.projectValueAmount;
   const [amountText, setAmountText] = useState(current === null ? "" : formatMoneyInput(String(current)));
@@ -63,7 +65,8 @@ export function ProjectValueInlineForm({ projectId, revenue, reload, canEdit }: 
     await save.run(() => pnlRequest(`/api/pnl/projects/${encodeURIComponent(projectId)}/project-value`, { method: "PUT", body }));
   }
 
-  if (!canEdit || !revenue.canEdit) return <p className="text-xs text-muted-foreground">Bạn chỉ có quyền xem doanh thu dự án.</p>;
+  // revenue.canEdit is the API's own rule (PM / Founder/GM / Workspace Admin), the same one the create form and the project chip use.
+  if (!revenue.canEdit) return <p className="text-xs text-muted-foreground">Bạn chỉ có quyền xem doanh thu dự án.</p>;
   return (
     <form onSubmit={(event) => void submit(event)} className="grid gap-3 rounded-xl border border-primary/20 bg-background p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
       <Field label="Doanh thu dự án (đồng)" htmlFor="pnl-project-value-inline" hint={amount === null ? "Nhập số tiền VND, ví dụ 67.200.000." : `= ${formatExactVnd(amount)}`}>

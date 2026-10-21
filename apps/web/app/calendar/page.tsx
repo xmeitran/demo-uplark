@@ -460,8 +460,9 @@ export default function CalendarPage() {
   }, [allUsers]);
 
   const timeOptions = useMemo<TaskSelectOption[]>(() => {
-    return Array.from({ length: 28 }).map((_, i) => {
-      const h = Math.floor(i / 2) + 8;
+    // 07:00–19:00, the same window the API enforces for plans and actual hours.
+    return Array.from({ length: 25 }).map((_, i) => {
+      const h = Math.floor(i / 2) + 7;
       const m = i % 2 === 0 ? "00" : "30";
       const val = `${h.toString().padStart(2, "0")}:${m}`;
       return { value: val, label: val };
@@ -891,15 +892,13 @@ export default function CalendarPage() {
     setIsSubmittingEvent(true);
     try {
       const startD = new Date(vietnamDateTimeToIso(eventDate, startTime));
-      let endD = new Date(vietnamDateTimeToIso(eventDate, endTime));
+      const endD = new Date(vietnamDateTimeToIso(eventDate, endTime));
+      // A plan stays inside one day (no silent move of the end to tomorrow).
       if (endD <= startD) {
-        endD = new Date(endD.getTime() + 24 * 60 * 60 * 1000);
+        triggerToast("Giờ kết thúc phải sau giờ bắt đầu, trong cùng một ngày (07:00–19:00).", "danger");
+        return;
       }
-
-      let diffMins = Math.round((endD.getTime() - startD.getTime()) / (1000 * 60));
-      if (diffMins <= 0) {
-        diffMins = 60; // fallback
-      }
+      const diffMins = Math.round((endD.getTime() - startD.getTime()) / (1000 * 60));
 
       const response = await fetch(`/api/tasks/${encodeURIComponent(selectedTaskId)}/planning-blocks`, {
         method: "POST",
@@ -966,7 +965,8 @@ export default function CalendarPage() {
     return { top: `${geometry.top}px`, height: `${geometry.height}px`, pixelHeight: geometry.height };
   };
 
-  const activeBlocks = filteredBlocks;
+  // Cancelled plans are shown but never counted.
+  const activeBlocks = filteredBlocks.filter((block) => block.status !== "cancelled");
   const totalPlannedMinutes = activeBlocks.filter(b => b.kind === "planned").reduce((sum, block) => sum + block.minutes, 0);
   const totalActualMinutes = activeBlocks.filter(b => b.kind === "actual").reduce((sum, block) => sum + block.minutes, 0);
   const picCount = new Set(activeBlocks.map((block) => block.userId)).size;
@@ -1028,7 +1028,7 @@ export default function CalendarPage() {
                 {formattedMonthTitle}
               </h2>
               <p className="text-xs font-medium text-slate-400">
-                {hasCustomRange ? `${formatDay(customRange.from)} - ${formatDay(customRange.to)}` : `${formatVietnamDate(weekStart)} - ${formatVietnamDate(addDays(weekStart, 6))}`} · {activeBlocks.length} mốc · {formatHours(totalPlannedMinutes)} KH · {formatHours(totalActualMinutes)} TT · {picCount} PIC · {VIETNAM_TIME_ZONE_LABEL}
+                {hasCustomRange ? `${formatDay(customRange.from)} - ${formatDay(customRange.to)}` : `${formatVietnamDate(new Date(activeRange.startAt))} - ${formatVietnamDate(new Date(Date.parse(activeRange.endAt) - 1))}`} · {activeBlocks.length} mốc · {formatHours(totalPlannedMinutes)} KH · {formatHours(totalActualMinutes)} TT · {picCount} PIC · {VIETNAM_TIME_ZONE_LABEL}
               </p>
             </div>
 

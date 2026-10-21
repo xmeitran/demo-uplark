@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import type { CreateAccountContactInput, CreateAccountInput, PrincipalContext, UpdateAccountContactInput, UpdateAccountInput } from "@b2b-crm/contracts";
+import { ADMIN_ROLE_CODES, type CreateAccountContactInput, type CreateAccountInput, type PrincipalContext, type UpdateAccountContactInput, type UpdateAccountInput } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import {
   buildPaginationMeta,
@@ -63,7 +63,7 @@ export class AccountsService {
     ]);
 
     return {
-      data: accounts.map((account) => mapAccountSummary(account, canViewCost(principal))),
+      data: accounts.map((account) => mapAccountSummary(account, canViewCost(principal), principal.subjectType !== "portal_user")),
       meta: {
         principal,
         rowScope: "workspace",
@@ -83,7 +83,7 @@ export class AccountsService {
       throw new NotFoundException("Account not found");
     }
 
-    return mapAccountSummary(account, canViewCost(principal));
+    return mapAccountSummary(account, canViewCost(principal), principal.subjectType !== "portal_user");
   }
 
   async createAccount(input: CreateAccountInput, principal: PrincipalContext) {
@@ -108,7 +108,7 @@ export class AccountsService {
       include: accountInclude
     });
 
-    return mapAccountSummary(account, canViewCost(principal));
+    return mapAccountSummary(account, canViewCost(principal), principal.subjectType !== "portal_user");
   }
 
   private async generateAccountCode(workspaceId: string, name: string) {
@@ -119,7 +119,18 @@ export class AccountsService {
 
   async updateAccount(accountId: string, input: UpdateAccountInput, principal: PrincipalContext) {
     assertInternalAccountWriter(principal);
-    await this.ensureAccount(accountId, principal.workspaceId);
+    const current = await this.ensureAccount(accountId, principal.workspaceId);
+    const picUserId = optionalString(input.picUserId, "picUserId");
+    // The client's PIC sees every project of the client (project-visibility.ts): only the current PIC or an Admin may
+    // hand it over, and only to an active member of this workspace. Anyone could make themselves PIC before.
+    if (picUserId !== undefined && picUserId !== current.picUserId) {
+      if (current.picUserId !== principal.subjectId && !principal.roleCodes.some((role) => (ADMIN_ROLE_CODES as readonly string[]).includes(role))) {
+        throw new ForbiddenException("Chỉ PIC hiện tại của khách hàng hoặc Admin mới được đổi PIC.");
+      }
+      if (picUserId && !(await this.prisma.user.findFirst({ where: { id: picUserId, status: "ACTIVE", subjectType: "INTERNAL_USER", roleBindings: { some: { workspaceId: principal.workspaceId, endsAt: null } } }, select: { id: true } }))) {
+        throw new BadRequestException("PIC phải là thành viên đang hoạt động của workspace.");
+      }
+    }
 
     const account = await this.prisma.account.update({
       where: { id: accountId },
@@ -127,7 +138,7 @@ export class AccountsService {
         name: optionalString(input.name, "name") ?? undefined,
         stage: optionalString(input.stage, "stage") ?? undefined,
         ownerTeamId: optionalString(input.ownerTeamId, "ownerTeamId"),
-        picUserId: optionalString(input.picUserId, "picUserId"),
+        picUserId,
         // A viewer without the cost permission never received the figure: ignore what their form sends back.
         annualValue: canViewCost(principal) ? optionalNumber(input.annualValue, "annualValue") ?? undefined : undefined,
         commercialNote: optionalString(input.commercialNote, "commercialNote")
@@ -135,7 +146,7 @@ export class AccountsService {
       include: accountInclude
     });
 
-    return mapAccountSummary(account, canViewCost(principal));
+    return mapAccountSummary(account, canViewCost(principal), principal.subjectType !== "portal_user");
   }
 
   async deleteAccount(accountId: string, principal: PrincipalContext) {
@@ -154,10 +165,14 @@ export class AccountsService {
       throw new BadRequestException("Khách hàng đã có dự án, cơ hội hoặc task nên không xóa được. Hãy chuyển trạng thái khách hàng thay vì xóa.");
     }
 
+    // Contacts, contracts, invoices, tickets… are kept by the database (ON DELETE RESTRICT): say so instead of a 500.
     await this.prisma.$transaction([
       this.prisma.account.delete({ where: { id: account.id } }),
       this.prisma.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "account.deleted", resource: "account", resourceId: account.id, before: { code: account.code, name: account.name, stage: account.stage, picUserId: account.picUserId }, requestId: randomUUID() } })
-    ]);
+    ]).catch((error: unknown) => {
+      if ((error as { code?: string })?.code === "P2003") throw new BadRequestException("Khách hàng còn người liên hệ, hợp đồng, hóa đơn hoặc dữ liệu liên quan nên không xóa được. Hãy chuyển trạng thái khách hàng thay vì xóa.");
+      throw error;
+    });
     return { deleted: true, id: account.id };
   }
 

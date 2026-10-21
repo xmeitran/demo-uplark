@@ -139,7 +139,11 @@ export function StaffCostsPage() {
                 <button type="button" className={smallButton} disabled={save.busy} onClick={() => void save.run(() => downloadTemplate(period))}>Tải file mẫu</button>
                 <button type="button" className={smallButton} disabled={save.busy || !canEdit} onClick={() => fileInput.current?.click()}>Import Excel</button>
                 <input ref={fileInput} type="file" accept=".xlsx" className="sr-only" tabIndex={-1} aria-label="Chọn file Excel chi phí tháng" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) importFile(file); }} />
-                <button type="button" className={smallButton} disabled={save.busy || !canApprove || !data.counts.draft} onClick={() => { if (window.confirm(`Duyệt ${data.counts.draft} bản nháp của ${periodLabel(period).toLowerCase()}? Bản Đã duyệt được dùng để tính đơn giá giờ (cost rate) cho P&L.`)) approve(); }}>Duyệt bản nháp</button>
+                <button type="button" className={smallButton} disabled={save.busy || !canApprove || !data.counts.draft} onClick={() => {
+                  // Only the drafts this screen shows: a draft imported by someone else after it loaded is not approved unseen.
+                  const draftIds = (allRows ?? []).filter((row) => row.status === "DRAFT").map((row) => row.userId);
+                  if (draftIds.length && window.confirm(`Duyệt ${draftIds.length} bản nháp của ${periodLabel(period).toLowerCase()}? Bản Đã duyệt được dùng để tính đơn giá giờ (cost rate) cho P&L.`)) approve(draftIds);
+                }}>Duyệt bản nháp</button>
               </>
             }
           >
@@ -241,8 +245,8 @@ function StaffCostModal({ target, locked, reload, onClose }: Readonly<{ target: 
 
   async function submit() {
     const parsedRate = parseMoneyInput(hourlyCostRate);
-    if (parsedRate === undefined) {
-      await save.run(async () => { throw new Error("Vui lòng nhập đơn giá giờ."); });
+    if (parsedRate === undefined || parsedRate <= 0) {
+      await save.run(async () => { throw new Error("Nhập đơn giá giờ là số tiền lớn hơn 0 (đồng/giờ), không âm, không số lẻ."); });
       return;
     }
     const input: PnlStaffCostInput = { userId: target.userId, periodKey: target.periodKey, hourlyCostRate: parsedRate };

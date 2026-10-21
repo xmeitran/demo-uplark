@@ -45,7 +45,7 @@ function ProjectTotals({ data, moneyVisible, canEdit, onEditValue }: Readonly<{ 
           title={revenue.lockedReason ?? formatExactVnd(revenue.amount)}
           note={revenueNote}
           whyEmpty={hidden ?? (revenue.wholeProjectOnly ? WHOLE_ONLY : blocked ?? revenue.missingReason ?? "Chưa có số liệu")}
-          action={moneyVisible && canEdit && revenue.canEdit ? <button type="button" onClick={onEditValue} title="Nhập hoặc sửa doanh thu dự án" className="shrink-0 rounded-lg border border-border px-2 py-0.5 text-xs font-semibold text-foreground transition-colors hover:bg-muted">{revenue.projectValueAmount === null ? "Nhập" : "Sửa"}</button> : undefined}
+          action={moneyVisible && revenue.canEdit ? <button type="button" onClick={onEditValue} title="Nhập hoặc sửa doanh thu dự án" className="shrink-0 rounded-lg border border-border px-2 py-0.5 text-xs font-semibold text-foreground transition-colors hover:bg-muted">{revenue.projectValueAmount === null ? "Nhập" : "Sửa"}</button> : undefined}
       />
       <Tile
         icon={Receipt}
@@ -134,7 +134,7 @@ function ProjectStatement({ data, meta, projectId, onChanged, onEditValue, onOve
                   return (
                     <li key={reason.code}>
                       {plainReason(reason)}.{" "}
-                      {meta.canEdit && revenue.canEdit ? <button type="button" onClick={onEditValue} className="whitespace-nowrap font-semibold !text-amber-900 underline underline-offset-2 hover:!text-amber-700">{FIX_ACTION_LABELS.project_value} ›</button> : "PM (Admin) nhập ở ô Doanh thu."}
+                      {revenue.canEdit ? <button type="button" onClick={onEditValue} className="whitespace-nowrap font-semibold !text-amber-900 underline underline-offset-2 hover:!text-amber-700">{FIX_ACTION_LABELS.project_value} ›</button> : "PM (Admin) nhập ở ô Doanh thu."}
                     </li>
                   );
                 }

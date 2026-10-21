@@ -115,7 +115,7 @@ export function MonthlyTimesheet({
           hint={`${monthLabel}`}
         />
         <KpiCard
-          label="Giờ tiêu chuẩn (8h/ngày)"
+          label="Giờ tiêu chuẩn"
           value={formatHours(kpis.standardMinutes)}
           badge={`${kpis.workingDays} ngày công`}
           tone="neutral"

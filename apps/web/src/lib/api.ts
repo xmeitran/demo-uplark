@@ -127,7 +127,8 @@ export async function getAccountsWithAuth({
       headers.Authorization = `Bearer ${sessionToken}`;
     }
 
-    const response = await fetch(`${baseUrl}/accounts?principal=${encodeURIComponent(principal)}`, {
+    // ponytail: 100 is the API's page cap (default 50 silently hid the rest); page through if a workspace outgrows it.
+    const response = await fetch(`${baseUrl}/accounts?principal=${encodeURIComponent(principal)}&limit=100`, {
       cache: "no-store",
       headers
     });
@@ -337,7 +338,8 @@ export async function getProjectsWithAuth({
       headers.Authorization = `Bearer ${sessionToken}`;
     }
 
-    const response = await fetch(`${baseUrl}/projects?principal=${encodeURIComponent(principal)}`, {
+    // ponytail: 100 is the API's page cap (default 50 silently hid the rest); page through if a workspace outgrows it.
+    const response = await fetch(`${baseUrl}/projects?principal=${encodeURIComponent(principal)}&limit=100`, {
       cache: "no-store",
       headers
     });

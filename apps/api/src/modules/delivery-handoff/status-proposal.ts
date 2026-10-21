@@ -56,6 +56,9 @@ function positionStatus(facts: ProjectStatusFacts): { base: ProjectStatusCode | 
     const own = facts.milestones;
     if (!own?.total) return { base: null, baseBasis: "" };
     if (own.approved >= own.total) return { base: "completed", baseBasis: `Cả ${own.total} milestone của dự án đã được duyệt` };
+    // Hand-built milestones carry no Pilot / Onboard / acceptance stage: one the PM set by hand stays (no "Đang triển khai" nag).
+    const current = normalizeProjectStatus(facts.currentStatus);
+    if (current === "pilot" || current === "onboarding" || current === "in_review") return { base: current, baseBasis: "Trạng thái PM đặt cho dự án tự dựng milestone" };
     if (own.approved > 0) return { base: "active", baseBasis: `${own.approved}/${own.total} milestone đã được duyệt` };
     return own.started ? { base: "active", baseBasis: "Dự án đã bắt đầu thực hiện" } : { base: "planning", baseBasis: "Chưa milestone nào bắt đầu" };
   }
@@ -114,8 +117,10 @@ export interface StatusSyncPlan {
 }
 
 function mayAutoApply(current: ProjectStatusCode | null, to: ProjectStatusCode) {
-  // Never automatically step back from Đang bảo trì to Đã hoàn thành.
-  return current !== "closed" && current !== to && !(current === "maintenance" && to === "completed");
+  // Never automatically step back from Đang bảo trì to Đã hoàn thành. A Có rủi ro stays until a person lifts it: the way
+  // back is proposed, not forced (a hand-set Có rủi ro used to be undone in the same request). A hold both sides agreed on
+  // is already kept by computeProjectStatus; a customer-wait hold ends by itself.
+  return current !== "closed" && current !== to && !(current === "maintenance" && to === "completed") && current !== "at_risk";
 }
 
 /**
@@ -139,10 +144,16 @@ export function planStatusSync(currentStatus: unknown, computed: ComputedProject
   }
   if (computed.status === current) return plan;
   if (computed.automatic) {
-    if (mayAutoApply(current, computed.status)) auto(computed.status, computed.basis);
-    return plan;
+    if (mayAutoApply(current, computed.status)) {
+      auto(computed.status, computed.basis);
+      return plan;
+    }
+    // From Có rủi ro, Đã hoàn thành / Đang bảo trì is proposed below; nothing else steps back.
+    if (current !== "at_risk") return plan;
   }
-  if (lastDeclined && lastDeclined.proposedStatus === computed.status && lastDeclined.basis === computed.basis) return plan;
+  // Counts in the basis ("2 task Quá hạn" → "3 task Quá hạn") are not a new reason to ask again.
+  const sameReason = (a: string, b: string) => a.replace(/\d+/g, "#") === b.replace(/\d+/g, "#");
+  if (lastDeclined && lastDeclined.proposedStatus === computed.status && sameReason(lastDeclined.basis, computed.basis)) return plan;
   plan.propose = { proposedStatus: computed.status, basis: computed.basis, ...(computed.suggestedReason ? { suggestedReason: computed.suggestedReason } : {}) };
   return plan;
 }

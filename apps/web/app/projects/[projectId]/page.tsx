@@ -1070,7 +1070,9 @@ function toTaskStatus(status: string, derivedStatus?: string): TaskItem["status"
 
 /** Applies the parent/sub-task rule after the project task list has been loaded. */
 function deriveUiTaskStatus(task: TaskItem): TaskItem["status"] {
-  const children = task.subtasks ?? [];
+  if (task.status === "cancelled") return "cancelled";
+  // Same rule as the API (task-status.ts): a cancelled sub-task neither blocks nor completes its parent.
+  const children = (task.subtasks ?? []).filter((child) => child.status !== "cancelled");
   if (children.length === 0) return task.status;
   if (children.some((child) => child.status === "overdue")) return "overdue";
   if (children.every((child) => child.status === "done")) {
@@ -1817,7 +1819,8 @@ function ProjectStatusSlaBar({
   milestones,
   tasks,
   projectColor,
-  onStatusChanged
+  onStatusChanged,
+  canEditStatus = true
 }: {
   projectId: string;
   project: Project;
@@ -1825,6 +1828,8 @@ function ProjectStatusSlaBar({
   tasks: TaskItem[];
   projectColor: string;
   onStatusChanged: () => Promise<void>;
+  /** PIC / PM / Admin; others would only get a 403 from the save. */
+  canEditStatus?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -1844,12 +1849,8 @@ function ProjectStatusSlaBar({
   const deliveryPlanComplete = allMilestonesComplete(orderedMilestones);
   const completedTasks = tasks.filter((task) => task.status === "done").length;
   const progress = tasks.length > 0 ? Math.round((completedTasks / tasks.length) * 100) : project.progress;
-  const hasLiveRisk = tasks.some((task) => task.status === "overdue" || task.status === "blocked")
-    || orderedMilestones.some((milestone) => milestone.status === "at-risk");
-  const displayedProjectStatus = hasLiveRisk
-    && (project.status === PROJECT_STATUS_LABELS.completed || project.status === PROJECT_STATUS_LABELS.maintenance)
-    ? PROJECT_STATUS_LABELS.at_risk
-    : project.status;
+  // The saved status, as in its history: live risk on a finished project arrives as a "Hệ thống đề xuất" Có rủi ro the PIC confirms.
+  const displayedProjectStatus = project.status;
   const statusLabel = formatProjectStatusLabel(displayedProjectStatus);
   const statusUnknown = displayedProjectStatus === UNKNOWN_PROJECT_STATUS_LABEL;
   const slaPaused = ["on_hold", "at_risk", "closed"].includes(normalizeProjectStatus(displayedProjectStatus) ?? "");
@@ -1877,7 +1878,7 @@ function ProjectStatusSlaBar({
         <p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Đồng hồ SLA</p>
         <p className={`mt-1 text-xs font-semibold ${slaPaused ? "text-amber-700" : "text-emerald-700"}`}>{slaPaused ? "Đang tạm dừng" : "Đang chạy"} <span className="font-normal text-muted-foreground">· theo dõi đến {project.dueDate || "TBD"}</span></p>
       </div>
-      <button type="button" onClick={() => setEditing(true)} className="inline-flex min-h-9 items-center justify-center rounded-lg border border-border px-3 text-xs font-bold text-muted-foreground transition hover:bg-muted">Sửa trạng thái</button>
+      {canEditStatus ? <button type="button" onClick={() => setEditing(true)} className="inline-flex min-h-9 items-center justify-center rounded-lg border border-border px-3 text-xs font-bold text-muted-foreground transition hover:bg-muted">Sửa trạng thái</button> : null}
       {historyOpen ? (
         <div id="project-status-history" className="border-t border-border pt-3 md:col-span-4">
           {historyError ? <p role="alert" className="text-xs text-rose-600">{historyError}</p>
@@ -5217,6 +5218,13 @@ export default function ProjectDetailPage() {
     }
   }, [handoffBusy, milestones, projectId, reloadCanonicalHierarchy]);
 
+  // Approved from the bell (header.tsx): refresh the open project instead of leaving the old "Chờ duyệt" on screen.
+  useEffect(() => {
+    const onApproved = (event: Event) => { if ((event as CustomEvent<{ projectId?: string }>).detail?.projectId === projectId) void reloadCanonicalHierarchy(); };
+    window.addEventListener("crm:milestone-approved", onApproved);
+    return () => window.removeEventListener("crm:milestone-approved", onApproved);
+  }, [projectId, reloadCanonicalHierarchy]);
+
   const handleCustomerConfirmationChange = useCallback(async (confirmed: boolean) => {
     if (handoffBusy) return;
     const activeMilestone = selectActiveMilestone(milestones, isRealProjectMilestone);
@@ -6188,16 +6196,8 @@ export default function ProjectDetailPage() {
   const filteredProgress = filteredTasks.length > 0 ? Math.round((doneFiltered / filteredTasks.length) * 100) : 0;
   const openRiskCount = riskRegistry.filter((risk) => !["resolved", "closed", "done"].includes(risk.status.toLowerCase())).length;
   const overdueTaskCount = allTasks.filter((task) => task.status !== "done" && task.due && !["TBD", "Not set"].includes(task.due) && new Date(task.due).getTime() < Date.now()).length;
-  // A stale completed/maintenance label must not hide live overdue or blocked
-  // work on the detail screen. The API status proposal still remains the
-  // approval source of truth; this is the truthful live-work display guard.
-  const hasLiveRisk = overdueTaskCount > 0
-    || allTasks.some((task) => task.status === "blocked" || task.status === "overdue")
-    || milestones.some((milestone) => milestone.status === "at-risk");
-  const displayedProjectStatus = hasLiveRisk
-    && (project.status === PROJECT_STATUS_LABELS.completed || project.status === PROJECT_STATUS_LABELS.maintenance)
-    ? PROJECT_STATUS_LABELS.at_risk
-    : project.status;
+  // The saved status (see the status card): live risk is proposed by the server, not painted over it here.
+  const displayedProjectStatus = project.status;
   const sc = STATUS_CFG[displayedProjectStatus];
   const pc = PRIORITY_CFG[project.priority.toLowerCase() as keyof typeof PRIORITY_CFG];
   const pendingDocumentCount = documents.filter((doc) => doc.versions.length === 0).length;
@@ -6595,7 +6595,7 @@ export default function ProjectDetailPage() {
               {tab === "Overview" && (
                 <div className="space-y-5">
                   <ProjectWarningsBlock projectId={projectId} projectColor={project.color} teamMembers={teamMembers} onChanged={clearLiveProjectSnapshotCache} />
-                  <ProjectStatusSlaBar projectId={projectId} project={project} milestones={milestones} tasks={allTasks} projectColor={project.color} onStatusChanged={refreshProject} />
+                  <ProjectStatusSlaBar projectId={projectId} project={project} milestones={milestones} tasks={allTasks} projectColor={project.color} onStatusChanged={refreshProject} canEditStatus={projectPeople.permissions.canManage} />
                   <MilestoneOverviewBar
                     milestones={milestones}
                     milestoneGroups={milestoneGroups}

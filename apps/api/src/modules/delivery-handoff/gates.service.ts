@@ -23,7 +23,7 @@ import { getStoredParameter } from "../../shared/system-parameters";
 import { addWorkspaceWorkingDays, loadDayOffKeys } from "../../shared/working-days";
 import { allowedGateActions, blockingGateForStage, canGrantGateException, g7PendingCheck, gateDefinition, gateHooks, gateDocumentTicks, gatePassedAt, gateRequirements, isGatePassed, planGateAction, projectGatePosition, runGateHooks, stageBlockedMessage, type GateFacts } from "./gates";
 import { countsTowardProjectAtRisk } from "./issue-log";
-import { createIssueLogRecord, type IssueLogContext } from "./issue-log.service";
+import { createIssueLogRecord, notifyOwner, type IssueLogContext } from "./issue-log.service";
 import { normalizeProjectStatus } from "./project-status";
 import { loadStageExtensions, stageExtensionState } from "./stage-extension";
 import { customerWaitWorkingDays, stageSlaState } from "./stage-sla";
@@ -256,6 +256,7 @@ export async function actOnProjectGate(ctx: GateContext, project: { id: string; 
   const { principal } = ctx;
   const workspaceId = principal.workspaceId;
   let hookInput: { gate: any; project: any; plan?: any } | undefined;
+  let conditionIssue: any;
 
   await ctx.prisma.$transaction(async (tx: any) => {
     // Two people deciding at once must each see the other's result.
@@ -275,6 +276,7 @@ export async function actOnProjectGate(ctx: GateContext, project: { id: string; 
         milestoneId: gate.milestoneId, stageId: gate.stageId, extension: { actualImpact: String(input.reason ?? "").trim() }
       } as any, { tx });
       patch.conditionIssueId = issue.id;
+      conditionIssue = issue;
     }
     if (plan.customerWait === true) {
       // V-14: the customer's response deadline in working days; V-19: the stage clock stops now.
@@ -299,6 +301,8 @@ export async function actOnProjectGate(ctx: GateContext, project: { id: string; 
     hookInput = { gate: updated, project, plan };
   });
 
+  // Created inside the gate transaction, so its owner is told only now that it is committed.
+  if (conditionIssue) await notifyOwner(ctx, project, conditionIssue, "created");
   if (hookInput) {
     const { plan, gate } = hookInput;
     const hooks = [
@@ -392,7 +396,7 @@ export async function syncProjectStatus(ctx: StatusSyncContext, client: any, pro
   if (!project) return;
   const facts = await loadStatusFacts(client, ctx.workspaceId, project, now);
   const lastProposal = await client.projectStatusProposal.findFirst({ where: { projectId }, orderBy: { createdAt: "desc" } });
-  // ponytail: only the latest row is consulted, so a declined proposal stays quiet until its basis text changes.
+  // ponytail: only the latest row is consulted, so a declined proposal stays quiet until its reason changes (counts aside, planStatusSync).
   const plan = planStatusSync(project.status, computeProjectStatus(facts), lastProposal?.status === "declined" ? lastProposal : null);
 
   let current = normalizeProjectStatus(project.status) ?? project.status;

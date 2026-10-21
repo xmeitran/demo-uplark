@@ -201,6 +201,18 @@ describe("attendance (review 19/10: C4, C7)", () => {
     expect(summary).toMatchObject({ actualMinutes: 960, missingDays: [], daysLogged: 2 }); // the pr-2 day is not "missing"
   });
 
+  it("with a project filter, the hours card adds up only the people it picked; one person's extra hours never cover another's gap", () => {
+    const logs = [day("a-1", "p-1", "pr-1", "2026-09-01"), day("a-2", "p-1", "pr-1", "2026-09-02"), day("b-1", "p-2", "pr-2", "2026-09-01"), day("b-2", "p-2", "pr-2", "2026-09-02")];
+    const twoProjects: TimesheetDataset = { ...dataset, logs };
+    const filters = { ...base, projectId: "pr-1", projectIds: ["pr-1"] };
+    expect(attendanceLogs(twoProjects, filters).map((log) => log.personId)).toEqual(["p-1", "p-1"]);
+    const overAndUnder: TimesheetDataset = { ...dataset, logs: [day("a-1", "p-1", "pr-1", "2026-09-01"), day("a-2", "p-1", "pr-1", "2026-09-01"), day("a-3", "p-1", "pr-1", "2026-09-02")] };
+    const all = { ...base, personIds: ["p-1", "p-2"], personId: "multiple" };
+    const summaries = buildPersonMonthSummaries(overAndUnder, all, attendanceLogs(overAndUnder, all));
+    // p-1 logged 24h of 16h, p-2 nothing: 16h are missing, not 0.
+    expect(buildMonthlyKpis(overAndUnder, all, attendanceLogs(overAndUnder, all), summaries).missingMinutes).toBe(960);
+  });
+
   it("approved leave lowers the standard and a full day of leave is not a missing day", () => {
     const onLeave: TimesheetDataset = { ...dataset, logs: [day("l-x", "p-1", "pr-1", "2026-09-01")], leave: { "p-1|2026-09-02": 1, "p-2|2026-09-02": 0.5 } };
     const filters = { ...base, personIds: ["p-1", "p-2"], personId: "multiple" };

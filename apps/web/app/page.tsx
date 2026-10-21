@@ -61,6 +61,8 @@ interface DashboardProject {
   tasks: number;
   progress: number;
   deadline: string;
+  /** ISO due date, for sorting (the display text "Oct 21, 2026" does not sort). */
+  deadlineAt?: string;
   members: Member[];
   client: string;
   status: Project["status"];
@@ -159,10 +161,11 @@ function toDashboardProject(project: Project): DashboardProject {
     color: mappedColor.bg,
     textColor: mappedColor.text,
     initials: project.name.charAt(0).toUpperCase() || "P",
-    stages: parseStageCount(project.description),
+    stages: project.stageCount ?? parseStageCount(project.description),
     tasks: project.tasks.total,
     progress: project.progress,
     deadline: project.dueDate.replaceAll("/", "."),
+    deadlineAt: project.dueAt,
     members: project.members,
     client: project.client,
     status: project.status
@@ -564,7 +567,9 @@ export default function DashboardPage() {
   const visibleDashboardProjects = useMemo(() => {
     const list = [...projectsList];
     if (projectTab === "deadline") {
-      return list.sort((a, b) => a.deadline.localeCompare(b.deadline));
+      // Real dates, earliest first; no due date last.
+      const at = (value?: string) => value ? Date.parse(value) : Number.POSITIVE_INFINITY;
+      return list.sort((a, b) => at(a.deadlineAt) - at(b.deadlineAt));
     }
     return list;
   }, [projectTab, projectsList]);

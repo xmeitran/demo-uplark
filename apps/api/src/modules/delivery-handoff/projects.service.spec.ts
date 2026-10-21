@@ -1523,6 +1523,9 @@ describe("ProjectsService.updateTask", () => {
       stageId: data.stageId,
       stage: { stageKey: "implementation", activity: "New stage" }
     }));
+    // One sub-task, which has none of its own: it moves with its parent.
+    (prisma.projectTask as any).findMany = vi.fn().mockImplementation(async ({ where }: any) => where.parentTaskId?.in?.includes("task-1") ? [{ id: "sub-1" }] : []);
+    (prisma.projectTask as any).updateMany = vi.fn().mockResolvedValue({ count: 1 });
     const service = new ProjectsService(withMutationDependencies(prisma) as any);
     prisma.$queryRaw.mockResolvedValue([{ id: "prj-1", hierarchyOrderVersion: 0 }]);
 
@@ -1537,6 +1540,7 @@ describe("ProjectsService.updateTask", () => {
       data: expect.objectContaining({ projectId: "prj-1", stageId: "stage-2", title: "Moved task" }),
       include: expect.any(Object)
     });
+    expect((prisma.projectTask as any).updateMany).toHaveBeenCalledWith({ where: { id: { in: ["sub-1"] } }, data: { stageId: "stage-2" } });
   });
 
   it.each(["SALES_OWNER", "DELIVERY_LEAD", "FOUNDER_GM"])("rejects project relocation through PATCH for %s, preserving the dedicated hierarchy boundary", async (roleCode) => {

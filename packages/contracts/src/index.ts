@@ -1179,6 +1179,8 @@ export interface WorkspaceDayOffListResponse {
     year: number;
     timeZone: "Asia/Ho_Chi_Minh";
     canManage: boolean;
+    /** "Giờ chuẩn một ngày" (Admin › Tham số): the Timesheet's standard day, the same one the logging cap and P&L use. */
+    standardDayHours?: number;
   };
 }
 

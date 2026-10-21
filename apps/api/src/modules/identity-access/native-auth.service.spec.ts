@@ -71,12 +71,19 @@ describe("NativeAuthService rejection and lifecycle boundaries", () => {
     await expect(service.acceptSsoInvitation("token", { openId: "o", email: "recipient@example.com", displayName: "Recipient" }, { workspaceId: "foreign", tenantKey: "t" })).rejects.toMatchObject({ status: 401 });
   });
   it("rejects SSO identity linking to a different existing identity", async () => {
-    const { db, service } = setup({ tenantWorkspace: { findUnique: vi.fn().mockResolvedValue({ status: "active" }) }, portalIdentity: { findUnique: vi.fn().mockResolvedValue({ userId: "other-owner" }) } });
-    db.portalInvitation.findUnique.mockResolvedValue({ id: "i", invitedEmail: "recipient@example.com", status: "PENDING", expiresAt: new Date(Date.now() + 60000), workspaceId: "w", tenantKey: "t" });
+    const { db, service } = setup({ tenantWorkspace: { findUnique: vi.fn().mockResolvedValue({ status: "active" }) }, portalIdentity: { findUnique: vi.fn().mockResolvedValue({ userId: "other-owner" }) }, roleBinding: { findMany: vi.fn().mockResolvedValue([{ role: { code: "WORKSPACE_ADMIN" } }]) } });
+    db.portalInvitation.findUnique.mockResolvedValue({ id: "i", invitedEmail: "recipient@example.com", status: "PENDING", expiresAt: new Date(Date.now() + 60000), workspaceId: "w", tenantKey: "t", invitedByUserId: "inviter", roleCode: "WORKSPACE_USER" });
     db.portalInvitation.updateMany = vi.fn().mockResolvedValue({ count: 1 });
     db.user.findUnique.mockResolvedValue({ id: "recipient" });
     await expect(service.acceptSsoInvitation("token", { openId: "o", email: "recipient@example.com", displayName: "Recipient" }, { workspaceId: "w", tenantKey: "t" })).rejects.toMatchObject({ status: 409 });
     expect(db.user.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses an invitation whose inviter has since lost the right to invite", async () => {
+    const { db, service } = setup({ tenantWorkspace: { findUnique: vi.fn().mockResolvedValue({ status: "active" }) }, roleBinding: { findMany: vi.fn().mockResolvedValue([{ role: { code: "WORKSPACE_USER" } }]) } });
+    db.portalInvitation.findUnique.mockResolvedValue({ id: "i", invitedEmail: "recipient@example.com", status: "PENDING", expiresAt: new Date(Date.now() + 60000), workspaceId: "w", tenantKey: "t", invitedByUserId: "demoted", roleCode: "FOUNDER_GM" });
+    db.portalInvitation.updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    await expect(service.acceptSsoInvitation("token", { openId: "o", email: "recipient@example.com", displayName: "Recipient" }, { workspaceId: "w", tenantKey: "t" })).rejects.toMatchObject({ status: 403 });
   });
 
 });

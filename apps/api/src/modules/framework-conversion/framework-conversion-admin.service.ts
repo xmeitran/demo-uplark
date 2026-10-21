@@ -43,6 +43,8 @@ export class FrameworkConversionAdminService {
       actor: { userId: principal.subjectId, displayName: actor?.displayName ?? null },
       hooks: projectsServiceHooks(this.projects, principal)
     }), { timeout: 120_000, maxWait: 20_000 });
+    // V-17: the project now reads its position from G1–G8; the old milestone-based proposal is replaced.
+    await this.projects.recomputeStatusProposal(projectId, principal);
     return { applied: true, backupDirectory, plan };
   }
 }

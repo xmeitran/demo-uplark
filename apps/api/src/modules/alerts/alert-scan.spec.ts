@@ -290,4 +290,11 @@ describe("daily scan", () => {
     expect(db.warnings[0]).toMatchObject({ status: "closed", closeReason: "Loại cảnh báo đã bỏ khỏi danh mục" });
     expect((await scan(prisma, THU)).closed).toEqual({});
   });
+
+  it("closes the old \"Chưa tạo được nhóm Lark\" warnings (LARK-GROUP left with automatic Lark group creation)", async () => {
+    const { prisma, db } = fakePrisma({});
+    db.warnings.push({ id: "w-lark", workspaceId: "w", projectId: "p-1", typeCode: "LARK-GROUP", dedupeKey: "LARK-GROUP", status: "open", title: "Chưa tạo được nhóm Lark", openedAt: WED, events: [] });
+    expect((await scan(prisma, WED)).closed).toEqual({ "LARK-GROUP": 1 });
+    expect(db.warnings[0]).toMatchObject({ status: "closed", closeReason: "Loại cảnh báo đã bỏ khỏi danh mục" });
+  });
 });

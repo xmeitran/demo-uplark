@@ -182,8 +182,8 @@ export function overlapFraction(rangeStart: Date, rangeEnd: Date, itemStart: Dat
   return Math.max(0, Math.min(1, (end - start) / span));
 }
 
-/** Count HCM-local weekdays (Mon-Fri) in the half-open day range [from,to). */
-export function countHcmWeekdays(from: Date, to: Date): number {
+/** Count HCM-local weekdays (Mon-Fri) in the half-open day range [from,to), minus workspace days off ("YYYY-MM-DD"). */
+export function countHcmWeekdays(from: Date, to: Date, dayOffKeys?: ReadonlySet<string>): number {
   let count = 0;
   let cursor = startOfHcmDay(from);
   if (cursor.getTime() < from.getTime()) cursor = addHcmDays(cursor, 1);
@@ -191,7 +191,7 @@ export function countHcmWeekdays(from: Date, to: Date): number {
   while (cursor.getTime() < to.getTime() && guard < 40_000) {
     guard += 1;
     const weekday = toHcmParts(cursor).weekday;
-    if (weekday >= 1 && weekday <= 5) count += 1;
+    if (weekday >= 1 && weekday <= 5 && !dayOffKeys?.has(hcmDateKey(cursor))) count += 1;
     cursor = addHcmDays(cursor, 1);
   }
   return count;
@@ -218,8 +218,8 @@ export function prorateCapacityPeriod(input: {
   return (input.availableMinutes * overlapWeekdays) / periodWeekdays;
 }
 
-/** Weekly capacity scaled by HCM weekdays in range (used only for explicit profiles). */
-export function prorateWeeklyCapacity(weeklyMinutes: number, rangeFrom: Date, rangeTo: Date): number {
-  const weekdays = countHcmWeekdays(rangeFrom, rangeTo);
+/** Weekly capacity scaled by HCM working days in range (used only for explicit profiles); holidays are not capacity. */
+export function prorateWeeklyCapacity(weeklyMinutes: number, rangeFrom: Date, rangeTo: Date, dayOffKeys?: ReadonlySet<string>): number {
+  const weekdays = countHcmWeekdays(rangeFrom, rangeTo, dayOffKeys);
   return (weeklyMinutes * weekdays) / 5;
 }

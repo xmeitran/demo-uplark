@@ -165,3 +165,11 @@ describe("task status semantics", () => {
     });
   });
 });
+
+describe("cancelled sub-tasks (21/10/2026)", () => {
+  it("a cancelled sub-task neither blocks nor completes its parent", () => {
+    const now = new Date("2026-10-21T03:00:00.000Z");
+    expect(deriveTaskStatus({ rawStatus: "done", subtasks: [{ derivedStatus: "completed" }, { derivedStatus: "cancelled" }], now })).toBe("completed");
+    expect(deriveTaskStatus({ rawStatus: "todo", subtasks: [{ derivedStatus: "cancelled" }], now })).toBe("not_started");
+  });
+});

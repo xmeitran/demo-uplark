@@ -12,15 +12,18 @@ const moneyFormat = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 })
 export const inputClass = "h-10 w-full rounded-xl border border-input bg-background px-3 text-sm text-foreground focus:border-primary focus:outline-none disabled:cursor-not-allowed disabled:opacity-60";
 export const labelClass = "mb-1.5 block text-xs font-semibold text-muted-foreground";
 
-/** Digits typed by the user → number of đồng. Empty input is "no value", not zero. */
+/** Digits typed by the user → number of đồng. Empty input is "no value", not zero. A minus sign or a decimal tail
+ *  ("150.000,5") is refused rather than silently dropped (it used to save +150.000 and 1.500.005). */
 export function parseMoneyInput(value: string): number | undefined {
+  if (value.includes("-") || /[.,]\d{1,2}\s*(đ|₫)?\s*$/i.test(value.trim())) return undefined;
   const digits = value.replace(/[^\d]/g, "");
   return digits ? Number(digits) : undefined;
 }
 
 export function formatMoneyInput(value: string) {
   const amount = parseMoneyInput(value);
-  return amount === undefined ? "" : moneyFormat.format(amount);
+  // Unreadable text stays as typed (save stays disabled) instead of being wiped or rewritten into another number.
+  return amount === undefined ? (/\d/.test(value) ? value : "") : moneyFormat.format(amount);
 }
 
 export function currentPeriodKey() {
@@ -149,12 +152,18 @@ export function mapStaffCostSheet(matrix: ReadonlyArray<ReadonlyArray<unknown>>,
     if (!employeeCode && cells.every((cell) => cell.raw === null || cell.raw === undefined || cell.raw === "")) continue;
     const row: StaffCostImportRow = { employeeCode };
     for (const cell of cells) {
-      const value = typeof cell.raw === "number" ? cell.raw : typeof cell.raw === "string" ? parseDecimalInput(cell.raw) : undefined;
+      const value = typeof cell.raw === "number" ? cell.raw : typeof cell.raw === "string" ? parseImportAmount(cell.raw) : undefined;
       if (value !== undefined) row[cell.key] = value;
     }
     rows.push(row);
   }
   return { rows, missingColumns: [] };
+}
+
+/** A text cell of an amount in đồng: "150,000" (en-US grouping) and "150.000" both mean 150 000, never 150. */
+export function parseImportAmount(raw: string): number | undefined {
+  const text = raw.replace(/[\sđ₫]/gi, "");
+  return /^\d{1,3}([.,]\d{3})+$/.test(text) ? Number(text.replace(/[.,]/g, "")) : parseDecimalInput(text);
 }
 
 /** "Import 09/2026: 44 dòng hợp lệ vào Nháp · 1 dòng lỗi: mã NS-099 không tồn tại". */

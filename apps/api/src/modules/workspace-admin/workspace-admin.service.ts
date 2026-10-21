@@ -441,6 +441,11 @@ export class WorkspaceAdminService {
       ? await this.prisma.workspaceDayOff.findFirst({ where: { workspaceId: principal.workspaceId, isActive: true, date: dateOnly(localDate) }, select: { name: true } })
       : null;
     if (dayOff) throw new BadRequestException(`Ngày ${localDate} là ngày nghỉ (${dayOff.name}) nên không gửi nhắc.`);
+    // Same rule as the scheduled reminders: with "Chỉ gửi vào ngày làm việc" on, Saturday and Sunday are refused too.
+    const weekday = new Date(`${localDate}T00:00:00Z`).getUTCDay();
+    if ((weekday === 0 || weekday === 6) && (await this.getReminderPolicy(principal)).data.weekdaysOnly) {
+      throw new BadRequestException(`Ngày ${localDate} là cuối tuần nên không gửi nhắc (đang bật “Chỉ gửi vào ngày làm việc”).`);
+    }
 
     let scopedUserIds: string[] | undefined;
     if (input.userId) {
@@ -516,7 +521,7 @@ export class WorkspaceAdminService {
     ]);
 
     const at = (openId?: string) => openId ? `<at id=${openId}></at> ` : "";
-    const userFacts = users.map((user) => {
+    const allFacts = users.map((user) => {
       const operationalTasks = tasks.filter((task) => (task.assigneeUserId ?? task.ownerUserId) === user.id);
       const userPlan = planningBlocks.filter((block) => block.userId === user.id);
       const userActual = timeEntries.filter((entry) => entry.userId === user.id);
@@ -534,7 +539,14 @@ export class WorkspaceAdminService {
       const missingActualTasks = plannedTasks.filter((task) => !actualTaskIds.has(task.id));
       return { user, operationalTasks, userPlan, actualMinutes, planIssues, missingActualTasks };
     });
+    // Only people whose data is actually missing are reminded (the card's note says finished data is left out).
+    const userFacts = allFacts.filter((fact) => input.slot === "evening_actual"
+      ? fact.actualMinutes < dayMinutes || fact.missingActualTasks.length > 0
+      : !fact.userPlan.length || fact.planIssues.length > 0);
+    if (!userFacts.length) throw new BadRequestException(`Mọi người nhận đã đủ dữ liệu ngày ${localDate}, không cần nhắc.`);
     const directDeliveryRequested = Boolean(input.userId || input.teamId);
+    // "Nhắc lọc cho PM" is the PM's follow-up list: it is never sent privately to the staff member it lists.
+    if (directDeliveryRequested && input.slot === "pm_follow_up") throw new BadRequestException("“Nhắc lọc cho PM” gửi danh sách cho PM qua nhóm. Để nhắc riêng một người hoặc một team, chọn “Kế hoạch đầu ngày” hoặc “Giờ thực tế cuối ngày”.");
     const renderUserLines = ({ user, operationalTasks, userPlan, actualMinutes, planIssues, missingActualTasks }: typeof userFacts[number]) => {
       const projects = [...new Set(operationalTasks.map((task) => task.project?.name).filter((name): name is string => Boolean(name)))].join(", ") || "các Project đang active";
       // Legacy open_ids are scoped to the previous Lark app. Do not embed them
@@ -550,14 +562,13 @@ export class WorkspaceAdminService {
           `• Trạng thái: ${userPlan.length ? "Kế hoạch chưa đủ dữ liệu" : "Chưa có kế hoạch"}`,
           `• Task liên quan: ${taskNames}`,
           `• Nội dung còn thiếu: ${missingFields}`,
-          "• Lần nhắc tự động: 08:30"
         ];
       }
       if (input.slot === "evening_actual") {
         const missingMinutes = Math.max(0, dayMinutes - actualMinutes);
         return [
           `${mention}Chào **${user.displayName}**,`,
-          `Đến 17:00 ngày ${localDate}, dữ liệu giờ thực tế của bạn chưa đầy đủ.`,
+          `Ngày ${localDate}, dữ liệu giờ thực tế của bạn chưa đầy đủ.`,
           "Tổng giờ trong ngày:",
           `• Đã ghi nhận: ${reminderMinutesLabel(actualMinutes)}`,
           `• Giờ tiêu chuẩn: ${reminderMinutesLabel(dayMinutes)}`,
@@ -570,7 +581,7 @@ export class WorkspaceAdminService {
       }
       return [
         `${mention}Chào **${user.displayName}**,`,
-        `Đến 08:30 ngày ${localDate}, kế hoạch Task của các Project ${projects} hôm nay của bạn chưa đầy đủ.`,
+        `Ngày ${localDate}, kế hoạch Task của các Project ${projects} hôm nay của bạn chưa đầy đủ.`,
         "Nội dung cần bổ sung:",
         ...(userPlan.length ? (planIssues.length ? planIssues.slice(0, 5).map(({ task, missingFields }) => `• **${task.title}**${task.project?.name ? ` · ${task.project.name}` : ""} — còn thiếu: ${missingFields.join(", ")}.`) : ["• Kế hoạch đã đủ trường bắt buộc."]) : ["• Bạn chưa lập Task cho ngày hôm nay."]),
         "Vui lòng hoàn tất kế hoạch Task trước 09:00 hôm nay để bảo đảm dữ liệu kế hoạch được ghi nhận đầy đủ."

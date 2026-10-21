@@ -221,19 +221,22 @@ export function AnalyticsWorkbench() {
   const exportCsv = useCallback(() => {
     if (!breakdown) return;
     const metricKeys = visibleBreakdownColumns(breakdown, state.by).map((column) => column.key);
-    const headers = ["Mã", "Tên", "Phân loại", ...metricKeys.map((key) => ANALYTICS_METRIC_LABELS[key])];
+    // Durations go out in hours like the screen (they used to be raw minutes under an hour label).
+    const isMinutes = (key: string) => key.endsWith("Minutes");
+    const cell = (key: string, value: number | null | undefined) => value == null ? null : isMinutes(key) ? Math.round((value / 60) * 100) / 100 : value;
+    const headers = ["Mã", "Tên", "Phân loại", ...metricKeys.map((key) => `${ANALYTICS_METRIC_LABELS[key]}${isMinutes(key) ? " (giờ)" : ""}`)];
     const rows = [
       ...breakdown.rows.map((row) => [
         row.id,
         row.label,
         ANALYTICS_BREAKDOWN_LABELS[row.kind] ?? row.kind,
-        ...metricKeys.map((key) => row.metrics[key] ?? null)
+        ...metricKeys.map((key) => cell(key, row.metrics[key]))
       ]),
       [
         "tong-cong",
         "Tổng toàn bộ dữ liệu đã lọc",
         ANALYTICS_BREAKDOWN_LABELS[breakdown.meta.by] ?? breakdown.meta.by,
-        ...metricKeys.map((key) => breakdown.totals[key] ?? null)
+        ...metricKeys.map((key) => cell(key, breakdown.totals[key]))
       ]
     ];
     const inclusiveTo = exclusiveEndDateToInclusiveEndDate(range.to) ?? range.to;

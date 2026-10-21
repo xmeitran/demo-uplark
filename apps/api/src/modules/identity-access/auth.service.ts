@@ -377,14 +377,18 @@ export class AuthService {
       await lockWorkspaceAuth(tx, principal.workspaceId);
       await lockUserAuth(tx, userId);
       await this.requireCurrentAdmin(tx, principal.subjectId, principal.workspaceId);
-      // Reactivation restores only the most recently ended role, never all historical grants/roles.
+      // Reactivation restores the roles the member held when deactivated (deactivateUser ends them all at one instant):
+      // base role and cost roles together, never older historical grants. One arbitrary binding used to come back.
       const binding = await tx.roleBinding.findFirst({ where: { userId, workspaceId: principal.workspaceId, tenantKey: principal.tenantKey }, orderBy: { endsAt: "desc" }, include: { role: true } });
       if (!binding) throw new NotFoundException("Workspace member not found");
-      assertFounderRoleChangeAllowed(principal.roleCodes, false, isFounderBinding(binding));
+      const lastBindings = binding.endsAt
+        ? await tx.roleBinding.findMany({ where: { userId, workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, endsAt: binding.endsAt }, include: { role: true } })
+        : [binding];
+      assertFounderRoleChangeAllowed(principal.roleCodes, false, lastBindings.some(isFounderBinding));
       const active = await tx.roleBinding.findFirst({ where: { userId, workspaceId: principal.workspaceId, ...activeMembershipWhere() } });
       if (active) throw new ConflictException("Member is already active");
       await tx.user.update({ where: { id: userId }, data: { status: "ACTIVE" } });
-      await tx.roleBinding.update({ where: { id: binding.id }, data: { startsAt: new Date(), endsAt: null } });
+      await tx.roleBinding.updateMany({ where: { id: { in: lastBindings.map((row) => row.id) } }, data: { startsAt: new Date(), endsAt: null } });
       await tx.portalSession.updateMany({ where: { userId, workspaceId: principal.workspaceId, revokedAt: null }, data: { revokedAt: new Date() } });
       await tx.auditEvent.create({ data: { workspaceId: principal.workspaceId, actorUserId: principal.subjectId, action: "auth.member.reactivated", resource: "user", resourceId: userId, before: { status: "SUSPENDED" }, after: { status: "ACTIVE", restoredRoleBindingId: binding.id }, requestId: randomUUID() } });
     });
@@ -401,7 +405,8 @@ export class AuthService {
       await lockWorkspaceAuth(tx, principal.workspaceId);
       await lockUserAuth(tx, userId);
       await this.requireCurrentAdmin(tx, principal.subjectId, principal.workspaceId);
-      const user = await tx.user.findFirst({ where: { id: userId, roleBindings: { some: { workspaceId: principal.workspaceId, tenantKey: principal.tenantKey } } }, include: { roleBindings: { where: { workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, ...activeMembershipWhere() }, include: { role: true } } } });
+      // An active member only: granting cost roles to a deactivated member used to bring them back with P&L access.
+      const user = await tx.user.findFirst({ where: { id: userId, status: "ACTIVE", roleBindings: { some: { workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, ...activeMembershipWhere() } } }, include: { roleBindings: { where: { workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, ...activeMembershipWhere() }, include: { role: true } } } });
       if (!user) throw new NotFoundException("Workspace member not found");
       const isFounder = user.roleBindings.some((binding) => binding.role.code === "FOUNDER_GM");
       const next = isFounder ? COST_PERMISSION_CODES : requested;

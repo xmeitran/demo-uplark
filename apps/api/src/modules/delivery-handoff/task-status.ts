@@ -109,7 +109,8 @@ export function deriveTaskStatus(input: DeriveTaskStatusInput): DerivedTaskStatu
     0,
   );
   const subtasks = input.subtasks ?? [];
-  const children = subtasks.map(childStatus);
+  // A cancelled sub-task is out of the work: it neither blocks nor completes the parent (it used to block it forever).
+  const children = subtasks.map(childStatus).filter((status) => status !== "cancelled");
   const hasChildren = children.length > 0;
   const allChildrenCompleted = hasChildren && children.every((status) => status === "completed");
   const childIsOverdue = children.some((status) => status === "overdue");

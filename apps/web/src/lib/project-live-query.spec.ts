@@ -109,26 +109,18 @@ describe("live project query params", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("primes project detail snapshots from list results in the same user scope", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+  it("loads the detail from the API after a list fetch: list rows lack detail-only fields such as Doanh thu dự kiến", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(String(input).includes("?") ? {
       data: [cachedProjectSummary],
-      meta: {
-        pagination: {
-          limit: 10,
-          offset: 0,
-          returned: 1,
-          total: 1,
-          hasNextPage: false,
-          hasPreviousPage: false
-        }
-      }
-    }), { status: 200, headers: { "content-type": "application/json" } }));
+      meta: { pagination: { limit: 10, offset: 0, returned: 1, total: 1, hasNextPage: false, hasPreviousPage: false } }
+    } : cachedProjectSummary), { status: 200, headers: { "content-type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
 
     await fetchLiveProjects({ limit: 10, cacheScope: "usr-cache" });
     await expect(fetchLiveProjectById(cachedProjectSummary.id, { cacheScope: "usr-cache" }))
       .resolves.toEqual(expect.objectContaining({ id: cachedProjectSummary.id }));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain(`/api/projects/${encodeURIComponent(cachedProjectSummary.id)}`);
   });
 
   it("pushes search, status, and category filters into the API query before pagination", async () => {

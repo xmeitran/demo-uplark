@@ -128,7 +128,11 @@ export function peopleInScope(dataset: TimesheetDataset, filters: TimesheetFilte
 /** Logs that count for attendance (standard hours, missing days, day load): every log of the period and people in
  *  scope, whatever project / work-group / search filter narrows the other views. */
 export function attendanceLogs(dataset: TimesheetDataset, filters: TimesheetFilters): TimeLog[] {
-  return filterLogs(dataset, { ...filters, projectIds: [], workGroups: [], search: "" });
+  const logs = filterLogs(dataset, { ...filters, projectIds: [], workGroups: [], search: "" });
+  if (!selectedProjectIds(filters).length) return logs;
+  // With a project filter, only the people it picked: the card used to add up the whole workspace next to "3 nhân sự".
+  const people = new Set(peopleInScope(dataset, filters).map((person) => person.id));
+  return logs.filter((log) => people.has(log.personId));
 }
 
 /* ── Calendar / standard hours ──────────────────────────────────────────── */
@@ -257,7 +261,8 @@ export function buildMonthlyKpis(
     actualMinutes,
     standardMinutes,
     completionPercent: standardMinutes > 0 ? (scopedActualMinutes / standardMinutes) * 100 : 0,
-    missingMinutes: Math.max(0, standardMinutes - scopedActualMinutes),
+    // Each person's own shortfall: one person's extra hours never cover another's gap.
+    missingMinutes: sum(summaries.map((item) => Math.max(0, item.standardMinutes - item.actualMinutes))),
     projectCount: new Set(logs.map((log) => log.projectId)).size,
     peopleCount: summaries.length,
     workingDays: workingDays.length,

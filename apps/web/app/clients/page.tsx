@@ -119,9 +119,10 @@ function mapStatus(stage: string): ClientStatus {
   return "Prospect";
 }
 
+// Annual value is in đồng (the old thresholds were dollar-sized: 50.000.000 đ/năm counted as Enterprise).
 function mapTier(annualValue = 0): ClientTier {
-  if (annualValue >= 500000) return "Enterprise";
-  if (annualValue >= 120000) return "Growth";
+  if (annualValue >= 500_000_000) return "Enterprise";
+  if (annualValue >= 120_000_000) return "Growth";
   return "Starter";
 }
 

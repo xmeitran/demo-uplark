@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { ForbiddenException, Inject, Injectable } from "@nestjs/common";
 import type { PrincipalContext } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { buildPaginationMeta, normalizePagination, optionalString } from "../../shared/http/request-context";
@@ -14,14 +14,13 @@ export class OpportunitiesService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async listOpportunities(query: any, principal: PrincipalContext) {
+    // Deal amounts, probability and forecast are internal sales data, not for the customer's own portal.
+    if (principal.subjectType === "portal_user") throw new ForbiddenException("Cơ hội bán hàng chỉ dành cho nội bộ.");
     const pagination = normalizePagination({ limit: query.limit, offset: query.offset });
     const search = optionalString(query.q ?? query.search, "q");
     const stage = optionalString(query.stage, "stage");
     const where: any = {
       workspaceId: principal.workspaceId,
-      ...(principal.subjectType === "portal_user"
-        ? { accountId: { in: principal.customerAccountIds } }
-        : {}),
       ...(stage ? { stage } : {}),
       ...(search
         ? {
@@ -48,7 +47,7 @@ export class OpportunitiesService {
       data: rows.map((row) => mapOpportunitySummary(row)),
       meta: {
         principal,
-        rowScope: principal.subjectType === "portal_user" ? "customer_accounts" : "workspace",
+        rowScope: "workspace",
         hiddenFields: ["ownerEmail"],
         pagination: buildPaginationMeta({ ...pagination, total, returned: rows.length })
       }

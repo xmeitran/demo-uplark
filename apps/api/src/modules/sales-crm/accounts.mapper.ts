@@ -1,8 +1,9 @@
 import type { AccountSummary, ContactSummary } from "@b2b-crm/contracts";
 import { toIso, toMoneyNumber } from "../../shared/http/request-context";
 
-/** `canViewMoney`: the annual value is a money figure, shown only to the cost permission group (`canViewCost`). */
-export function mapAccountSummary(account: any, canViewMoney: boolean): AccountSummary {
+/** `canViewMoney`: the annual value is a money figure, shown only to the cost permission group (`canViewCost`).
+ *  `internal`: the commercial note is an internal remark, never sent to a portal (customer) user. */
+export function mapAccountSummary(account: any, canViewMoney: boolean, internal = true): AccountSummary {
   return {
     id: account.id,
     code: account.code,
@@ -15,7 +16,7 @@ export function mapAccountSummary(account: any, canViewMoney: boolean): AccountS
     picAvatarUrl: account.picUser?.avatarUrl ?? undefined,
     health: inferAccountHealth(account.stage),
     ...(canViewMoney ? { annualValue: toMoneyNumber(account.annualValue) } : {}),
-    commercialNote: account.commercialNote ?? undefined,
+    commercialNote: internal ? account.commercialNote ?? undefined : undefined,
     createdAt: toIso(account.createdAt) ?? undefined
   };
 }
@@ -35,10 +36,11 @@ export function mapContactSummary(contact: any): ContactSummary {
 }
 
 function inferAccountHealth(stage: string): AccountSummary["health"] {
-  if (["churn_risk", "blocked", "red"].includes(stage)) {
+  // A churned / lost client is not "Healthy"; a client that is not a customer yet is not green either.
+  if (["churn_risk", "churned", "lost", "blocked", "red"].includes(stage)) {
     return "red";
   }
-  if (["implementation", "expansion", "negotiation", "amber"].includes(stage)) {
+  if (["new", "prospect", "implementation", "expansion", "negotiation", "amber"].includes(stage)) {
     return "amber";
   }
 

@@ -132,6 +132,8 @@ describe("overlap proration", () => {
     // 2026-07-06 (Mon) .. 2026-07-13 (Mon, exclusive) = Mon-Fri = 5 weekdays
     expect(countHcmWeekdays(hcmDateToUtc(2026, 7, 6), hcmDateToUtc(2026, 7, 13))).toBe(5);
     expect(countHcmWeekdays(hcmDateToUtc(2026, 7, 11), hcmDateToUtc(2026, 7, 13))).toBe(0);
+    // A workspace day off is not a working day (capacity used to count it).
+    expect(countHcmWeekdays(hcmDateToUtc(2026, 7, 6), hcmDateToUtc(2026, 7, 13), new Set(["2026-07-07"]))).toBe(4);
   });
 
   it("prorates capacity periods by business-day overlap", () => {

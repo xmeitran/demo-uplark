@@ -1419,11 +1419,18 @@ export function AccountsWorkbench({
           }}
           onDeleteAccount={(accId) => {
             const accountToDelete = localAccounts.find(a => a.id === accId);
-            const newAccounts = localAccounts.filter(a => a.id !== accId);
-            setLocalAccounts(newAccounts);
-            localStorage.setItem("lark_crm_custom_accounts_list", JSON.stringify(newAccounts));
-            setSelectedAccountId(null);
-            triggerToast(`Đã xóa khách hàng ${accountToDelete?.name || accId}.`, "danger");
+            // Deleted on the server first (it refuses a client that still has projects, contacts…); the list only follows.
+            void (async () => {
+              try {
+                const response = await fetch(`/api/accounts/${encodeURIComponent(accId)}`, { method: "DELETE", credentials: "same-origin" });
+                if (!response.ok) throw await readApiError(response);
+                setLocalAccounts(localAccounts.filter(a => a.id !== accId));
+                setSelectedAccountId(null);
+                triggerToast(`Đã xóa khách hàng ${accountToDelete?.name || accId}.`, "danger");
+              } catch (err) {
+                triggerToast(err instanceof Error ? err.message : "Không thể xóa khách hàng.", "danger");
+              }
+            })();
           }}
           onAddContact={async (newContact) => {
             const response = await fetch(`/api/accounts/${encodeURIComponent(selectedAccount.id)}/contacts`, {

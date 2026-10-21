@@ -57,6 +57,8 @@ export interface Project {
   color: string;
   tags: string[];
   category: string;
+  /** Number of stages (the API's count; the dashboard used to parse it out of the description). */
+  stageCount?: number;
 }
 
 export const PROJECTS: Project[] = [

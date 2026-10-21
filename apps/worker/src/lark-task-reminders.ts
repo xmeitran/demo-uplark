@@ -437,7 +437,14 @@ async function sendOnce(redis: RedisLike, key: string, send: () => Promise<void>
   }
 }
 
-export async function runTaskReminderSlot(options: {
+/** "Giờ chuẩn một ngày" (Admin › Tham số), the same cap logging uses; LARK_TASK_REMINDER_TARGET_MINUTES is only the fallback. */
+export async function workspaceTargetMinutes(prisma: PrismaClient, config: TaskReminderConfig): Promise<number> {
+  const row = await (prisma as any).systemParameter?.findFirst?.({ where: { workspaceId: config.workspaceId, key: "standardDayHours" }, orderBy: { createdAt: "desc" }, select: { value: true } });
+  const hours = Number(row?.value);
+  return Number.isFinite(hours) && hours > 0 && hours <= 24 ? Math.round(hours * 60) : config.targetMinutes;
+}
+
+export async function runTaskReminderSlot(input: {
   prisma: PrismaClient;
   redis: RedisLike;
   config: TaskReminderConfig;
@@ -445,6 +452,7 @@ export async function runTaskReminderSlot(options: {
   weekdaysOnly?: boolean;
   now?: Date;
 }) {
+  const options = { ...input, config: { ...input.config, targetMinutes: await workspaceTargetMinutes(input.prisma, input.config) } };
   const now = options.now ?? new Date();
   const window = getVietnamWorkdayWindow(now);
   if (!(await isWorkspaceWorkday(options.prisma, options.config, window, options.weekdaysOnly ?? true))) return { skipped: "non_working_day", sent: 0 };
@@ -458,7 +466,9 @@ export async function runTaskReminderSlot(options: {
   if (options.slot === "pm_follow_up") {
     const issues = findPlanIssues(facts, window);
     if (issues.length === 0 || options.config.pmOpenIds.length === 0) return { issues: issues.length, sent: 0 };
-    for (const openId of options.config.pmOpenIds) {
+    // Without private messages every send lands in the same group webhook (the card already tags every PM): send it once.
+    const recipients = options.config.directMessage ? options.config.pmOpenIds : options.config.pmOpenIds.slice(0, 1);
+    for (const openId of recipients) {
       if (await sendOnce(options.redis, `${prefix}:pm:${openId}`, () => send(options, pmFollowUpCard(options.config, issues, window.localDate), openId))) sent += 1;
     }
     await options.redis.set(`${prefix}:complete`, "1", "EX", 8 * 24 * 60 * 60);
