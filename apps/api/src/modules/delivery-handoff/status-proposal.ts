@@ -62,7 +62,8 @@ function positionStatus(facts: ProjectStatusFacts): { base: ProjectStatusCode | 
     // Hand-built milestones carry no Pilot / Onboard / acceptance stage: one the PM set by hand stays (no "Đang triển khai" nag).
     const current = normalizeProjectStatus(facts.currentStatus);
     if (current === "pilot" || current === "onboarding" || current === "in_review") return { base: current, baseBasis: "Trạng thái PM đặt cho dự án tự dựng milestone" };
-    if (own.approved > 0) return { base: "active", baseBasis: `${own.approved}/${own.total} milestone đã được duyệt` };
+    // No count in the basis: it becomes the status reason, which would go stale with the next approval.
+    if (own.approved > 0) return { base: "active", baseBasis: "Còn milestone chưa được duyệt" };
     return own.started ? { base: "active", baseBasis: "Dự án đã bắt đầu thực hiện" } : { base: "planning", baseBasis: "Chưa milestone nào bắt đầu" };
   }
   const status = (code: string) => facts.gates?.find((gate) => gate.code === code)?.status;
@@ -145,10 +146,11 @@ export function planStatusSync(currentStatus: unknown, computed: ComputedProject
     auto(computed.base, `Không còn đủ điều kiện ${statusProposalLabel(current)} — ${computed.baseBasis}`);
   }
 
-  // G7 / G8 only auto-advance when no higher-precedence risk or hold is active.
-  // Otherwise an overdue/open task must remain visible as `Có rủi ro`; marking
-  // the project completed first makes the UI contradict its task board.
-  if (computed.status === computed.base && computed.base && AUTOMATIC_PROJECT_STATUSES.includes(computed.base) && mayAutoApply(current, computed.base)) {
+  // Chốt 23/10: the position decides Đã hoàn thành / Đang bảo trì (every milestone approved, G7 / G8) even while an issue
+  // or overdue task is open: the risk stays a Có rủi ro proposal the PM confirms or declines, so a decline no longer
+  // leaves the project on a stale earlier status. A hold both sides agreed on still wins.
+  const agreedHold = current === "on_hold" && computed.status === "on_hold";
+  if (computed.base && AUTOMATIC_PROJECT_STATUSES.includes(computed.base) && !agreedHold && mayAutoApply(current, computed.base)) {
     auto(computed.base, computed.baseBasis);
   }
   if (computed.status === current) return plan;

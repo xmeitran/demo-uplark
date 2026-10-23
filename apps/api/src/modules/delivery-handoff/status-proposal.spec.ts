@@ -141,14 +141,15 @@ describe("proposal or automatic transition (V-17, V-19)", () => {
     expect(plan).toEqual({ apply: [{ to: "maintenance", reason: "Hệ thống tự chuyển: G8 đã duyệt, đã bàn giao CS" }] });
   });
 
-  it("keeps Có rủi ro as the visible outcome when an issue is open at G7", () => {
+  // Chốt 23/10: the position decides Đã hoàn thành; a risk stays a proposal the PM confirms or declines.
+  it("completes at G7 even with an open issue, and proposes Có rủi ro on top", () => {
     const computed = computeProjectStatus(facts({ currentStatus: "in_review", gates: gates(approved("G1", "G2", "G3", "G4", "G5", "G6", "G7")), openIssueCodes: ["ISS-004"] }));
     const plan = planStatusSync("in_review", computed);
-    expect(plan.apply).toEqual([]);
+    expect(plan.apply.map((step) => step.to)).toEqual(["completed"]);
     expect(plan.propose).toMatchObject({ proposedStatus: "at_risk" });
   });
 
-  it("does not auto-complete a project while overdue work keeps it at risk", () => {
+  it("completes at G7 with overdue work too; the overdue tasks are a Có rủi ro proposal", () => {
     const computed = computeProjectStatus(facts({
       currentStatus: "in_review",
       gates: gates(approved("G1", "G2", "G3", "G4", "G5", "G6", "G7")),
@@ -157,7 +158,7 @@ describe("proposal or automatic transition (V-17, V-19)", () => {
 
     expect(computed).toMatchObject({ status: "at_risk", base: "completed" });
     expect(planStatusSync("in_review", computed)).toEqual({
-      apply: [],
+      apply: [{ to: "completed", reason: "Hệ thống tự chuyển: G7 đã duyệt" }],
       propose: { proposedStatus: "at_risk", basis: "3 task Quá hạn" }
     });
   });
@@ -211,8 +212,18 @@ describe("project without G1–G8 (hand-built milestones)", () => {
   it("takes back its own Đã hoàn thành once a milestone is added or reopened, then proposes Có rủi ro for an open issue", () => {
     const computed = computeProjectStatus(facts({ gates: null, milestones: { total: 3, approved: 1, started: true }, currentStatus: "completed", openIssueCodes: ["ISS-001"] }));
     const plan = planStatusSync("completed", computed, null, true);
-    expect(plan.apply).toEqual([{ to: "active", reason: "Hệ thống tự chuyển: Không còn đủ điều kiện Đã hoàn thành — 1/3 milestone đã được duyệt" }]);
+    expect(plan.apply).toEqual([{ to: "active", reason: "Hệ thống tự chuyển: Không còn đủ điều kiện Đã hoàn thành — Còn milestone chưa được duyệt" }]);
     expect(plan.propose?.proposedStatus).toBe("at_risk");
+  });
+
+  // 23/10/2026: all three approved with ISS-001 open stayed "Đang triển khai"; a declined risk would have kept it there.
+  it("completes once every milestone is approved despite an open issue; a declined Có rủi ro leaves it Đã hoàn thành", () => {
+    const computed = computeProjectStatus(facts({ gates: null, milestones: { total: 3, approved: 3, started: true }, currentStatus: "active", openIssueCodes: ["ISS-001"] }));
+    const plan = planStatusSync("active", computed);
+    expect(plan.apply).toEqual([{ to: "completed", reason: "Hệ thống tự chuyển: Cả 3 milestone của dự án đã được duyệt" }]);
+    expect(plan.propose?.proposedStatus).toBe("at_risk");
+    const afterDecline = planStatusSync("completed", computeProjectStatus(facts({ gates: null, milestones: { total: 3, approved: 3, started: true }, currentStatus: "completed", openIssueCodes: ["ISS-001"] })), { proposedStatus: "at_risk", basis: computed!.basis }, true);
+    expect(afterDecline).toEqual({ apply: [] });
   });
 
   it("leaves a Đã hoàn thành a person set by hand", () => {
