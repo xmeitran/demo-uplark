@@ -40,6 +40,9 @@ export interface ComputedProjectStatus {
 
 /** "Hệ thống tự chuyển" in table 5.1. */
 export const AUTOMATIC_PROJECT_STATUSES: readonly ProjectStatusCode[] = ["completed", "maintenance"];
+/** Reason prefixes of a status the system's rule set: applied by itself, or proposed and confirmed by a person. */
+export const AUTOMATIC_REASON = "Hệ thống tự chuyển";
+export const CONFIRMED_SYSTEM_REASON = "Xác nhận đề xuất hệ thống";
 /** Reason prefix of a Tạm dừng caused by a customer wait; planStatusSync and the service recognise the hold by it. */
 export const CUSTOMER_WAIT_REASON = "Chờ khách xác nhận tại";
 /** Reason prefix of a Tạm dừng proposed for a customer-side Blocker (V-26); the hold ends with the Blocker, like a customer wait. */
@@ -125,16 +128,22 @@ function mayAutoApply(current: ProjectStatusCode | null, to: ProjectStatusCode) 
 
 /**
  * `lastDeclined` is the most recent declined proposal: the same status on the same basis is not proposed again
- * until the basis changes.
+ * until the basis changes. `currentSetBySystem`: the current status came from an automatic transition, not a person.
  */
-export function planStatusSync(currentStatus: unknown, computed: ComputedProjectStatus | null, lastDeclined?: { proposedStatus: string; basis: string } | null): StatusSyncPlan {
+export function planStatusSync(currentStatus: unknown, computed: ComputedProjectStatus | null, lastDeclined?: { proposedStatus: string; basis: string } | null, currentSetBySystem = false): StatusSyncPlan {
   const plan: StatusSyncPlan = { apply: [] };
   let current = normalizeProjectStatus(currentStatus);
   if (!computed || current === "closed") return plan;
   const auto = (to: ProjectStatusCode, basis: string) => {
-    plan.apply.push({ to, reason: `Hệ thống tự chuyển: ${basis}` });
+    plan.apply.push({ to, reason: `${AUTOMATIC_REASON}: ${basis}` });
     current = to;
   };
+
+  // The rule behind an automatic Đã hoàn thành / Đang bảo trì no longer holds (a milestone was added or reopened):
+  // the system takes back its own transition. One a person set stays theirs.
+  if (currentSetBySystem && current && AUTOMATIC_PROJECT_STATUSES.includes(current) && computed.base && !AUTOMATIC_PROJECT_STATUSES.includes(computed.base)) {
+    auto(computed.base, `Không còn đủ điều kiện ${statusProposalLabel(current)} — ${computed.baseBasis}`);
+  }
 
   // G7 / G8 only auto-advance when no higher-precedence risk or hold is active.
   // Otherwise an overdue/open task must remain visible as `Có rủi ro`; marking

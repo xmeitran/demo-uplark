@@ -41,12 +41,15 @@ export function selectActiveMilestone<T extends MilestoneGateSelection>(
   return undefined;
 }
 
+/** Nghiệm thu: approved, or done on a legacy milestone without gate metadata. */
+export function isMilestoneAccepted(milestone: MilestoneGateSelection): boolean {
+  return milestone.gateStatus === "approved" || (!milestone.gateStatus && milestone.status === "done");
+}
+
 export function allMilestonesComplete<T extends MilestoneGateSelection>(
   milestones: readonly T[],
   isSelectable: (milestone: T) => boolean = () => true
 ): boolean {
   const selectable = milestones.filter(isSelectable);
-  return selectable.length > 0 && selectable.every((milestone) =>
-    milestone.gateStatus === "approved" || (!milestone.gateStatus && milestone.status === "done")
-  );
+  return selectable.length > 0 && selectable.every(isMilestoneAccepted);
 }

@@ -27,7 +27,7 @@ import { createIssueLogRecord, notifyOwner, type IssueLogContext } from "./issue
 import { normalizeProjectStatus } from "./project-status";
 import { loadStageExtensions, stageExtensionState } from "./stage-extension";
 import { customerWaitWorkingDays, stageSlaState } from "./stage-sla";
-import { CUSTOMER_BLOCKER_REASON, CUSTOMER_WAIT_REASON, isProgressBlockingCustomerBlocker, canDecideStatusProposal, computeProjectStatus, planStatusSync, statusProposalLabel, type ProjectStatusFacts } from "./status-proposal";
+import { AUTOMATIC_PROJECT_STATUSES, AUTOMATIC_REASON, CONFIRMED_SYSTEM_REASON, CUSTOMER_BLOCKER_REASON, CUSTOMER_WAIT_REASON, isProgressBlockingCustomerBlocker, canDecideStatusProposal, computeProjectStatus, planStatusSync, statusProposalLabel, type ProjectStatusFacts } from "./status-proposal";
 import { isCustomerProjectType } from "./task-classification";
 import { NON_ACTUAL_TIME_ENTRY_STATUSES } from "./member-participation";
 import { CLOSED_WORK_STATUSES } from "./task-status";
@@ -397,7 +397,12 @@ export async function syncProjectStatus(ctx: StatusSyncContext, client: any, pro
   const facts = await loadStatusFacts(client, ctx.workspaceId, project, now);
   const lastProposal = await client.projectStatusProposal.findFirst({ where: { projectId }, orderBy: { createdAt: "desc" } });
   // ponytail: only the latest row is consulted, so a declined proposal stays quiet until its reason changes (counts aside, planStatusSync).
-  const plan = planStatusSync(project.status, computeProjectStatus(facts), lastProposal?.status === "declined" ? lastProposal : null);
+  const currentCode = normalizeProjectStatus(project.status);
+  const lastEntry = currentCode && (AUTOMATIC_PROJECT_STATUSES as readonly string[]).includes(currentCode) && hasModel(client, "projectStatusHistory", "findFirst")
+    ? await client.projectStatusHistory.findFirst({ where: { projectId, toStatus: currentCode }, orderBy: { changedAt: "desc" }, select: { reason: true } })
+    : null;
+  const setBySystem = [AUTOMATIC_REASON, CONFIRMED_SYSTEM_REASON].some((prefix) => String(lastEntry?.reason ?? "").startsWith(prefix));
+  const plan = planStatusSync(project.status, computeProjectStatus(facts), lastProposal?.status === "declined" ? lastProposal : null, setBySystem);
 
   let current = normalizeProjectStatus(project.status) ?? project.status;
   for (const step of plan.apply) {
@@ -467,7 +472,9 @@ export async function decideStatusProposal(
   if (input?.decision !== "confirm") throw new BadRequestException("decision phải là confirm hoặc decline.");
   await claim({ status: "confirmed", decidedAt: now, decidedByUserId: ctx.principal.subjectId });
   try {
-    await applyStatus(proposal.proposedStatus, reason || proposal.suggestedReason || undefined);
+    // A confirmed Đã hoàn thành / Đang bảo trì still rests on the system's rule, so the sync may take it back later (CONFIRMED_SYSTEM_REASON).
+    const systemOwned = (AUTOMATIC_PROJECT_STATUSES as readonly string[]).includes(proposal.proposedStatus);
+    await applyStatus(proposal.proposedStatus, systemOwned ? `${CONFIRMED_SYSTEM_REASON}: ${proposal.basis}${reason ? ` — ${reason}` : ""}` : reason || proposal.suggestedReason || undefined);
   } catch (error) {
     // The status change was refused: the proposal is still waiting for a decision.
     await ctx.prisma.projectStatusProposal.update({ where: { id: proposal.id }, data: { status: "pending", decidedAt: null, decidedByUserId: null } });

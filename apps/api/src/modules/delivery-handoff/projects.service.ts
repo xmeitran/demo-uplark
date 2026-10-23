@@ -2125,7 +2125,7 @@ export class ProjectsService {
     if (hasInputKey(input, "sortOrder")) {
       throw new BadRequestException("sortOrder can only be changed through the hierarchy order endpoint");
     }
-    return this.prisma.$transaction(async (tx) => {
+    const summary = await this.prisma.$transaction(async (tx) => {
       await this.permissions.lockProjectMembers(tx, principal.workspaceId, projectId);
       await this.permissions.assertProjectManager(tx, projectId, principal);
     const project = await this.permissions.ensureProject(projectId, principal.workspaceId);
@@ -2209,6 +2209,9 @@ export class ProjectsService {
     await this.syncMissingOwnerWarning(tx, principal, { projectId: project.id, kind: "stage", id: stage.id, label: stage.activity, hasOwner: Boolean(stage.ownerUserId), isOpen: !CLOSED_WORK_STATUSES.includes(stage.status), stageId: stage.id, milestoneId: stage.milestoneId });
     return mapProjectStageSummary(stage);
     }, { isolationLevel: "Serializable" });
+    // V-17: a stage that adds a milestone to a completed hand-built plan takes the plan back out of Đã hoàn thành.
+    await this.recomputeStatusProposal(projectId, principal);
+    return summary;
   }
 
   /** 7.7: "PM và Dx Director đổi PIC" (Founder/GM and Workspace Admin hold every Admin right). */
@@ -2227,7 +2230,7 @@ export class ProjectsService {
     if (hasInputKey(input, "sortOrder")) {
       throw new BadRequestException("sortOrder can only be changed through the hierarchy order endpoint");
     }
-    return this.prisma.$transaction(async (tx) => {
+    const summary = await this.prisma.$transaction(async (tx) => {
       await this.permissions.lockProjectMembers(tx, principal.workspaceId, projectId);
       await this.permissions.assertProjectManager(tx, projectId, principal);
     const existingStage = await tx.projectStage.findFirst({ where: { id: stageId, projectId, workspaceId: principal.workspaceId } });
@@ -2445,6 +2448,9 @@ export class ProjectsService {
       await this.syncMissingOwnerWarning(tx, principal, { projectId, kind: "stage", id: stageId, label: stage.activity, hasOwner: Boolean(stage.ownerUserId), isOpen: !CLOSED_WORK_STATUSES.includes(stage.status), stageId, milestoneId: stage.milestoneId });
       return mapProjectStageSummary(stage);
     }, { isolationLevel: "Serializable" });
+    // V-17: a new milestone (or a stage reopened) changes the project's position: Đã hoàn thành may no longer hold.
+    await this.recomputeStatusProposal(projectId, principal);
+    return summary;
   }
 
   async deleteStage(projectId: string, stageId: string, principal: PrincipalContext, options: DeleteStageOptions = {}) {

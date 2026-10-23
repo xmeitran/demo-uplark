@@ -206,6 +206,19 @@ describe("project without G1–G8 (hand-built milestones)", () => {
     expect(computeProjectStatus(own({ total: 0, approved: 0, started: false }))).toBeNull();
     expect(planStatusSync("planning", computeProjectStatus(own({ total: 2, approved: 0, started: false })))).toEqual({ apply: [] });
   });
+
+  // 23/10/2026: "Cả 2 milestone đã được duyệt" stayed Đã hoàn thành after a third milestone was added and the first reopened.
+  it("takes back its own Đã hoàn thành once a milestone is added or reopened, then proposes Có rủi ro for an open issue", () => {
+    const computed = computeProjectStatus(facts({ gates: null, milestones: { total: 3, approved: 1, started: true }, currentStatus: "completed", openIssueCodes: ["ISS-001"] }));
+    const plan = planStatusSync("completed", computed, null, true);
+    expect(plan.apply).toEqual([{ to: "active", reason: "Hệ thống tự chuyển: Không còn đủ điều kiện Đã hoàn thành — 1/3 milestone đã được duyệt" }]);
+    expect(plan.propose?.proposedStatus).toBe("at_risk");
+  });
+
+  it("leaves a Đã hoàn thành a person set by hand", () => {
+    const computed = computeProjectStatus(own({ total: 3, approved: 1, started: true }, "completed"));
+    expect(planStatusSync("completed", computed, null, false).apply).toEqual([]);
+  });
 });
 
 describe("hand edits and declines (21/10/2026)", () => {

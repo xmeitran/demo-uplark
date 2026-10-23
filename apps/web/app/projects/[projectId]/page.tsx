@@ -74,7 +74,7 @@ import {
   createHierarchyOrderCoordinator,
   isSortableTopLevelTask
 } from "@/features/project-hierarchy/hierarchy-order";
-import { allMilestonesComplete, isMilestoneWorkLocked, selectActiveMilestone } from "@/features/project-hierarchy/milestone-gate-ui";
+import { allMilestonesComplete, isMilestoneAccepted, isMilestoneWorkLocked, selectActiveMilestone } from "@/features/project-hierarchy/milestone-gate-ui";
 import { deriveMilestoneWorkStatus } from "@/features/project-hierarchy/work-status";
 import { IssueLogPanel } from "@/features/issue-log/issue-log-panel";
 import { ApiResponseError, readApiError } from "@/lib/api-error";
@@ -1848,8 +1848,11 @@ function ProjectStatusSlaBar({
   const orderedMilestones = [...milestones].filter(isRealProjectMilestone).sort((left, right) => left.order - right.order);
   const activeMilestone = selectActiveMilestone(orderedMilestones);
   const deliveryPlanComplete = allMilestonesComplete(orderedMilestones);
+  // "Tiến độ nghiệm thu" counts accepted milestones: a milestone with no task yet (or a reopened one) is not accepted.
   const completedTasks = tasks.filter((task) => task.status === "done").length;
-  const progress = tasks.length > 0 ? Math.round((completedTasks / tasks.length) * 100) : project.progress;
+  const progress = orderedMilestones.length > 0
+    ? Math.round((orderedMilestones.filter(isMilestoneAccepted).length / orderedMilestones.length) * 100)
+    : tasks.length > 0 ? Math.round((completedTasks / tasks.length) * 100) : project.progress;
   // The saved status, as in its history: live risk on a finished project arrives as a "Hệ thống đề xuất" Có rủi ro the PIC confirms.
   const displayedProjectStatus = project.status;
   const statusLabel = formatProjectStatusLabel(displayedProjectStatus);
