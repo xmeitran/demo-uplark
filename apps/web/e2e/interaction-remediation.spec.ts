@@ -549,6 +549,20 @@ test.describe("interaction audit remediation", () => {
     await expect(page.getByText("Create New Project", { exact: true })).toHaveCount(0);
   });
 
+  test("Create Project keeps focus while typing a custom milestone name", async ({ page }) => {
+    await installCoreReadMocks(page);
+    await installProjectListMocks(page, () => undefined);
+
+    await page.goto("/projects");
+    await page.locator("main").getByRole("button", { name: /New Project/ }).click();
+    await page.getByText("Tự chọn milestone", { exact: true }).click();
+    const milestoneName = page.getByLabel("Milestone 1", { exact: true });
+    await milestoneName.fill("");
+    await milestoneName.pressSequentially("Discovery");
+    await expect(milestoneName).toHaveValue("Discovery");
+    await expect(milestoneName).toBeFocused();
+  });
+
   test("failed time entry never attempts completion or displays combined success", async ({ page }) => {
     await installCoreReadMocks(page);
     await installProjectListMocks(page);

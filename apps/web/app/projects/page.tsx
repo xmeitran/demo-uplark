@@ -2123,7 +2123,7 @@ export default function ProjectsPage() {
                       </div>
                       <div className="space-y-2 px-4 py-2">
                       {projectMilestones.map((milestone, index) => (
-                        <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 space-y-2" key={`${index}-${milestone}`}>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 space-y-2" key={index}>
                           <div className="flex items-center gap-2">
                             <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700">M{index + 1}</span>
                             <input aria-label={`Milestone ${index + 1}`} value={milestone} onChange={(event) => setProjectMilestones((current) => current.map((value, itemIndex) => itemIndex === index ? event.target.value : value))} placeholder="Tên milestone" className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium" />
