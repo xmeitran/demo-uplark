@@ -1,4 +1,5 @@
 "use client";
+import { UserAvatar } from "@/components/user-avatar";
 import { MoneyAmount } from "@/components/money-amount";
 
 
@@ -400,7 +401,7 @@ function PaymentMilestoneTimeline({ milestones }: { milestones: PaymentMilestone
             <FinanceProgress paid={sumInvoicePaid(milestone.invoices)} total={milestone.amount ?? 0} />
             <div className="finance-milestone-meta">
               <span><MoneyAmount value={(milestone.amount) ?? 0} /> · {milestone.percentage ?? 0}%</span>
-              <span>Phụ trách: {formatFinanceText(milestone.financeOwnerDisplayName ?? "Chưa gán")}</span>
+              <span className="inline-flex items-center gap-1">Phụ trách: {milestone.financeOwnerDisplayName ? <UserAvatar id={milestone.financeOwnerUserId} name={milestone.financeOwnerDisplayName} size="xs" /> : null}{formatFinanceText(milestone.financeOwnerDisplayName ?? "Chưa gán")}</span>
               <span>{milestone.customerVisible ? "Khách hàng được xem" : "Nội bộ"}</span>
             </div>
             {milestone.customerNote ? <p>{formatFinanceText(milestone.customerNote)}</p> : null}

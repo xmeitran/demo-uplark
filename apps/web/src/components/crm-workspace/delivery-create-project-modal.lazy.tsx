@@ -1,5 +1,6 @@
 "use client";
 
+import { UserAvatar } from "@/components/user-avatar";
 import { useEffect, useRef, useState } from "react";
 import { PROJECT_TYPE_OPTIONS, projectKindOf, type CreateProjectInput, type ProjectPlanPreviewResponse, type ProjectStageSummary, type ProjectSummary, type UpdateProjectInput } from "@b2b-crm/contracts";
 import { CustomDropdown, DatePickerField, FormField, FormTextArea, Modal, type TaskSelectOption } from "./tasks-workbench";
@@ -251,7 +252,7 @@ export default function DeliveryCreateProjectModal({
           </article>
           <article>
             <span>PIC</span>
-            <strong>{ownerUserId === "none" ? "Chưa giao" : selectedOwner?.label || "Chưa giao"}</strong>
+            <strong className="inline-flex items-center gap-1.5">{ownerUserId !== "none" && selectedOwner ? <UserAvatar id={selectedOwner.value} name={selectedOwner.label} avatarUrl={selectedOwner.avatarUrl} size="xs" /> : null}{ownerUserId === "none" ? "Chưa giao" : selectedOwner?.label || "Chưa giao"}</strong>
           </article>
           <article>
             <span>Timeline</span>

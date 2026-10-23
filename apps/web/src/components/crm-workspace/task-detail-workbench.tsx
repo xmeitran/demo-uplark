@@ -1,4 +1,5 @@
 "use client";
+import { UserAvatar } from "@/components/user-avatar";
 import { apiErrorMessage, isNetworkFailure, readApiError } from "@/lib/api-error";
 import { TASK_ESTIMATE_HINT } from "../../features/crm-tasks/task-estimate";
 import { isActualTimeEntry, ON_HOLD_LOG_REVIEW_LABEL, timeEntryRecordLabel } from "@/lib/time-entry-actual";
@@ -2576,18 +2577,14 @@ export function TaskDetailWorkbench({
                           const isInternal = comment.visibility === "internal";
                           const isOffline = comment.id?.toString().startsWith("local-comment");
                           const authorId = comment.createdByUserId;
-                          const author = authorId === "founder" || authorId === "usr-founder" || authorId === "usr-kha-founder"
+                          const author = comment.createdByDisplayName || (authorId === "founder" || authorId === "usr-founder" || authorId === "usr-kha-founder"
                             ? "Nguyễn Hùng Việt Kha"
                             : authorId === "sales-owner" ? "Business development"
                             : authorId === "delivery-lead" ? "Project Manager"
-                            : authorId || "Thành viên";
-                          const avatarBg = ["bg-indigo-100 text-indigo-700","bg-violet-100 text-violet-700","bg-emerald-100 text-emerald-700","bg-amber-100 text-amber-700"];
-                          const ci = author.charCodeAt(0) % avatarBg.length;
+                            : authorId || "Thành viên");
                           return (
                             <div key={comment.id} className="flex gap-3">
-                              <div className={`shrink-0 h-7 w-7 rounded-full ${avatarBg[ci]} flex items-center justify-center text-[11px] font-bold mt-0.5`}>
-                                {author[0].toUpperCase()}
-                              </div>
+                              <UserAvatar id={authorId} name={author} avatarUrl={comment.createdByAvatarUrl} size="md" className="mt-0.5" />
                               <div className="flex-1 min-w-0 rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3">
                                 <div className="flex items-center justify-between gap-2 mb-1.5">
                                   <div className="flex items-center gap-2">

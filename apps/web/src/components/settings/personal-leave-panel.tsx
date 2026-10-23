@@ -4,6 +4,7 @@
  * D-09: personal leave is read from the approved leave requests of the Lark Approval flow. Read-only here —
  * a wrong row is fixed in Lark and synced again.
  */
+import { UserAvatar } from "@/components/user-avatar";
 import { useCallback, useEffect, useState } from "react";
 import { apiErrorMessage, readApiError } from "@/lib/api-error";
 
@@ -102,7 +103,7 @@ export function PersonalLeavePanel() {
             <tbody className="divide-y divide-slate-100">
               {list.data.map((row) => (
                 <tr key={row.id} className={row.status === "approved" ? "" : "text-slate-400"}>
-                  <td className="px-5 py-3 font-semibold text-slate-900">{row.userName}</td>
+                  <td className="px-5 py-3 font-semibold text-slate-900"><span className="inline-flex items-center gap-1.5"><UserAvatar name={row.userName} size="xs" />{row.userName}</span></td>
                   <td className="px-5 py-3">{rangeLabel(row)}</td>
                   <td className="px-5 py-3">{row.leaveType ?? "—"}</td>
                   <td className="px-5 py-3">{row.status === "approved" ? "Đã duyệt" : "Đã huỷ"}</td>

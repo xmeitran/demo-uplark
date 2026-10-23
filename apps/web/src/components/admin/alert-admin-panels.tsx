@@ -1,5 +1,6 @@
 "use client";
 
+import { UserAvatar } from "@/components/user-avatar";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ExternalLink, Info, Play, RefreshCw, RotateCcw, Save } from "lucide-react";
 import {
@@ -181,7 +182,7 @@ export function WarningRecordsPanel({ legacy }: { legacy: ReactNode }) {
             <td className="px-4 py-4"><a href={`/projects/${encodeURIComponent(row.projectId)}`} className="group inline-flex min-w-[180px] items-start gap-1 font-bold text-slate-900 hover:text-primary">{row.projectName}<ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400 group-hover:text-primary" /></a>{row.projectCode ? <span className="mt-1 block text-xs font-medium text-slate-500">{row.projectCode}</span> : null}</td>
             <td className="max-w-[420px] px-4 py-4"><span className="font-semibold text-slate-900">{row.title}</span>{row.detail ? <span className="mt-1 block text-xs leading-relaxed text-slate-600">{row.detail}</span> : null}{row.closeReason ? <span className="mt-1 block text-xs text-slate-500">Đóng: {row.closeReason}</span> : null}</td>
             <td className="px-4 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${severityClass(row.severity)}`}>{severityLabel(row.severity)}</span></td>
-            <td className="px-4 py-4 text-slate-700">{row.ownerName ?? "—"}</td>
+            <td className="px-4 py-4 text-slate-700">{row.ownerName ? <span className="inline-flex items-center gap-1.5"><UserAvatar id={row.ownerUserId} name={row.ownerName} size="xs" />{row.ownerName}</span> : "—"}</td>
             <td className={`whitespace-nowrap px-4 py-4 ${row.overdue ? "font-bold text-rose-700" : "text-slate-700"}`}>{formatDate(row.dueAt)}{row.overdue ? <span className="block text-xs font-semibold">Quá hạn</span> : null}</td>
             <td className="whitespace-nowrap px-4 py-4 text-slate-600">{formatDateTime(row.openedAt)}</td>
             <td className="whitespace-nowrap px-4 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${row.status === "open" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-600"}`}>{row.status === "open" ? "Đang mở" : "Đã đóng"}</span>{row.closedAt ? <span className="mt-1 block text-xs text-slate-500">{formatDateTime(row.closedAt)}</span> : null}</td>

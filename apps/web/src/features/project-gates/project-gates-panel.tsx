@@ -5,6 +5,8 @@
  * Renders what GET /projects/:id/gates returns; every action goes to the API, which decides what is allowed.
  * Renders nothing for a project on a hand-built framework (it keeps its milestone gates).
  */
+import { avatarInitialsFor } from "@/lib/workspace-users";
+import { UserAvatar } from "@/components/user-avatar";
 import React, { useCallback, useEffect, useState } from "react";
 import { Check, ChevronDown, ChevronUp, Circle, Clock, Lock, X } from "lucide-react";
 import { gateActionLabel, gatePaymentText, type ProjectGateAction, type ProjectGateListResponse, type ProjectGateSummary } from "@b2b-crm/contracts";
@@ -66,7 +68,7 @@ function ActionDialog({ gate, action, members, saving, error, onClose, onSubmit 
             {fields.map((field) => {
               const label = <span className={labelClass}>{field.label}{field.required ? " *" : ""}</span>;
               const value = values[field.key] ?? "";
-              if (field.kind === "member") return <div key={field.key}>{label}<CustomDropdown ariaLabel={field.label} options={members.map((member) => ({ value: member.id, label: member.name }))} value={value} onChange={set(field.key)} placeholder="Chọn thành viên" menuPortal /></div>;
+              if (field.kind === "member") return <div key={field.key}>{label}<CustomDropdown ariaLabel={field.label} options={members.map((member) => ({ value: member.id, label: member.name, initials: avatarInitialsFor(member.name) }))} value={value} onChange={set(field.key)} placeholder="Chọn thành viên" menuPortal /></div>;
               if (field.kind === "date") return <label key={field.key}>{label}<input type="date" value={value} onChange={(event) => set(field.key)(event.target.value)} className={inputClass} /></label>;
               if (field.kind === "textarea") return <label key={field.key}>{label}<textarea value={value} onChange={(event) => set(field.key)(event.target.value)} rows={3} placeholder={field.placeholder} className={`${inputClass} resize-none`} /></label>;
               return <label key={field.key}>{label}<input type="text" value={value} onChange={(event) => set(field.key)(event.target.value)} placeholder={field.placeholder} className={inputClass} /></label>;
@@ -118,7 +120,7 @@ function GateCard({ gate, onAction, extend }: { gate: ProjectGateSummary; onActi
         <div className="space-y-1 text-xs text-muted-foreground">
           <p className={headClass}>Chuẩn bị · Duyệt</p>
           <p className="mt-1.5">Chuẩn bị: <span className="font-semibold text-foreground">{definition.preparedBy}</span>{gate.submittedAt ? ` · ${gate.submittedByName ?? "—"} nộp ${dateTime(gate.submittedAt)}` : ""}</p>
-          <p>Duyệt: <span className="font-semibold text-foreground">{definition.approvedBy}</span>{gate.decidedAt ? ` · ${gate.decidedByName ?? "Hệ thống"} ${gate.decision === "rejected" ? "từ chối" : "duyệt"} ${dateTime(gate.decidedAt)}` : ""}</p>
+          <p>Duyệt: <span className="font-semibold text-foreground">{definition.approvedBy}</span>{gate.decidedAt ? <> · {gate.decidedByName ? <UserAvatar id={gate.decidedByUserId} name={gate.decidedByName} size="xs" className="mx-0.5 align-middle" /> : null}{`${gate.decidedByName ?? "Hệ thống"} ${gate.decision === "rejected" ? "từ chối" : "duyệt"} ${dateTime(gate.decidedAt)}`}</> : ""}</p>
           {gate.decisionReason ? <p>{gate.decision === "rejected" ? "Lý do từ chối" : "Tồn đọng"}: <span className="text-foreground">{gate.decisionReason}</span>{gate.conditionIssueCode ? ` (${gate.conditionIssueCode} trong sổ vấn đề)` : ""}</p> : null}
           {gate.paymentConfirmationRequired ? <p>Thu tiền ({gatePaymentText(gate.code)}): {gate.paymentConfirmedAt ? <span className="text-foreground">{gate.paymentConfirmedByName ?? "PM"} xác nhận {dateTime(gate.paymentConfirmedAt)}{gate.paymentNote ? ` · ${gate.paymentNote}` : ""}</span> : "PM chưa xác nhận"}</p> : null}
           {definition.goLiveDate ? <p>Ngày Go-live: <span className="text-foreground">{gate.goLiveDate ? formatVietnamDate(gate.goLiveDate) : "Chưa có"}</span></p> : null}

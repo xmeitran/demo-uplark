@@ -1,4 +1,5 @@
 "use client";
+import { UserAvatar } from "@/components/user-avatar";
 import { useProjectPeople } from "@/hooks/use-project-people";
 import { formatVnd } from "@/lib/currency";
 import { ProjectValueModal } from "@/components/pnl/pnl-project-edit";
@@ -1294,7 +1295,7 @@ function ProjectSheetPanel({
                 return (
                   <tr key={task.id} tabIndex={0} role="button" onClick={() => onOpenTask(task)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpenTask(task); } }} className="cursor-pointer border-b border-border/70 transition-colors hover:bg-muted/25 focus:bg-primary/5 focus:outline-none">
                     <td className="px-5 py-4"><p className="text-[10px] font-black uppercase tracking-wide text-primary">{milestone.name}</p><p className="mt-1 text-xs text-muted-foreground"><strong className="text-foreground">Stage:</strong> {stage.name} · Deadline {task.due}</p><p className="mt-1 font-bold text-foreground">{task.title}</p></td>
-                    <td className="px-5 py-4"><span className="inline-flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-bold text-white" style={{ backgroundColor: member?.color || task.aColor }}>{member?.initials || task.assignee}</span><span className={`text-sm ${member?.id === currentUserId ? "font-bold text-primary" : "font-medium text-foreground"}`}>{member?.name || task.assignee}</span></span></td>
+                    <td className="px-5 py-4"><span className="inline-flex items-center gap-2"><UserAvatar id={member?.id} name={member?.name || task.assignee} avatarUrl={member?.avatarUrl} size="md" /><span className={`text-sm ${member?.id === currentUserId ? "font-bold text-primary" : "font-medium text-foreground"}`}>{member?.name || task.assignee}</span></span></td>
                     <td className="px-5 py-4"><span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${isTaskOverdue(task) ? "bg-red-50 text-red-700" : task.status === "done" ? "bg-emerald-50 text-emerald-700" : task.status === "in-progress" ? "bg-purple-50 text-purple-700" : "bg-slate-100 text-slate-600"}`}>{isTaskOverdue(task) ? "Quá hạn" : statusLabel[task.status]}</span></td>
                     <td className="px-5 py-4"><span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${milestone.status === "done" ? "bg-emerald-50 text-emerald-700" : milestone.status === "at-risk" ? "bg-red-50 text-red-700" : milestone.status === "in-progress" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"}`}>{milestone.status === "done" ? "Đã đạt" : milestone.status === "at-risk" ? "Cần xử lý" : milestone.status === "in-progress" ? "Đang theo dõi" : "Chưa mở"}</span></td>
                     <td className="px-5 py-4 font-mono text-sm tabular-nums text-foreground">{formatHours(task.plannedHours)}h</td>
@@ -1318,7 +1319,7 @@ function ProjectSheetPanel({
 
         <article className="rounded-2xl border border-border bg-card p-5 shadow-sm xl:col-span-2">
           <h3 className="text-lg font-black text-foreground">Project master data</h3>
-          <dl className="mt-5 grid grid-cols-2 gap-x-5 gap-y-5 text-sm"><div><dt className="text-xs text-muted-foreground">Client</dt><dd className="mt-1 font-bold text-foreground">{project.client || "Chưa thiết lập"}</dd></div><div><dt className="text-xs text-muted-foreground">Project PIC</dt><dd className="mt-1 font-bold text-foreground">{project.ownerDisplayName || "Chưa phân công"}</dd></div><div><dt className="text-xs text-muted-foreground">Trạng thái</dt><dd className="mt-1 font-bold text-foreground">{formatProjectStatusLabel(project.status)}</dd></div><div><dt className="text-xs text-muted-foreground">Kỳ project</dt><dd className="mt-1 font-bold text-foreground">{project.startDate || "TBD"} → {project.dueDate || "TBD"}</dd></div><div><dt className="text-xs text-muted-foreground">Loại dịch vụ</dt><dd className="mt-1 font-bold text-foreground">{project.category}</dd></div><div><dt className="text-xs text-muted-foreground">Data readiness</dt><dd className="mt-1 font-bold text-foreground">{readiness}/3 trường kiểm tra đạt</dd></div></dl>
+          <dl className="mt-5 grid grid-cols-2 gap-x-5 gap-y-5 text-sm"><div><dt className="text-xs text-muted-foreground">Client</dt><dd className="mt-1 font-bold text-foreground">{project.client || "Chưa thiết lập"}</dd></div><div><dt className="text-xs text-muted-foreground">Project PIC</dt><dd className="mt-1 flex items-center gap-1.5 font-bold text-foreground">{project.ownerDisplayName ? <UserAvatar id={project.ownerUserId} name={project.ownerDisplayName} avatarUrl={project.ownerAvatarUrl} size="xs" /> : null}{project.ownerDisplayName || "Chưa phân công"}</dd></div><div><dt className="text-xs text-muted-foreground">Trạng thái</dt><dd className="mt-1 font-bold text-foreground">{formatProjectStatusLabel(project.status)}</dd></div><div><dt className="text-xs text-muted-foreground">Kỳ project</dt><dd className="mt-1 font-bold text-foreground">{project.startDate || "TBD"} → {project.dueDate || "TBD"}</dd></div><div><dt className="text-xs text-muted-foreground">Loại dịch vụ</dt><dd className="mt-1 font-bold text-foreground">{project.category}</dd></div><div><dt className="text-xs text-muted-foreground">Data readiness</dt><dd className="mt-1 font-bold text-foreground">{readiness}/3 trường kiểm tra đạt</dd></div></dl>
         </article>
       </section>
     </div>
@@ -1783,7 +1784,7 @@ function ProjectWarningsBlock({ projectId, projectColor, teamMembers, onChanged 
   if (open.length === 0) {
     return closedDisclosure ? <section aria-label="Cảnh báo dự án" className="rounded-xl border border-border bg-card px-4 py-2 shadow-sm">{closedDisclosure}</section> : null;
   }
-  const ownerOf = (userId?: string) => userId ? <PersonLink userId={userId} className="font-semibold text-foreground">{teamMembers.find((member) => member.id === userId)?.name ?? userId}</PersonLink> : "Chưa có";
+  const ownerOf = (userId?: string) => userId ? <PersonLink userId={userId} avatar avatarUrl={teamMembers.find((member) => member.id === userId)?.avatarUrl} className="font-semibold text-foreground">{teamMembers.find((member) => member.id === userId)?.name ?? userId}</PersonLink> : "Chưa có";
 
   return (
     <section aria-label="Cảnh báo dự án" className="rounded-xl border border-red-200 bg-red-50 shadow-sm">
@@ -1887,7 +1888,7 @@ function ProjectStatusSlaBar({
             : <ul className="space-y-2">{history.map((item) => (
               <li key={item.id} className="text-xs text-muted-foreground">
                 <span className="font-semibold text-foreground">{item.fromStatus ? `${projectStatusCodeLabel(item.fromStatus)} → ` : ""}{projectStatusCodeLabel(item.toStatus)}</span>
-                {item.closeReasonCode ? ` · ${PROJECT_CLOSE_REASONS[item.closeReasonCode] ?? item.closeReasonCode}` : ""}{item.reason ? ` · ${item.reason}` : ""} · <PersonLink userId={item.changedByUserId}>{item.changedByDisplayName ?? "Hệ thống"}</PersonLink> · {formatVietnamDate(item.changedAt)} {formatVietnamTime(item.changedAt)}
+                {item.closeReasonCode ? ` · ${PROJECT_CLOSE_REASONS[item.closeReasonCode] ?? item.closeReasonCode}` : ""}{item.reason ? ` · ${item.reason}` : ""} · <PersonLink userId={item.changedByUserId} avatar={Boolean(item.changedByUserId)}>{item.changedByDisplayName ?? "Hệ thống"}</PersonLink> · {formatVietnamDate(item.changedAt)} {formatVietnamTime(item.changedAt)}
               </li>
             ))}</ul>}
         </div>
@@ -2064,7 +2065,7 @@ function ProjectDeliveryWireframePanels({
             <div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Issue register</p><h3 className="mt-1 text-base font-black text-foreground">Sổ Blocker / Risk / Issue</h3><p className="mt-1 text-xs text-muted-foreground">Điều phối owner và tác động ngay từ Overview.</p></div>
             <button type="button" onClick={onOpenIssues} className="text-xs font-semibold text-primary hover:underline">Mở sổ →</button>
           </div>
-          {openRisks.length === 0 ? <div className="px-5 py-10 text-center"><CheckCircle2 className="mx-auto h-7 w-7 text-emerald-500" /><p className="mt-2 text-sm font-semibold text-foreground">Chưa có vấn đề mở</p><p className="mt-1 text-xs text-muted-foreground">Các blocker, risk và issue mới sẽ xuất hiện tại đây.</p></div> : <div className="divide-y divide-border">{openRisks.slice(0, 4).map((risk) => <button type="button" key={risk.id} onClick={onOpenIssues} className="flex w-full items-start gap-3 px-5 py-3 text-left transition hover:bg-muted/30"><span className={`mt-0.5 rounded-full px-2 py-1 text-[10px] font-bold ${riskKindTone(risk.category)}`}>{riskKindLabel(risk.category)}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold text-foreground">{risk.description}</span><span className="mt-1 block text-[11px] text-muted-foreground">Owner: {risk.owner || "Chưa phân công"}</span></span><ChevronRight className="mt-1 h-3.5 w-3.5 shrink-0 text-muted-foreground" /></button>)}</div>}
+          {openRisks.length === 0 ? <div className="px-5 py-10 text-center"><CheckCircle2 className="mx-auto h-7 w-7 text-emerald-500" /><p className="mt-2 text-sm font-semibold text-foreground">Chưa có vấn đề mở</p><p className="mt-1 text-xs text-muted-foreground">Các blocker, risk và issue mới sẽ xuất hiện tại đây.</p></div> : <div className="divide-y divide-border">{openRisks.slice(0, 4).map((risk) => <button type="button" key={risk.id} onClick={onOpenIssues} className="flex w-full items-start gap-3 px-5 py-3 text-left transition hover:bg-muted/30"><span className={`mt-0.5 rounded-full px-2 py-1 text-[10px] font-bold ${riskKindTone(risk.category)}`}>{riskKindLabel(risk.category)}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold text-foreground">{risk.description}</span><span className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">Owner: {risk.owner ? <UserAvatar id={risk.ownerUserId} name={risk.owner} size="xs" /> : null}{risk.owner || "Chưa phân công"}</span></span><ChevronRight className="mt-1 h-3.5 w-3.5 shrink-0 text-muted-foreground" /></button>)}</div>}
         </div>
       </div>
 
@@ -2916,9 +2917,7 @@ function InviteMemberModal({ color, onClose, onInvite, teamMembers, workspaceUse
           >
             <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Preview Selected Profile</h4>
             <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-white text-sm" style={{ backgroundColor:selectedUser.color }}>
-                {selectedUser.initials}
-              </div>
+                <UserAvatar id={selectedUser.id} email={selectedUser.email} name={selectedUser.name} avatarUrl={selectedUser.avatarUrl} size="lg" />
               <div>
                 <p className="text-xs font-bold text-foreground">{selectedUser.name}</p>
                 <p className="text-[10px] text-muted-foreground">{selectedUser.role} • {systemRoleLabel(selectedUser.systemRole)}</p>
@@ -7117,7 +7116,7 @@ export default function ProjectDetailPage() {
                             {visiblePerformanceRows.map(row => (
                               <div key={projectMemberIdentity(row.member)} className="space-y-1">
                                 <div className="flex justify-between gap-3 text-[11px] font-medium">
-                                  <span className={`truncate ${row.member.id === user?.id ? "font-bold text-primary" : "text-foreground"}`}>{row.member.name}</span>
+                                  <span className={`flex min-w-0 items-center gap-1.5 ${row.member.id === user?.id ? "font-bold text-primary" : "text-foreground"}`}><UserAvatar id={row.member.id} name={row.member.name} avatarUrl={row.member.avatarUrl} size="xs" /><span className="truncate">{row.member.name}</span></span>
                                   <span className="shrink-0 text-muted-foreground font-mono">{row.completed}/{row.total} ({row.pct}%)</span>
                                 </div>
                                 <div className="h-3 bg-muted rounded-md overflow-hidden relative border border-border/50">

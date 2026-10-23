@@ -1,5 +1,6 @@
 "use client";
 
+import { UserAvatar } from "@/components/user-avatar";
 import { useEffect, useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import type {
   AccountSummary,
@@ -759,7 +760,7 @@ export function PolicyAccessAdmin({
                     <span>{entry.resource}{entry.resourceId ? ` · ${entry.resourceId}` : ""}</span>
                   </div>
                   <div>
-                    <span>{entry.actorDisplayName ?? entry.actorUserId ?? "System"}</span>
+                    <span className="inline-flex items-center gap-1">{entry.actorUserId ? <UserAvatar id={entry.actorUserId} name={entry.actorDisplayName} size="xs" /> : null}{entry.actorDisplayName ?? entry.actorUserId ?? "System"}</span>
                     <time dateTime={entry.createdAt}>{formatDateTime(entry.createdAt)}</time>
                   </div>
                   {entry.reason ? <p>{entry.reason}</p> : null}

@@ -1,4 +1,5 @@
 "use client";
+import { UserAvatar } from "@/components/user-avatar";
 import { MoneyAmount } from "@/components/money-amount";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -241,7 +242,7 @@ export function OpportunityDetailPage({
             <div className="opportunity-hero-meta" aria-label="Ngữ cảnh cơ hội">
               <span>
                 <ShopifyIcon name="users" size={13} />
-                Phụ trách: <strong>{opportunityOwner}</strong>
+                Phụ trách: {selected.ownerUserId ? <UserAvatar id={selected.ownerUserId} name={opportunityOwner} size="xs" className="mx-1 align-middle" /> : null}<strong>{opportunityOwner}</strong>
               </span>
               <span>
                 <ShopifyIcon name="target" size={13} />
@@ -375,14 +376,14 @@ export function OpportunityDetailPage({
                     onChange={(val) => setDraft((current) => ({ ...current, ownerUserId: val }))}
                     renderOption={(opt) => (
                       <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        <ShopifyIcon name="users" size={14} />
+                        <UserAvatar id={opt.value} name={opt.label} size="xs" />
                         <span>{opt.label}</span>
                       </span>
                     )}
                     visuallyHiddenLabel
                   />
                 ) : (
-                  <strong>{opportunityOwner}</strong>
+                  <strong className="inline-flex items-center">{selected.ownerUserId ? <UserAvatar id={selected.ownerUserId} name={opportunityOwner} size="xs" className="mx-1 align-middle" /> : null}{opportunityOwner}</strong>
                 )}
               </InlineMetricShell>
               <InlineMetricShell label="Nguồn cơ hội">
@@ -640,9 +641,7 @@ export function OpportunityDetailPage({
                     {timelineItems.map((item) => (
                       <div className="opportunity-timeline-item" key={item.id}>
                         <span className="opportunity-timeline-dot" />
-                        <div className="opportunity-timeline-avatar" aria-hidden="true">
-                          {getInitials(item.owner)}
-                        </div>
+                        <UserAvatar name={item.owner} size="md" className="mt-px" />
                         <div className="opportunity-timeline-body">
                           <div className="opportunity-timeline-main">
                             <strong>{item.title}</strong>
@@ -1114,13 +1113,6 @@ function Checklist({
       <strong>{label}</strong>
     </label>
   );
-}
-
-function getInitials(name?: string) {
-  if (!name) return "SYS";
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 function getActivityIcon(type: string) {

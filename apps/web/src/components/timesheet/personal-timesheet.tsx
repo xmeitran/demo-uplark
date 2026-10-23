@@ -122,7 +122,7 @@ function CalendarCard({
     <SectionCard
       title={`Lịch ghi giờ của tôi — ${formatMonth(month)}`}
       description="Bấm một ngày đã ghi giờ để xem các dòng Time Log nguồn."
-      actions={<span className="text-[11px] text-muted-foreground">{person.name}</span>}
+      actions={<span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground"><Avatar person={person} />{person.name}</span>}
       id="personal-calendar"
     >
       <div className="grid grid-cols-7 gap-1 border-b border-border px-3 py-2">

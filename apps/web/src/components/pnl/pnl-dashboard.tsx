@@ -1,5 +1,6 @@
 "use client";
 
+import { UserAvatar } from "@/components/user-avatar";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -234,7 +235,7 @@ function CompanyCostDetail({ line, from, to }: Readonly<{ line: PnlCompanyCostLi
           {data.data.map((row, index) => (
             <tr key={`${row.periodKey}-${row.userId}-${row.projectId}-${index}`}>
               <td className={`${tdClass} font-mono tabular-nums`}>{formatMonth(row.periodKey)}</td>
-              <td className={tdClass}>{row.userName ?? "—"}</td>
+              <td className={tdClass}>{row.userName ? <span className="inline-flex items-center gap-1.5"><UserAvatar id={row.userId} name={row.userName} size="xs" />{row.userName}</span> : "—"}</td>
               <td className={tdClass}>{row.projectName ?? "—"}</td>
               <td className={tdNumberClass}>{formatHoursValue(row.minutes)}</td>
               <td title={formatExactVnd(row.amount)} className={tdNumberClass}>{formatVndAmount(row.amount)}</td>

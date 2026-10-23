@@ -1,5 +1,6 @@
 "use client";
 
+import { UserAvatar } from "@/components/user-avatar";
 import { useRouter } from "next/navigation";
 import { Fragment, lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
@@ -1227,7 +1228,7 @@ function DeliveryWorkbench({ config, projectId }: Readonly<{ config: BusinessFun
                           ),
                           (
                             <div className="tasks-relation-cell">
-                              <span className="tasks-relation-title">{rollup.currentStage?.ownerDisplayName || rollup.assignees[0] || "Chưa giao"}</span>
+                              <span className="tasks-relation-title inline-flex items-center gap-1.5">{(rollup.currentStage?.ownerDisplayName || rollup.assignees[0]) ? <UserAvatar id={rollup.currentStage?.ownerUserId} name={rollup.currentStage?.ownerDisplayName || rollup.assignees[0]} size="xs" /> : null}{rollup.currentStage?.ownerDisplayName || rollup.assignees[0] || "Chưa giao"}</span>
                               <span className="tasks-relation-meta">{rollup.assignees.length ? `${rollup.assignees.length} người có task` : "Chưa có task"}</span>
                             </div>
                           ),
@@ -1354,7 +1355,7 @@ function DeliveryWorkbench({ config, projectId }: Readonly<{ config: BusinessFun
                               <small>{row.progressPercent}%</small>
                             </div>
                             <div className="delivery-stage-row-meta">
-                              <span>{row.stage.ownerDisplayName || row.assignees[0] || "Chưa giao"}</span>
+                              <span className="inline-flex items-center gap-1.5">{(row.stage?.ownerDisplayName || row.assignees[0]) ? <UserAvatar id={row.stage?.ownerUserId} name={row.stage?.ownerDisplayName || row.assignees[0]} size="xs" /> : null}{row.stage.ownerDisplayName || row.assignees[0] || "Chưa giao"}</span>
                               <small>{row.assignees.length ? `${row.assignees.length} người có task` : "Chưa có task"}</small>
                             </div>
                             <div className="delivery-stage-row-meta">
@@ -1389,7 +1390,7 @@ function DeliveryWorkbench({ config, projectId }: Readonly<{ config: BusinessFun
                                   <a href={`/tasks/${task.id}`} className="delivery-stage-task-line" key={task.id}>
                                     <span>{formatTaskTitle(task.title)}</span>
                                     <small>{getStatusLabel(task.status)}</small>
-                                    <small>{task.assigneeDisplayName || "Chưa giao"}</small>
+                                    <small className="inline-flex items-center gap-1">{task.assigneeDisplayName ? <UserAvatar id={task.assigneeUserId} name={task.assigneeDisplayName} avatarUrl={task.assigneeAvatarUrl} size="xs" /> : null}{task.assigneeDisplayName || "Chưa giao"}</small>
                                     <small>{formatDeliveryDate(task.dueAt)}</small>
                                     <small>{formatTaskMinutes(Number(task.loggedMinutes || 0))} / {formatTaskMinutes(Number(task.estimateMinutes || 0))}</small>
                                   </a>
@@ -1431,7 +1432,7 @@ function DeliveryWorkbench({ config, projectId }: Readonly<{ config: BusinessFun
                                 <span style={{ width: `${row.progressPercent}%` }} />
                               </div>
                               <div className="delivery-stage-group-meta">
-                                <span>{row.stage.ownerDisplayName || row.assignees[0] || "Chưa giao PIC"}</span>
+                                <span className="inline-flex items-center gap-1.5">{(row.stage?.ownerDisplayName || row.assignees[0]) ? <UserAvatar id={row.stage?.ownerUserId} name={row.stage?.ownerDisplayName || row.assignees[0]} size="xs" /> : null}{row.stage.ownerDisplayName || row.assignees[0] || "Chưa giao PIC"}</span>
                                 <span>{formatDeliveryDate(row.stage.plannedEndAt)}</span>
                                 <span>{row.tasks.length} task</span>
                               </div>
@@ -1473,7 +1474,7 @@ function DeliveryWorkbench({ config, projectId }: Readonly<{ config: BusinessFun
                                 <div className="delivery-stage-progress" aria-label={`Tiến độ stage ${row.stage.activity}: ${row.progressPercent}%`}>
                                   <span style={{ width: `${row.progressPercent}%` }} />
                                 </div>
-                                <small>{row.stage.ownerDisplayName || row.assignees[0] || "Chưa giao PIC"}</small>
+                                <small className="inline-flex items-center gap-1">{(row.stage?.ownerDisplayName || row.assignees[0]) ? <UserAvatar id={row.stage?.ownerUserId} name={row.stage?.ownerDisplayName || row.assignees[0]} size="xs" /> : null}{row.stage.ownerDisplayName || row.assignees[0] || "Chưa giao PIC"}</small>
                                 <small>{formatDeliveryDate(row.stage.plannedEndAt)} · {row.tasks.length} task</small>
                                 <div className="delivery-stage-row-actions">
                                   <button type="button" onClick={() => openEditStage(row.stage)}>
@@ -1597,7 +1598,7 @@ function DeliveryWorkbench({ config, projectId }: Readonly<{ config: BusinessFun
                       </article>
                       <article>
                         <span>Owner</span>
-                        <strong>{stageDetail.stage.ownerDisplayName || "Chưa giao"}</strong>
+                        <strong className="inline-flex items-center gap-1.5">{stageDetail.stage.ownerDisplayName ? <UserAvatar id={stageDetail.stage.ownerUserId} name={stageDetail.stage.ownerDisplayName} size="xs" /> : null}{stageDetail.stage.ownerDisplayName || "Chưa giao"}</strong>
                       </article>
                       <article>
                         <span>Timeline</span>

@@ -300,7 +300,7 @@ export default function ClientDetailPage() {
                   <InfoRow label="Stage">{stageLabel(account.stage)}</InfoRow>
                   <InfoRow label="PIC">
                     {account.picUserId && account.picName ? (
-                      <PersonLink userId={account.picUserId} className="transition-colors hover:text-primary">{account.picName}</PersonLink>
+                      <PersonLink userId={account.picUserId} avatar avatarUrl={account.picAvatarUrl} className="transition-colors hover:text-primary">{account.picName}</PersonLink>
                     ) : (account.picName || "Unassigned")}
                   </InfoRow>
                   <InfoRow label="PIC email">{account.picEmail || "Not set"}</InfoRow>

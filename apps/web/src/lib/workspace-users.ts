@@ -46,8 +46,8 @@ export function mapWorkspaceUserToOption(user: WorkspaceDirectoryMember): Worksp
     id: user.id,
     email: user.email,
     name: user.displayName,
-    initials: initialsFor(user.displayName || user.email),
-    color: colorForId(user.id || user.email),
+    initials: avatarInitialsFor(user.displayName || user.email),
+    color: avatarColorFor(user.id || user.email),
     avatarUrl: user.avatarUrl,
     role: businessRoleFromMember(user),
     systemRole: systemRoleFromCodes(user.roleCodes),
@@ -59,14 +59,14 @@ export function isUnauthorizedWorkspaceUsersError(error: unknown) {
   return error instanceof WorkspaceUsersError && error.status === 401;
 }
 
-function initialsFor(value: string) {
+export function avatarInitialsFor(value: string) {
   const words = value.trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return "U";
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
   return `${words[0][0] ?? ""}${words[words.length - 1][0] ?? ""}`.toUpperCase();
 }
 
-function colorForId(id: string) {
+export function avatarColorFor(id: string) {
   const hash = Array.from(id).reduce((acc, char) => acc + char.charCodeAt(0), 0);
   return USER_COLORS[hash % USER_COLORS.length];
 }

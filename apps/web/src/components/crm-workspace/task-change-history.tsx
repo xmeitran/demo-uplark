@@ -1,5 +1,6 @@
 "use client";
 
+import { UserAvatar } from "@/components/user-avatar";
 import { taskTypeLayer1Label, taskTypeLayer2Label } from "@/lib/task-classification";
 import { useEffect, useMemo, useState } from "react";
 import type { WorkspaceUserOption } from "@/lib/workspace-users";
@@ -82,16 +83,6 @@ function actionLabel(action: string) {
   if (action === "task.assignee_transferred") return "Đã đổi phân công";
   if (action === "task.project_changed") return "Đã đổi dự án";
   return "Đã cập nhật công việc";
-}
-
-function actorInitials(name: string) {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(-2)
-    .map((part) => part[0])
-    .join("")
-    .toUpperCase() || "?";
 }
 
 function formatChangedAt(value: string) {
@@ -197,7 +188,7 @@ export function TaskChangeHistory({
               return (
                 <li key={row.id} className="relative flex gap-3">
                   {index < rows.length - 1 ? <span className="absolute left-[9px] top-6 h-[calc(100%+12px)] w-px bg-slate-100" aria-hidden="true" /> : null}
-                  <span className="relative z-10 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-[8px] font-bold text-indigo-600 ring-4 ring-white">{actorInitials(actor)}</span>
+                  <UserAvatar id={row.changedByUserId} name={actor} avatarUrl={row.changedByUserId ? peopleById.get(row.changedByUserId)?.avatarUrl : undefined} size="xs" className="relative z-10 ring-4 ring-white" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-xs font-semibold leading-snug text-slate-700">{actionLabel(row.action)}</p>

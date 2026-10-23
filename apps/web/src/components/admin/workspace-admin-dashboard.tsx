@@ -1,5 +1,6 @@
 "use client";
 
+import { UserAvatar } from "@/components/user-avatar";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowRight,
@@ -409,7 +410,7 @@ function AdminHistoryPanel({ entries, loading, onRefresh, scope, filters, total,
         <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${historyIconTone(entry.category)}`}>{historyIcon(entry.category)}</span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"><p className="text-sm font-bold text-slate-900">{entry.title}</p><time dateTime={entry.createdAt} className="text-[11px] font-medium text-slate-400">{new Date(entry.createdAt).toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" })}</time></div>
-          <p className="mt-1 text-xs leading-relaxed text-slate-600"><span className="font-semibold text-slate-800">{entry.actorDisplayName ?? "Hệ thống"}</span> · {entry.detail}</p>
+          <p className="mt-1 text-xs leading-relaxed text-slate-600">{entry.actorDisplayName ? <UserAvatar id={entry.actorUserId} name={entry.actorDisplayName} size="xs" className="mr-1 align-middle" /> : null}<span className="font-semibold text-slate-800">{entry.actorDisplayName ?? "Hệ thống"}</span> · {entry.detail}</p>
           {entry.href ? <a href={entry.href} className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-primary hover:underline"><ExternalLink className="h-3.5 w-3.5" /> Mở chi tiết</a> : null}
         </div>
       </li>)}</ol> : null}
@@ -516,7 +517,7 @@ function ApprovalPanel({ approvalHistory, historyLoading, onRefreshHistory, onAp
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-800">Chờ duyệt</span><span className="text-xs font-semibold text-slate-500">{row.project.code}</span></div>
                 <h4 className="mt-2 line-clamp-2 text-sm font-bold leading-snug text-slate-950">{row.project.name} <span className="font-medium text-slate-500">· {row.milestone.name}</span></h4>
-                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500"><span><strong className="font-semibold text-slate-700">Gửi bởi:</strong> {row.requesterLabel}</span><span><Clock3 className="mr-1 inline-block h-3.5 w-3.5 align-[-2px]" />{new Date(row.pendingSince).toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" })}</span></div>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500"><span className="inline-flex items-center gap-1"><strong className="font-semibold text-slate-700">Gửi bởi:</strong> <UserAvatar name={row.requesterLabel} size="xs" />{row.requesterLabel}</span><span><Clock3 className="mr-1 inline-block h-3.5 w-3.5 align-[-2px]" />{new Date(row.pendingSince).toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" })}</span></div>
               </div>
             </div>
 

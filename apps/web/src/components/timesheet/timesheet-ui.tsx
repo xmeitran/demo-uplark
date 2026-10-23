@@ -3,6 +3,8 @@
 import React from "react";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { toneClasses } from "./timesheet-format";
+import { UserAvatar } from "@/components/user-avatar";
+import type { Person } from "./timesheet-types";
 
 /** Shared presentation primitives for the Timesheet screens. */
 
@@ -146,16 +148,8 @@ export function Td({ children = null, align = "left", className = "" }: { childr
   );
 }
 
-export function Avatar({ initials, name }: { initials: string; name: string }) {
-  return (
-    <span
-      title={name}
-      aria-hidden
-      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary"
-    >
-      {initials}
-    </span>
-  );
+export function Avatar({ person }: { person: Pick<Person, "id" | "name" | "avatarUrl"> }) {
+  return <UserAvatar id={person.id} name={person.name} avatarUrl={person.avatarUrl} size="sm" />;
 }
 
 /** A thin proportion bar used inside table cells. */

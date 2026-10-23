@@ -1,5 +1,6 @@
 "use client";
 
+import { UserAvatar } from "@/components/user-avatar";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -188,7 +189,6 @@ function ProjectStatement({ data, meta, projectId, onChanged, onEditValue, onOve
   );
 }
 
-const initialsOf = (name: string) => name.trim().split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]?.toUpperCase()).join("") || "?";
 
 function PersonRow({ person, moneyVisible }: Readonly<{ person: PnlProjectPersonRow; moneyVisible: boolean }>) {
   const unassigned = person.userId === null;
@@ -197,7 +197,7 @@ function PersonRow({ person, moneyVisible }: Readonly<{ person: PnlProjectPerson
     <tr className={unassigned ? "text-muted-foreground" : "transition-colors hover:bg-muted/25"}>
       <th scope="row" className={`${tdClass} text-left font-normal`}>
         <span className="flex min-w-0 items-center gap-2.5">
-          <span aria-hidden className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${unassigned ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary"}`}>{unassigned ? "–" : initialsOf(person.displayName)}</span>
+          {unassigned ? <span aria-hidden className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-bold text-muted-foreground">–</span> : <UserAvatar id={person.userId} name={person.displayName} size="md" />}
           <span className="min-w-0">
             {unassigned ? <span className="block truncate text-muted-foreground">{person.displayName}</span> : <PersonLink userId={person.userId} className="block truncate font-semibold !text-foreground hover:!text-primary">{person.displayName}</PersonLink>}
             {person.roleGroupLabel ? <span className="block truncate text-xs text-muted-foreground">{person.roleGroupLabel}</span> : null}

@@ -168,7 +168,7 @@ export function LogDrawer({
                           className="flex min-w-0 flex-1 items-start gap-3 px-4 py-2.5 text-left transition-colors hover:bg-primary/[0.04] focus-visible:bg-primary/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30"
                           aria-label={`Xem chi tiết log ${entry.id}`}
                         >
-                          {person ? <Avatar initials={person.initials} name={person.name} /> : null}
+                          <Avatar person={person ?? { id: entry.personId, name: entry.personId }} />
 
                           <div className="min-w-0 flex-1">
                             <div className="flex items-baseline justify-between gap-2">
@@ -266,7 +266,7 @@ function TimeLogDetail({
       </div>
 
       <DetailSection title="Nhân sự">
-        <DetailRow label="Họ tên" value={person ? <PersonLink userId={person.id} className="text-primary hover:underline">{person.name}</PersonLink> : "Chưa mapping"} />
+        <DetailRow label="Họ tên" value={person ? <PersonLink userId={person.id} avatar avatarUrl={person.avatarUrl} className="text-primary hover:underline">{person.name}</PersonLink> : "Chưa mapping"} />
         <DetailRow label="Lark user ID" value={log.personId} mono />
         <DetailRow label="Phòng ban" value={person?.departmentId ? formatDepartmentLabel(person.departmentId, "Chưa có dữ liệu") : "Chưa có dữ liệu"} />
         <DetailRow label="Vai trò" value={person?.role ?? "Chưa có dữ liệu"} />

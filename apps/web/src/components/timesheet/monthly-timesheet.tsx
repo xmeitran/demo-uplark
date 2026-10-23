@@ -198,7 +198,7 @@ export function MonthlyTimesheet({
                               className="flex shrink-0 items-center gap-2"
                             >
                               {expanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />}
-                              <Avatar initials={row.person.initials} name={row.person.name} />
+                              <Avatar person={row.person} />
                             </button>
                             <span className="min-w-0">
                               <PersonLink userId={row.person.id} className={`block truncate hover:underline ${row.person.id === currentUserId ? "font-bold text-primary" : "font-semibold"}`} title={row.person.name}>

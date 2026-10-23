@@ -589,7 +589,7 @@ export default function ClientsPage() {
                             </td>
                             <td className="px-4 py-3.5">
                               {client.ownerId ? (
-                                <PersonLink userId={client.ownerId} className="text-xs text-muted-foreground transition-colors hover:text-primary">{client.owner}</PersonLink>
+                                <PersonLink userId={client.ownerId} avatar avatarUrl={client.ownerAvatarUrl} className="text-xs text-muted-foreground transition-colors hover:text-primary">{client.owner}</PersonLink>
                               ) : (
                                 <p className="text-xs text-muted-foreground">{client.owner}</p>
                               )}

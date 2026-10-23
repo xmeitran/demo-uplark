@@ -1,4 +1,6 @@
 "use client";
+import { UserAvatar } from "@/components/user-avatar";
+import { avatarInitialsFor } from "@/lib/workspace-users";
 import { readApiError } from "@/lib/api-error";
 import { MoneyAmount } from "@/components/money-amount";
 import { useDialogAccessibility } from "@/hooks/use-dialog-accessibility";
@@ -159,6 +161,8 @@ function getAccountPicOptions(resources: CapacitySummaryItem[], members: AdminAc
       optionsByUser.set(member.id, {
         value: member.id,
         label: member.displayName || member.email || member.id,
+        avatarUrl: member.avatarUrl,
+        initials: avatarInitialsFor(member.displayName || member.email || member.id),
         icon: "users",
         meta: getMemberPicMeta(member)
       });
@@ -170,6 +174,8 @@ function getAccountPicOptions(resources: CapacitySummaryItem[], members: AdminAc
       optionsByUser.set(resource.userId, {
         value: resource.userId,
         label: resource.userDisplayName || resource.userEmail || resource.userId,
+        avatarUrl: resource.userAvatarUrl,
+        initials: avatarInitialsFor(resource.userDisplayName || resource.userEmail || resource.userId),
         icon: "users",
         meta: businessRoleFromMember({ resourceDisplayRole: resource.displayRole }) || resource.userEmail
       });
@@ -1784,11 +1790,11 @@ export function AccountsWorkbench({
                           >
                             {account.name}
                           </span>
-                          <span>{picName}</span>
+                          <span className="inline-flex items-center gap-1.5">{account.picName ? <UserAvatar id={account.picUserId} name={account.picName} avatarUrl={account.picAvatarUrl} size="xs" /> : null}{picName}</span>
                         </div>
                       ),
                       <span style={{ fontWeight: 400 }}>{formatAccountStage(account.stage)}</span>,
-                      <span>{picName}</span>,
+                      <span className="inline-flex items-center gap-1.5">{account.picName ? <UserAvatar id={account.picUserId} name={account.picName} avatarUrl={account.picAvatarUrl} size="xs" /> : null}{picName}</span>,
                       (
                         <s-badge tone={account.health === "green" ? "success" : account.health === "amber" ? "warning" : "critical"}>
                           {formatAccountHealth(account.health)}
@@ -1941,6 +1947,8 @@ function AccountDetailPage({
   const picOptions = getAccountPicOptions(resources, members);
   const editPicName = picOptions.find(option => option.value === editPicUserId)?.label ?? getAccountPicName(account);
   const currentPicName = isEditingAccount ? editPicName : getAccountPicName(account);
+  const currentPicUserId = isEditingAccount ? editPicUserId : account.picUserId;
+  const currentPicFace = currentPicUserId ? <UserAvatar id={currentPicUserId} name={currentPicName} avatarUrl={isEditingAccount ? picOptions.find(option => option.value === editPicUserId)?.avatarUrl : account.picAvatarUrl} size="xs" /> : null;
 
   // Filters state
   const [filterInfluence, setFilterInfluence] = useState("all");
@@ -2316,7 +2324,7 @@ function AccountDetailPage({
               <div className="account-detail-chip-row">
                 <span className="account-detail-pill">
                   <ShopifyIcon name="users" size={13} />
-                  PIC: <strong>{currentPicName}</strong>
+                  PIC: {currentPicFace}<strong>{currentPicName}</strong>
                 </span>
                 <span className="account-detail-pill">
                   <ShopifyIcon name="spark" size={13} />
@@ -2425,7 +2433,7 @@ function AccountDetailPage({
           <div className="account-detail-metric-card">
             <span>Giai đoạn hiện tại</span>
             <strong>{formatAccountStage(isEditingAccount ? editStage : account.stage)}</strong>
-            <small>PIC {currentPicName}</small>
+            <small className="inline-flex items-center gap-1">PIC {currentPicFace}{currentPicName}</small>
           </div>
           <div className="account-detail-metric-card">
             <span>Tín hiệu liên quan</span>
@@ -2488,7 +2496,7 @@ function AccountDetailPage({
               <div className="account-detail-field-grid">
                 <div className="account-detail-field">
                   <span>PIC</span>
-                  <strong>{currentPicName}</strong>
+                  <strong className="inline-flex items-center gap-1.5">{currentPicFace}{currentPicName}</strong>
                 </div>
                 <div className="account-detail-field">
                   <span>Sức khỏe</span>

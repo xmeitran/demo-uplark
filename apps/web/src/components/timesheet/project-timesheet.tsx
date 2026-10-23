@@ -623,7 +623,7 @@ function ProjectMemberTable({
             <tr key={row.person.id} className="border-b border-border transition-colors hover:bg-primary/[0.04]">
               <Td>
                 <span className="flex items-center gap-2">
-                  <Avatar initials={row.person.initials} name={row.person.name} />
+                  <Avatar person={row.person} />
                   <PersonLink userId={row.person.id} className={`hover:underline ${row.person.id === currentUserId ? "font-bold text-primary" : "font-semibold"}`}>{row.person.name}</PersonLink>
                 </span>
               </Td>

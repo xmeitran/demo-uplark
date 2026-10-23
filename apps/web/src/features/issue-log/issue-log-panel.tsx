@@ -4,6 +4,8 @@
  * "Sổ vấn đề": the body of the project's Issues tab (rules 5.4, V-23…V-26, V-31).
  * Blocker / Risk / Issue share one list; the API decides which transitions are allowed.
  */
+import { avatarInitialsFor } from "@/lib/workspace-users";
+import { UserAvatar } from "@/components/user-avatar";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertCircle, Check, Download, Pencil, Plus, X } from "lucide-react";
 import {
@@ -68,7 +70,7 @@ const isReal = (id: string) => Boolean(id) && !id.startsWith("__");
 function FieldInput({ def, value, onChange, members, required }: { def: IssueLogFieldDef; value: string; onChange: (value: string) => void; members: Member[]; required?: boolean }) {
   const label = <span className={labelClass}>{def.label}{required ? " *" : ""}</span>;
   if (def.kind === "select" || def.kind === "user") {
-    const options = def.kind === "user" ? members.map((member) => ({ value: member.id, label: member.name })) : [...(def.options ?? [])];
+    const options = def.kind === "user" ? members.map((member) => ({ value: member.id, label: member.name, avatarUrl: member.avatarUrl, initials: avatarInitialsFor(member.name) })) : [...(def.options ?? [])];
     return <div>{label}<CustomDropdown ariaLabel={def.label} options={required ? options : [{ value: "", label: "— Chưa chọn —" }, ...options]} value={value} onChange={onChange} placeholder="Chọn" menuPortal /></div>;
   }
   if (def.kind === "date") return <div>{label}<CustomDatePicker ariaLabel={def.label} value={value} onChange={onChange} placeholder="Chưa đặt" /></div>;
@@ -280,7 +282,7 @@ export function IssueLogPanel({ projectId, teamMembers, milestones, milestoneGro
                       <td className="max-w-[340px] px-4 py-3"><p className="line-clamp-2 font-semibold text-foreground">{record.description}</p><p className="mt-1 text-[11px] text-muted-foreground">{record.nextStep ? `Bước tiếp theo: ${record.nextStep}` : "Chưa có bước tiếp theo"}</p></td>
                       <td className="px-4 py-3 text-xs text-muted-foreground">{locationLabel(record)}</td>
                       <td className="px-4 py-3"><span className={`${pillClass} ${SEVERITY_TONE[record.severity]}`}>{ISSUE_LOG_SEVERITY_LABELS[record.severity]}</span></td>
-                      <td className="px-4 py-3 text-xs font-semibold text-foreground">{record.ownerDisplayName ?? "Chưa phân công"}</td>
+                      <td className="px-4 py-3 text-xs font-semibold text-foreground"><span className="inline-flex items-center gap-1.5">{record.ownerDisplayName ? <UserAvatar id={record.ownerUserId} name={record.ownerDisplayName} size="xs" /> : null}{record.ownerDisplayName ?? "Chưa phân công"}</span></td>
                       <td className="px-4 py-3"><span className={`whitespace-nowrap ${pillClass} ${statusTone(record.status)}`}>{ISSUE_LOG_STATUS_LABELS[record.status]}</span>{record.resolutionProposedAt && record.isOpen && <p className="mt-1.5 text-[10px] font-semibold text-amber-700">Chờ PM xác nhận</p>}{record.escalationLevel !== "none" && <p className="mt-1.5"><span className={`whitespace-nowrap ${pillClass} bg-rose-50 text-rose-700`}>Chuyển cấp: {ISSUE_LOG_ESCALATION_LABELS[record.escalationLevel]}</span></p>}</td>
                       <td className="px-4 py-3 text-xs text-muted-foreground"><p>{due ? dateLabel(due) : "—"}</p><p className={`mt-1 text-[10px] font-bold ${record.dueState === "overdue" ? "text-rose-600" : "text-muted-foreground"}`}>{ISSUE_LOG_DUE_STATE_LABELS[record.dueState]} · {record.ageDays} ngày <span className="ml-1">{expanded ? "▲" : "▼"}</span></p></td>
                     </tr>
@@ -310,7 +312,7 @@ export function IssueLogPanel({ projectId, teamMembers, milestones, milestoneGro
                             {[...record.history].reverse().map((entry) => <li key={entry.id} className="border-l-2 border-border pl-3 text-xs leading-5">
                               <p className="font-semibold text-foreground">{entry.label}{entry.toStatus && entry.toStatus !== entry.fromStatus ? ` → ${ISSUE_LOG_STATUS_LABELS[entry.toStatus as IssueLogStatus] ?? entry.toStatus}` : ""}</p>
                               {entry.note && <p className="whitespace-pre-wrap text-muted-foreground">{entry.note}</p>}
-                              <p className="text-[10px] text-muted-foreground">{entry.actorDisplayName ?? "Hệ thống"} · {formatVietnamDate(entry.at)} {formatVietnamTime(entry.at)}</p>
+                              <p className="flex items-center gap-1 text-[10px] text-muted-foreground">{entry.actorDisplayName ? <UserAvatar id={entry.actorUserId} name={entry.actorDisplayName} size="xs" /> : null}{entry.actorDisplayName ?? "Hệ thống"} · {formatVietnamDate(entry.at)} {formatVietnamTime(entry.at)}</p>
                             </li>)}
                           </ol>
                         </div>
@@ -329,7 +331,7 @@ export function IssueLogPanel({ projectId, teamMembers, milestones, milestoneGro
           {form.mode === "create" && <div><span className={labelClass}>Loại bản ghi *</span><CustomDropdown ariaLabel="Loại bản ghi" options={ISSUE_LOG_TYPES.map((type) => ({ value: type, label: TYPE_HINT[type] }))} value={values.type ?? "issue"} onChange={set("type")} /></div>}
           <div><span className={labelClass}>Mức ảnh hưởng *</span><CustomDropdown ariaLabel="Mức ảnh hưởng" options={ISSUE_LOG_SEVERITIES.map((severity) => ({ value: severity, label: ISSUE_LOG_SEVERITY_LABELS[severity] }))} value={values.severity ?? "medium"} onChange={set("severity")} /></div>
           <label className="md:col-span-2"><span className={labelClass}>Mô tả *</span><textarea value={values.description ?? ""} onChange={(event) => set("description")(event.target.value)} rows={3} placeholder="Ví dụ: Chờ dữ liệu đầu vào từ khách hàng để hoàn thành stage…" className={`${inputClass} resize-none`} /></label>
-          <div><span className={labelClass}>Người chịu trách nhiệm</span><CustomDropdown ariaLabel="Người chịu trách nhiệm" options={[{ value: "", label: "Chưa phân công" }, ...teamMembers.map((member) => ({ value: member.id, label: member.name }))]} value={values.ownerUserId ?? ""} onChange={set("ownerUserId")} /></div>
+          <div><span className={labelClass}>Người chịu trách nhiệm</span><CustomDropdown ariaLabel="Người chịu trách nhiệm" options={[{ value: "", label: "Chưa phân công" }, ...teamMembers.map((member) => ({ value: member.id, label: member.name, avatarUrl: member.avatarUrl, initials: avatarInitialsFor(member.name) }))]} value={values.ownerUserId ?? ""} onChange={set("ownerUserId")} /></div>
           <div><span className={labelClass}>Hạn xử lý</span><CustomDatePicker ariaLabel="Hạn xử lý" value={values.dueAt ?? ""} onChange={set("dueAt")} placeholder="Chưa đặt hạn" /></div>
           <div><span className={labelClass}>Milestone</span><CustomDropdown ariaLabel="Milestone" options={[{ value: "", label: "Không gắn" }, ...milestones.filter((milestone) => isReal(milestone.id)).map((milestone) => ({ value: milestone.id, label: milestone.name }))]} value={values.milestoneId ?? ""} onChange={(milestoneId) => setValues((current) => ({ ...current, milestoneId, stageId: "", taskId: "" }))} /></div>
           <div><span className={labelClass}>Stage</span><CustomDropdown ariaLabel="Stage" options={[{ value: "", label: "Không gắn" }, ...stages.map((stage) => ({ value: stage.id, label: stage.name }))]} value={values.stageId ?? ""} onChange={(stageId) => setValues((current) => ({ ...current, stageId, taskId: "" }))} /></div>

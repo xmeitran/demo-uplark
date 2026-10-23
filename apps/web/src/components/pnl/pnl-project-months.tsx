@@ -1,5 +1,6 @@
 "use client";
 
+import { UserAvatar } from "@/components/user-avatar";
 import Link from "next/link";
 import { Fragment, useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
@@ -109,7 +110,7 @@ function PeopleByDay({ detail }: Readonly<{ detail: PnlProjectMonthDetail }>) {
             const byDay = new Map(person.byDay.map((day) => [day.dateKey, day]));
             return (
               <tr key={person.userId}>
-                <th scope="row" className={`${tdClass} sticky left-0 z-10 whitespace-nowrap bg-card text-left font-semibold`}>{person.displayName}</th>
+                <th scope="row" className={`${tdClass} sticky left-0 z-10 whitespace-nowrap bg-card text-left font-semibold`}><span className="inline-flex items-center gap-1.5"><UserAvatar id={person.userId} name={person.displayName} size="xs" />{person.displayName}</span></th>
                 {detail.days.map((day) => {
                   const cell = byDay.get(day.dateKey);
                   const onLeave = person.leaveDays.includes(day.dateKey);

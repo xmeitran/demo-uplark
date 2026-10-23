@@ -1,5 +1,6 @@
 "use client";
 
+import { avatarInitialsFor } from "@/lib/workspace-users";
 import { useEffect, useMemo, useState } from "react";
 import type {
   CapacitySummaryItem,
@@ -122,6 +123,8 @@ export function ResourceMgmtFunctionPage({
     return consultants.map((c) => ({
       value: c.id,
       label: `${c.name} (${c.role})`,
+      avatarUrl: c.avatarUrl,
+      initials: avatarInitialsFor(c.name),
       icon: "users" as const,
       iconTone: "info"
     }));

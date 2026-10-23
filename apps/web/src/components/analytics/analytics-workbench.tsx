@@ -1,5 +1,6 @@
 "use client";
 
+import { UserAvatar } from "@/components/user-avatar";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
@@ -785,7 +786,7 @@ function WorkforceView({ summary, slot, onRetry }: {
             <CompanionTable
               head={["Nhân sự", "Giờ đã duyệt", "Năng lực khả dụng", "Mức sử dụng"]}
               rows={users.map((row) => [
-                row.href ? <Link key={row.id} href={row.href as any} className="font-semibold text-primary hover:underline">{row.label}</Link> : row.label,
+                <span key={row.id} className="inline-flex items-center gap-1.5">{row.pseudonymized ? null : <UserAvatar id={row.id} name={row.label} size="xs" />}{row.href ? <Link href={row.href as any} className="font-semibold text-primary hover:underline">{row.label}</Link> : row.label}</span>,
                 formatHours(row.metrics.reviewedApprovedMinutes ?? 0),
                 row.metrics.capacityMinutes === null || row.metrics.capacityMinutes === undefined ? "Chưa có dữ liệu" : formatHours(row.metrics.capacityMinutes),
                 row.metrics.actualUtilization === null || row.metrics.actualUtilization === undefined ? "Chưa có dữ liệu" : formatPercent(row.metrics.actualUtilization)
@@ -924,7 +925,7 @@ function ResourcesView({ summary, slot, onRetry }: {
             <CompanionTable
               head={["Nhân sự", "Năng lực khả dụng", "Kế hoạch phân bổ", "Đã lên lịch", "Giờ đã duyệt"]}
               rows={users.map((row) => [
-                row.href ? <Link key={row.id} href={row.href as any} className="font-semibold text-primary hover:underline">{row.label}</Link> : row.label,
+                <span key={row.id} className="inline-flex items-center gap-1.5">{row.pseudonymized ? null : <UserAvatar id={row.id} name={row.label} size="xs" />}{row.href ? <Link href={row.href as any} className="font-semibold text-primary hover:underline">{row.label}</Link> : row.label}</span>,
                 row.metrics.capacityMinutes === null || row.metrics.capacityMinutes === undefined ? "Chưa có dữ liệu" : formatHours(row.metrics.capacityMinutes),
                 formatHours(row.metrics.allocationMinutes ?? 0),
                 formatHours(row.metrics.scheduledMinutes ?? 0),

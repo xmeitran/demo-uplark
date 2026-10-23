@@ -119,7 +119,7 @@ export function PersonDayLoad({
                   <tr key={row.person.id} className="border-b border-border">
                     <Td>
                       <span className="flex items-center gap-2">
-                        <Avatar initials={row.person.initials} name={row.person.name} />
+                        <Avatar person={row.person} />
                         <span className="min-w-0">
                           <PersonLink userId={row.person.id} className={`block truncate hover:underline ${row.person.id === currentUserId ? "font-bold text-primary" : "font-semibold"}`} title={row.person.name}>{row.person.name}</PersonLink>
                           <span className="block truncate text-[10.5px] text-muted-foreground">
@@ -242,10 +242,10 @@ function DayDetailCard({
       className="z-50 rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-xl"
     >
       <div className="flex items-start justify-between gap-2 border-b border-border pb-2">
-        <div className="min-w-0">
+        <div className="flex min-w-0 items-start gap-2"><Avatar person={row.person} /><div className="min-w-0">
           <p className="truncate text-[12.5px] font-bold">{row.person.name}</p>
           <p className="text-[11px] text-muted-foreground">{formatDate(cell.date)}</p>
-        </div>
+        </div></div>
         <div className="shrink-0 text-right">
           <p className="font-mono text-[14px] font-bold tabular-nums">{formatHours(cell.minutes)}</p>
           <p className={`text-[10.5px] font-semibold ${cell.loadPercent > OVERLOAD_THRESHOLD_PERCENT ? "text-destructive" : cell.loadPercent >= UNDERLOAD_THRESHOLD_PERCENT ? "text-success" : "text-warning"}`}>

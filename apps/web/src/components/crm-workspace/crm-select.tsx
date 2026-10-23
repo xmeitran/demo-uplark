@@ -1,5 +1,6 @@
 "use client";
 
+import { UserAvatar } from "@/components/user-avatar";
 import React, { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, Info, Search } from "lucide-react";
@@ -87,15 +88,9 @@ function optionText(option: CrmSelectOption) {
 }
 
 function optionIcon(option: CrmSelectOption, size: "trigger" | "option") {
-  const dimension = size === "trigger" ? "h-5 w-5 text-[9px]" : "h-8 w-8 text-[10px]";
-  const initials = option.initials || option.label.trim().split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]?.toUpperCase()).join("");
-
-  if (option.avatarUrl) {
-    return <img src={option.avatarUrl} alt="" referrerPolicy="no-referrer" className={`${dimension} shrink-0 rounded-full object-cover ring-1 ring-black/5`} />;
-  }
-
-  if (option.initials) {
-    return <span aria-hidden className={`${dimension} flex shrink-0 items-center justify-center rounded-full font-bold text-white ring-1 ring-black/5`} style={{ backgroundColor: option.color ?? "#64748b" }}>{initials || "U"}</span>;
+  // A person option (photo or initials): their face, looked up in the workspace directory when the option carries no photo.
+  if (option.avatarUrl || option.initials) {
+    return <UserAvatar id={option.value} name={option.label} avatarUrl={option.avatarUrl} initials={option.initials} size={size === "trigger" ? "xs" : "md"} className="ring-1 ring-black/5" />;
   }
 
   if (typeof option.icon === "function") {

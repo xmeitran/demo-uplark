@@ -1,4 +1,5 @@
 "use client";
+import { UserAvatar } from "@/components/user-avatar";
 import { apiErrorMessage, isNetworkFailure, readApiError, ApiResponseError } from "@/lib/api-error";
 import { isActualTimeEntry } from "@/lib/time-entry-actual";
 import { allowedPerformers } from "@/lib/task-people-policy";
@@ -304,15 +305,8 @@ export function CustomDropdown({
               )}
               {selectedOpt?.label ?? "Select option"}
             </span>
-          ) : selectedOpt?.avatarUrl ? (
-            <img src={selectedOpt.avatarUrl} alt="" className="h-5 w-5 rounded-full object-cover shrink-0" />
-          ) : selectedOpt?.initials ? (
-            <span
-              className="h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0"
-              style={{ backgroundColor: selectedOpt.color ?? "#64748b" }}
-            >
-              {selectedOpt.initials}
-            </span>
+          ) : selectedOpt && (selectedOpt.avatarUrl || selectedOpt.initials) ? (
+            <UserAvatar id={selectedOpt.value} name={selectedOpt.label} avatarUrl={selectedOpt.avatarUrl} initials={selectedOpt.initials} size="xs" />
           ) : selectedOpt?.icon ? (
             <ShopifyIcon
               className="text-slate-400 shrink-0"
@@ -397,15 +391,8 @@ export function CustomDropdown({
                     )}
                     {opt.label}
                   </span>
-                ) : opt.avatarUrl ? (
-                  <img src={opt.avatarUrl} alt="" className="h-7 w-7 rounded-full object-cover shrink-0" />
-                ) : opt.initials ? (
-                  <span
-                    className="h-7 w-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"
-                    style={{ backgroundColor: opt.color ?? "#64748b" }}
-                  >
-                    {opt.initials}
-                  </span>
+                ) : opt.avatarUrl || opt.initials ? (
+                  <UserAvatar id={opt.value} name={opt.label} avatarUrl={opt.avatarUrl} initials={opt.initials} size="md" />
                 ) : opt.icon ? (
                   <div className="h-7 w-7 rounded-full bg-slate-50 flex items-center justify-center text-slate-400 shrink-0">
                     <ShopifyIcon
@@ -483,11 +470,7 @@ export function MultiPersonDropdown({
       >
         <span className="flex items-center gap-2 min-w-0">
           <span className="flex -space-x-1.5 shrink-0">
-            {selectedOptions.slice(0, 3).map((option) => option.avatarUrl ? (
-              <img key={option.value} src={option.avatarUrl} alt="" className="h-5 w-5 rounded-full object-cover ring-2 ring-white" />
-            ) : (
-              <span key={option.value} className="h-5 w-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white ring-2 ring-white" style={{ backgroundColor: option.color ?? "#64748b" }}>{option.initials ?? option.label.slice(0, 2).toUpperCase()}</span>
-            ))}
+            {selectedOptions.slice(0, 3).map((option) => <UserAvatar key={option.value} id={option.value} name={option.label} avatarUrl={option.avatarUrl} initials={option.initials} size="xs" className="ring-2 ring-white" />)}
           </span>
           <span className="min-w-0">
             <span className="block truncate text-xs font-semibold text-slate-800">{summary}</span>
@@ -518,7 +501,7 @@ export function MultiPersonDropdown({
                 className={`w-full min-h-11 flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/25 ${selected ? "bg-blue-50/60 text-blue-600" : "hover:bg-slate-50 text-slate-700"}`}
                 onClick={() => onChange(selected ? values.filter((value) => value !== option.value) : [...values, option.value])}
               >
-                {option.avatarUrl ? <img src={option.avatarUrl} alt="" className="h-7 w-7 rounded-full object-cover shrink-0" /> : <span className="h-7 w-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0" style={{ backgroundColor: option.color ?? "#64748b" }}>{option.initials ?? option.label.slice(0, 2).toUpperCase()}</span>}
+                <UserAvatar id={option.value} name={option.label} avatarUrl={option.avatarUrl} initials={option.initials} size="md" />
                 <span className="flex-1 min-w-0">
                   <span className="block text-xs text-slate-800 font-semibold truncate">{option.label}</span>
                   {option.subtext && <span className="block text-[10px] text-slate-400 font-normal truncate mt-0.5">{option.subtext}</span>}

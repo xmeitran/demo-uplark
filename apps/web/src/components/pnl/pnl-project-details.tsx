@@ -1,5 +1,6 @@
 "use client";
 
+import { UserAvatar } from "@/components/user-avatar";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, ChevronUp } from "lucide-react";
 import type { PnlHistoryEvent, PnlManualCostInput, PnlManualLine, PnlProjectItemRow, PnlProjectResponse } from "@b2b-crm/contracts";
@@ -260,7 +261,7 @@ function HistoryList({ events }: Readonly<{ events: PnlHistoryEvent[] }>) {
             <span className="font-semibold text-foreground">{event.label}</span>
             {event.periodKey ? <span className="text-muted-foreground">kỳ {formatMonth(event.periodKey)}</span> : null}
             {before !== null || after !== null ? <span className="font-mono text-xs text-muted-foreground">{before ?? "—"} → {after ?? "—"}</span> : null}
-            <span className="text-muted-foreground">{event.actorName ?? "Hệ thống"}</span>
+            <span className="inline-flex items-center gap-1 text-muted-foreground">{event.actorName ? <UserAvatar name={event.actorName} size="xs" /> : null}{event.actorName ?? "Hệ thống"}</span>
             {event.reason ? <span className="text-muted-foreground">lý do: {event.reason}</span> : null}
           </li>
         );

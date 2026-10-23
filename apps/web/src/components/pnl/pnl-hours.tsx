@@ -82,7 +82,7 @@ function EntryTable({ entries, moneyVisible, showDeadline, onReset }: Readonly<{
                   </span>
                 </td>
                 <td className={`${tdClass} break-words`}>
-                  <PersonLink userId={entry.userId} className="!text-foreground hover:!text-primary">{entry.userDisplayName}</PersonLink>
+                  <PersonLink userId={entry.userId} avatar className="!text-foreground hover:!text-primary">{entry.userDisplayName}</PersonLink>
                   <span className="mt-0.5 block whitespace-nowrap font-mono text-xs tabular-nums text-muted-foreground">{formatDay(entry.workDate)}</span>
                 </td>
                 <td className={tdNumberClass}>
@@ -105,7 +105,7 @@ function EntryTable({ entries, moneyVisible, showDeadline, onReset }: Readonly<{
                     </span>
                     <span className="mt-0.5 block">
                       {entry.ownerUserId
-                        ? <PersonLink userId={entry.ownerUserId} className="!text-foreground hover:!text-primary">{entry.ownerDisplayName}</PersonLink>
+                        ? <PersonLink userId={entry.ownerUserId} avatar className="!text-foreground hover:!text-primary">{entry.ownerDisplayName}</PersonLink>
                         : <span className={warnTextClass}>Dự án chưa có PIC</span>}
                     </span>
                   </td>

@@ -6,6 +6,7 @@
  * changed and why.
  * Renders what GET /projects/:id/baseline returns; an Admin can lock or re-lock with a reason.
  */
+import { UserAvatar } from "@/components/user-avatar";
 import React, { useEffect, useState } from "react";
 import { ChevronDown, ChevronUp, Lock, LockOpen } from "lucide-react";
 import type { ProjectBaselineResponse } from "@b2b-crm/contracts";
@@ -98,7 +99,7 @@ export function ProjectBaselineBlock({ projectId, refreshKey, className = "" }: 
           {baseline.history.map((version) => (
             <li key={version.id} className="text-xs text-muted-foreground">
               <p>
-                <span className="font-semibold text-foreground">Phiên bản {version.version}</span> · {baselineCauseLabel(version)} · {version.createdByName ?? "Hệ thống"} · {formatVietnamDate(version.createdAt)}
+                <span className="font-semibold text-foreground">Phiên bản {version.version}</span> · {baselineCauseLabel(version)} · {version.createdByName ? <UserAvatar name={version.createdByName} size="xs" className="mr-1 align-middle" /> : null}{version.createdByName ?? "Hệ thống"} · {formatVietnamDate(version.createdAt)}
               </p>
               <p className="text-foreground">{version.reason}</p>
               {version.diff.length ? (

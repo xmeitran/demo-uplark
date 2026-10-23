@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { APP_NAME, AppBrandLogo } from "./app-brand";
 import { ModalLayer } from "./modal-layer";
 import { getShellRoutes } from "../lib/production-route-readiness";
+import { useAuth } from "../lib/auth";
 
 export type ShopifyIconName =
   | "alert"
@@ -344,6 +345,10 @@ export function ShopifyAppShell({
   principal,
   principalAvatarUrl
 }: Readonly<{ active: ShopifyActiveItem; children: ReactNode; principal: string; principalAvatarUrl?: string }>) {
+  // The signed-in person wins over whatever label a screen passed ("founder" on older workbenches).
+  const { user } = useAuth();
+  const shownPrincipal = user?.name || principal;
+  const shownAvatarUrl = principalAvatarUrl || user?.avatarUrl;
   const [isNavOpen, setIsNavOpen] = useState(false);
   const [isMobileNavigation, setIsMobileNavigation] = useState(false);
   const navDialogRef = useDialogAccessibility(isNavOpen && isMobileNavigation, () => setIsNavOpen(false));
@@ -529,10 +534,10 @@ export function ShopifyAppShell({
             }}
             type="button"
           >
-            <PrincipalAvatar avatarUrl={principalAvatarUrl} principal={principal} />
+            <PrincipalAvatar avatarUrl={shownAvatarUrl} principal={shownPrincipal} />
             <span className="shopify-nav-user-copy">
               <span>Đang đăng nhập</span>
-              <strong>{principal}</strong>
+              <strong>{shownPrincipal}</strong>
             </span>
             <ShopifyIcon
               className={isUserMenuOpen ? "shopify-nav-user-chevron is-open" : "shopify-nav-user-chevron"}
@@ -603,10 +608,10 @@ export function ShopifyAppShell({
                 </div>
 
                 <div className="shopify-user-settings-profile">
-                  <PrincipalAvatar avatarUrl={principalAvatarUrl} principal={principal} />
+                  <PrincipalAvatar avatarUrl={shownAvatarUrl} principal={shownPrincipal} />
                   <div>
                     <span>Tên hiển thị</span>
-                    <strong>{principal}</strong>
+                    <strong>{shownPrincipal}</strong>
                   </div>
                 </div>
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { UserAvatar } from "@/components/user-avatar";
 import Link from "next/link";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -178,7 +179,7 @@ export function StaffCostsPage() {
                 return (
                   <tr key={row.userId} className={waiting ? "bg-amber-50" : "hover:bg-muted/25"}>
                     <td className={`${cell} font-mono text-xs`}>{row.employeeCode ?? <span className={toneClass.warn}>Chưa gán mã</span>}</td>
-                    <td className={cell}><Link href={`/users/${encodeURIComponent(row.userId)}`} className="font-medium !text-foreground hover:!text-primary hover:underline">{row.displayName}</Link>{row.department ? <span className="block text-[11px] text-muted-foreground">{row.department}</span> : null}</td>
+                    <td className={cell}><Link href={`/users/${encodeURIComponent(row.userId)}`} className="inline-flex items-center gap-1.5 font-medium !text-foreground hover:!text-primary hover:underline"><UserAvatar id={row.userId} name={row.displayName} size="xs" />{row.displayName}</Link>{row.department ? <span className="block text-[11px] text-muted-foreground">{row.department}</span> : null}</td>
                     {row.components
                       ? <><td className={`${num} font-semibold`}><HourlyRateCell rate={row.hourlyCostRate} status={row.status} /></td><td className={num}>{formatHoursValue(row.loggedMinutes)} giờ</td></>
                       : <td colSpan={2} className={`${cell} ${waiting ? "font-medium text-amber-700" : "text-muted-foreground"}`}>{waiting ? waitingText : "Chưa nhập đơn giá giờ tháng này"}</td>}
