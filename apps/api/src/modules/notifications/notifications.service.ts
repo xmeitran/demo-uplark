@@ -255,8 +255,7 @@ export class NotificationsService {
           reviewerMode,
           reviewerUserId: row.reviewerUserId,
           principalUserId: principal.subjectId,
-          principalRoleCodes: principal.roleCodes,
-          requestedByUserId: row.approvalRequestedByUserId
+          principalRoleCodes: principal.roleCodes
         })
       };
     });
@@ -309,13 +308,9 @@ export class NotificationsService {
       select: { id: true, displayName: true },
       orderBy: { displayName: "asc" }
     });
-    // V-12: the person sending the dossier never reviews it.
+    if (!recipients.length) throw new ForbiddenException("Không tìm thấy người duyệt đang hoạt động trong workspace");
+    // The sender may approve their own dossier, so they need no notification about it.
     const reviewers = recipients.filter((recipient) => recipient.id !== input.principal.subjectId);
-    if (!reviewers.length) {
-      throw new ForbiddenException(recipients.length
-        ? "Bạn là người duyệt duy nhất của milestone này nên không thể tự gửi và tự duyệt. Đổi người duyệt hoặc nhờ người khác gửi hồ sơ."
-        : "Không tìm thấy người duyệt đang hoạt động trong workspace");
-    }
     if (["locked", "approved"].includes(milestone.gateStatus)) throw new ForbiddenException("Milestone hiện không nhận yêu cầu duyệt");
 
     const requestedAt = new Date();
@@ -324,7 +319,7 @@ export class NotificationsService {
     // absolute URL, so the public origin is added only to the card payload.
     const href = `/projects/${encodeURIComponent(milestone.project.id)}?tab=Overview`;
     const larkHref = `${appPublicOrigin()}${href}`;
-    const reviewerLabel = reviewerMode === "specific_user" ? reviewers[0].displayName : "Admin workspace";
+    const reviewerLabel = reviewerMode === "specific_user" ? recipients[0].displayName : "Admin workspace";
     // Sending the dossier is what puts the milestone in "Chờ duyệt" (the requirement check alone only makes it ready).
     // The first sender is kept; a re-send only refreshes the notifications.
     const requestClaim = milestone.approvalRequestedAt && milestone.gateStatus === "pending_review"

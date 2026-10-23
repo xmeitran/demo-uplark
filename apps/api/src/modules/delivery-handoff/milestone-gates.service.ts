@@ -369,8 +369,7 @@ export class MilestoneGatesService {
         reviewerMode: normalizeMilestoneReviewerMode(updated.reviewerMode ?? milestone.reviewerMode),
         reviewerUserId: updated.reviewerUserId ?? milestone.reviewerUserId,
         principalUserId: principal.subjectId,
-        principalRoleCodes: principal.roleCodes,
-        requestedByUserId: updated.approvalRequestedByUserId
+        principalRoleCodes: principal.roleCodes
       })
     };
   }
@@ -382,9 +381,6 @@ export class MilestoneGatesService {
     if (!milestone) throw new NotFoundException("Project milestone not found");
     if (milestone.gateStatus !== "pending_review" || !milestone.approvalRequestedAt) {
       throw new BadRequestException("Hồ sơ milestone chưa được gửi duyệt. Bấm “Gửi hồ sơ chờ duyệt” trước.");
-    }
-    if (milestone.approvalRequestedByUserId === principal.subjectId) {
-      throw new ForbiddenException("Người gửi hồ sơ không tự duyệt hồ sơ của mình. Nhờ người duyệt khác.");
     }
 
     const reviewerMode = normalizeMilestoneReviewerMode(milestone.reviewerMode);

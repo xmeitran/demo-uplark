@@ -100,6 +100,17 @@ describe("NotificationsService milestone approval requests", () => {
     const codes = prisma.user.findMany.mock.calls[0][0].where.roleBindings.some.role.code.in;
     expect([...codes].sort()).toEqual(["BD_LEAD", "DX_DIRECTOR", "FOUNDER_GM", "PM", "WORKSPACE_ADMIN"]);
   });
+
+  it("lets the only reviewer send their own dossier without notifying themself (chốt 23/10)", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const prisma = fakePrisma(milestone({ reviewerMode: "specific_user", reviewerUserId: principal.subjectId }));
+    prisma.user.findMany.mockResolvedValue([{ id: principal.subjectId, displayName: principal.displayName }]);
+
+    const result = await new NotificationsService(prisma as never).createMilestoneApprovalRequest({ projectId: "project-1", milestoneId: "ms-1", principal });
+
+    expect(result).toMatchObject({ gateStatus: "pending_review", reviewerLabel: principal.displayName, notificationCount: 0 });
+    expect(prisma.appNotification.upsert).not.toHaveBeenCalled();
+  });
 });
 
 describe("NotificationsService project risk notifications", () => {

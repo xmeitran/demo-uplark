@@ -186,13 +186,14 @@ describe("ProjectsService milestone customer confirmation", () => {
     expect(prisma.projectMilestone.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "milestone-2" }, data: { gateStatus: "open" } }));
   });
 
-  it("refuses an approval nobody sent, and the sender approving their own dossier (V-12)", async () => {
+  it("refuses an approval nobody sent, but lets the sender approve their own dossier (chốt 23/10)", async () => {
     const base = { id: "milestone-1", projectId: "project-1", workspaceId: "workspace-1", sortOrder: 1, requiredDocumentCount: 0, requiredDocumentTypes: [], evidenceMode: "file_or_link", customerConfirmationRequired: false, customerConfirmationAt: null, reviewerMode: "workspace_admin", reviewerUserId: null };
     const unsent = createPrisma({ ...base, gateStatus: "pending_review", approvalRequestedAt: null }, ["done"]);
     await expect(new ProjectsService(unsent as any).approveProjectMilestone("project-1", "milestone-1", adminPrincipal)).rejects.toMatchObject({ status: 400 });
     const own = createPrisma({ ...base, gateStatus: "pending_review", approvalRequestedAt: new Date(), approvalRequestedByUserId: adminPrincipal.subjectId }, ["done"]);
-    await expect(new ProjectsService(own as any).approveProjectMilestone("project-1", "milestone-1", adminPrincipal)).rejects.toMatchObject({ status: 403 });
-    expect(own.projectMilestone.updateMany).not.toHaveBeenCalled();
+    const approved = await new ProjectsService(own as any).approveProjectMilestone("project-1", "milestone-1", adminPrincipal);
+    expect(approved.gateStatus).toBe("approved");
+    expect(approved.reviewerApprovedByUserId).toBe(adminPrincipal.subjectId);
   });
 
   it("rejects approval by a non-selected PIC", async () => {

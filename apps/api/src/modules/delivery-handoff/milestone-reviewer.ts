@@ -20,10 +20,8 @@ export function canApproveMilestoneReviewer(input: {
   reviewerUserId?: string | null;
   principalUserId: string;
   principalRoleCodes: readonly string[];
-  /** Who sent the dossier: the preparer never approves their own request (V-12, as for G1–G8). */
-  requestedByUserId?: string | null;
 }) {
-  if (input.requestedByUserId && input.requestedByUserId === input.principalUserId) return false;
+  // The sender may approve their own dossier (chốt 23/10): the designated reviewer, or any admin when none is designated.
   if (input.reviewerMode === "workspace_admin") return isWorkspaceAdmin(input.principalRoleCodes);
   return Boolean(input.reviewerUserId) && input.reviewerUserId === input.principalUserId;
 }

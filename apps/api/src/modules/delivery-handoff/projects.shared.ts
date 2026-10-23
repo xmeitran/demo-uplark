@@ -138,8 +138,7 @@ export function mapMilestoneGateSummary(
           reviewerMode: normalizeMilestoneReviewerMode(milestone.reviewerMode),
           reviewerUserId: milestone.reviewerUserId,
           principalUserId: principal.subjectId,
-          principalRoleCodes: principal.roleCodes,
-          requestedByUserId: milestone.approvalRequestedByUserId
+          principalRoleCodes: principal.roleCodes
         })
       : undefined,
     reviewerRole: milestone.reviewerRole
