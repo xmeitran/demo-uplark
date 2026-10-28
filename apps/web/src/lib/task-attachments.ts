@@ -130,6 +130,36 @@ export async function createTaskAttachment(task: AttachmentTask, fileInput: Reco
   return mapTaskAttachmentToView(await attachmentResponse.json() as TaskAttachmentSummary);
 }
 
+/** Renames an attachment; a link can also get a new URL. */
+export async function updateTaskAttachment(taskId: string, attachmentId: string, input: { fileName?: string; externalUrl?: string }, principal?: string) {
+  const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/attachments/${encodeURIComponent(attachmentId)}${principalQuery(principal)}`, {
+    method: "PATCH",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+  if (!response.ok) {
+    throw new Error(`Task attachment update failed: ${response.status}`);
+  }
+  return mapTaskAttachmentToView(await response.json() as TaskAttachmentSummary);
+}
+
+export async function deleteTaskAttachment(taskId: string, attachmentId: string, principal?: string) {
+  const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/attachments/${encodeURIComponent(attachmentId)}${principalQuery(principal)}`, {
+    method: "DELETE",
+    credentials: "same-origin"
+  });
+  if (!response.ok) {
+    throw new Error(`Task attachment delete failed: ${response.status}`);
+  }
+}
+
+/** A file keeps its extension when renamed: the user edits the part before it. */
+export function splitFileExtension(name: string) {
+  const match = /^(.*?)(\.[^.\s]{1,8})$/.exec(name);
+  return match && match[1] ? { base: match[1], extension: match[2] } : { base: name, extension: "" };
+}
+
 /** Short-lived same-origin URL for an uploaded file; `inline` opens it in the browser instead of downloading. */
 export async function createFileDownloadUrl(fileObjectId: string, inline = false) {
   const response = await fetch(`/api/files/${encodeURIComponent(fileObjectId)}/download-grants`, {
@@ -144,6 +174,17 @@ export async function createFileDownloadUrl(fileObjectId: string, inline = false
   const url = new URL(payload.signedUrl, window.location.origin);
   if (inline) url.searchParams.set("inline", "1");
   return `${url.pathname}${url.search}`;
+}
+
+/** Saves an uploaded file to the user's downloads, under its own name. */
+export async function downloadFileObject(fileObjectId: string) {
+  const anchor = document.createElement("a");
+  anchor.href = await createFileDownloadUrl(fileObjectId);
+  anchor.download = "";
+  anchor.rel = "noreferrer";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
 }
 
 /** Opens an uploaded file in a new tab; the tab is opened before the await so popup blockers allow it. */

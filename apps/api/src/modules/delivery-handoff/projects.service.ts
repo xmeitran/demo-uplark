@@ -18,6 +18,7 @@ import type {
   ProjectHierarchyOrderInput,
   ProjectHierarchyOrderKind,
   CreateTaskAttachmentInput,
+  UpdateTaskAttachmentInput,
   CreateTaskCommentInput,
   CreateTaskPlanningBlockInput,
   CreateTaskTimeEntryInput,
@@ -34,6 +35,7 @@ import type {
   UpdateProjectTaskInput
 } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
+import { parseExternalUrl, validateFileName } from "../artifact-mgmt/file-names";
 import { NotificationsService } from "../notifications/notifications.service";
 import {
   buildPaginationMeta,
@@ -3975,6 +3977,32 @@ export class ProjectsService {
 
     await this.prisma.taskAttachment.delete({ where: { id: attachment.id } });
     return { deleted: true, id: attachment.id };
+  }
+
+  async updateTaskAttachment(taskId: string, attachmentId: string, input: UpdateTaskAttachmentInput, principal: PrincipalContext) {
+    this.permissions.assertInternalTaskPrincipal(principal, "Task attachments are internal");
+    const task = await this.permissions.ensureTaskForPrincipal(taskId, principal);
+    const attachment = await this.prisma.taskAttachment.findFirst({
+      where: { id: attachmentId, taskId: task.id, workspaceId: principal.workspaceId },
+      include: taskAttachmentInclude
+    });
+    if (!attachment) {
+      throw new NotFoundException("Task attachment not found");
+    }
+
+    const isLink = attachment.fileObject.storageProvider === "external";
+    const data: Prisma.FileObjectUpdateInput = {};
+    if (input.fileName !== undefined) data.fileName = validateFileName(input.fileName, !isLink);
+    if (input.externalUrl !== undefined) {
+      if (!isLink) throw new BadRequestException("Only a link attachment has a URL to change");
+      const externalUrl = parseExternalUrl(input.externalUrl).toString();
+      data.externalUrl = externalUrl;
+      data.checksumSha256 = createHash("sha256").update(externalUrl).digest("hex");
+    }
+    if (Object.keys(data).length === 0) return mapTaskAttachmentSummary(attachment);
+
+    const fileObject = await this.prisma.fileObject.update({ where: { id: attachment.fileObjectId }, data });
+    return mapTaskAttachmentSummary({ ...attachment, fileObject });
   }
 
   private async normalizeTaskScope(input: Partial<CreateProjectTaskInput> | Partial<UpdateProjectTaskInput>, workspaceId: string, allowPartial = false) {

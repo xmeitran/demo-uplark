@@ -2698,6 +2698,12 @@ export interface CreateTaskAttachmentInput {
   larkTaskGuid?: string;
 }
 
+/** Rename an attachment, or point a link attachment at another URL. */
+export interface UpdateTaskAttachmentInput {
+  fileName?: string;
+  externalUrl?: string;
+}
+
 export interface CreateProjectAttachmentInput {
   fileObjectId: string;
   commentId?: string;

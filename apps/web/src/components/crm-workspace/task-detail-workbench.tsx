@@ -29,7 +29,7 @@ import type {
   CreateTaskTimeEntryInput
 } from "@b2b-crm/contracts";
 import { ShopifyIcon, PolarisFallbackText, type ShopifyIconName } from "../shopify-ui";
-import { attachmentStyle, createTaskAttachment, formatAttachmentSize, linkFileInput, listTaskAttachments, readFileAsBase64, type TaskAttachmentView } from "@/lib/task-attachments";
+import { attachmentStyle, createTaskAttachment, downloadFileObject, formatAttachmentSize, linkFileInput, listTaskAttachments, readFileAsBase64, type TaskAttachmentView } from "@/lib/task-attachments";
 import {
   loadTaskDrafts,
   persistTaskDrafts,
@@ -2222,11 +2222,15 @@ export function TaskDetailWorkbench({
                                     {file.ext}
                                   </div>
                                   {file.url ? (
-                                    <a href={file.url} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-indigo-600 truncate hover:underline max-w-[180px]" title={file.url}>
+                                    <a href={file.url} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold !text-indigo-600 truncate hover:underline max-w-[180px]" title={file.url}>
                                       {file.name}
                                     </a>
+                                  ) : file.fileObjectId ? (
+                                    <button type="button" onClick={() => downloadFileObject(file.fileObjectId!).catch(() => triggerToast("Không tải được tập tin.", "danger"))} className="text-left text-xs font-semibold text-slate-700 truncate hover:text-indigo-600 hover:underline transition-colors max-w-[180px]" title={`Tải về ${file.name}`}>
+                                      {file.name}
+                                    </button>
                                   ) : (
-                                    <span className="text-xs font-semibold text-slate-700 truncate group-hover:text-indigo-600 transition-colors max-w-[180px]" title={file.name}>
+                                    <span className="text-xs font-semibold text-slate-700 truncate max-w-[180px]" title={file.name}>
                                       {file.name}
                                     </span>
                                   )}

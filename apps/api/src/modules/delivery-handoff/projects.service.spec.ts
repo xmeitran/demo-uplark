@@ -2829,6 +2829,37 @@ describe("ProjectsService task comments and attachments", () => {
       }
     });
   });
+
+  it("renames attachments and re-points links, but never gives an upload a URL or an executable name", async () => {
+    const file = (storageProvider: string, fileName: string, externalUrl?: string) => ({
+      id: "file-1", accountId: "acc-1", fileName, contentType: "text/uri-list", byteSize: 0, storageProvider, externalUrl,
+      ownerType: "task", ownerId: "task-1", allowedRoles: [], status: "active", createdAt: new Date("2026-10-28T00:00:00.000Z")
+    });
+    const attachment = (fileObject: ReturnType<typeof file>) => ({
+      id: "att-1", taskId: "task-1", accountId: "acc-1", fileObjectId: "file-1", syncStatus: "not_synced", createdAt: new Date("2026-10-28T00:00:00.000Z"), fileObject
+    });
+    const prisma: Record<string, any> = {
+      projectTask: { findFirst: vi.fn().mockResolvedValue({ id: "task-1", workspaceId: "twk-1", accountId: "acc-1", projectId: "prj-1", title: "Brief" }) },
+      taskAttachment: { findFirst: vi.fn().mockResolvedValue(attachment(file("external", "upbasevn.sg.larksuite.com", "https://upbasevn.sg.larksuite.com/wiki/a"))) },
+      fileObject: { update: vi.fn().mockImplementation(async ({ data }) => ({ ...file("external", "", "https://upbasevn.sg.larksuite.com/wiki/a"), ...data })) }
+    };
+    const service = new ProjectsService(withMutationDependencies(prisma) as any);
+
+    await expect(service.updateTaskAttachment("task-1", "att-1", { fileName: "Biên bản kick-off", externalUrl: "https://upbasevn.sg.larksuite.com/wiki/b" }, principal)).resolves.toMatchObject({
+      id: "att-1",
+      file: { fileName: "Biên bản kick-off", externalUrl: "https://upbasevn.sg.larksuite.com/wiki/b" }
+    });
+    expect(prisma.fileObject.update).toHaveBeenCalledWith({
+      where: { id: "file-1" },
+      data: { fileName: "Biên bản kick-off", externalUrl: "https://upbasevn.sg.larksuite.com/wiki/b", checksumSha256: expect.any(String) }
+    });
+    await expect(service.updateTaskAttachment("task-1", "att-1", { externalUrl: "javascript:alert(1)" }, principal)).rejects.toThrow(BadRequestException);
+
+    prisma.taskAttachment.findFirst.mockResolvedValue(attachment(file("local", "report.xlsx")));
+    await expect(service.updateTaskAttachment("task-1", "att-1", { externalUrl: "https://example.com" }, principal)).rejects.toThrow(BadRequestException);
+    await expect(service.updateTaskAttachment("task-1", "att-1", { fileName: "report.exe" }, principal)).rejects.toThrow(BadRequestException);
+    expect(prisma.fileObject.update).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("ProjectsService interaction remediation", () => {

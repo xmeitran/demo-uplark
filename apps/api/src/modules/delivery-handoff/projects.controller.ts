@@ -622,6 +622,18 @@ export class ProjectsController {
     return this.projects.createTaskAttachment(taskId, body, principal, principal.subjectId);
   }
 
+  @Patch("tasks/:taskId/attachments/:attachmentId")
+  async updateTaskAttachment(
+    @Headers("authorization") authorization: string | undefined,
+    @Query("principal") principalFallback: string | undefined,
+    @Param("taskId") taskId: string,
+    @Param("attachmentId") attachmentId: string,
+    @Body() body: any
+  ) {
+    const principal = await this.principals.resolveFromAuthorization(authorization, principalFallback);
+    return this.projects.updateTaskAttachment(taskId, attachmentId, body, principal);
+  }
+
   @Delete("tasks/:taskId/attachments/:attachmentId")
   async deleteTaskAttachment(
     @Headers("authorization") authorization: string | undefined,

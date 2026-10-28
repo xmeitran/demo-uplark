@@ -78,7 +78,7 @@ import { allMilestonesComplete, isMilestoneAccepted, isMilestoneWorkLocked, sele
 import { deriveMilestoneWorkStatus } from "@/features/project-hierarchy/work-status";
 import { IssueLogPanel } from "@/features/issue-log/issue-log-panel";
 import { TaskRowExtrasContext, groupIssuesByTask, useTaskRowExtras } from "@/features/task-board/task-row-extras";
-import { createFileDownloadUrl, openFileObject } from "@/lib/task-attachments";
+import { downloadFileObject, openFileObject } from "@/lib/task-attachments";
 import { ProjectActionDialogs, type ProjectAction } from "../project-dialogs";
 import { ApiResponseError, readApiError } from "@/lib/api-error";
 import { fetchAllPages } from "@/lib/api-pages";
@@ -5408,14 +5408,7 @@ export default function ProjectDetailPage() {
     setDownloadingFileId(fileObjectId);
     setDocumentMutationError(null);
     try {
-      const downloadUrl = await createFileDownloadUrl(fileObjectId);
-      const anchor = document.createElement("a");
-      anchor.href = downloadUrl;
-      anchor.download = "";
-      anchor.rel = "noreferrer";
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
+      await downloadFileObject(fileObjectId);
     } catch (error) {
       setDocumentMutationError(error instanceof Error ? error.message : "Could not download this file.");
     } finally {

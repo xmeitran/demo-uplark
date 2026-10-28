@@ -6,9 +6,9 @@
  */
 import Link from "next/link";
 import React, { createContext, useContext, useState } from "react";
-import { AlertCircle, Link2, Paperclip, Plus, Upload, X } from "lucide-react";
+import { AlertCircle, Link2, Paperclip, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
 import { ISSUE_LOG_STATUS_LABELS, ISSUE_LOG_TYPE_LABELS, type ProjectRiskSummary } from "@b2b-crm/contracts";
-import { createTaskAttachment, linkFileInput, listTaskAttachments, openFileObject, readFileAsBase64, type TaskAttachmentView } from "@/lib/task-attachments";
+import { createTaskAttachment, deleteTaskAttachment, downloadFileObject, linkFileInput, listTaskAttachments, readFileAsBase64, splitFileExtension, updateTaskAttachment, type TaskAttachmentView } from "@/lib/task-attachments";
 
 type TaskRowExtrasContextValue = {
   projectId: string;
@@ -96,7 +96,7 @@ export function useTaskRowExtras(task: { id: string; title: string; attachmentCo
             <ul className="divide-y divide-border">
               {issues.map((record) => (
                 <li key={record.id}>
-                  <Link href={withPrincipal(`/projects/${encodeURIComponent(context.projectId)}?tab=Issues&issueId=${encodeURIComponent(record.id)}`)} className="flex items-center gap-2 py-2 text-xs hover:text-primary">
+                  <Link href={withPrincipal(`/projects/${encodeURIComponent(context.projectId)}?tab=Issues&issueId=${encodeURIComponent(record.id)}`)} className="flex items-center gap-2 py-2 text-xs hover:!text-primary">
                     <span className="shrink-0 font-black text-foreground">{record.code}</span>
                     <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">{ISSUE_LOG_TYPE_LABELS[record.type]}</span>
                     <span className="min-w-0 flex-1 truncate text-foreground" title={record.description}>{record.description}</span>
@@ -120,7 +120,7 @@ export function useTaskRowExtras(task: { id: string; title: string; attachmentCo
           docs={docs}
           error={docsError}
           onError={setDocsError}
-          onAdded={(doc) => setDocs((current) => [doc, ...(current ?? [])])}
+          setDocs={setDocs}
         />
       )}
     </div>
@@ -129,23 +129,30 @@ export function useTaskRowExtras(task: { id: string; title: string; attachmentCo
   return { buttons, panel: panelNode };
 }
 
-function TaskDocsPanel({ task, principal, docs, error, onError, onAdded }: {
+const iconButtonClass = "shrink-0 rounded-md p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-50";
+
+function TaskDocsPanel({ task, principal, docs, error, onError, setDocs }: {
   task: { id: string; accountId?: string; projectId: string };
   principal?: string;
   docs: TaskAttachmentView[] | null;
   error: string | null;
   onError: (message: string | null) => void;
-  onAdded: (doc: TaskAttachmentView) => void;
+  setDocs: React.Dispatch<React.SetStateAction<TaskAttachmentView[] | null>>;
 }) {
   const [linkDraft, setLinkDraft] = useState<{ url: string; name: string } | null>(null);
   const [saving, setSaving] = useState(false);
+  // One row at a time is being edited or asked about; the other rows keep their actions.
+  const [edit, setEdit] = useState<{ id: string; name: string; url: string } | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const add = async (fileInput: Record<string, unknown>, failure: string) => {
     if (!task.accountId) return onError("Không xác định được khách hàng của task.");
     setSaving(true);
     onError(null);
     try {
-      onAdded(await createTaskAttachment(task, fileInput, principal));
+      const doc = await createTaskAttachment(task, fileInput, principal);
+      setDocs((current) => [doc, ...(current ?? [])]);
       setLinkDraft(null);
     } catch {
       onError(failure);
@@ -160,8 +167,58 @@ function TaskDocsPanel({ task, principal, docs, error, onError, onAdded }: {
     if (file) await add({ fileName: file.name, contentType: file.type || "application/octet-stream", base64Data: await readFileAsBase64(file) }, `Không tải lên được ${file.name}.`);
   };
 
-  const openFile = (fileObjectId?: string) => {
-    if (fileObjectId) openFileObject(fileObjectId).catch(() => onError("Không mở được tập tin."));
+  const downloadFile = (fileObjectId?: string) => {
+    if (fileObjectId) downloadFileObject(fileObjectId).catch(() => onError("Không tải được tập tin."));
+  };
+
+  const startEdit = (doc: TaskAttachmentView) => {
+    setConfirmDeleteId(null);
+    setEdit({ id: doc.id, name: doc.url ? doc.name : splitFileExtension(doc.name).base, url: doc.url ?? "" });
+  };
+
+  const saveEdit = async (doc: TaskAttachmentView) => {
+    if (!edit) return;
+    let input: { fileName?: string; externalUrl?: string };
+    if (doc.url) {
+      const link = linkFileInput(edit.url, edit.name);
+      let fileName = link.fileName;
+      try {
+        fileName ??= new URL(link.externalUrl).hostname;
+      } catch {
+        // The API answers an invalid URL with its own error.
+      }
+      input = { fileName: fileName === doc.name ? undefined : fileName, externalUrl: link.externalUrl === doc.url ? undefined : link.externalUrl };
+    } else {
+      const base = edit.name.trim().replace(/[\\/]/g, "-");
+      const fileName = `${base}${splitFileExtension(doc.name).extension}`;
+      input = { fileName: !base || fileName === doc.name ? undefined : fileName };
+    }
+    if (input.fileName === undefined && input.externalUrl === undefined) return setEdit(null);
+    setBusyId(doc.id);
+    onError(null);
+    try {
+      const updated = await updateTaskAttachment(task.id, doc.id, input, principal);
+      setDocs((current) => (current ?? []).map((item) => item.id === doc.id ? updated : item));
+      setEdit(null);
+    } catch {
+      onError(doc.url ? "Không lưu được link. Kiểm tra lại đường dẫn (http/https)." : "Không đổi được tên tập tin.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const remove = async (doc: TaskAttachmentView) => {
+    setBusyId(doc.id);
+    onError(null);
+    try {
+      await deleteTaskAttachment(task.id, doc.id, principal);
+      setDocs((current) => (current ?? []).filter((item) => item.id !== doc.id));
+      setConfirmDeleteId(null);
+    } catch {
+      onError(`Không xóa được ${doc.name}.`);
+    } finally {
+      setBusyId(null);
+    }
   };
 
   return (
@@ -173,17 +230,49 @@ function TaskDocsPanel({ task, principal, docs, error, onError, onAdded }: {
         <p className="py-2 text-xs text-muted-foreground">Chưa có tài liệu đính kèm nào.</p>
       ) : (
         <ul className="divide-y divide-border">
-          {docs.map((doc) => (
-            <li key={doc.id} className="flex items-center gap-2.5 py-2">
-              <span className={`flex h-6 w-9 shrink-0 items-center justify-center rounded-md text-[9px] font-bold ${doc.bg} ${doc.color}`}>{doc.ext}</span>
-              {doc.url ? (
-                <a href={doc.url} target="_blank" rel="noopener noreferrer" title={doc.url} className="min-w-0 flex-1 truncate text-xs font-semibold text-primary hover:underline">{doc.name}</a>
-              ) : (
-                <button type="button" onClick={() => openFile(doc.fileObjectId)} title={doc.name} className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-primary hover:underline">{doc.name}</button>
-              )}
-              <span className="shrink-0 text-[10px] text-muted-foreground">{doc.url ? "Link" : doc.size} · {doc.date}</span>
-            </li>
-          ))}
+          {docs.map((doc) => {
+            const badge = <span className={`flex h-6 w-9 shrink-0 items-center justify-center rounded-md text-[9px] font-bold ${doc.bg} ${doc.color}`}>{doc.ext}</span>;
+            const busy = busyId === doc.id;
+            if (edit?.id === doc.id) {
+              return (
+                <li key={doc.id} className="py-2">
+                  <form onSubmit={(event) => { event.preventDefault(); void saveEdit(doc); }} className="flex flex-wrap items-center gap-2">
+                    {badge}
+                    <span className="flex min-w-[160px] flex-1 items-center gap-1">
+                      <input autoFocus aria-label="Tên tài liệu" value={edit.name} onChange={(event) => setEdit({ ...edit, name: event.target.value })} placeholder={doc.url ? "Tên hiển thị (không bắt buộc)" : "Tên tập tin"} className={`${inputClass} min-w-0 flex-1`} />
+                      {!doc.url && <span className="text-xs text-muted-foreground">{splitFileExtension(doc.name).extension}</span>}
+                    </span>
+                    {doc.url && <input inputMode="url" aria-label="Đường dẫn của link" value={edit.url} onChange={(event) => setEdit({ ...edit, url: event.target.value })} placeholder="https://..." className={`${inputClass} min-w-[200px] flex-[2]`} />}
+                    <button type="submit" disabled={busy || (doc.url ? !edit.url.trim() : !edit.name.trim())} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-60">{busy ? "Đang lưu" : "Lưu"}</button>
+                    <button type="button" onClick={() => setEdit(null)} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-muted">Hủy</button>
+                  </form>
+                </li>
+              );
+            }
+            if (confirmDeleteId === doc.id) {
+              return (
+                <li key={doc.id} className="flex flex-wrap items-center gap-2.5 py-2">
+                  {badge}
+                  <span className="min-w-0 flex-1 truncate text-xs text-foreground">Xóa <b>{doc.name}</b> khỏi task?</span>
+                  <button type="button" onClick={() => void remove(doc)} disabled={busy} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60">{busy ? "Đang xóa" : "Xóa"}</button>
+                  <button type="button" onClick={() => setConfirmDeleteId(null)} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-muted">Hủy</button>
+                </li>
+              );
+            }
+            return (
+              <li key={doc.id} className="flex items-center gap-2.5 py-2">
+                {badge}
+                {doc.url ? (
+                  <a href={doc.url} target="_blank" rel="noopener noreferrer" title={doc.url} className="min-w-0 flex-1 truncate text-xs font-semibold !text-primary hover:underline">{doc.name}</a>
+                ) : (
+                  <button type="button" onClick={() => downloadFile(doc.fileObjectId)} title={`Tải về ${doc.name}`} className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-primary hover:underline">{doc.name}</button>
+                )}
+                <span className="hidden shrink-0 text-[10px] text-muted-foreground sm:inline">{doc.url ? "Link" : doc.size} · {doc.date}</span>
+                <button type="button" onClick={() => startEdit(doc)} aria-label={`Sửa ${doc.name}`} title="Sửa" className={iconButtonClass}><Pencil className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={() => { setEdit(null); setConfirmDeleteId(doc.id); }} aria-label={`Xóa ${doc.name}`} title="Xóa" className={`${iconButtonClass} hover:!bg-rose-50 hover:!text-rose-600`}><Trash2 className="h-3.5 w-3.5" /></button>
+              </li>
+            );
+          })}
         </ul>
       )}
       {linkDraft ? (
