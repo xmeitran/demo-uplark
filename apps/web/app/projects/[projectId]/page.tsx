@@ -21,7 +21,7 @@ import { AppShell } from "@/components/constructor-x/app-shell";
 import { WorkspaceTabBar, type WorkspaceTabItem } from "@/components/workspace-tab-bar";
 import { CustomDropdown, CustomDatePicker } from "@/components/constructor-x/custom-controls";
 import { ModalLayer } from "@/components/modal-layer";
-import { CrmMultiSelect, CrmSelect } from "@/components/crm-workspace/crm-select";
+import { CrmMultiSelect } from "@/components/crm-workspace/crm-select";
 import { useAuth } from "@/lib/auth";
 import type { Project } from "../data";
 import {
@@ -599,6 +599,8 @@ interface StageItem {
   picName?: string;
   picColor?: string;
   picUserId?: string;
+  /** Every PIC, primary first. */
+  picUserIds?: string[];
   picAvatarUrl?: string;
   startDate?: string;
   dueDate?: string;
@@ -952,7 +954,7 @@ function mapStageToMilestone(stage: ProjectStageSummary, order: number): Milesto
     picColor: colorForIdentity(ownerName),
     picUserId: stage.ownerUserId,
     picAvatarUrl: stage.ownerAvatarUrl,
-    assigneeIds: stage.ownerUserId ? [stage.ownerUserId] : undefined,
+    assigneeIds: stage.ownerUserIds?.length ? stage.ownerUserIds : (stage.ownerUserId ? [stage.ownerUserId] : undefined),
     assigneeNames: [ownerName],
     status: toMilestoneStatus(stage.status),
     order
@@ -976,6 +978,7 @@ function mapStageToStageItem(stage: ProjectStageSummary, tasks: ProjectTaskSumma
     picName: ownerName,
     picColor: colorForIdentity(ownerName),
     picUserId: stage.ownerUserId,
+    picUserIds: stage.ownerUserIds,
     picAvatarUrl: stage.ownerAvatarUrl,
     startDate: formatApiDate(stage.actualStartAt || stage.plannedStartAt),
     dueDate: formatApiDate(stage.actualEndAt || stage.plannedEndAt),
@@ -2350,6 +2353,34 @@ function ProjectIdentityAvatar({
   return <TeamMemberAvatar member={fallbackMember} size={size} />;
 }
 
+/** Every PIC of a milestone, stage or task: the primary first, then the others (name on hover, or written out with `withNames`). */
+function PicAvatars({ members, ids, userId, initials, name, color, avatarUrl, size = "sm", withNames = false }: {
+  members: ProjectTeamMember[];
+  ids?: string[];
+  userId?: string;
+  initials: string;
+  name?: string;
+  color: string;
+  avatarUrl?: string;
+  size?: "xs" | "sm" | "md";
+  withNames?: boolean;
+}) {
+  const primary = findTeamMember(members, initials, name, userId);
+  const others = (ids ?? [])
+    .filter((id) => id !== (primary?.id ?? userId))
+    .flatMap((id) => members.find((member) => member.id === id) ?? []);
+  const names = [primary?.name ?? name ?? initials, ...others.map((member) => member.name)].join(", ");
+  return (
+    <span role="group" aria-label={`PIC: ${names}`} className="flex min-w-0 items-center gap-1">
+      <span className="flex shrink-0 -space-x-1.5">
+        <ProjectIdentityAvatar member={primary} initials={initials} name={name} color={color} avatarUrl={avatarUrl} size={size} />
+        {others.map((member) => <TeamMemberAvatar key={member.id} member={member} size={size} />)}
+      </span>
+      {withNames && <span className="truncate" title={names}>{names}</span>}
+    </span>
+  );
+}
+
 function TeamMemberMultiSelect({ members, selectedIds, onChange, placeholder = "Select users" }: { members: ProjectTeamMember[]; selectedIds: string[]; onChange: (ids: string[]) => void; placeholder?: string }) {
   return (
     <CrmMultiSelect
@@ -2375,43 +2406,6 @@ function TeamMemberMultiSelect({ members, selectedIds, onChange, placeholder = "
   );
 }
 
-function TeamMemberSingleSelect({
-  members,
-  value,
-  onChange,
-  placeholder = "Select user"
-}: {
-  members: ProjectTeamMember[];
-  value?: ProjectTeamMember;
-  onChange: (member: ProjectTeamMember | undefined) => void;
-  placeholder?: string;
-}) {
-  const selectedMember = value ? members.find((member) => member.id === value.id) ?? value : undefined;
-
-  return (
-    <CrmSelect
-      ariaLabel="Chọn người phụ trách"
-      disabled={members.length === 0}
-      options={[
-        { value: "", label: members.length === 0 ? "No project members" : placeholder },
-        ...members.map((member) => ({
-          value: member.id,
-          label: member.name,
-          meta: `${member.role || "Chưa gán"} · ${systemRoleLabel(member.systemRole)} · ${member.email}`,
-          avatarUrl: member.avatarUrl,
-          initials: member.initials,
-          color: member.color
-        }))
-      ]}
-      searchable
-      searchPlaceholder="Tìm tên, email hoặc vai trò..."
-      value={selectedMember?.id ?? ""}
-      onChange={(memberId) => onChange(members.find((member) => member.id === memberId))}
-      placeholder={placeholder}
-    />
-  );
-}
-
 function resolveMilestoneAssigneeIds(milestone: Milestone, members: ProjectTeamMember[]) {
   const byIds = (milestone.assigneeIds ?? []).filter((id) => members.some((member) => member.id === id));
   if (byIds.length > 0) return byIds;
@@ -2429,7 +2423,11 @@ function AddStageModal({ milestoneName, color, onClose, onSave, members = EMPTY_
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<StageItem["status"]>("in-progress");
-  const [pic, setPic] = useState<ProjectTeamMember | undefined>(() => members.find((member) => member.id === currentUserId) ?? members[0]);
+  const [picIds, setPicIds] = useState<string[]>(() => {
+    const defaultMember = members.find((member) => member.id === currentUserId) ?? members[0];
+    return defaultMember ? [defaultMember.id] : [];
+  });
+  const pic = members.find((member) => member.id === picIds[0]);
   const [startDate, setStartDate] = useState("");
   const [dueDate, setDueDate] = useState("");
   const stageName = name.trim();
@@ -2438,12 +2436,11 @@ function AddStageModal({ milestoneName, color, onClose, onSave, members = EMPTY_
   const { submit, submitting, submitError } = useModalMutation(onClose);
 
   useEffect(() => {
-    setPic((current) => {
-      const signedInUser = members.find((member) => member.id === currentUserId);
-      if (signedInUser) return signedInUser;
-      return current && members.some((member) => member.id === current.id) ? current : members[0];
-    });
-  }, [members, currentUserId]);
+    if (picIds.length === 0) {
+      const defaultMember = members.find((member) => member.id === currentUserId) ?? members[0];
+      if (defaultMember) setPicIds([defaultMember.id]);
+    }
+  }, [members, currentUserId, picIds.length]);
 
   const STAGE_STATUS_CFG = {
     "upcoming": { label: "Sắp tới", color: "#facc15", bg: "#fef9c31b" },
@@ -2470,6 +2467,7 @@ function AddStageModal({ milestoneName, color, onClose, onSave, members = EMPTY_
                     picName: pic.name,
                     picColor: pic.color,
                     picUserId: pic.id,
+                    picUserIds: picIds,
                     startDate,
                     dueDate
                   }));
@@ -2509,13 +2507,13 @@ function AddStageModal({ milestoneName, color, onClose, onSave, members = EMPTY_
 
         <div className="grid grid-cols-2 gap-3">
           <Field label="Assignee (PIC)">
-            <TeamMemberSingleSelect
+            <TeamMemberMultiSelect
               members={members}
-              value={pic}
-              onChange={setPic}
-              placeholder="Select stage PIC"
+              selectedIds={picIds}
+              onChange={setPicIds}
+              placeholder="Select stage PICs"
             />
-            {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected PIC: {pic.name}{pic.id === currentUserId ? " · tài khoản đang đăng nhập" : ""}</p>}
+            {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected PIC: {pic.name}{picIds.length > 1 ? ` +${picIds.length - 1}` : ""}{pic.id === currentUserId ? " · tài khoản đang đăng nhập" : ""}</p>}
           </Field>
 
           <div className="space-y-2">
@@ -3762,7 +3760,10 @@ function EditStageModal({ stage, color, onClose, onSave, members = EMPTY_TEAM_ME
   const [picTouched, setPicTouched] = useState(false);
 
   const initPic = getSelectedTeamMember(members, stage.picUserId);
-  const [pic, setPic] = useState<ProjectTeamMember | undefined>(initPic);
+  const stagePicIds = useMemo(() => (stage.picUserIds?.length ? stage.picUserIds : (stage.picUserId ? [stage.picUserId] : []))
+    .filter((id) => members.some((member) => member.id === id)), [members, stage.picUserId, stage.picUserIds]);
+  const [picIds, setPicIds] = useState<string[]>(stagePicIds);
+  const pic = members.find((member) => member.id === picIds[0]);
   const directoryReady = React.useContext(ProjectPickerFeedback).ready;
   const staleAssigneeError = directoryReady && !initPic && (stage.picUserId || (stage.picName && stage.picName !== "Unassigned"))
     ? STALE_ASSIGNEE_NOTE
@@ -3774,13 +3775,8 @@ function EditStageModal({ stage, color, onClose, onSave, members = EMPTY_TEAM_ME
   const { submit, submitting, submitError } = useModalMutation(onClose);
 
   useEffect(() => {
-    setPic((current) => {
-      if (current && members.some((member) => member.id === current.id)) {
-        return current;
-      }
-      return getSelectedTeamMember(members, stage.picUserId);
-    });
-  }, [members, stage.pic, stage.picName, stage.picUserId]);
+    if (!picTouched) setPicIds(stagePicIds);
+  }, [picTouched, stagePicIds]);
 
   const STAGE_STATUS_CFG = {
     "upcoming": { label: "Sắp tới", color: "#facc15", bg: "#fef9c31b" },
@@ -3803,7 +3799,7 @@ function EditStageModal({ stage, color, onClose, onSave, members = EMPTY_TEAM_ME
                   description: description.trim(),
                   status,
                   // The PIC is required (and sent) only when changed, so a stage whose PIC left the project can still be edited.
-                  ...(picTouched && pic ? { pic: pic.initials, picName: pic.name, picColor: pic.color, picUserId: pic.id } : {}),
+                  ...(picTouched && pic ? { pic: pic.initials, picName: pic.name, picColor: pic.color, picUserId: pic.id, picUserIds: picIds } : {}),
                   startDate,
                   dueDate
                 }));
@@ -3842,13 +3838,13 @@ function EditStageModal({ stage, color, onClose, onSave, members = EMPTY_TEAM_ME
 
         <div className="grid grid-cols-2 gap-3">
           <Field label="Assignee (PIC)">
-            <TeamMemberSingleSelect
+            <TeamMemberMultiSelect
               members={members}
-              value={pic}
-              onChange={(member) => { setPicTouched(true); setPic(member); }}
-              placeholder="Select stage PIC"
+              selectedIds={picIds}
+              onChange={(ids) => { setPicTouched(true); setPicIds(ids); }}
+              placeholder="Select stage PICs"
             />
-            {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected PIC: {pic.name}</p>}
+            {pic && <p className="text-[10px] text-muted-foreground mt-1">Primary PIC: {pic.name}</p>}
           </Field>
 
           <div className="space-y-2">
@@ -4257,8 +4253,10 @@ function TaskRow({ task, projectColor, onEdit, onDelete, onViewDetails, onAddSub
           <span>{formatHours(task.actualHours ?? 0)}h/{formatHours(task.plannedHours ?? 8)}h</span>
         </span>
 
-        <ProjectIdentityAvatar
-          member={assigneeMember}
+        <PicAvatars
+          members={members}
+          ids={task.assigneeUserIds}
+          userId={task.assigneeUserId}
           initials={task.assignee}
           name={assigneeMember?.name ?? task.assignee}
           color={task.aColor}
@@ -4359,12 +4357,27 @@ function StageSection({ stage, projectColor, onAddTask, onAddSubtask, onEditTask
                 <span>{formatHours(stageActualHours)}h/{formatHours(stagePlannedHours)}h</span>
               </span>
             </div>
-            <ProjectDateRange
-              startDate={stage.startDate}
-              dueDate={stage.dueDate}
-              fallback="TBD"
-              className="mt-1 max-w-full text-[10px] text-muted-foreground"
-            />
+            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+              <ProjectDateRange
+                startDate={stage.startDate}
+                dueDate={stage.dueDate}
+                fallback="TBD"
+                className="max-w-full"
+              />
+              {stage.picUserId && (
+                <PicAvatars
+                  members={members}
+                  ids={stage.picUserIds}
+                  userId={stage.picUserId}
+                  initials={stage.pic ?? ""}
+                  name={stage.picName}
+                  color={stage.picColor || "#94a3b8"}
+                  avatarUrl={stage.picAvatarUrl}
+                  size="xs"
+                  withNames
+                />
+              )}
+            </div>
           </div>
         </button>
         {/* Right: action buttons */}
@@ -4562,17 +4575,17 @@ function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onA
               fallback="TBD"
               className="max-w-full"
             />
-            <span className="flex items-center gap-1">
-              <ProjectIdentityAvatar
-                member={findTeamMember(members, milestone.pic, milestone.picName, milestone.picUserId)}
-                initials={milestone.pic}
-                name={milestone.picName}
-                color={milestone.picColor}
-                avatarUrl={milestone.picAvatarUrl}
-                size="xs"
-              />
-              {milestone.picName}
-            </span>
+            <PicAvatars
+              members={members}
+              ids={milestone.assigneeIds}
+              userId={milestone.picUserId}
+              initials={milestone.pic}
+              name={milestone.picName}
+              color={milestone.picColor}
+              avatarUrl={milestone.picAvatarUrl}
+              size="xs"
+              withNames
+            />
           </div>
         </button>
         {/* Add Stage + toggle */}
@@ -5739,7 +5752,7 @@ export default function ProjectDetailPage() {
         phase: m.name,
         activity: m.name,
         status: toApiStageStatus(m.status),
-        ownerUserId: owner?.id,
+        ownerUserIds: m.assigneeIds?.length ? m.assigneeIds : [owner.id],
         plannedStartAt: toApiDateValue(m.startDate),
         plannedEndAt: toApiDateValue(m.dueDate),
         criteria: m.description || "Milestone completion criteria",
@@ -5768,9 +5781,11 @@ export default function ProjectDetailPage() {
 
   const handleEditMilestone = useCallback(async (milestoneId: string, updated: Milestone) => {
     const original = milestones.find(item => item.id === milestoneId);
-    const ownerChanged = updated.picUserId !== original?.picUserId;
-    const owner = findAssignableTeamMember(assignmentTeamMembers, updated.picUserId);
-    if (ownerChanged && updated.picUserId && !owner) throw new Error(projectMemberAssignmentError(workspaceTeamMembers.find(member => member.id === updated.picUserId)?.name));
+    const originalOwnerIds = original?.assigneeIds ?? (original?.picUserId ? [original.picUserId] : []);
+    const ownerIds = updated.assigneeIds?.length ? updated.assigneeIds : originalOwnerIds;
+    const ownersChanged = ownerIds.join() !== originalOwnerIds.join();
+    const unassignable = ownersChanged ? ownerIds.find(id => !findAssignableTeamMember(assignmentTeamMembers, id)) : undefined;
+    if (unassignable) throw new Error(projectMemberAssignmentError(workspaceTeamMembers.find(member => member.id === unassignable)?.name));
     const representativeStageId = resolveMilestoneStageId(milestoneId);
     const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(representativeStageId)}?scope=milestone`, {
       method: "PATCH",
@@ -5779,7 +5794,7 @@ export default function ProjectDetailPage() {
       body: JSON.stringify({
         phase: updated.name !== original?.name ? updated.name : undefined,
         status: updated.status !== original?.status ? toApiStageStatus(updated.status) : undefined,
-        ownerUserId: ownerChanged ? (owner?.id ?? null) : undefined,
+        ownerUserIds: ownersChanged ? ownerIds : undefined,
         plannedStartAt: updated.startDate !== original?.startDate ? toApiDateValue(updated.startDate) : undefined,
         plannedEndAt: updated.dueDate !== original?.dueDate ? toApiDateValue(updated.dueDate) : undefined,
         criteria: updated.description !== original?.description ? updated.description || "Milestone completion criteria" : undefined,
@@ -5814,6 +5829,7 @@ export default function ProjectDetailPage() {
                     picName: stage.ownerDisplayName || stage.ownerUserId || "Unassigned",
                     picColor: colorForIdentity(stage.ownerDisplayName || stage.ownerUserId || "Unassigned"),
                     picUserId: stage.ownerUserId,
+                    picUserIds: stage.ownerUserIds,
                     startDate: formatApiDate(stage.actualStartAt || stage.plannedStartAt),
                     dueDate: formatApiDate(stage.actualEndAt || stage.plannedEndAt),
                     description: stage.scopeSummary || stage.description || stage.criteria || "",
@@ -5875,7 +5891,7 @@ export default function ProjectDetailPage() {
         phase: milestoneName,
         activity,
         status: toApiStageStatus(newStage.status),
-        ownerUserId: owner?.id,
+        ownerUserIds: newStage.picUserIds?.length ? newStage.picUserIds : [owner.id],
         plannedStartAt: toApiDateValue(newStage.startDate),
         plannedEndAt: toApiDateValue(newStage.dueDate),
         criteria: newStage.description || "Stage completion criteria",
@@ -6032,9 +6048,11 @@ export default function ProjectDetailPage() {
 
   const handleEditStage = useCallback(async (milestoneId: string, stageId: string, updated: StageItem) => {
     const original = milestoneGroups.find(group => group.milestoneId === milestoneId)?.stages.find(stage => stage.id === stageId);
-    const ownerChanged = updated.picUserId !== original?.picUserId;
-    const owner = ownerChanged ? findAssignableTeamMember(teamMembers, updated.picUserId) : undefined;
-    if (ownerChanged && !owner) throw new Error(projectMemberAssignmentError(workspaceTeamMembers.find(member => member.id === updated.picUserId)?.name));
+    const originalOwnerIds = original?.picUserIds?.length ? original.picUserIds : (original?.picUserId ? [original.picUserId] : []);
+    const ownerIds = updated.picUserIds?.length ? updated.picUserIds : (updated.picUserId ? [updated.picUserId] : []);
+    const ownersChanged = ownerIds.join() !== originalOwnerIds.join();
+    const unassignable = ownersChanged ? ownerIds.find(id => !findAssignableTeamMember(teamMembers, id)) : undefined;
+    if (unassignable) throw new Error(projectMemberAssignmentError(workspaceTeamMembers.find(member => member.id === unassignable)?.name));
     const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageId)}`, {
       method: "PATCH",
       credentials: "same-origin",
@@ -6043,7 +6061,7 @@ export default function ProjectDetailPage() {
         activity: updated.name,
         // An unchanged status is left out: re-sending it must not run the start-stage gate check on a title or date edit.
         status: updated.status !== original?.status ? toApiStageStatus(updated.status) : undefined,
-        ownerUserId: owner?.id,
+        ownerUserIds: ownersChanged ? ownerIds : undefined,
         // The dates shown are actual-or-planned days: re-sending unchanged ones would overwrite the planned dates
         // (and hit the locked baseline), so only a date the user changed is sent.
         plannedStartAt: updated.startDate !== original?.startDate ? toApiDateValue(updated.startDate) : undefined,
@@ -7581,7 +7599,6 @@ export default function ProjectDetailPage() {
                             }
 
                             const mStatus = milestone.status;
-                            const milestoneMember = findTeamMember(teamMembers, milestone.pic, milestone.picName, milestone.picUserId);
                             let mBarBg = `${project.color}15`;
                             let mBarBorder = `${project.color}40`;
                             let mBarText = project.color;
@@ -7605,8 +7622,10 @@ export default function ProjectDetailPage() {
                                 {/* Milestone Row */}
                                 <div className="flex items-center">
                                   <div className="w-80 shrink-0 pr-4 flex items-center gap-2.5">
-                                    <ProjectIdentityAvatar
-                                      member={milestoneMember}
+                                    <PicAvatars
+                                      members={teamMembers}
+                                      ids={milestone.assigneeIds}
+                                      userId={milestone.picUserId}
                                       initials={milestone.pic}
                                       name={milestone.picName}
                                       color={milestone.picColor}
@@ -7657,7 +7676,6 @@ export default function ProjectDetailPage() {
                                 {/* Stages Rows */}
                                 {timelineStages.map(stage => {
                                   const { start: stageStart, due: stageDue, estimated: stageDatesEstimated } = getStageDateRange(stage, milestone.startDate, milestone.dueDate);
-                                  const stageMember = findTeamMember(teamMembers, stage.pic, stage.picName, stage.picUserId);
                                   const sVisible = stageStart <= viewEndDate && stageDue >= viewStartDate;
 
                                   let sLeft = 0;
@@ -7700,8 +7718,10 @@ export default function ProjectDetailPage() {
                                         <div className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30 shrink-0" />
 
                                         {stage.pic ? (
-                                          <ProjectIdentityAvatar
-                                            member={stageMember}
+                                          <PicAvatars
+                                            members={teamMembers}
+                                            ids={stage.picUserIds}
+                                            userId={stage.picUserId}
                                             initials={stage.pic}
                                             name={stage.picName}
                                             color={stage.picColor || "#94a3b8"}

@@ -2149,8 +2149,9 @@ export class ProjectsService {
       await this.permissions.assertProjectManager(tx, projectId, principal);
     const project = await this.permissions.ensureProject(projectId, principal.workspaceId);
     const activity = nonEmptyString(input.activity, "activity");
-    const ownerUserId = optionalString(input.ownerUserId, "ownerUserId") ?? undefined;
-    await this.permissions.ensureProjectAssignmentUsers(tx, principal.workspaceId, principal.tenantKey, project.id, ownerUserId ? [ownerUserId] : []);
+    const ownerUserIds = optionalStringArray(input.ownerUserIds, "ownerUserIds");
+    const ownerUserId = (ownerUserIds ? ownerUserIds[0] : optionalString(input.ownerUserId, "ownerUserId")) ?? undefined;
+    await this.permissions.ensureProjectAssignmentUsers(tx, principal.workspaceId, principal.tenantKey, project.id, ownerUserIds ?? (ownerUserId ? [ownerUserId] : []));
     const baseStageKey = optionalString(input.stageKey, "stageKey") ?? stageKeyFromActivity(activity);
     const stageKey = `${baseStageKey}-${Date.now().toString(36)}`.slice(0, 64);
     const phase = normalizeMilestoneName(optionalString(input.phase, "phase") ?? activity);
@@ -2208,6 +2209,7 @@ export class ProjectsService {
           description: optionalString(input.description, "description") ?? undefined,
           status: optionalString(input.status, "status") ?? "not_started",
           ownerUserId,
+          coOwnerUserIds: ownerUserIds?.slice(1),
           plannedStartAt: optionalDate(input.plannedStartAt, "plannedStartAt") ?? undefined,
           plannedEndAt: optionalDate(input.plannedEndAt, "plannedEndAt") ?? undefined,
           acceptanceCriteria: optionalString(input.acceptanceCriteria, "acceptanceCriteria") ?? undefined,
@@ -2258,6 +2260,7 @@ export class ProjectsService {
     if (hasInputKey(input, "activity")) nonEmptyString(input.activity, "Stage name");
     const scope = options.scope?.trim().toLowerCase() === "milestone" ? "milestone" : "stage";
     const requestedPhase = optionalString(input.phase, "phase") ?? undefined;
+    const ownerUserIds = optionalStringArray(input.ownerUserIds, "ownerUserIds");
     const data = omitUndefined({
       phase: requestedPhase,
       activity: optionalString(input.activity, "activity") ?? undefined,
@@ -2266,7 +2269,8 @@ export class ProjectsService {
       criteria: optionalString(input.criteria, "criteria") ?? undefined,
       description: optionalString(input.description, "description"),
       status: optionalString(input.status, "status") ?? undefined,
-      ownerUserId: optionalString(input.ownerUserId, "ownerUserId"),
+      ownerUserId: ownerUserIds ? (ownerUserIds[0] ?? null) : optionalString(input.ownerUserId, "ownerUserId"),
+      coOwnerUserIds: ownerUserIds?.slice(1),
       plannedStartAt: optionalDate(input.plannedStartAt, "plannedStartAt"),
       plannedEndAt: optionalDate(input.plannedEndAt, "plannedEndAt"),
       actualStartAt: optionalDate(input.actualStartAt, "actualStartAt"),
@@ -2291,13 +2295,13 @@ export class ProjectsService {
       principal.workspaceId,
       principal.tenantKey,
       existingStage.projectId,
-      typeof data.ownerUserId === "string" ? [data.ownerUserId] : []
+      ownerUserIds ?? (typeof data.ownerUserId === "string" ? [data.ownerUserId] : [])
     );
-    if (hasInputKey(input, "ownerUserId")) {
+    if (ownerUserIds || hasInputKey(input, "ownerUserId")) {
       // The PIC is the owner of the project's first stage, so changing that owner is a PIC change (7.7).
       const firstStage = await tx.projectStage.findFirst({ where: { projectId, workspaceId: principal.workspaceId }, orderBy: FIRST_STAGE_ORDER, select: { id: true, ownerUserId: true, milestoneId: true } });
       const touchesFirstStage = firstStage && (firstStage.id === stageId || (options.scope?.trim().toLowerCase() === "milestone" && firstStage.milestoneId === existingStage.milestoneId));
-      if (touchesFirstStage && (optionalString(input.ownerUserId, "ownerUserId") ?? null) !== firstStage.ownerUserId) this.assertCanChangePic(principal);
+      if (touchesFirstStage && (data.ownerUserId ?? null) !== firstStage.ownerUserId) this.assertCanChangePic(principal);
     }
 
     if (scope === "milestone") {

@@ -900,7 +900,7 @@ test.beforeEach(async ({ context, page, baseURL }) => {
       expect(input.phase).toBe(liveStage.phase);
       expect(input.activity).toBe("Production QA");
       expect(input.activity).not.toBe(input.phase);
-      expect(input.ownerUserId).toBe(liveUser.id);
+      expect(input.ownerUserIds).toEqual([liveUser.id]);
       await route.fulfill({
         status: 201,
         contentType: "application/json",
@@ -911,7 +911,7 @@ test.beforeEach(async ({ context, page, baseURL }) => {
           activity: input.activity,
           phase: input.phase,
           status: input.status ?? "in_progress",
-          ownerUserId: input.ownerUserId,
+          ownerUserId: input.ownerUserIds[0],
           plannedStartAt: input.plannedStartAt,
           plannedEndAt: input.plannedEndAt,
           criteria: input.criteria,
@@ -930,7 +930,7 @@ test.beforeEach(async ({ context, page, baseURL }) => {
       expect(url.searchParams.get("scope")).toBe("milestone");
       expect(input.phase).toBe("Discovery Renamed");
       expect(input.activity).toBeUndefined();
-      expect(input.ownerUserId).toBeUndefined();
+      expect(input.ownerUserIds).toBeUndefined();
       currentMilestoneName = input.phase;
       await route.fulfill({
         status: 200,
@@ -960,8 +960,8 @@ test.beforeEach(async ({ context, page, baseURL }) => {
       expect(input.activity).toBe("Scope confirmation renamed");
       expect(input.phase).toBeUndefined();
       expect(input.sortOrder).toBeUndefined();
-      // A rename sends only what changed: the stage PIC is not re-sent (and so not re-validated).
-      expect(input.ownerUserId).toBeUndefined();
+      // A rename sends only what changed: the stage PICs are not re-sent (and so not re-validated).
+      expect(input.ownerUserIds).toBeUndefined();
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -2168,7 +2168,7 @@ test("project detail loads live data and switches workspace tabs", async ({ page
   await expect(addStageDialog.getByRole("button", { name: "Create Stage" })).toBeDisabled();
   await expect(addStageDialog.getByText("Selected PIC: Nguyễn Hùng Việt Kha")).toBeVisible();
   await expect(addStageDialog.locator('img[src="https://example.com/avatar-kha.png"]').first()).toBeVisible();
-  await addStageDialog.getByRole("button", { name: "Chọn người phụ trách" }).click();
+  await addStageDialog.getByRole("button", { name: "Thành viên project" }).click();
   await expect(addStageDialog.getByRole("option", { name: /Nguyễn Hùng Việt Kha/ })).toBeVisible();
   await expect(addStageDialog.getByRole("option", { name: /Trần Anh Annie/ })).toHaveCount(0);
   await expect(addStageDialog.locator('img[src="https://example.com/avatar-kha.png"]').first()).toBeVisible();
@@ -3369,6 +3369,61 @@ test("project detail does not merge different users that only share initials", a
   await expect(page.locator("main").getByText("Nguyễn Hùng Việt Kha", { exact: true }).first()).toBeVisible();
   await expect(page.locator('main img[src="https://example.com/avatar-ngan.png"]').first()).toBeVisible();
   await expect(page.locator('main img[src="https://example.com/avatar-kha.png"]').first()).toBeVisible();
+});
+
+test("milestone, stage and task with two PICs show both faces and names, and the task page links to no profile", async ({ page }) => {
+  const ngan = { userId: initialsCollisionUser.id, displayName: initialsCollisionUser.displayName, email: initialsCollisionUser.email, avatarUrl: initialsCollisionUser.avatarUrl, relation: "member" };
+  const project = { ...liveProject, memberUserIds: [liveUser.id, ngan.userId], members: [liveProject.members[0], ngan] };
+  const bothIds = [liveUser.id, ngan.userId];
+  const task = {
+    ...liveTask,
+    assigneeUserIds: bothIds,
+    assignees: [
+      { userId: liveUser.id, displayName: liveUser.displayName, avatarUrl: liveUser.avatarUrl },
+      { userId: ngan.userId, displayName: ngan.displayName, avatarUrl: ngan.avatarUrl }
+    ]
+  };
+  const json = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+
+  await page.route(/\/api\/(?:admin|workspace)\/users(?:[/?].*)?$/, (route) => route.fulfill(json({ data: [liveUser, initialsCollisionUser], meta: { tenantKey: "prod", total: 2 } })));
+  await page.route(`**/api/projects/${liveProject.id}`, (route) => route.request().method() === "GET" ? route.fulfill(json(project)) : route.fallback());
+  await page.route(new RegExp(`/api/projects/${liveProject.id}/stages(?:\\?.*)?$`), (route) => route.request().method() === "GET"
+    ? route.fulfill(json({
+      data: [liveMilestonePlaceholderStage, liveStage, liveBuildStage].map((stage) => ({ ...stage, ownerUserIds: bothIds })),
+      meta: { principal: { subjectId: "e2e", workspaceId: "e2e-workspace" }, rowScope: "project", hiddenFields: [] }
+    }))
+    : route.fallback());
+  await page.route("**/api/tasks**", (route) => {
+    const url = new URL(route.request().url());
+    if (route.request().method() !== "GET") return route.fallback();
+    if (url.pathname === `/api/tasks/${liveTask.id}`) return route.fulfill(json(task));
+    if (url.pathname === "/api/tasks" && url.searchParams.get("projectId") === liveProject.id) {
+      return route.fulfill(json({
+        data: [task],
+        meta: { principal: { subjectId: "e2e", workspaceId: "e2e-workspace" }, rowScope: "workspace", hiddenFields: [], pagination: { limit: 100, offset: 0, returned: 1, total: 1, hasNextPage: false, hasPreviousPage: false } }
+      }));
+    }
+    return route.fallback();
+  });
+  fixtureMembers.set(page, project.members);
+
+  await page.goto(`/projects/${liveProject.id}?tab=Tasks`);
+  await expect(page.getByText(liveTask.title)).toBeVisible();
+  // Milestone header, the two stages and the task row each list both PICs, primary first.
+  const bothPics = page.locator("main").getByRole("group", { name: "PIC: Nguyễn Hùng Việt Kha, Nguyễn Kim Ngân", exact: true });
+  await expect(bothPics).toHaveCount(4);
+  await expect(bothPics.first().getByText("Nguyễn Hùng Việt Kha, Nguyễn Kim Ngân")).toBeVisible();
+  for (const pics of await bothPics.all()) {
+    await expect(pics.locator('img[src="https://example.com/avatar-kha.png"]')).toHaveCount(1);
+    await expect(pics.locator('img[src="https://example.com/avatar-ngan.png"]')).toHaveCount(1);
+  }
+
+  await page.goto(`/tasks/${liveTask.id}`);
+  const assignees = page.getByText("Phụ trách", { exact: true }).locator("..");
+  await expect(assignees.getByText("Nguyễn Hùng Việt Kha", { exact: true })).toBeVisible();
+  await expect(assignees.getByText("Nguyễn Kim Ngân", { exact: true })).toBeVisible();
+  await expect(assignees.locator('img[src="https://example.com/avatar-ngan.png"]')).toHaveCount(1);
+  await expect(assignees.getByRole("link")).toHaveCount(0);
 });
 
 test("Phụ lục B ca 9 · project detail offers “Xem P&L ↗” to an Admin account in the cost permission group only, and shows no P&L figure", async ({ page }) => {

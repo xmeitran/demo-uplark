@@ -225,6 +225,7 @@ describe("delivery.mapper", () => {
       criteria: "UAT sign-off is approved.",
       status: "in_progress",
       ownerUserId: "usr-1",
+      coOwnerUserIds: ["usr-2", "usr-1"],
       owner: { displayName: "Delivery Lead", avatarUrl: "https://example.com/delivery-lead.png" },
       progressPercent: 60,
       createdAt: new Date("2026-06-30T01:00:00.000Z"),
@@ -238,6 +239,7 @@ describe("delivery.mapper", () => {
       accountName: "Acme Co",
       ownerDisplayName: "Delivery Lead",
       ownerAvatarUrl: "https://example.com/delivery-lead.png",
+      ownerUserIds: ["usr-1", "usr-2"],
       progressPercent: 60
     });
   });

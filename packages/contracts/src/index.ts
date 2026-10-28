@@ -844,6 +844,8 @@ export interface ProjectStageSummary {
   ownerUserId?: string;
   ownerDisplayName?: string;
   ownerAvatarUrl?: string;
+  /** Every PIC, the primary (ownerUserId) first. */
+  ownerUserIds?: string[];
   plannedStartAt?: string;
   plannedEndAt?: string;
   actualStartAt?: string;
@@ -867,6 +869,8 @@ export interface CreateProjectStageInput {
   description?: string;
   status?: string;
   ownerUserId?: string;
+  /** Every PIC, primary first; takes precedence over ownerUserId. */
+  ownerUserIds?: string[];
   plannedStartAt?: string;
   plannedEndAt?: string;
   acceptanceCriteria?: string;
@@ -885,6 +889,8 @@ export interface UpdateProjectStageInput {
   description?: string | null;
   status?: string;
   ownerUserId?: string | null;
+  /** Replaces every PIC, primary first; takes precedence over ownerUserId. */
+  ownerUserIds?: string[];
   plannedStartAt?: string | null;
   plannedEndAt?: string | null;
   actualStartAt?: string | null;

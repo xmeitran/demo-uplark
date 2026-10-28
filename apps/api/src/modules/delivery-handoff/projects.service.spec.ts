@@ -1400,6 +1400,25 @@ describe("ProjectsService.updateStage", () => {
     expect(prisma.projectStage.update).not.toHaveBeenCalled();
   });
 
+  it("saves every milestone PIC: the first is the owner, the rest co-owners, all checked as project members", async () => {
+    const prisma = createStageDeletePrismaMock();
+    // The primary stays usr-1, so adding a co-PIC is not a project PIC change (7.7) and needs no PM role.
+    prisma.projectStage.findFirst.mockResolvedValue({ ...(await prisma.projectStage.findFirst()), ownerUserId: "usr-1" });
+    prisma.user = { findMany: vi.fn().mockResolvedValue([{ id: "usr-1" }, { id: "usr-2" }]) };
+    prisma.projectMember = { findMany: vi.fn().mockResolvedValue([{ userId: "usr-1" }, { userId: "usr-2" }]) };
+    const service = new ProjectsService(withMutationDependencies(prisma) as any);
+
+    await service.updateStage("prj-1", "stage-1", { ownerUserIds: ["usr-1", "usr-2", "usr-1"] }, principal, { scope: "milestone" });
+
+    expect(prisma.projectMember.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ userId: { in: ["usr-1", "usr-2"] } })
+    }));
+    expect(prisma.projectStage.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ milestoneId: "milestone-1" }),
+      data: expect.objectContaining({ ownerUserId: "usr-1", coOwnerUserIds: ["usr-2"] })
+    }));
+  });
+
   it("rejects milestone rename collisions without changing stage compatibility fields", async () => {
     const prisma = createStageDeletePrismaMock();
     prisma.projectMilestone.findFirst.mockResolvedValue({ id: "milestone-existing" });

@@ -4,7 +4,6 @@ import { apiErrorMessage, isNetworkFailure, readApiError } from "@/lib/api-error
 import { TASK_ESTIMATE_HINT } from "../../features/crm-tasks/task-estimate";
 import { isActualTimeEntry, ON_HOLD_LOG_REVIEW_LABEL, timeEntryRecordLabel } from "@/lib/time-entry-actual";
 import { LAYER2_MISMATCH_LABEL, TASK_TYPE_LAYER1_FIELD_LABEL, TASK_TYPE_LAYER2_FIELD_LABEL, isLayer2ReasonRequired, layer2OptionsForTask, taskTypeLabel, taskTypeLayer2Label } from "@/lib/task-classification";
-import { PersonLink } from "@/components/person-link";
 import { useTaskPeople } from "@/hooks/use-task-people";
 import { useAuth } from "@/lib/auth";
 import { isAdminView } from "@/lib/auth-role";
@@ -1874,12 +1873,6 @@ export function TaskDetailWorkbench({
   const assignedPeople = currentTask.assignees?.length
     ? currentTask.assignees
     : (currentTask.assigneeUserId ? [{ userId: currentTask.assigneeUserId, displayName: currentTask.assigneeDisplayName, avatarUrl: currentTask.assigneeAvatarUrl }] : []);
-  const displayAssignee = assignedPeople.length > 1
-    ? `${formatAssigneeName(assignedPeople[0].userId, assignedPeople[0].displayName)} + ${assignedPeople.length - 1}`
-    : formatAssigneeName(currentTask.assigneeUserId, currentTask.assigneeDisplayName);
-  const assigneeAvatarUrl =
-    currentTask.assigneeAvatarUrl ||
-    workspaceAssigneeOptions.find((option) => option.value === currentTask.assigneeUserId)?.avatarUrl;
 
 
 
@@ -2713,20 +2706,21 @@ export function TaskDetailWorkbench({
                           }}
                         />
                       ) : (
-                        <div className="flex items-center gap-2">
-                          <div className="h-5 w-5 rounded-full overflow-hidden bg-indigo-100 flex items-center justify-center text-[9px] font-bold text-indigo-700 shrink-0">
-                            {assigneeAvatarUrl ? (
-                              <img src={assigneeAvatarUrl} alt={displayAssignee} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
-                            ) : (
-                              initialForName(displayAssignee)
-                            )}
-                          </div>
-                          {assignedPeople[0]?.userId ? (
-                            <PersonLink userId={assignedPeople[0].userId} className="text-xs font-semibold text-slate-800 truncate hover:text-indigo-600 hover:underline">{displayAssignee}</PersonLink>
-                          ) : (
-                            <p className="text-xs font-semibold text-slate-800 truncate">{displayAssignee}</p>
-                          )}
-                        </div>
+                        assignedPeople.length > 0 ? (
+                          <ul className="space-y-1.5">
+                            {assignedPeople.map((person) => {
+                              const name = formatAssigneeName(person.userId, person.displayName);
+                              return (
+                                <li key={person.userId} className="flex min-w-0 items-center gap-2">
+                                  <UserAvatar id={person.userId} name={name} avatarUrl={person.avatarUrl} size="xs" />
+                                  <span className="truncate text-xs font-semibold text-slate-800">{name}</span>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        ) : (
+                          <p className="text-xs font-semibold text-slate-800">{formatAssigneeName()}</p>
+                        )
                       )}
                     </div>
 

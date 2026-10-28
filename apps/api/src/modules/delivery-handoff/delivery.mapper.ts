@@ -257,6 +257,7 @@ export function mapProjectStageSummary(stage: any): ProjectStageSummary {
     ownerUserId: stage.ownerUserId ?? undefined,
     ownerDisplayName: stage.owner?.displayName ?? undefined,
     ownerAvatarUrl: stage.owner?.avatarUrl ?? undefined,
+    ownerUserIds: Array.from(new Set<string>([stage.ownerUserId, ...(stage.coOwnerUserIds ?? [])].filter(Boolean))),
     plannedStartAt: toIso(stage.plannedStartAt),
     plannedEndAt: toIso(stage.plannedEndAt),
     actualStartAt: toIso(stage.actualStartAt),

@@ -1667,6 +1667,8 @@ model ProjectStage {
   customerRole       String?
   status             String           @default("not_started")
   ownerUserId        String?
+  /// PICs besides ownerUserId (the primary PIC). A milestone writes the same set to each of its stages.
+  coOwnerUserIds     String[]         @default([])
   plannedStartAt     DateTime?
   plannedEndAt       DateTime?
   actualStartAt      DateTime?
