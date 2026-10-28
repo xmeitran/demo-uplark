@@ -172,8 +172,7 @@ export function optionalEnum(value: unknown, fieldName: string, allowed: Set<str
 
 export type MilestoneTemplateRecord = CreateProjectMilestoneInput[];
 
-export const MAX_TASK_ESTIMATE_MINUTES = 8 * 60;
-export const TASK_ESTIMATE_CAP_MESSAGE = "Giờ kế hoạch của một task tối đa 8 giờ (480 phút). Việc dài hơn hãy tách thành nhiều task hoặc sub-task.";
+export const TASK_ESTIMATE_CAP_MESSAGE = "Giờ kế hoạch của task phải là một số không âm.";
 
 const hoursLabel = (minutes: number) => `${Math.round(minutes / 6) / 10} giờ`;
 
@@ -192,15 +191,15 @@ export function dayCapMessage(capMinutes: number, kind: "plan" | "log", usedMinu
 }
 
 /**
- * `unchangedValue` is the task's stored estimate on an update: an older estimate above the cap that is sent back
- * as is (the forms resend every field) is not a change, so it never blocks saving the other fields.
+ * A task's planned minutes. There is no per-task cap (user's call, 2026-10-28): the 8-hour limit is per person per day,
+ * applied to plans and time logs (dayCapMessage). `unchangedValue`: the stored estimate is always accepted back.
  */
 export function validateTaskEstimateMinutes(value: unknown, path = "estimateMinutes", unchangedValue?: number | null) {
   if (value === undefined || value === null) return undefined;
   const estimateMinutes = optionalInteger(value, path);
   if (estimateMinutes === undefined || estimateMinutes === null) return undefined;
   if (unchangedValue !== undefined && unchangedValue !== null && estimateMinutes === unchangedValue) return estimateMinutes;
-  if (estimateMinutes < 0 || estimateMinutes > MAX_TASK_ESTIMATE_MINUTES) {
+  if (estimateMinutes < 0) {
     throw new BadRequestException(TASK_ESTIMATE_CAP_MESSAGE);
   }
   return estimateMinutes;

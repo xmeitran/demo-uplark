@@ -1127,7 +1127,7 @@ function hoursToMinutes(hours?: number) {
 
 const PLANNED_HOURS_ERROR = TASK_ESTIMATE_ERROR;
 
-/** Planned hours of a task: decimals allowed, the 8h limit stated under the field (shared rule in features/crm-tasks/task-estimate). */
+/** Planned hours of a task: decimals allowed, no per-task cap; the 8h/day rule is stated under the field (features/crm-tasks/task-estimate). */
 function PlannedHoursField({ value, onChange, invalid }: { value: string; onChange: (value: string) => void; invalid: boolean }) {
   return (
     <Field label="Planned Hours (Giờ kế hoạch)">
@@ -4015,7 +4015,7 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
   const [plannedHoursText, setPlannedHoursText] = useState(String(originalPlannedHours));
   const plannedHours = parsePlannedHours(plannedHoursText);
   const estimateChanged = plannedHours !== originalPlannedHours;
-  const plannedHoursInvalid = isPlannedHoursInvalid(plannedHours, originalPlannedHours);
+  const plannedHoursInvalid = isPlannedHoursInvalid(plannedHours);
   const actualHours = task.actualHours ?? 0;
   // #10: the assignee is required (and sent) only when the user changes it, so a task whose assignee left the project can still be edited.
   const [assigneeTouched, setAssigneeTouched] = useState(false);

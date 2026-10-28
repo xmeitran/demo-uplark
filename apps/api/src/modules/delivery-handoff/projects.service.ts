@@ -92,7 +92,6 @@ import { TimeEntriesService } from "./time-entries.service";
 import { MilestoneGatesService } from "./milestone-gates.service";
 import { TaskClassificationService } from "./task-classification.service";
 import { ProjectTemplatesService } from "./project-templates.service";
-export { MAX_TASK_ESTIMATE_MINUTES } from "./projects.shared"; // kept for existing importers
 export { validateTaskEstimateMinutes } from "./projects.shared"; // kept for existing importers
 export { buildSpreadsheetTemplateDraft } from "./project-templates.service"; // kept for existing importers
 

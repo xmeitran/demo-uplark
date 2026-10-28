@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { buildSpreadsheetTemplateDraft, MAX_TASK_ESTIMATE_MINUTES, ProjectsService, validateTaskEstimateMinutes } from "./projects.service";
+import { buildSpreadsheetTemplateDraft, ProjectsService, validateTaskEstimateMinutes } from "./projects.service";
 import type { PrincipalContext } from "@b2b-crm/contracts";
 import { visibleProjectWhere } from "./project-visibility";
 
@@ -115,18 +115,15 @@ const portalPrincipal: PrincipalContext = {
 };
 
 describe("task estimate validation", () => {
-  it("accepts at most eight planned hours represented as minutes", () => {
-    expect(validateTaskEstimateMinutes(MAX_TASK_ESTIMATE_MINUTES)).toBe(MAX_TASK_ESTIMATE_MINUTES);
+  it("accepts any number of planned hours for a task: the 8-hour limit is per day, not per task", () => {
     expect(validateTaskEstimateMinutes(0)).toBe(0);
+    expect(validateTaskEstimateMinutes(480)).toBe(480);
+    expect(validateTaskEstimateMinutes(16 * 60)).toBe(960);
+    expect(validateTaskEstimateMinutes(900, "estimateMinutes", 960)).toBe(900);
   });
 
-  it("rejects planned time above eight hours", () => {
-    expect(() => validateTaskEstimateMinutes(MAX_TASK_ESTIMATE_MINUTES + 1)).toThrow("tối đa 8 giờ");
-  });
-
-  it("keeps an older estimate above the cap when it is sent back unchanged, and rejects a new one", () => {
-    expect(validateTaskEstimateMinutes(960, "estimateMinutes", 960)).toBe(960);
-    expect(() => validateTaskEstimateMinutes(900, "estimateMinutes", 960)).toThrow("tối đa 8 giờ");
+  it("rejects a negative estimate", () => {
+    expect(() => validateTaskEstimateMinutes(-30)).toThrow("không âm");
   });
 });
 
