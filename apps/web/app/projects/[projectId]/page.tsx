@@ -79,6 +79,7 @@ import { deriveMilestoneWorkStatus } from "@/features/project-hierarchy/work-sta
 import { IssueLogPanel } from "@/features/issue-log/issue-log-panel";
 import { TaskRowExtrasContext, groupIssuesByTask, useTaskRowExtras } from "@/features/task-board/task-row-extras";
 import { createFileDownloadUrl, openFileObject } from "@/lib/task-attachments";
+import { ProjectActionDialogs, type ProjectAction } from "../project-dialogs";
 import { ApiResponseError, readApiError } from "@/lib/api-error";
 import { fetchAllPages } from "@/lib/api-pages";
 import { HeaderLinkButton, PageBackLink } from "@/components/page-header";
@@ -4924,6 +4925,10 @@ export default function ProjectDetailPage() {
   const [isHoveredPush, setIsHoveredPush] = useState(false);
   const [isHoveredEdit, setIsHoveredEdit] = useState(false);
   const [isHoveredMore, setIsHoveredMore] = useState(false);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const projectMenuButtonRef = useRef<HTMLButtonElement>(null);
+  // Edit / delete open here, on the project, instead of sending the user to the project list.
+  const [projectAction, setProjectAction] = useState<ProjectAction | null>(null);
   const canManageProjectActions = isAdminView(user);
 
   // Overview and Tasks each keep their own task filters (same shape, see task-filters.ts).
@@ -6413,7 +6418,7 @@ export default function ProjectDetailPage() {
                 title={isPushed ? "Unpush from Sidebar Menu" : "Push to Sidebar Menu"}
                 onMouseEnter={() => setIsHoveredPush(true)}
                 onMouseLeave={() => setIsHoveredPush(false)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-bold transition-all shadow-sm"
+                className="flex h-8 items-center gap-1.5 px-3 rounded-lg border text-[11px] font-bold transition-all shadow-sm"
                 style={{
                   backgroundColor: isPushed
                     ? project.color
@@ -6426,11 +6431,11 @@ export default function ProjectDetailPage() {
                 <span>{isPushed ? "Pushed to Menu" : "Push to Menu"}</span>
               </button>
               <button
-                type="button" disabled={!canManageProjectActions} aria-label={canManageProjectActions ? "Edit project" : "Edit project unavailable"} title={canManageProjectActions ? "Edit project" : "Only Workspace Admin can edit this project"}
-                onClick={() => canManageProjectActions && router.push(`/projects?edit=${encodeURIComponent(projectId)}`)}
+                type="button" disabled={!canManageProjectActions} aria-label={canManageProjectActions ? "Chỉnh sửa dự án" : "Chỉnh sửa dự án (chỉ Admin)"} title={canManageProjectActions ? "Chỉnh sửa dự án" : "Chỉ Workspace Admin được sửa dự án này"}
+                onClick={() => canManageProjectActions && setProjectAction({ kind: "edit", project })}
                 onMouseEnter={() => setIsHoveredEdit(true)}
                 onMouseLeave={() => setIsHoveredEdit(false)}
-                className="min-h-11 min-w-11 p-2 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex h-8 w-8 items-center justify-center rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{
                   backgroundColor: isHoveredEdit ? `${project.color}25` : `${project.color}12`,
                   borderColor: `${project.color}35`,
@@ -6440,11 +6445,13 @@ export default function ProjectDetailPage() {
                 <Edit3 className="w-3.5 h-3.5" />
               </button>
               <button
-                type="button" disabled={!canManageProjectActions} aria-label={canManageProjectActions ? "Delete project" : "Delete project unavailable"} title={canManageProjectActions ? "Delete project" : "Only Workspace Admin can delete this project"}
-                onClick={() => canManageProjectActions && router.push(`/projects?delete=${encodeURIComponent(projectId)}`)}
+                ref={projectMenuButtonRef}
+                type="button" disabled={!canManageProjectActions} aria-label={canManageProjectActions ? "Thao tác dự án" : "Thao tác dự án (chỉ Admin)"} title={canManageProjectActions ? "Thao tác dự án" : "Chỉ Workspace Admin được sửa hoặc xóa dự án này"}
+                aria-haspopup="menu" aria-expanded={projectMenuOpen}
+                onClick={() => canManageProjectActions && setProjectMenuOpen((open) => !open)}
                 onMouseEnter={() => setIsHoveredMore(true)}
                 onMouseLeave={() => setIsHoveredMore(false)}
-                className="min-h-11 min-w-11 p-2 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex h-8 w-8 items-center justify-center rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{
                   backgroundColor: isHoveredMore ? `${project.color}25` : `${project.color}12`,
                   borderColor: `${project.color}35`,
@@ -6453,12 +6460,35 @@ export default function ProjectDetailPage() {
               >
                 <MoreHorizontal className="w-3.5 h-3.5" />
               </button>
+              {projectMenuOpen && canManageProjectActions && (
+                <ActionMenu
+                  anchorRef={projectMenuButtonRef}
+                  onClose={() => setProjectMenuOpen(false)}
+                  items={[
+                    { label: "Sửa dự án", icon: Pencil, onClick: () => setProjectAction({ kind: "edit", project }) },
+                    { label: "Xóa dự án", icon: Trash2, danger: true, onClick: () => setProjectAction({ kind: "delete", project }) }
+                  ]}
+                />
+              )}
             </div>
             <div className="absolute bottom-3 left-4">
               <p className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">{project.category}</p>
               <h1 className="font-black tracking-tight text-foreground" style={{ fontSize: "1.25rem", lineHeight: 1.2 }}>{project.name}</h1>
             </div>
           </div>
+          {/* Mounted only while a dialog is open, so the idle page tree is unchanged. */}
+          {projectAction && (
+            <ProjectActionDialogs
+              action={projectAction}
+              onDone={() => setProjectAction(null)}
+              onUpdated={() => void refreshProject()}
+              onDeleted={() => {
+                if (isPushed) handleTogglePush();
+                router.push(projectsReturnHref);
+              }}
+              onUnauthorized={() => window.location.assign(`/login?returnTo=${encodeURIComponent(`/projects/${projectId}`)}`)}
+            />
+          )}
 
           {/* Header Info */}
           <div className="mt-4 px-4 sm:px-6">

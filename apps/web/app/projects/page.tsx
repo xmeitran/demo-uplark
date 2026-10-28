@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Plus, Download, Sparkles, FileUp, MessageSquare,
   Briefcase, Calendar, AlertCircle,
-  CheckCircle2, Clock, ArrowRight, BarChart2, Layers, X, Pin, Pencil, Trash2, Check, Archive,
+  CheckCircle2, ArrowRight, Layers, X, Pin, Pencil, Trash2, Check,
   Wallet, TrendingUp, LayoutGrid, List, Bell
 } from "lucide-react";
 import Link from "next/link";
@@ -19,9 +19,8 @@ import { ModalLayer } from "@/components/modal-layer";
 import { HeaderButton, PageHeader } from "@/components/page-header";
 import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilter, SearchFilter, dayOf, matchesAny, rangesOverlap, type DateRange } from "@/components/filters";
 import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
-import { CrmMultiSelect, CrmSelect } from "@/components/crm-workspace/crm-select";
 import { useAuth } from "@/lib/auth";
-import { canEditProjectSetup, canViewCostFigures, isAdminView } from "@/lib/auth-role";
+import { canEditProjectSetup, canViewCostFigures } from "@/lib/auth-role";
 import { MoneyAmount } from "@/components/money-amount";
 import { pnlRequest } from "@/components/pnl/pnl-ui";
 import { parseVndAmount } from "@/components/pnl/pnl-project-edit";
@@ -41,7 +40,6 @@ import {
   mergeProjectUpdate,
   PROJECT_PAGE_SIZE,
   formatProjectStatusLabel,
-  toBackendProjectStatus,
   type LiveProjectAccountOption
 } from "./live-projects";
 import {
@@ -51,7 +49,6 @@ import {
 } from "@/lib/workspace-users";
 import { downloadCsv } from "@/lib/csv-export";
 import { projectDueSortValue, uiProjectDateToIso } from "@/lib/project-date";
-import { systemRoleLabel } from "@/lib/people-roles";
 import { loadExcelWorkbook } from "@/lib/excel-import";
 import {
   ProjectSheet,
@@ -80,21 +77,12 @@ const PROJECT_LIST_VIEWS: { id: ProjectListView; label: string; icon: typeof Lay
 const MONEY_HIDDEN_TITLE = "Chỉ nhóm quyền chi phí xem được số tiền";
 
 import { Project, PROJECTS, type Member } from "./data";
+import { MilestoneApprovalField, ProjectActionDialogs, ProjectMemberMultiSelect, ProjectUserDropdown, STATUS_CFG, UserAvatar, getProjectCode, type ProjectAction, type ProjectClientOption } from "./project-dialogs";
 import { PROJECT_CLOSE_REASONS, PROJECT_STATUS_LABELS, PROJECT_STATUS_OPTIONS, projectStatusOrder, projectStatusStyleMap, quickProjectStatusOptions, type ProjectCloseReasonCode } from "@/lib/project-status";
 import { readApiError } from "@/lib/api-error";
 import { INTERNAL_WORKLOG_PROJECT_TYPE, PROJECT_TYPE_OPTIONS, projectKindOf, type ProjectMilestoneTemplateSummary, type ProjectTaskTemplateInput, type ResourceListPaginationMeta } from "@b2b-crm/contracts";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-
-const STATUS_CFG = projectStatusStyleMap({
-  active:    { color:"#16a34a", bg:"#dcfce7", icon:CheckCircle2 },
-  in_review: { color:"#2563eb", bg:"#eff6ff", icon:BarChart2 },
-  planning:  { color:"#0891b2", bg:"#e0f2fe", icon:Clock },
-  on_hold:   { color:"#64748b", bg:"#f1f5f9", icon:Clock },
-  completed: { color:"#16a34a", bg:"#f0fdf4", icon:CheckCircle2 },
-  at_risk:   { color:"#dc2626", bg:"#fee2e2", icon:AlertCircle },
-  closed:    { color:"#475569", bg:"#e2e8f0", icon:Archive },
-}, { color:"#64748b", bg:"#f1f5f9", icon:Clock });
 
 const PRIORITY_CFG = {
   Critical: { color:"#dc2626", bg:"#fee2e2" },
@@ -196,10 +184,6 @@ function projectPageRangeLabel(meta: ResourceListPaginationMeta) {
   const start = meta.offset + 1;
   const end = meta.offset + meta.returned;
   return `${start}-${end} / ${meta.total} projects`;
-}
-
-function getProjectCode(project: Project) {
-  return project.tags[0] ?? "";
 }
 
 function addDays(date: Date, days: number) {
@@ -433,23 +417,6 @@ const PRIORITY_OPTIONS = [
   { value: "Low", label: "Low", color: "#16a34a" },
 ];
 
-/** Project.milestoneApprovalRequired. "Không duyệt": no milestone locks, a milestone (or G1–G8 gate) completes with its tasks. */
-function MilestoneApprovalField({ value, onChange, disabled = false }: { value: boolean; onChange: (value: boolean) => void; disabled?: boolean }) {
-  return (
-    <div className="space-y-1.5" title={disabled ? "Chỉ tài khoản Admin (PM) đổi được chế độ này" : undefined}>
-      <span className="text-xs font-semibold text-muted-foreground">Duyệt milestone</span>
-      <CustomDropdown
-        ariaLabel="Duyệt milestone"
-        options={[{ value: "required", label: "Yêu cầu duyệt" }, { value: "none", label: "Không duyệt" }]}
-        value={value ? "required" : "none"}
-        onChange={(next) => onChange(next === "required")}
-        disabled={disabled}
-      />
-      <p className="text-[11px] text-muted-foreground">{value ? "Gửi hồ sơ và chờ duyệt trước khi sang milestone sau." : "Milestone mở hết từ đầu, hết task là tự hoàn thành."}</p>
-    </div>
-  );
-}
-
 /** Loại dự án of a list row as one of the three filter values; the fixed worklog project counts as Nội bộ. */
 function projectTypeCodeOf(project: Project) {
   const kind = projectKindOf(project.projectType) ?? "delivery";
@@ -466,458 +433,6 @@ function matchesProjectFilters(project: Project, filters: Pick<ProjectListUrlSta
     && rangesOverlap(dayOf(uiProjectDateToIso(project.startDate)), dayOf(project.dueAt ?? uiProjectDateToIso(project.dueDate)), filters);
 }
 
-
-function UserAvatar({ user, size = "md" }: { user: WorkspaceUserOption; size?: "sm" | "md" }) {
-  const [failed, setFailed] = useState(false);
-  const className = size === "sm" ? "h-6 w-6 text-[10px]" : "h-8 w-8 text-xs";
-
-  return (
-    <span
-      className={`${className} flex shrink-0 items-center justify-center overflow-hidden rounded-full font-bold text-white`}
-      style={{ backgroundColor: user.color }}
-    >
-      {user.avatarUrl && !failed ? (
-        <img
-          src={user.avatarUrl}
-          alt=""
-          className="h-full w-full object-cover"
-          referrerPolicy="no-referrer"
-          onError={() => setFailed(true)}
-        />
-      ) : (
-        user.initials
-      )}
-    </span>
-  );
-}
-
-function ProjectUserDropdown({
-  users,
-  value,
-  onChange,
-  placeholder = "Select PIC"
-}: {
-  users: WorkspaceUserOption[];
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-}) {
-  return (
-    <CrmSelect
-      ariaLabel="PIC dự án"
-      disabled={users.length === 0}
-      options={[
-        { value: "none", label: users.length === 0 ? "No synced users" : "Unassigned" },
-        ...users.map((user) => ({
-          value: user.id,
-          label: user.name,
-          meta: `${user.role || "Chưa gán"} · ${systemRoleLabel(user.systemRole)}${user.email ? ` · ${user.email}` : ""}`,
-          avatarUrl: user.avatarUrl,
-          initials: user.initials,
-          color: user.color
-        }))
-      ]}
-      searchable
-      searchPlaceholder="Tìm tên, email hoặc vai trò..."
-      value={value || "none"}
-      onChange={onChange}
-      placeholder={placeholder}
-    />
-  );
-}
-
-function ProjectMemberMultiSelect({ users, selectedIds, onChange, placeholder = "Select project members" }: { users: WorkspaceUserOption[]; selectedIds: string[]; onChange: (ids: string[]) => void; placeholder?: string }) {
-  return (
-    <CrmMultiSelect
-      ariaLabel="Thành viên dự án"
-      disabled={users.length === 0}
-      options={users.map((user) => ({
-        value: user.id,
-        label: user.name,
-        meta: `${user.role || "Chưa gán"} · ${systemRoleLabel(user.systemRole)} · ${user.email}`,
-        avatarUrl: user.avatarUrl,
-        initials: user.initials,
-        color: user.color
-      }))}
-      placeholder={users.length === 0 ? "No synced users" : placeholder}
-      selectedCountLabel={(count) => `${count} đã chọn`}
-      values={selectedIds}
-      onChange={onChange}
-    />
-  );
-}
-
-interface ProjectEditValues {
-  name: string;
-  code: string;
-  client: string;
-  status: Project["status"];
-  projectType: string;
-  scopeSummary: string;
-  ownerUserId: string;
-  memberUserIds: string[];
-  isTestProject: boolean;
-  milestoneApprovalRequired: boolean;
-  plannedStartAt: string;
-  plannedEndAt: string;
-}
-
-type ProjectClientOption = { value: string; label: string; accountId?: string };
-
-function ProjectEditModal({
-  project,
-  clientOptions,
-  workspaceUsers,
-  loadingWorkspaceUsers,
-  workspaceUsersError,
-  isSaving,
-  error,
-  onClose,
-  onSave
-}: {
-  project: Project;
-  clientOptions: ProjectClientOption[];
-  workspaceUsers: WorkspaceUserOption[];
-  loadingWorkspaceUsers: boolean;
-  workspaceUsersError: string | null;
-  isSaving: boolean;
-  error: string | null;
-  onClose: () => void;
-  onSave: (values: ProjectEditValues) => void;
-}) {
-  const editDialogRef = useDialogAccessibility(true, () => { if (!isSaving) onClose(); });
-  const [name, setName] = useState(project.name);
-  const [code, setCode] = useState(getProjectCode(project));
-  const [client, setClient] = useState(project.client);
-  const [status, setStatus] = useState<Project["status"]>(project.status);
-  // Loại dự án (V-01). The fixed worklog project keeps its own kind; the API refuses a change once G1 is approved.
-  const initialProjectType = projectKindOf(project.projectType) ?? "delivery";
-  const [projectType, setProjectType] = useState<string>(initialProjectType);
-  const projectTypeOptions = initialProjectType === INTERNAL_WORKLOG_PROJECT_TYPE ? [...PROJECT_TYPE_OPTIONS, { value: INTERNAL_WORKLOG_PROJECT_TYPE, label: "Nội bộ (DX Internal Worklog)" }] : PROJECT_TYPE_OPTIONS;
-  const [scopeSummary, setScopeSummary] = useState(project.scopeSummary ?? "");
-  const initialMemberIds = project.memberUserIds ?? project.members.map((member) => member.id).filter((id): id is string => Boolean(id));
-  const [ownerUserId, setOwnerUserId] = useState(project.ownerUserId ?? initialMemberIds[0] ?? "none");
-  const [memberUserIds, setMemberUserIds] = useState<string[]>(initialMemberIds);
-  // PL-02: "Dự án thử nghiệm" and the milestone approval mode — after creation only an Admin account changes them (the API enforces the same).
-  const [isTestProject, setIsTestProject] = useState(project.isTestProject === true);
-  const [milestoneApprovalRequired, setMilestoneApprovalRequired] = useState(project.milestoneApprovalRequired !== false);
-  const canEditTestFlag = isAdminView(useAuth().user);
-  const [plannedStartAt, setPlannedStartAt] = useState(project.startDate);
-  const [plannedEndAt, setPlannedEndAt] = useState(project.dueDate);
-
-  const handleSubmit = (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!name.trim() || isSaving) return;
-    onSave({
-      name: name.trim(),
-      code: code.trim(),
-      client,
-      status,
-      projectType,
-      scopeSummary: scopeSummary.trim(),
-      ownerUserId,
-      memberUserIds,
-      isTestProject,
-      milestoneApprovalRequired,
-      plannedStartAt,
-      plannedEndAt
-    });
-  };
-
-  return (
-    <ModalLayer onClose={onClose}>
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <motion.div
-        ref={editDialogRef} role="dialog" aria-modal="true" aria-label="Chỉnh sửa dự án" tabIndex={-1}
-        initial={{ opacity: 0, scale: 0.95, y: 16 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 16 }}
-        className="bg-card border border-border rounded-2xl w-full max-w-2xl max-h-[90dvh] overflow-visible shadow-2xl flex flex-col"
-      >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-muted/20">
-          <div>
-            <h3 className="text-base font-bold text-foreground">Chỉnh sửa dự án</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">Update persisted CRM fields for this workspace project.</p>
-          </div>
-          <button
-            aria-label="Close edit project dialog"
-            type="button"
-            onClick={onClose}
-            className="min-h-11 min-w-11 p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4">
-          {error && (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
-              {error}
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-1.5 md:col-span-2">
-              <label className="text-xs font-semibold text-muted-foreground">
-                Tên dự án <span className="text-destructive">*</span>
-              </label>
-              <input
-                type="text"
-                aria-label="Tên dự án"
-                required
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                className="w-full px-3.5 py-2.5 bg-background border border-input rounded-xl text-sm text-foreground focus:outline-none focus:border-primary transition-colors"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label htmlFor="edit-project-code" className="text-xs font-semibold text-muted-foreground">Mã dự án</label>
-              <input id="edit-project-code"
-                type="text"
-                aria-label="Mã dự án"
-                value={code}
-                onChange={(event) => setCode(event.target.value)}
-                className="w-full px-3.5 py-2.5 bg-background border border-input rounded-xl text-sm text-foreground focus:outline-none focus:border-primary transition-colors"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-muted-foreground">Trạng thái</label>
-              {/* No reason field here: only statuses the server accepts without one. */}
-              <CustomDropdown
-                ariaLabel="Trạng thái"
-                options={quickProjectStatusOptions(project.status).map((option) => ({ value: option.value, label: option.label, color: STATUS_CFG[option.value].color }))}
-                value={status}
-                onChange={(value) => setStatus(value as Project["status"])}
-              />
-              <p className="text-[11px] text-muted-foreground">Đổi trạng thái khác ở trang dự án</p>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-muted-foreground">Loại dự án</label>
-              <CustomDropdown
-                ariaLabel="Loại dự án"
-                options={projectTypeOptions}
-                value={projectType}
-                onChange={setProjectType}
-              />
-            </div>
-
-            <MilestoneApprovalField value={milestoneApprovalRequired} onChange={setMilestoneApprovalRequired} disabled={!canEditTestFlag} />
-
-            <div className="space-y-1.5 md:col-span-2">
-              <label className="text-xs font-semibold text-muted-foreground">Khách hàng</label>
-              <CustomDropdown
-                ariaLabel="Khách hàng"
-                options={clientOptions}
-                value={client}
-                onChange={setClient}
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-muted-foreground">PIC</label>
-              <ProjectUserDropdown
-                users={workspaceUsers}
-                value={ownerUserId}
-                onChange={(value) => {
-                  setOwnerUserId(value);
-                  if (value !== "none" && !memberUserIds.includes(value)) {
-                    setMemberUserIds((current) => [...current, value]);
-                  }
-                }}
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <span className="text-xs font-semibold text-muted-foreground">Dự án thử nghiệm</span>
-              <label htmlFor="edit-project-test-flag" title={canEditTestFlag ? undefined : "Chỉ tài khoản Admin (PM) đổi được cờ này"} className="flex w-full items-center gap-2 px-3.5 py-2.5 bg-background border border-input rounded-xl text-sm text-foreground">
-                <input id="edit-project-test-flag" type="checkbox" checked={isTestProject} disabled={!canEditTestFlag} onChange={(event) => setIsTestProject(event.target.checked)} />
-                Không tính vào số tổng P&amp;L
-              </label>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-muted-foreground">Planned Start</label>
-              <CustomDatePicker ariaLabel="Planned Start Date" value={plannedStartAt} onChange={setPlannedStartAt} />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-muted-foreground">Planned End</label>
-              <CustomDatePicker ariaLabel="Planned End Date" value={plannedEndAt} onChange={setPlannedEndAt} />
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <label htmlFor="edit-project-scope" className="text-xs font-semibold text-muted-foreground">Project Scope</label>
-            <textarea id="edit-project-scope"
-              rows={3}
-              value={scopeSummary}
-              onChange={(event) => setScopeSummary(event.target.value)}
-              placeholder="Describe scope, objectives, deliverables, and key boundaries..."
-              className="w-full px-3.5 py-2.5 bg-background border border-input rounded-xl text-sm text-foreground focus:outline-none focus:border-primary transition-colors resize-none"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-muted-foreground flex items-center justify-between">
-              <span>Project Members ({memberUserIds.length} selected)</span>
-              <span className="text-[10px] text-muted-foreground">
-                {loadingWorkspaceUsers ? "Loading synced users..." : "Synced workspace users"}
-              </span>
-            </label>
-            <ProjectMemberMultiSelect
-              users={workspaceUsers}
-              selectedIds={memberUserIds}
-              onChange={setMemberUserIds}
-            />
-            {!loadingWorkspaceUsers && workspaceUsers.length === 0 && (
-              <div className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground">
-                {workspaceUsersError ?? "No synced active users are available for assignment."}
-              </div>
-            )}
-          </div>
-
-          <div className="flex items-center justify-end gap-2 pt-4 border-t border-border">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-xl border border-border text-sm font-semibold text-muted-foreground hover:bg-muted transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSaving || !name.trim()}
-              className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-md hover:shadow-lg transition-all disabled:opacity-60 disabled:cursor-not-allowed"
-              style={{ backgroundColor: "var(--color-primary)" }}
-            >
-              {isSaving ? "Saving..." : "Save Changes"}
-            </button>
-          </div>
-        </form>
-      </motion.div>
-    </div>
-    </ModalLayer>
-  );
-}
-
-function ProjectDeleteConfirmModal({
-  project,
-  isDeleting,
-  error,
-  closeInstead,
-  onCancel,
-  onConfirm,
-  onCloseProject
-}: {
-  project: Project;
-  isDeleting: boolean;
-  error: string | null;
-  /** The API refused the delete because the project has records: the dialog then offers to close it. */
-  closeInstead: boolean;
-  onCancel: () => void;
-  onConfirm: () => void;
-  onCloseProject: (closeReasonCode: ProjectCloseReasonCode, note: string) => void;
-}) {
-  const deleteDialogRef = useDialogAccessibility(true, () => { if (!isDeleting) onCancel(); });
-  const [closeReasonCode, setCloseReasonCode] = useState<ProjectCloseReasonCode | "">("");
-  const [closeNote, setCloseNote] = useState("");
-  const alreadyClosed = project.status === PROJECT_STATUS_LABELS.closed;
-  return (
-    <ModalLayer closeOnEscape={!isDeleting} onClose={onCancel}>
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <motion.div
-        ref={deleteDialogRef} role="alertdialog" aria-modal="true" aria-label="Delete Project" tabIndex={-1}
-        initial={{ opacity: 0, scale: 0.95, y: 16 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 16 }}
-        className="bg-card border border-border rounded-2xl w-full max-w-md shadow-2xl overflow-hidden"
-      >
-        <div className="px-6 py-5 border-b border-border bg-red-50">
-          <div className="flex items-start gap-3">
-            <div className="w-9 h-9 rounded-xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">
-              <Trash2 className="w-4 h-4" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-foreground">Delete Project</h3>
-              <p className="text-xs text-muted-foreground mt-1">
-                This removes the project only if production rules allow it.
-              </p>
-            </div>
-          </div>
-        </div>
-        <div className="p-6 space-y-4">
-          <p className="text-sm text-muted-foreground">
-            Delete <span className="font-semibold text-foreground">{project.name}</span>? Projects with tasks are protected and the API will block deletion.
-          </p>
-          {error && (
-            <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
-              {error}
-            </div>
-          )}
-          {closeInstead && alreadyClosed && (
-            <p className="text-xs text-muted-foreground">Dự án này đã ở trạng thái Đã đóng nên không cần thao tác thêm.</p>
-          )}
-          {closeInstead && !alreadyClosed && (
-            <div className="space-y-2 rounded-xl border border-border bg-muted/30 p-3">
-              <label className="block text-xs font-semibold text-foreground" htmlFor="close-project-reason">Đóng dự án thay vì xóa: chọn lý do đóng</label>
-              <select
-                id="close-project-reason"
-                value={closeReasonCode}
-                onChange={(event) => setCloseReasonCode(event.target.value as ProjectCloseReasonCode | "")}
-                className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none"
-              >
-                <option value="">Chọn lý do đóng</option>
-                {Object.entries(PROJECT_CLOSE_REASONS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select>
-              <input
-                type="text"
-                value={closeNote}
-                onChange={(event) => setCloseNote(event.target.value)}
-                placeholder="Ghi chú (không bắt buộc)"
-                aria-label="Ghi chú đóng dự án"
-                className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none"
-              />
-            </div>
-          )}
-          <div className="flex items-center justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onCancel}
-              className="px-4 py-2 rounded-xl border border-border text-sm font-semibold text-muted-foreground hover:bg-muted transition-colors"
-            >
-              Cancel
-            </button>
-            {closeInstead ? (
-              !alreadyClosed && (
-                <button
-                  type="button"
-                  disabled={isDeleting || !closeReasonCode}
-                  onClick={() => { if (closeReasonCode) onCloseProject(closeReasonCode, closeNote.trim()); }}
-                  className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-slate-800 shadow-md hover:bg-slate-900 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  {isDeleting ? "Đang đóng…" : "Đóng dự án"}
-                </button>
-              )
-            ) : (
-              <button
-                type="button"
-                disabled={isDeleting}
-                onClick={onConfirm}
-                className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-red-600 shadow-md hover:bg-red-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {isDeleting ? "Deleting..." : "Delete Project"}
-              </button>
-            )}
-          </div>
-        </div>
-      </motion.div>
-    </div>
-    </ModalLayer>
-  );
-}
 
 const COLOR_OPTIONS = [
   "#2563eb", // blue
@@ -1115,6 +630,7 @@ export default function ProjectsPage() {
     const projectId = action === "edit" ? searchParams.get("edit")?.trim() : searchParams.get("delete")?.trim();
     if (!action || !projectId || loadingProjects) return;
     const targetProjectId = projectId;
+    const kind = action;
 
     let cancelled = false;
     const clearAction = () => {
@@ -1134,9 +650,7 @@ export default function ProjectsPage() {
         setProjectsError("Không tìm thấy dự án để thực hiện thao tác.");
         return;
       }
-      setProjectMutationError(null);
-      if (action === "edit") setEditingProject(target);
-      else setDeletingProject(target);
+      setProjectAction({ kind, project: target });
     }
 
     void openProjectAction();
@@ -1223,12 +737,7 @@ export default function ProjectsPage() {
     if (searchParams.get("create") === "1") setIsCreateOpen(true);
   }, [projectListSearch, searchParams]);
   const createDialogRef = useDialogAccessibility(isCreateOpen, closeCreateProject);
-  const [editingProject, setEditingProject] = useState<Project | null>(null);
-  const [deletingProject, setDeletingProject] = useState<Project | null>(null);
-  const [savingProjectEdit, setSavingProjectEdit] = useState(false);
-  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
-  const [deleteNeedsClose, setDeleteNeedsClose] = useState(false);
-  const [projectMutationError, setProjectMutationError] = useState<string | null>(null);
+  const [projectAction, setProjectAction] = useState<ProjectAction | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [client, setClient] = useState("");
@@ -1574,138 +1083,28 @@ export default function ProjectsPage() {
     }
   };
 
-  const handleUpdateProject = async (project: Project, values: ProjectEditValues) => {
-    if (savingProjectEdit) return;
-
-    const selectedAccount = clientOptions.find(option => option.value === values.client || option.label === values.client);
-    if (!selectedAccount?.accountId) {
-      setProjectMutationError("Select an existing CRM account before saving this production project.");
-      return;
-    }
-
-    setSavingProjectEdit(true);
-    setProjectMutationError(null);
+  const handleProjectUpdated = (projectId: string, updated: Project) => {
     setProjectsError(null);
-
-    try {
-      const ownerUserId = values.ownerUserId === "none" ? null : values.ownerUserId;
-      const memberUserIds = Array.from(new Set([
-        ...values.memberUserIds,
-        ...(ownerUserId ? [ownerUserId] : [])
-      ]));
-      const response = await fetch(`/api/projects/${encodeURIComponent(project.id)}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          accountId: selectedAccount.accountId,
-          name: values.name,
-          code: values.code || undefined,
-          // Unchanged status is left out so a system-owned or reason-bound status never blocks saving other fields.
-          status: values.status === project.status ? undefined : toBackendProjectStatus(values.status),
-          projectType: values.projectType,
-          scopeSummary: values.scopeSummary || null,
-          // Only what the user changed: the dates shown are the stages' actual-or-planned days, so re-sending them would
-          // overwrite the planned dates (and the locked baseline); an unchanged PIC is not a PIC change.
-          ownerUserId: ownerUserId === (project.ownerUserId ?? null) ? undefined : ownerUserId,
-          memberUserIds,
-          isTestProject: values.isTestProject,
-          milestoneApprovalRequired: values.milestoneApprovalRequired,
-          plannedStartAt: values.plannedStartAt === project.startDate ? undefined : uiProjectDateToIso(values.plannedStartAt),
-          plannedEndAt: values.plannedEndAt === project.dueDate ? undefined : uiProjectDateToIso(values.plannedEndAt)
-        })
-      });
-
-      if (response.status === 401) {
-        redirectToLogin("/projects");
-        return;
-      }
-
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(typeof body.message === "string" ? body.message : `Could not update project: ${response.status}`);
-      }
-
-      const updated = mapProjectSummaryToUiProject(await response.json());
-      setProjectsList(current => current.map(item => item.id === project.id ? mergeProjectUpdate(item, updated) : item));
-      setEditingProject(null);
-    } catch (error) {
-      setProjectMutationError(error instanceof Error ? error.message : "Could not update project");
-    } finally {
-      setSavingProjectEdit(false);
-    }
+    setProjectsList(current => current.map(item => item.id === projectId ? mergeProjectUpdate(item, updated) : item));
   };
 
-  const handleCloseProjectInstead = async (project: Project, closeReasonCode: ProjectCloseReasonCode, note: string) => {
-    if (deletingProjectId) return;
-    setDeletingProjectId(project.id);
-    setProjectMutationError(null);
-    try {
-      const response = await fetch(`/api/projects/${encodeURIComponent(project.id)}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ status: "closed", closeReasonCode, statusReason: note || undefined })
-      });
-      if (response.status === 401) {
-        redirectToLogin("/projects");
-        return;
-      }
-      if (!response.ok) throw await readApiError(response, "Không đóng được dự án");
-      const updated = mapProjectSummaryToUiProject(await response.json());
-      setProjectsList(current => current.map(item => item.id === project.id ? mergeProjectUpdate(item, updated) : item));
-      setDeleteNeedsClose(false);
-      setDeletingProject(null);
-    } catch (error) {
-      setProjectMutationError(error instanceof Error ? error.message : "Không đóng được dự án");
-    } finally {
-      setDeletingProjectId(null);
-    }
-  };
-
-  const handleDeleteProject = async (project: Project) => {
-    if (deletingProjectId) return;
-
-    setDeletingProjectId(project.id);
-    setProjectMutationError(null);
+  const handleProjectDeleted = (project: Project) => {
     setProjectsError(null);
-
-    try {
-      const response = await fetch(`/api/projects/${encodeURIComponent(project.id)}`, {
-        method: "DELETE"
-      });
-
-      if (response.status === 401) {
-        redirectToLogin("/projects");
-        return;
-      }
-
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        // A project with records is closed, never deleted: the dialog switches to "Đóng dự án".
-        if (body.code === "PROJECT_HAS_RECORDS") setDeleteNeedsClose(true);
-        throw new Error(typeof body.message === "string" ? body.message : `Could not delete project: ${response.status}`);
-      }
-
-      setProjectsList(current => current.filter(item => item.id !== project.id));
-      setProjectPagination(current => {
-        const total = Math.max(0, current.total - 1);
-        const returned = Math.max(0, current.returned - 1);
-        return {
-          ...current,
-          total,
-          returned,
-          hasNextPage: current.offset + returned < total
-        };
-      });
-      if (pushedIds.includes(project.id)) {
-        const nextPushedIds = pushedIds.filter(id => id !== project.id);
-        setPushedIds(nextPushedIds);
-        writePushedProjectIds(nextPushedIds, pushedProjectOwnerKey);
-      }
-      setDeletingProject(null);
-    } catch (error) {
-      setProjectMutationError(error instanceof Error ? error.message : "Could not delete project");
-    } finally {
-      setDeletingProjectId(null);
+    setProjectsList(current => current.filter(item => item.id !== project.id));
+    setProjectPagination(current => {
+      const total = Math.max(0, current.total - 1);
+      const returned = Math.max(0, current.returned - 1);
+      return {
+        ...current,
+        total,
+        returned,
+        hasNextPage: current.offset + returned < total
+      };
+    });
+    if (pushedIds.includes(project.id)) {
+      const nextPushedIds = pushedIds.filter(id => id !== project.id);
+      setPushedIds(nextPushedIds);
+      writePushedProjectIds(nextPushedIds, pushedProjectOwnerKey);
     }
   };
 
@@ -1827,14 +1226,8 @@ export default function ProjectsPage() {
                         showMoney={showMoney}
                         isPushed={pushedIds.includes(p.id)}
                         onTogglePush={() => handleTogglePush(p.id)}
-                        onEdit={() => {
-                          setProjectMutationError(null);
-                          setEditingProject(p);
-                        }}
-                        onDelete={() => {
-                          setProjectMutationError(null);
-                          setDeletingProject(p);
-                        }}
+                        onEdit={() => setProjectAction({ kind: "edit", project: p })}
+                        onDelete={() => setProjectAction({ kind: "delete", project: p })}
                       />
                     ))}
                   </AnimatePresence>
@@ -1854,14 +1247,8 @@ export default function ProjectsPage() {
                   sortDir={sortDir}
                   onSort={handleSort}
                   onTogglePush={handleTogglePush}
-                  onEdit={(project) => {
-                    setProjectMutationError(null);
-                    setEditingProject(project);
-                  }}
-                  onDelete={(project) => {
-                    setProjectMutationError(null);
-                    setDeletingProject(project);
-                  }}
+                  onEdit={(project) => setProjectAction({ kind: "edit", project })}
+                  onDelete={(project) => setProjectAction({ kind: "delete", project })}
                 />
               </div>
             )}
@@ -2319,39 +1706,17 @@ export default function ProjectsPage() {
           )}
         </AnimatePresence>
 
-        <AnimatePresence>
-          {editingProject && (
-            <ProjectEditModal
-              project={editingProject}
-              clientOptions={clientOptions}
-              workspaceUsers={workspaceUsers}
-              loadingWorkspaceUsers={loadingWorkspaceUsers}
-              workspaceUsersError={workspaceUsersError}
-              isSaving={savingProjectEdit}
-              error={projectMutationError}
-              onClose={() => {
-                setProjectMutationError(null);
-                setEditingProject(null);
-              }}
-              onSave={(values) => handleUpdateProject(editingProject, values)}
-            />
-          )}
-          {deletingProject && (
-            <ProjectDeleteConfirmModal
-              project={deletingProject}
-              isDeleting={deletingProjectId === deletingProject.id}
-              error={projectMutationError}
-              closeInstead={deleteNeedsClose}
-              onCancel={() => {
-                setProjectMutationError(null);
-                setDeleteNeedsClose(false);
-                setDeletingProject(null);
-              }}
-              onConfirm={() => handleDeleteProject(deletingProject)}
-              onCloseProject={(closeReasonCode, note) => handleCloseProjectInstead(deletingProject, closeReasonCode, note)}
-            />
-          )}
-        </AnimatePresence>
+        <ProjectActionDialogs
+          action={projectAction}
+          onDone={() => setProjectAction(null)}
+          onUpdated={handleProjectUpdated}
+          onDeleted={handleProjectDeleted}
+          onUnauthorized={() => redirectToLogin("/projects")}
+          clientOptions={clientOptions}
+          workspaceUsers={workspaceUsers}
+          loadingWorkspaceUsers={loadingWorkspaceUsers}
+          workspaceUsersError={workspaceUsersError}
+        />
     </AppShell>
   );
 }

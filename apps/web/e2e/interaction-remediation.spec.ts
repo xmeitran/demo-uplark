@@ -712,6 +712,39 @@ test.describe("interaction audit remediation", () => {
     });
   });
 
+  test("project header edits and deletes in place without leaving the project", async ({ page }) => {
+    await installCoreReadMocks(page);
+    await installProjectListMocks(page);
+    for (const resource of ["stages", "activity", "risks", "documents"]) {
+      await page.route(`**/api/projects/${project.id}/${resource}**`, route => fulfillJson(route, listResponse([])));
+    }
+    let patchBody: Record<string, unknown> | null = null;
+    await page.route(`**/api/projects/${project.id}`, async route => {
+      if (route.request().method() !== "PATCH") return route.fallback();
+      patchBody = route.request().postDataJSON();
+      await fulfillJson(route, { ...project, name: patchBody!.name });
+    });
+
+    await page.goto(`/projects/${project.id}?tab=Documents`);
+    await page.getByRole("button", { name: "Chỉnh sửa dự án" }).click();
+    const editDialog = page.getByRole("dialog", { name: "Chỉnh sửa dự án" });
+    await expect(editDialog).toBeVisible();
+    await editDialog.getByLabel("Tên dự án").fill("Renamed in place");
+    await editDialog.getByRole("button", { name: "Save Changes" }).click();
+    await expect(editDialog).toBeHidden();
+    expect(patchBody).toMatchObject({ name: "Renamed in place", accountId: account.id });
+    await expect(page).toHaveURL(new RegExp(`/projects/${project.id}`));
+
+    // "…" is a menu now, not a hidden delete button.
+    await page.getByRole("button", { name: "Thao tác dự án" }).click();
+    await page.getByRole("button", { name: "Xóa dự án" }).click();
+    const deleteDialog = page.getByRole("alertdialog", { name: "Delete Project" });
+    await expect(deleteDialog).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/projects/${project.id}`));
+    await deleteDialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(deleteDialog).toBeHidden();
+  });
+
   test("project document upload links bytes, while version and grant failures remain visible", async ({ page }) => {
     await installCoreReadMocks(page);
     await installProjectListMocks(page);
