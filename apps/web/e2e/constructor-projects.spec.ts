@@ -677,7 +677,12 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     }
   ]);
 
-  await page.addInitScript(() => window.localStorage.clear());
+  // Cleared on the tab's first load only: what a test stores (kept filters) must survive its reloads.
+  await page.addInitScript(() => {
+    if (window.sessionStorage.getItem("e2e-storage-cleared")) return;
+    window.localStorage.clear();
+    window.sessionStorage.setItem("e2e-storage-cleared", "1");
+  });
 
   // Fail closed: nothing in this spec reaches a real API. Shell reads get empty answers; any other unmocked call is a
   // 404 that names its path. Registered first, so every mock below takes precedence.
@@ -1933,6 +1938,8 @@ test("AC-PIN-010 same-project detail controls are request-free stable and active
 
   const sidebar = page.locator("aside");
   await expect(sidebar.locator(`a[href="/projects/${liveProject.id}?tab=Tasks"]`)).toBeVisible();
+  // The first load ends with the gate-lock read that follows the milestones; only later requests count.
+  await page.waitForLoadState("networkidle");
   const marker = "ac-pin-010-document";
   await installProjectNavigationProbe(page, marker);
 
@@ -2308,6 +2315,43 @@ test("project hierarchy consistently displays start and due dates", async ({ pag
   await expect(page.getByTitle("Jul 9, 2026 đến Jul 15, 2026")).toBeVisible();
   await expect(page.getByTitle(liveStage.milestoneName).first()).toBeVisible();
   await expect(page.getByTitle(liveStage.activity).first()).toBeVisible();
+});
+
+test("Task Board filters survive a reload and leaving the page, and Đặt lại forgets them", async ({ page }) => {
+  await page.goto(`/projects/${liveProject.id}?tab=Tasks`);
+  await expect(page.getByText("Task Board")).toBeVisible();
+  const liveTaskItem = page.locator(`[data-hierarchy-kind="task"][data-hierarchy-id="${liveTask.id}"]`);
+  const search = page.getByRole("textbox", { name: "Tìm task, stage..." });
+  const statusFilter = page.getByRole("button", { name: "Trạng thái", exact: true });
+  await expect(liveTaskItem).toBeVisible();
+
+  await search.fill("Migrated");
+  await statusFilter.click();
+  await page.getByRole("option", { name: "Hoàn tất", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(statusFilter).toContainText("Hoàn tất");
+  await expect(liveTaskItem).toHaveCount(0);
+
+  await page.reload();
+  await expect(page.getByText("Task Board")).toBeVisible();
+  await expect(search).toHaveValue("Migrated");
+  await expect(statusFilter).toContainText("Hoàn tất");
+  await expect(page.getByRole("button", { name: "Đặt lại (2)", exact: true })).toBeVisible();
+  await expect(liveTaskItem).toHaveCount(0);
+
+  await page.goto("/projects");
+  await expect(page.getByText(liveProject.name).first()).toBeVisible();
+  await page.goto(`/projects/${liveProject.id}?tab=Tasks`);
+  await expect(search).toHaveValue("Migrated");
+  await expect(statusFilter).toContainText("Hoàn tất");
+
+  await page.getByRole("button", { name: "Đặt lại (2)", exact: true }).click();
+  await expect(search).toHaveValue("");
+  await expect(liveTaskItem).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("Task Board")).toBeVisible();
+  await expect(search).toHaveValue("");
+  await expect(liveTaskItem).toBeVisible();
 });
 
 for (const scenario of [

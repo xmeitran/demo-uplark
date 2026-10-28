@@ -48,6 +48,7 @@ import {
 import { uiProjectDateToIso } from "@/lib/project-date";
 import { PROJECT_TYPE_OPTIONS, type ProjectTaskTemplateInput, type ResourceListPaginationMeta } from "@b2b-crm/contracts";
 import { buildCreateProjectHref } from "@/lib/project-create-navigation";
+import { usePersistedFilter } from "@/lib/persisted-filters";
 
 // ─── Live Dashboard Data ─────────────────────────────────────────────────────
 
@@ -358,10 +359,10 @@ export default function DashboardPage() {
   const [workspaceUsersError, setWorkspaceUsersError] = useState<string | null>(null);
   const [projectTab, setProjectTab] = useState<"last" | "deadline">("last");
   // Project list filters; sent to /api/projects like the Projects page does. Empty = all.
-  const [periodFilter, setPeriodFilter] = useState<DateRange>({ from: "", to: "" });
-  const [ownerFilter, setOwnerFilter] = useState<string[]>([]);
-  const [statusFilter, setStatusFilter] = useState<string[]>([]);
-  const [clientFilter, setClientFilter] = useState<string[]>([]);
+  const [periodFilter, setPeriodFilter] = usePersistedFilter<DateRange>("dashboard:period", { from: "", to: "" });
+  const [ownerFilter, setOwnerFilter] = usePersistedFilter<string[]>("dashboard:owners", []);
+  const [statusFilter, setStatusFilter] = usePersistedFilter<string[]>("dashboard:statuses", []);
+  const [clientFilter, setClientFilter] = usePersistedFilter<string[]>("dashboard:clients", []);
   const activeFilterCount = [periodFilter.from || periodFilter.to, ownerFilter.length, statusFilter.length, clientFilter.length].filter(Boolean).length;
   const filterKey = JSON.stringify([periodFilter, ownerFilter, statusFilter, clientFilter]);
   // A filter change always restarts the list at its first page.

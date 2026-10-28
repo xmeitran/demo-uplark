@@ -51,6 +51,7 @@ import { useAuth } from "@/lib/auth";
 import { isAdminView } from "@/lib/auth-role";
 import { WorkspaceTabBar } from "@/components/workspace-tab-bar";
 import { businessRoleFromMember, systemRoleFromCodes, systemRoleLabel } from "@/lib/people-roles";
+import { usePersistedFilter } from "@/lib/persisted-filters";
 import { SystemParametersPanel, WarningRecordsPanel } from "./alert-admin-panels";
 import { PnlSetupPage } from "@/components/pnl/pnl-setup-page";
 import { adminSectionFromHash, type AdminSection } from "./admin-sections";
@@ -324,11 +325,11 @@ function AdminHistoryLog({ people }: { people: FilterPerson[] }) {
   const [actionOptions, setActionOptions] = useState<Array<{ value: string; label: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [query, setQuery] = useState("");
-  const [range, setRange] = useState<DateRange>(ALL_TIME);
-  const [actors, setActors] = useState<string[]>([]);
-  const [actions, setActions] = useState<string[]>([]);
+  const [search, setSearch] = usePersistedFilter("admin:history:search", "");
+  const [query, setQuery] = useState(() => search.trim());
+  const [range, setRange] = usePersistedFilter<DateRange>("admin:history:range", ALL_TIME);
+  const [actors, setActors] = usePersistedFilter<string[]>("admin:history:actors", []);
+  const [actions, setActions] = usePersistedFilter<string[]>("admin:history:actions", []);
   const requestRef = useRef(0);
 
   // Typing does not fire a request per keystroke.
@@ -427,11 +428,11 @@ function ApprovalPanel({ approvalHistory, historyLoading, onRefreshHistory, onAp
   const [notice, setNotice] = useState<string | null>(null);
   const pendingForMe = rows.filter((row) => row.canApprove).length;
   const waitingForOtherReviewer = rows.length - pendingForMe;
-  const [search, setSearch] = useState("");
-  const [sentRange, setSentRange] = useState<DateRange>(ALL_TIME);
-  const [requesters, setRequesters] = useState<string[]>([]);
-  const [projectIds, setProjectIds] = useState<string[]>([]);
-  const [rights, setRights] = useState<string[]>([]);
+  const [search, setSearch] = usePersistedFilter("admin:approvals:search", "");
+  const [sentRange, setSentRange] = usePersistedFilter<DateRange>("admin:approvals:sent", ALL_TIME);
+  const [requesters, setRequesters] = usePersistedFilter<string[]>("admin:approvals:requesters", []);
+  const [projectIds, setProjectIds] = usePersistedFilter<string[]>("admin:approvals:projects", []);
+  const [rights, setRights] = usePersistedFilter<string[]>("admin:approvals:rights", []);
   // The queue carries the requester as a label only, so the label is the person's key.
   const requesterPeople = useMemo(() => [...new Set(rows.map((row) => row.requesterLabel))].sort((a, b) => a.localeCompare(b, "vi")).map((name) => ({ id: name, name })), [rows]);
   const projectOptions = useMemo(() => [...new Map(rows.map((row) => [row.project.id, `${row.project.code} · ${row.project.name}`]))].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, "vi")), [rows]);
@@ -571,9 +572,9 @@ function alertBadgeClass(row: AdminAlertDetailRow) {
 }
 
 function AlertsPanel({ rows, loading, onRefresh }: { rows: AdminAlertDetailRow[]; loading: boolean; onRefresh: () => void }) {
-  const [typeFilter, setTypeFilter] = useState<string[]>([]);
-  const [severityFilter, setSeverityFilter] = useState<string[]>([]);
-  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = usePersistedFilter<string[]>("admin:alerts:types", []);
+  const [severityFilter, setSeverityFilter] = usePersistedFilter<string[]>("admin:alerts:severities", []);
+  const [search, setSearch] = usePersistedFilter("admin:alerts:search", "");
   const filtered = rows.filter((row) => matchesAny(typeFilter, row.type) && matchesAny(severityFilter, row.severity) && matchesSearch(search, row.project.name, row.project.code, row.detail));
   const activeFilterCount = [Boolean(search.trim()), typeFilter.length > 0, severityFilter.length > 0].filter(Boolean).length;
   const resetFilters = () => { setSearch(""); setTypeFilter([]); setSeverityFilter([]); };

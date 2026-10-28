@@ -19,6 +19,7 @@ import { fetchAllPages } from "@/lib/api-pages";
 import { PROJECT_STATUS_LABELS } from "@/lib/project-status";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { businessRoleFromMember, systemRoleLabel } from "@/lib/people-roles";
+import { usePersistedFilter } from "@/lib/persisted-filters";
 import { StaffMonthlyCosts } from "@/components/pnl/staff-monthly-costs";
 
 type ProfileTab = "Tasks" | "Projects";
@@ -175,10 +176,10 @@ export default function UserProfilePage() {
   const [isTasksLoading, setIsTasksLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tasksError, setTasksError] = useState<string | null>(null);
-  const [taskQuery, setTaskQuery] = useState("");
-  const [taskDue, setTaskDue] = useState<DateRange>(ALL_TIME);
-  const [taskStatuses, setTaskStatuses] = useState<string[]>([]);
-  const [taskProjects, setTaskProjects] = useState<string[]>([]);
+  const [taskQuery, setTaskQuery] = usePersistedFilter(`user:${userId}:tasks:search`, "");
+  const [taskDue, setTaskDue] = usePersistedFilter<DateRange>(`user:${userId}:tasks:due`, ALL_TIME);
+  const [taskStatuses, setTaskStatuses] = usePersistedFilter<string[]>(`user:${userId}:tasks:statuses`, []);
+  const [taskProjects, setTaskProjects] = usePersistedFilter<string[]>(`user:${userId}:tasks:projects`, []);
 
   useEffect(() => {
     let cancelled = false;

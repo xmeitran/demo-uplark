@@ -62,6 +62,7 @@ import { ConfirmActionDialog } from "./confirm-action-dialog";
 import { fetchWorkspaceUserOptions, type WorkspaceUserOption } from "@/lib/workspace-users";
 import { useAuth } from "@/lib/auth";
 import { toVietnamDateInputValue, toVietnamDateKey, vietnamDateTimeToIso, VIETNAM_TIME_ZONE } from "@/lib/vietnam-time";
+import { usePersistedFilter } from "@/lib/persisted-filters";
 export {
   deploymentStagePlan,
   formatDecimalNumber,
@@ -2088,14 +2089,14 @@ export function TasksWorkbench({
   const [dailyCapacityFeedback, setDailyCapacityFeedback] = useState<DailyActualLogFeedback | null>(null);
 
   // Filters state
-  const [searchTerm, setSearchTerm] = useState("");
-  const [filterDue, setFilterDue] = useState<DateRange>({ from: "", to: "" });
-  const [filterAssignees, setFilterAssignees] = useState<string[]>([]);
-  const [filterAccounts, setFilterAccounts] = useState<string[]>([]);
-  const [filterProjects, setFilterProjects] = useState<string[]>([]);
-  const [filterStatuses, setFilterStatuses] = useState<string[]>([]);
-  const [filterPriorities, setFilterPriorities] = useState<string[]>([]);
-  const [filterStages, setFilterStages] = useState<string[]>([]);
+  const [searchTerm, setSearchTerm] = usePersistedFilter("tasks:search", "");
+  const [filterDue, setFilterDue] = usePersistedFilter<DateRange>("tasks:due", { from: "", to: "" });
+  const [filterAssignees, setFilterAssignees] = usePersistedFilter<string[]>("tasks:assignees", []);
+  const [filterAccounts, setFilterAccounts] = usePersistedFilter<string[]>("tasks:accounts", []);
+  const [filterProjects, setFilterProjects] = usePersistedFilter<string[]>("tasks:projects", []);
+  const [filterStatuses, setFilterStatuses] = usePersistedFilter<string[]>("tasks:statuses", []);
+  const [filterPriorities, setFilterPriorities] = usePersistedFilter<string[]>("tasks:priorities", []);
+  const [filterStages, setFilterStages] = usePersistedFilter<string[]>("tasks:stages", []);
 
   // Modals state
   const [showCreateModal, setShowCreateModal] = useState(false);

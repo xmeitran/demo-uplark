@@ -10,6 +10,7 @@ import { AppShell } from "@/components/constructor-x/app-shell";
 import { DateRangeFilter } from "@/components/filters";
 import { HeaderLinkButton, PageHeader, pageMainClassName } from "@/components/page-header";
 import { toVietnamDateKey } from "@/lib/vietnam-time";
+import { useRememberedQuery } from "@/lib/persisted-filters";
 import { PersonLink } from "@/components/person-link";
 import { formatDay, formatExactVnd, formatHoursValue, formatMonth, formatPercent, formatSignedPercent, formatVndAmount, monthsBetween } from "./pnl-format";
 import { COST_GROUP_ONLY, FIX_ACTION_LABELS, RESULT_MEANING, notComputableWhy, plainPersonStatus, plainReason } from "./pnl-plain";
@@ -254,6 +255,7 @@ function ProjectPeople({ people, moneyVisible }: Readonly<{ people: PnlProjectPe
 export function PnlProjectScreen({ projectId }: Readonly<{ projectId: string }>) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  useRememberedQuery(`pnl:${projectId}`);
   const scope = useMemo(() => parseProjectScope(new URLSearchParams(searchParams.toString())), [searchParams]);
   const base = `/pnl/${encodeURIComponent(projectId)}`;
   const query = scope ? `?fromMonth=${scope.fromMonth}&toMonth=${scope.toMonth}` : "";

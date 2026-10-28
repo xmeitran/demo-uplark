@@ -9,6 +9,7 @@ import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
 import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilter, SearchFilter, matchesAny } from "@/components/filters";
 import { PageHeader, pageMainClassName } from "@/components/page-header";
 import { PersonLink } from "@/components/person-link";
+import { useRememberedQuery } from "@/lib/persisted-filters";
 import { formatDay, formatDong, formatHoursValue, formatMonth } from "./pnl-format";
 import { ENTRY_GROUP_NAME, ENTRY_GROUP_TODO, ENTRY_STATUS_MEANING, ENTRY_STATUS_NAME, FIX_ACTION_LABELS, STAFF_COST_PHRASE, plainGateReason } from "./pnl-plain";
 import { PNL_ENTRY_STATUSES, entriesApiQuery, fixTargetHref, hoursFilterCount, hoursSearch, parseHoursState, type PnlHoursState } from "./pnl-query";
@@ -141,6 +142,7 @@ function optionsOf(rows: readonly PnlSourceEntryRow[], pick: (row: PnlSourceEntr
 export function PnlHoursPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  useRememberedQuery("pnl-hours");
   const params = useMemo(() => new URLSearchParams(searchParams.toString()), [searchParams]);
   const state = useMemo(() => parseHoursState(params), [params]);
   const { data: payload, error, loading, reload } = usePnlLoad<PnlSourceEntriesResponse>(`/api/pnl/entries?${entriesApiQuery(params)}`);

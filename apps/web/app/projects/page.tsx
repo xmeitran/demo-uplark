@@ -80,6 +80,7 @@ import { Project, PROJECTS, type Member } from "./data";
 import { MilestoneApprovalField, ProjectActionDialogs, ProjectMemberMultiSelect, ProjectUserDropdown, STATUS_CFG, UserAvatar, getProjectCode, type ProjectAction, type ProjectClientOption } from "./project-dialogs";
 import { PROJECT_CLOSE_REASONS, PROJECT_STATUS_LABELS, PROJECT_STATUS_OPTIONS, projectStatusOrder, projectStatusStyleMap, quickProjectStatusOptions, type ProjectCloseReasonCode } from "@/lib/project-status";
 import { readApiError } from "@/lib/api-error";
+import { usePersistedFilter, useRememberedQuery } from "@/lib/persisted-filters";
 import { INTERNAL_WORKLOG_PROJECT_TYPE, PROJECT_TYPE_OPTIONS, projectKindOf, type ProjectMilestoneTemplateSummary, type ProjectTaskTemplateInput, type ResourceListPaginationMeta } from "@b2b-crm/contracts";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -473,6 +474,7 @@ export default function ProjectsPage() {
   const { user } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
+  useRememberedQuery("projects", ["returnTo", "create", "edit", "delete", "page"]);
   const projectListSearch = searchParams.toString();
   const urlState = useMemo(
     () => readProjectListState(new URLSearchParams(projectListSearch)),
@@ -498,7 +500,7 @@ export default function ProjectsPage() {
   const [workspaceUsersError, setWorkspaceUsersError] = useState<string | null>(null);
   const [pushedIds, setPushedIds] = useState<string[]>([]);
   const [view, setView]         = useState<ProjectListView>(urlState.view);
-  const [warningOnly, setWarningOnly] = useState(false);
+  const [warningOnly, setWarningOnly] = usePersistedFilter("projects:warning-only", false);
   const [warningCounts, setWarningCounts] = useState<Record<string, number> | null>(null);
   const [warnedProjects, setWarnedProjects] = useState<Project[] | null>(null);
   useEffect(() => {

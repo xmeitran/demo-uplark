@@ -10,6 +10,7 @@ import { AppShell } from "@/components/constructor-x/app-shell";
 import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
 import { FilterBar, FilterField, MonthFilter, MultiSelectFilter, SearchFilter, matchesAny } from "@/components/filters";
 import { PageHeader, pageMainClassName } from "@/components/page-header";
+import { usePersistedFilter, useRememberedQuery } from "@/lib/persisted-filters";
 import { currentPeriodKey, formatMoneyInput, importResultText, inputClass, mapStaffCostSheet, parseMoneyInput, periodLabel, type StaffCostImportRow } from "./pnl-cost-shared";
 import { formatDay, formatDong, formatHoursValue, formatMonth } from "./pnl-format";
 import { Field, linkClass, LoadingBlock, ModalActions, numberCellClass, PnlModal, ReadOnlyNote, SaveFeedback, smallButton, Strip, tableCellClass, tableHeadClass, toneClass, useSave } from "./pnl-setup-ui";
@@ -80,15 +81,16 @@ async function readImportFile(file: File, periodKey: string): Promise<StaffCostI
 export function StaffCostsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  useRememberedQuery("users-costs");
   const requested = searchParams.get("periodKey") ?? "";
   const periodKey = PERIOD_KEY.test(requested) ? requested : "";
   const api = usePnlLoad<PnlStaffCostsResponse>(`/api/pnl/staff-costs${periodKey ? `?periodKey=${periodKey}` : ""}`, "Không tải được chi phí theo tháng.");
   const save = useSave(api.reload);
   const [editing, setEditing] = useState<EditTarget | null>(null);
   const [showErrors, setShowErrors] = useState(false);
-  const [search, setSearch] = useState("");
-  const [statuses, setStatuses] = useState<string[]>([]);
-  const [departments, setDepartments] = useState<string[]>([]);
+  const [search, setSearch] = usePersistedFilter("users-costs:search", "");
+  const [statuses, setStatuses] = usePersistedFilter<string[]>("users-costs:statuses", []);
+  const [departments, setDepartments] = usePersistedFilter<string[]>("users-costs:departments", []);
   const fileInput = useRef<HTMLInputElement>(null);
   const data = api.data?.data;
   const meta = api.data?.meta;

@@ -7,6 +7,7 @@ import type { PnlCostItem, PnlCostItemInput, PnlCostItemMethod, PnlCostItemsResp
 import { CrmSelect } from "@/components/crm-workspace/crm-select";
 import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
 import { FilterBar, FilterField, SearchFilter } from "@/components/filters";
+import { usePersistedFilter } from "@/lib/persisted-filters";
 import { configCheckParts, filterTree, formulaText, nextFormulaStep, visibleTreeRows } from "./pnl-cost-shared";
 import { formatMonth } from "./pnl-format";
 import { LoadingBlock, SaveFeedback, smallButton, Strip, tableCellClass, tableHeadClass, useSave } from "./pnl-setup-ui";
@@ -33,7 +34,7 @@ export function PnlSetupItems({ actionSlot }: Readonly<{ actionSlot: HTMLElement
   const [selectedCode, setSelectedCode] = useState<string | null>(null);
   const [showRequired, setShowRequired] = useState(false);
   const data = api.data?.data;
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = usePersistedFilter("pnl-costs:items:search", "");
   // A search shows every hit with its parents, whatever is folded.
   const rows = useMemo(() => {
     const items = data?.items ?? [];

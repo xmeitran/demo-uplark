@@ -34,6 +34,7 @@ import { fetchAllPages } from "@/lib/api-pages";
 import { downloadCsv } from "@/lib/csv-export";
 import { useAuth } from "@/lib/auth";
 import { canViewCostFigures } from "@/lib/auth-role";
+import { usePersistedFilter } from "@/lib/persisted-filters";
 
 type SortKey = "name" | "stage" | "tier" | "mrr" | "status" | "health";
 type SortDir = "asc" | "desc";
@@ -254,11 +255,11 @@ export default function ClientsPage() {
   const showMoney = canViewCostFigures(useAuth().user);
   const [clientsList, setClientsList] = useState<ClientRow[]>([]);
   const [view, setView] = useState<ViewMode>("list");
-  const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string[]>([]);
-  const [tierFilter, setTierFilter] = useState<string[]>([]);
-  const [ownerFilter, setOwnerFilter] = useState<string[]>([]);
-  const [createdRange, setCreatedRange] = useState<DateRange>(ALL_TIME);
+  const [query, setQuery] = usePersistedFilter("clients:search", "");
+  const [statusFilter, setStatusFilter] = usePersistedFilter<string[]>("clients:statuses", []);
+  const [tierFilter, setTierFilter] = usePersistedFilter<string[]>("clients:tiers", []);
+  const [ownerFilter, setOwnerFilter] = usePersistedFilter<string[]>("clients:owners", []);
+  const [createdRange, setCreatedRange] = usePersistedFilter<DateRange>("clients:created", ALL_TIME);
   const [sortKey, setSortKey] = useState<SortKey>("mrr");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [isCreateOpen, setIsCreateOpen] = useState(false);

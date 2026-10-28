@@ -11,6 +11,7 @@ import { CrmSelect } from "@/components/crm-workspace/crm-select";
 import { DateRangeFilter, FilterField, MultiSelectFilter, PersonFilter, SearchFilter } from "@/components/filters";
 import { HeaderLinkButton, PageHeader, pageMainClassName } from "@/components/page-header";
 import { toVietnamDateKey } from "@/lib/vietnam-time";
+import { useRememberedQuery } from "@/lib/persisted-filters";
 import { DashboardProjectTable } from "./pnl-dashboard-table";
 import { formatExactVnd, formatHoursValue, formatMonth, formatPercent, formatUpdatedAt, formatVndAmount, monthsBetween } from "./pnl-format";
 import { COST_GROUP_ONLY, STAFF_COST_PHRASE, plainPending, resultExplanation } from "./pnl-plain";
@@ -288,6 +289,7 @@ function DashboardCompanyCosts({ companyCosts }: Readonly<{ companyCosts: Dashbo
 export function PnlDashboard() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  useRememberedQuery("pnl");
   const currentYear = useMemo(() => Number(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric" }).format(new Date())), []);
   const state = useMemo(() => parseDashboardState(new URLSearchParams(searchParams.toString()), currentYear), [searchParams, currentYear]);
   const { data: payload, error, loading, reload } = usePnlLoad<PnlDashboardResponse>(`/api/pnl/dashboard?${dashboardApiQuery(state)}`);

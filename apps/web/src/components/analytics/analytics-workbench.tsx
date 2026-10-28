@@ -51,6 +51,7 @@ import {
   businessWarningLabel
 } from "./analytics-copy";
 import { projectStatusOrder } from "@/lib/project-status";
+import { useRememberedQuery } from "@/lib/persisted-filters";
 
 /* Recharts widgets are lazy-loaded so the analytics route bundle stays lean. */
 const chartLoading = () => <div className="h-[280px] animate-pulse rounded-lg bg-muted" aria-hidden />;
@@ -98,6 +99,7 @@ export function AnalyticsWorkbench() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  useRememberedQuery("analytics", ["returnTo", "cursor"]);
   // The detail table grouping follows the active view tab; a stale `by` param is ignored.
   const state = useMemo(() => {
     const parsed = parseAnalyticsSearchParams(new URLSearchParams(searchParams.toString()));

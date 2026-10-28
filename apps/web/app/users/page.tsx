@@ -21,6 +21,7 @@ import { useAuth } from "@/lib/auth";
 import { isAdminView } from "@/lib/auth-role";
 import type { EmploymentStatus, WorkspaceSystemRole } from "@b2b-crm/contracts";
 import { BUSINESS_ROLE_OPTIONS, businessRoleFromMember, systemRoleFromCodes, SYSTEM_ROLE_LABELS, SYSTEM_ROLE_OPTIONS } from "@/lib/people-roles";
+import { usePersistedFilter } from "@/lib/persisted-filters";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -180,14 +181,14 @@ export default function UsersPage() {
   const [users, setUsers]       = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError]       = useState<string | null>(null);
-  const [query, setQuery]       = useState("");
+  const [query, setQuery]       = usePersistedFilter("users:search", "");
   const [sortKey, setSortKey]   = useState<SortKey>("name");
   const [sortDir, setSortDir]   = useState<SortDir>("asc");
-  const [statusFilter, setStatusFilter] = useState<string[]>([]);
-  const [roleFilter, setRoleFilter]     = useState<string[]>([]);
-  const [systemRoleFilter, setSystemRoleFilter] = useState<string[]>([]);
-  const [departmentFilter, setDepartmentFilter] = useState<string[]>([]);
-  const [period, setPeriod] = useState<DateRange>(THIS_MONTH);
+  const [statusFilter, setStatusFilter] = usePersistedFilter<string[]>("users:statuses", []);
+  const [roleFilter, setRoleFilter]     = usePersistedFilter<string[]>("users:roles", []);
+  const [systemRoleFilter, setSystemRoleFilter] = usePersistedFilter<string[]>("users:system-roles", []);
+  const [departmentFilter, setDepartmentFilter] = usePersistedFilter<string[]>("users:departments", []);
+  const [period, setPeriod] = usePersistedFilter<DateRange>("users:period", THIS_MONTH);
   const [minutesByUser, setMinutesByUser] = useState<Map<string, number> | null>(null);
 
   // Logwork is a secondary column: a failed time-entry request must not hide the directory.

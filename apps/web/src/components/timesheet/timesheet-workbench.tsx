@@ -22,6 +22,7 @@ import { MonthlyTimesheet } from "./monthly-timesheet";
 import { ProjectTimesheet } from "./project-timesheet";
 import { useAuth } from "@/lib/auth";
 import { fetchWorkspaceUserOptions } from "@/lib/workspace-users";
+import { useRememberedQuery } from "@/lib/persisted-filters";
 import { TIMESHEET_EXPORT_SHEETS, exportTimesheetWorkbook } from "./timesheet-export";
 import { canViewTimesheetGroup, resolveTimesheetScope } from "./timesheet-access";
 import { buildTimesheetAlerts } from "./timesheet-alerts";
@@ -59,6 +60,7 @@ export function TimesheetWorkbench() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  useRememberedQuery("timesheet");
 
   const { user } = useAuth();
   const [dataset, setDataset] = useState(() => emptyTimesheetDataset());

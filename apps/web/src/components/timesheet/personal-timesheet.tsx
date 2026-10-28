@@ -19,6 +19,7 @@ import { emptyTimesheetDataset, loadTimesheetDataset } from "./timesheet-live-da
 import { eachDate, isWorkingDay, monthBounds } from "./timesheet-dates";
 import { isClosedNodeStatus, isTaskOverdue } from "./timesheet-status";
 import { projectStatusLabel } from "@/lib/project-status";
+import { useRememberedQuery } from "@/lib/persisted-filters";
 import {
   buildPersonDayMatrix,
   buildPersonProjectRows,
@@ -232,6 +233,7 @@ export function PersonalTimesheet() {
   const { user, isLoading: authLoading } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
+  useRememberedQuery("timesheet-me");
   const [dataset, setDataset] = useState(() => emptyTimesheetDataset());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

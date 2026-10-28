@@ -35,6 +35,7 @@ import { readApiError } from "@/lib/api-error";
 import { fetchAllPages } from "@/lib/api-pages";
 import { downloadCsv } from "@/lib/csv-export";
 import { formatVietnamDate, formatVietnamTime } from "@/lib/vietnam-time";
+import { usePersistedFilter } from "@/lib/persisted-filters";
 import { EMPTY_ISSUE_LOG_FILTERS, ISSUE_LOG_CSV_HEADERS, OPEN_ISSUE_STATUS, UNASSIGNED_ISSUE_OWNER, activeIssueLogFilterCount, dateLabel, fieldDisplay, filterIssueLog, isoDay, issueLogCsvRows, locationLabel, type IssueLogFilters } from "./issue-log-view";
 
 type Member = { id: string; name: string; email?: string; avatarUrl?: string };
@@ -133,7 +134,7 @@ export function IssueLogPanel({ projectId, teamMembers, milestones, milestoneGro
   const [records, setRecords] = useState<ProjectRiskSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [filters, setFilters] = useState(EMPTY_ISSUE_LOG_FILTERS);
+  const [filters, setFilters] = usePersistedFilter(`project:${projectId}:issues`, EMPTY_ISSUE_LOG_FILTERS);
   const setFilter = <K extends keyof IssueLogFilters>(key: K) => (value: IssueLogFilters[K]) => setFilters((current) => ({ ...current, [key]: value }));
   const activeFilterCount = activeIssueLogFilterCount(filters);
   const [expandedId, setExpandedId] = useState<string | null>(initialRiskId ?? null);

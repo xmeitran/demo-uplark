@@ -82,6 +82,7 @@ import { downloadFileObject, openFileObject } from "@/lib/task-attachments";
 import { ProjectActionDialogs, type ProjectAction } from "../project-dialogs";
 import { ApiResponseError, readApiError } from "@/lib/api-error";
 import { fetchAllPages } from "@/lib/api-pages";
+import { usePersistedFilter } from "@/lib/persisted-filters";
 import { HeaderLinkButton, PageBackLink } from "@/components/page-header";
 import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilter, SearchFilter, dayOf, formatRangeLabel, isWithinRange, matchesAny, standardDatePresets, type DateRange, type FilterPerson } from "@/components/filters";
 import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
@@ -1189,7 +1190,7 @@ function ProjectSheetPanel({
   onOpenTasks: () => void;
   onOpenTask: (task: TaskItem) => void;
 }) {
-  const [filters, setFilters] = useState(EMPTY_PROJECT_TASK_FILTERS);
+  const [filters, setFilters] = usePersistedFilter(`project:${project.id}:sheet`, EMPTY_PROJECT_TASK_FILTERS);
   const setFilter = <K extends keyof ProjectTaskFilters>(key: K) => (value: ProjectTaskFilters[K]) => setFilters((current) => ({ ...current, [key]: value }));
   const activeFilterCount = activeProjectTaskFilterCount(filters);
   const filterPeople = useMemo(() => toFilterPeople(teamMembers), [teamMembers]);
@@ -1997,10 +1998,8 @@ function ProjectDeliveryWireframePanels({
   // EV-035: participation state per member for the current month; null while loading or on error (never guessed).
   // Default "Tháng này"; the API needs both ends, so there is no all-time choice here.
   const participationPresets = useMemo(() => standardDatePresets().filter((preset) => preset.from && preset.to), []);
-  const [participationRange, setParticipationRange] = useState<DateRange>(() => {
-    const month = currentVietnamMonthRange();
-    return { from: month.startDate, to: month.endDate };
-  });
+  const participationMonth = currentVietnamMonthRange();
+  const [participationRange, setParticipationRange] = usePersistedFilter<DateRange>(`project:${projectId}:participation`, { from: participationMonth.startDate, to: participationMonth.endDate });
   const participationLabel = formatRangeLabel(participationRange, participationPresets).toLocaleLowerCase("vi");
   const [participation, setParticipation] = useState<Map<string, ProjectMemberParticipationItem> | null>(null);
   useEffect(() => {
@@ -4945,8 +4944,8 @@ export default function ProjectDetailPage() {
   const canManageProjectActions = isAdminView(user);
 
   // Overview and Tasks each keep their own task filters (same shape, see task-filters.ts).
-  const [overviewFilters, setOverviewFilters] = useState(EMPTY_PROJECT_TASK_FILTERS);
-  const [taskTabFilters, setTaskTabFilters] = useState(EMPTY_PROJECT_TASK_FILTERS);
+  const [overviewFilters, setOverviewFilters] = usePersistedFilter(`project:${projectId}:overview`, EMPTY_PROJECT_TASK_FILTERS);
+  const [taskTabFilters, setTaskTabFilters] = usePersistedFilter(`project:${projectId}:tasks`, EMPTY_PROJECT_TASK_FILTERS);
   const [hoursMilestoneFilter, setHoursMilestoneFilter] = useState<string>("All");
   const [hoursStageFilter, setHoursStageFilter]         = useState<string>("All");
   const [weeklyWorkloadType, setWeeklyWorkloadType]     = useState<"tasks" | "hours">("tasks");
@@ -5395,9 +5394,9 @@ export default function ProjectDetailPage() {
   const [documents, setDocuments] = useState<ProjectDoc[]>(EMPTY_PROJECT_DOCS);
   const [activityLog, setActivityLog] = useState<ActivityLogItem[]>(EMPTY_ACTIVITY_LOG);
   const [activityPage, setActivityPage] = useState(0);
-  const [activitySourceFilter, setActivitySourceFilter] = useState<string[]>([]);
-  const [activityUserFilter, setActivityUserFilter] = useState<string[]>([]);
-  const [activityDateRange, setActivityDateRange] = useState<DateRange>(EMPTY_DATE_RANGE);
+  const [activitySourceFilter, setActivitySourceFilter] = usePersistedFilter<string[]>(`project:${projectId}:activity:sources`, []);
+  const [activityUserFilter, setActivityUserFilter] = usePersistedFilter<string[]>(`project:${projectId}:activity:users`, []);
+  const [activityDateRange, setActivityDateRange] = usePersistedFilter<DateRange>(`project:${projectId}:activity:dates`, EMPTY_DATE_RANGE);
   const [riskRegistry, setRiskRegistry] = useState<RiskItem[]>(EMPTY_RISK_REGISTRY);
   const [showAddDocModal, setShowAddDocModal] = useState(false);
   const [showAddLinkModal, setShowAddLinkModal] = useState(false);
@@ -5406,12 +5405,12 @@ export default function ProjectDetailPage() {
   const [showVersionHistoryForDoc, setShowVersionHistoryForDoc] = useState<ProjectDoc | null>(null);
   // Document types the project's G1–G8 gates ask for (empty for projects that keep milestone gates).
   const [gateDocumentTypes, setGateDocumentTypes] = useState<string[]>([]);
-  const [docSearchQuery, setDocSearchQuery] = useState("");
-  const [docCategoryFilter, setDocCategoryFilter] = useState<string[]>([]);
-  const [docMilestoneFilter, setDocMilestoneFilter] = useState<string[]>([]);
-  const [docStatusFilter, setDocStatusFilter] = useState<string[]>([]);
-  const [docDateRange, setDocDateRange] = useState<DateRange>(EMPTY_DATE_RANGE);
-  const [requiredDocsOnly, setRequiredDocsOnly] = useState(false);
+  const [docSearchQuery, setDocSearchQuery] = usePersistedFilter(`project:${projectId}:docs:search`, "");
+  const [docCategoryFilter, setDocCategoryFilter] = usePersistedFilter<string[]>(`project:${projectId}:docs:categories`, []);
+  const [docMilestoneFilter, setDocMilestoneFilter] = usePersistedFilter<string[]>(`project:${projectId}:docs:milestones`, []);
+  const [docStatusFilter, setDocStatusFilter] = usePersistedFilter<string[]>(`project:${projectId}:docs:statuses`, []);
+  const [docDateRange, setDocDateRange] = usePersistedFilter<DateRange>(`project:${projectId}:docs:dates`, EMPTY_DATE_RANGE);
+  const [requiredDocsOnly, setRequiredDocsOnly] = usePersistedFilter(`project:${projectId}:docs:required-only`, false);
   const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
   const [documentMutationError, setDocumentMutationError] = useState<string | null>(null);
   const uploadedProjectFileCache = useRef(new WeakMap<File, FileObjectSummary>());

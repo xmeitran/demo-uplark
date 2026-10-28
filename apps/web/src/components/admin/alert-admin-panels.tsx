@@ -19,6 +19,7 @@ import { CrmSelect } from "@/components/crm-workspace/crm-select";
 import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
 import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilter, SearchFilter, matchesAny, type DateRange, type FilterPerson } from "@/components/filters";
 import { fetchAllPages } from "@/lib/api-pages";
+import { usePersistedFilter } from "@/lib/persisted-filters";
 import { TABLE_HEAD_CLASS } from "@/components/ui/kpi-tile";
 
 const buttonClass = "inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-[10px] border border-border bg-white px-3 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50";
@@ -79,13 +80,13 @@ const NO_OWNER = "__none__";
 export function WarningRecordsPanel({ legacy }: { legacy: ReactNode }) {
   const [rows, setRows] = useState<AdminWarningItem[]>([]);
   const [meta, setMeta] = useState<WarningsResponse["meta"]>({ total: 0, open: 0, byCode: {} });
-  const [statuses, setStatuses] = useState<string[]>(OPEN_ONLY);
-  const [opened, setOpened] = useState<DateRange>(ALL_TIME);
-  const [typeCodes, setTypeCodes] = useState<string[]>([]);
-  const [severities, setSeverities] = useState<string[]>([]);
-  const [projectIds, setProjectIds] = useState<string[]>([]);
-  const [ownerIds, setOwnerIds] = useState<string[]>([]);
-  const [search, setSearch] = useState("");
+  const [statuses, setStatuses] = usePersistedFilter<string[]>("admin:warnings:statuses", OPEN_ONLY);
+  const [opened, setOpened] = usePersistedFilter<DateRange>("admin:warnings:opened", ALL_TIME);
+  const [typeCodes, setTypeCodes] = usePersistedFilter<string[]>("admin:warnings:types", []);
+  const [severities, setSeverities] = usePersistedFilter<string[]>("admin:warnings:severities", []);
+  const [projectIds, setProjectIds] = usePersistedFilter<string[]>("admin:warnings:projects", []);
+  const [ownerIds, setOwnerIds] = usePersistedFilter<string[]>("admin:warnings:owners", []);
+  const [search, setSearch] = usePersistedFilter("admin:warnings:search", "");
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);

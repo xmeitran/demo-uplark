@@ -10,6 +10,7 @@ import type {
   WorkspaceDayOffSummary
 } from "@b2b-crm/contracts";
 import { toVietnamDateKey } from "@/lib/vietnam-time";
+import { usePersistedFilter } from "@/lib/persisted-filters";
 import { CrmSelect } from "@/components/crm-workspace/crm-select";
 import { FilterBar, FilterField, MultiSelectFilter, matchesAny } from "@/components/filters";
 
@@ -41,7 +42,7 @@ function responseError(body: unknown, fallback: string) {
 }
 
 export function WorkspaceDayOffSettings() {
-  const [year, setYear] = useState(() => Number(toVietnamDateKey(new Date()).slice(0, 4)));
+  const [year, setYear] = usePersistedFilter("settings:day-off:year", Number(toVietnamDateKey(new Date()).slice(0, 4)));
   const [items, setItems] = useState<WorkspaceDayOffSummary[]>([]);
   const [canManage, setCanManage] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -55,8 +56,8 @@ export function WorkspaceDayOffSettings() {
   const [name, setName] = useState("");
   const [category, setCategory] = useState<WorkspaceDayOffCategory>("national_holiday");
   const [note, setNote] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
-  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  const [categoryFilter, setCategoryFilter] = usePersistedFilter<string[]>("settings:day-off:categories", []);
+  const [statusFilter, setStatusFilter] = usePersistedFilter<string[]>("settings:day-off:statuses", []);
   const currentYear = Number(today.slice(0, 4));
   // The picker lists the years around today plus the one being viewed; the arrows step without limit.
   const yearOptions = [...new Set([year, ...Array.from({ length: 8 }, (_, index) => currentYear - 5 + index)])].sort((a, b) => b - a).map((value) => ({ value: String(value), label: `Năm ${value}` }));

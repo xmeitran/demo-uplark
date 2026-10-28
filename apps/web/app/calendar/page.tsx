@@ -35,6 +35,7 @@ import {
   pruneCalendarFilterIds
 } from "@/lib/calendar-filters";
 import { buildPlanningActualPresentation } from "@/lib/planning-actual-presentation";
+import { usePersistedFilter } from "@/lib/persisted-filters";
 
 type CalendarWorkEvent = {
   id: string;
@@ -403,12 +404,12 @@ export default function CalendarPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dayOffError, setDayOffError] = useState<string | null>(null);
-  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
-  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
-  const [selectedKinds, setSelectedKinds] = useState<string[]>([]);
-  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
+  const [selectedProjectIds, setSelectedProjectIds] = usePersistedFilter<string[]>("calendar:projects", []);
+  const [selectedMemberIds, setSelectedMemberIds] = usePersistedFilter<string[]>("calendar:members", []);
+  const [selectedKinds, setSelectedKinds] = usePersistedFilter<string[]>("calendar:kinds", []);
+  const [selectedStatuses, setSelectedStatuses] = usePersistedFilter<string[]>("calendar:statuses", []);
   // "Khoảng ngày": a custom span of days shown as an agenda instead of the Day/Week/Month/Year grid.
-  const [customRange, setCustomRange] = useState<DateRange>(NO_RANGE);
+  const [customRange, setCustomRange] = usePersistedFilter<DateRange>("calendar:range", NO_RANGE);
   const hasCustomRange = Boolean(customRange.from && customRange.to);
 
   // Custom visual state
