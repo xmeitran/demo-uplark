@@ -127,6 +127,18 @@ describe("\"Không duyệt\" milestone mode on G1–G8", () => {
     expect(table("projectGate").map((gate) => gate.status)).toEqual(["approved", "approved", "not_submitted"]);
   });
 
+  it("with review required, a task change on a G1–G8 project skips the milestone re-evaluation instead of failing into a warning", async () => {
+    const { prisma, table } = seedFree();
+    table("project")[0].milestoneApprovalRequired = true;
+    const service = new MilestoneGatesService(prisma, new ProjectPermissionsService(prisma));
+    const evaluate = vi.spyOn(service, "evaluateProjectMilestoneGate");
+    const warn = vi.spyOn((service as any).logger, "warn");
+    await service.evaluateMilestoneGateForTask({ projectId: "p1", stageId: "s-validate" }, principal);
+    expect(evaluate).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    expect(table("projectGate").map((gate) => gate.status)).toEqual(["not_submitted", "submitted", "not_submitted"]);
+  });
+
   it("blocks no stage, offers no gate action and lists only the open tasks as missing", async () => {
     const { prisma, table } = seedFree();
     await expect(assertStageGateOpen(prisma, "w", "s-build", "log giờ")).resolves.toBeUndefined();

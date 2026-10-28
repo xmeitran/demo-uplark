@@ -492,7 +492,9 @@ export class MilestoneGatesService {
       // "Không duyệt" on G1–G8: the gates, not the milestone rows, follow the tasks.
       if (await this.autoPassesStageGates(task.projectId, principal.workspaceId)) {
         await this.passFinishedMilestones(task.projectId, principal);
-      } else {
+      } else if (!(await projectUsesStageGates(this.prisma, principal.workspaceId, task.projectId))) {
+        // G1–G8 projects approve at the stage gates; the milestone re-evaluation is refused for them on purpose, so it is
+        // skipped quietly (production patch1, 2026-10-28) instead of failing into a warning on every task change.
         await this.evaluateProjectMilestoneGate(task.projectId, stage.milestoneId, principal);
       }
     } catch (error) {
