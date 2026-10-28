@@ -901,6 +901,51 @@ describe("ProjectsService.transitionTaskPlanningBlock", () => {
     expect(prisma.taskTimeEntry.update).not.toHaveBeenCalled();
   });
 
+  it("logs the confirmed actual hours with the plan in one step, linked to it, and never twice", async () => {
+    const prisma = createPlanningTransitionPrismaMock({ initial: planningBlockFixture("planned") });
+    const service = new ProjectsService(withMutationDependencies(prisma) as any);
+
+    await service.transitionTaskPlanningBlock("plan-1", {
+      status: "completed",
+      expectedUpdatedAt: planningUpdatedAt.toISOString(),
+      actual: { startAt: "2026-07-14T02:00:00.000Z", endAt: "2026-07-14T04:00:00.000Z" }
+    }, principal, principal.subjectId);
+
+    expect(prisma.taskTimeEntry.create).toHaveBeenCalledTimes(1);
+    expect(prisma.taskTimeEntry.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        userId: "usr-1",
+        taskId: "task-1",
+        startAt: new Date("2026-07-14T02:00:00.000Z"),
+        endAt: new Date("2026-07-14T04:00:00.000Z"),
+        minutes: 120,
+        workType: "consulting",
+        billable: false,
+        sourcePlanningBlockId: "plan-1"
+      })
+    }));
+
+    const again = createPlanningTransitionPrismaMock({ initial: planningBlockFixture("planned"), existingEntry: { id: "time-plan-1" } });
+    await new ProjectsService(withMutationDependencies(again) as any).transitionTaskPlanningBlock("plan-1", {
+      status: "completed",
+      expectedUpdatedAt: planningUpdatedAt.toISOString(),
+      actual: { startAt: "2026-07-14T02:00:00.000Z", endAt: "2026-07-14T04:00:00.000Z" }
+    }, principal, principal.subjectId);
+    expect(again.taskTimeEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses an actual window that ends before it starts, before changing the plan", async () => {
+    const prisma = createPlanningTransitionPrismaMock({ initial: planningBlockFixture("planned") });
+    const service = new ProjectsService(withMutationDependencies(prisma) as any);
+
+    await expect(service.transitionTaskPlanningBlock("plan-1", {
+      status: "completed",
+      expectedUpdatedAt: planningUpdatedAt.toISOString(),
+      actual: { startAt: "2026-07-14T04:00:00.000Z", endAt: "2026-07-14T02:00:00.000Z" }
+    }, principal, principal.subjectId)).rejects.toThrow(BadRequestException);
+    expect(prisma.taskPlanningBlock.updateMany).not.toHaveBeenCalled();
+  });
+
   it("reconciles a same-target completion without another status update, audit, or activity", async () => {
     const prisma = createPlanningTransitionPrismaMock({
       initial: planningBlockFixture("completed"),
@@ -2490,7 +2535,7 @@ describe("ProjectsService.deleteTaskPlanningBlock", () => {
 });
 
 describe("ProjectsService.deleteTaskTimeEntry", () => {
-  const entrySelect = { id: true, userId: true, taskId: true, projectId: true, minutes: true, workDate: true, approvalStatus: true, billable: true, reviewedByUserId: true };
+  const entrySelect = { id: true, userId: true, taskId: true, projectId: true, minutes: true, workDate: true, approvalStatus: true, billable: true, reviewedByUserId: true, sourcePlanningBlockId: true };
   function timeEntryDeleteMock(entry: Record<string, unknown> | null, options: { projectMember?: boolean; picUserId?: string | null } = {}) {
     const prisma: Record<string, any> = {
       taskTimeEntry: {
@@ -2498,6 +2543,7 @@ describe("ProjectsService.deleteTaskTimeEntry", () => {
         delete: vi.fn().mockResolvedValue({ id: "time-1" })
       },
       projectCost: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      taskPlanningBlock: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
       projectMember: { findFirst: vi.fn().mockResolvedValue(options.projectMember ? { userId: "member" } : null) },
       projectStage: { findFirst: vi.fn().mockResolvedValue({ ownerUserId: options.picUserId ?? null }) },
       $transaction: vi.fn(async (callback: any) => callback(prisma))
@@ -2525,6 +2571,20 @@ describe("ProjectsService.deleteTaskTimeEntry", () => {
         before: { userId: "usr-1", taskId: "task-1", projectId: "prj-1", minutes: 90, workDate: "2026-07-14T02:00:00.000Z", approvalStatus: "submitted", billable: true }
       })
     });
+  });
+
+  it("reopens the plan whose completion logged the deleted hours, and leaves other plans alone", async () => {
+    const prisma = timeEntryDeleteMock({ userId: "usr-1", approvalStatus: "approved", reviewedByUserId: null, sourcePlanningBlockId: "plan-1" });
+    const service = new ProjectsService(withMutationDependencies(prisma) as any);
+    await service.deleteTaskTimeEntry("time-1", member("usr-1"));
+    expect(prisma.taskPlanningBlock.updateMany).toHaveBeenCalledWith({
+      where: { id: "plan-1", workspaceId: "twk-1", status: "completed" },
+      data: { status: "planned" }
+    });
+
+    const manual = timeEntryDeleteMock({ userId: "usr-1", approvalStatus: "approved", reviewedByUserId: null, sourcePlanningBlockId: null });
+    await new ProjectsService(withMutationDependencies(manual) as any).deleteTaskTimeEntry("time-1", member("usr-1"));
+    expect(manual.taskPlanningBlock.updateMany).not.toHaveBeenCalled();
   });
 
   it("lets the author delete their own entry that is approved by default but was never reviewed", async () => {

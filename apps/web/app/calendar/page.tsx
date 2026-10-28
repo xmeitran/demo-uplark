@@ -331,11 +331,13 @@ const CalendarConfirmModal = ({
   cancelLabel = "Hủy",
   tone = "primary",
   loading = false,
-  error
+  error,
+  children
 }: {
   isOpen: boolean;
   title: string;
   message: string;
+  children?: React.ReactNode;
   onConfirm: () => void;
   onCancel: () => void;
   confirmLabel?: string;
@@ -356,6 +358,7 @@ const CalendarConfirmModal = ({
         <p className="text-xs text-slate-500 leading-relaxed">
           {message}
         </p>
+        {children}
         {error ? (
           <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
             {error}
@@ -424,6 +427,12 @@ export default function CalendarPage() {
   const [isDeletingBlock, setIsDeletingBlock] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [blockToComplete, setBlockToComplete] = useState<CalendarWorkEvent | null>(null);
+  // The actual hours confirmed when completing a plan: the plan's window unless the person worked other hours.
+  const [completeWindow, setCompleteWindow] = useState({ start: "", end: "" });
+  const askToCompleteBlock = (block: CalendarWorkEvent) => {
+    setCompleteWindow({ start: formatVietnamTime(block.startAt), end: formatVietnamTime(block.endAt) });
+    setBlockToComplete(block);
+  };
   const [isCompletingBlock, setIsCompletingBlock] = useState(false);
   const [completionError, setCompletionError] = useState<string | null>(null);
   const [detailBlock, setDetailBlock] = useState<CalendarWorkEvent | null>(null);
@@ -842,7 +851,11 @@ export default function CalendarPage() {
         body: JSON.stringify({
           status: "completed",
           expectedUpdatedAt: block.updatedAt,
-          reason: "Hoàn thành kế hoạch từ Calendar"
+          reason: "Hoàn thành kế hoạch từ Calendar",
+          actual: {
+            startAt: vietnamDateTimeToIso(toVietnamDateKey(block.startAt), completeWindow.start),
+            endAt: vietnamDateTimeToIso(toVietnamDateKey(block.startAt), completeWindow.end)
+          }
         })
       });
       if (response.status === 401) {
@@ -864,8 +877,8 @@ export default function CalendarPage() {
       setBlockToComplete(null);
       setDetailBlock(null);
       await loadPlanningBlocks();
-      // D-15: completing a plan never logs hours; the person logs actual hours themselves.
-      triggerToast("Đã hoàn thành kế hoạch. Giờ thực tế không tự ghi theo giờ kế hoạch — hãy log giờ thực tế của bạn.", "success");
+      // D-15: the hours logged are the ones the person confirmed in the dialog, not copied silently from the plan.
+      triggerToast(`Đã hoàn thành kế hoạch và ghi giờ thực tế ${completeWindow.start} – ${completeWindow.end}.`, "success");
     } catch (completeError) {
       const message = completeError instanceof Error ? completeError.message : "Không thể hoàn thành kế hoạch trên backend.";
       setCompletionError(message);
@@ -1609,13 +1622,25 @@ export default function CalendarPage() {
       <CalendarConfirmModal
         isOpen={blockToComplete !== null}
         title="Hoàn thành kế hoạch"
-        message="Bạn có chắc chắn muốn hoàn thành mốc kế hoạch này không? Giờ kế hoạch không tự chuyển thành giờ thực tế; bạn cần log giờ thực tế riêng."
-        confirmLabel="Hoàn thành kế hoạch"
+        message="Giờ thực tế dưới đây sẽ được ghi vào công việc cùng lúc hoàn thành kế hoạch. Mặc định bằng giờ kế hoạch; sửa nếu bạn làm khác. Xóa giờ này sau đó thì kế hoạch mở lại."
+        confirmLabel="Hoàn thành & ghi giờ"
         cancelLabel="Hủy"
         loading={isCompletingBlock}
-        onConfirm={() => blockToComplete && void handleCompleteBlock(blockToComplete)}
+        onConfirm={() => blockToComplete && completeWindow.start < completeWindow.end && void handleCompleteBlock(blockToComplete)}
         onCancel={() => !isCompletingBlock && setBlockToComplete(null)}
-      />
+      >
+        <div className="grid grid-cols-2 gap-3">
+          <label className="text-[11px] font-semibold text-slate-500">
+            Bắt đầu thực tế
+            <input type="time" aria-label="Bắt đầu thực tế" value={completeWindow.start} onChange={(event) => setCompleteWindow((current) => ({ ...current, start: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/15" />
+          </label>
+          <label className="text-[11px] font-semibold text-slate-500">
+            Kết thúc thực tế
+            <input type="time" aria-label="Kết thúc thực tế" value={completeWindow.end} onChange={(event) => setCompleteWindow((current) => ({ ...current, end: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/15" />
+          </label>
+          {completeWindow.start >= completeWindow.end && <p role="alert" className="col-span-2 text-[11px] font-semibold text-red-600">Giờ kết thúc phải sau giờ bắt đầu.</p>}
+        </div>
+      </CalendarConfirmModal>
 
       {/* Add Event Modal */}
       {showAddModal && (
@@ -1956,7 +1981,7 @@ export default function CalendarPage() {
             {detailBlock.kind === "planned" && ["planned", "in_progress"].includes(detailBlock.status) && (
               <button
                 type="button"
-                onClick={() => setBlockToComplete(detailBlock)}
+                onClick={() => askToCompleteBlock(detailBlock)}
                 disabled={isCompletingBlock}
                 className="mt-4 min-h-11 w-full rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
               >

@@ -3772,7 +3772,7 @@ export class ProjectsService {
   }
   async listTaskPlanningBlocks(query: any, principal: PrincipalContext) { return this.timeEntries.listTaskPlanningBlocks(query, principal); } // kept for existing callers
   async createTaskPlanningBlock(taskId: string, input: CreateTaskPlanningBlockInput, principal: PrincipalContext, fallbackUserId?: string) { return this.timeEntries.createTaskPlanningBlock(taskId, input, principal, fallbackUserId); } // kept for existing callers
-  async transitionTaskPlanningBlock(blockId: string, input: TransitionTaskPlanningBlockInput, principal: PrincipalContext, changedByUserId?: string) { return this.timeEntries.transitionTaskPlanningBlock(blockId, input, principal, changedByUserId); } // kept for existing callers
+  async transitionTaskPlanningBlock(blockId: string, input: TransitionTaskPlanningBlockInput, principal: PrincipalContext, changedByUserId?: string) { return this.timeEntries.transitionTaskPlanningBlock(blockId, input, principal, changedByUserId, (projectId, actor) => this.recomputeStatusProposal(projectId, actor)); } // kept for existing callers
   async listTaskTimeEntries(query: any, principal: PrincipalContext) { return this.timeEntries.listTaskTimeEntries(query, principal); } // kept for existing callers
   async deleteTaskPlanningBlock(blockId: string, principal: PrincipalContext) { return this.timeEntries.deleteTaskPlanningBlock(blockId, principal); } // kept for existing callers
   async deleteTaskTimeEntry(entryId: string, principal: PrincipalContext) { return this.timeEntries.deleteTaskTimeEntry(entryId, principal, (projectId, actor) => this.recomputeStatusProposal(projectId, actor)); } // kept for existing callers

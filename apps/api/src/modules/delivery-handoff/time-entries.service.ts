@@ -274,7 +274,8 @@ export class TimeEntriesService {
     blockId: string,
     input: TransitionTaskPlanningBlockInput,
     principal: PrincipalContext,
-    changedByUserId?: string
+    changedByUserId?: string,
+    recomputeStatusProposal?: RecomputeStatusProposal
   ) {
     this.permissions.assertInternalTaskPrincipal(principal, "Task planning blocks are internal");
     const targetStatus = optionalEnum(input.status, "status", PLANNING_TRANSITION_STATUSES);
@@ -314,7 +315,17 @@ export class TimeEntriesService {
       throw new ForbiddenException("Chỉ người được lập kế hoạch hoặc PM của dự án mới được hủy khối kế hoạch này");
     }
 
-    // D-15: completing a block only changes the block. Planned hours never become a time log; the person logs actual hours.
+    // D-15: planned hours never become a time log by themselves. Completing may carry the actual hours the person
+    // confirms (pre-filled with the plan's window); they are logged in the same transaction, linked to the plan.
+    let actual: { startAt: Date; endAt: Date; minutes: number } | undefined;
+    if (targetStatus === "completed" && input.actual) {
+      const startAt = optionalDate(input.actual.startAt, "actual.startAt");
+      const endAt = optionalDate(input.actual.endAt, "actual.endAt");
+      if (!startAt || !endAt) throw new BadRequestException("Hãy nhập giờ bắt đầu và kết thúc thực tế.");
+      if (endAt <= startAt) throw new BadRequestException("Giờ kết thúc phải sau giờ bắt đầu.");
+      this.assertTimeEntryWindow(startAt, endAt, DEFAULT_TIME_ENTRY_TIME_ZONE);
+      actual = { startAt, endAt, minutes: Math.round((endAt.getTime() - startAt.getTime()) / 60000) };
+    }
     if (existing.status === targetStatus) {
       return mapTaskPlanningBlockSummary(existing);
     }
@@ -355,6 +366,24 @@ export class TimeEntriesService {
         throw new NotFoundException("Task planning block not found");
       }
 
+      if (actual && existing.task && !(await tx.taskTimeEntry.findUnique({ where: { sourcePlanningBlockId: existing.id }, select: { id: true } }))) {
+        const task = existing.task;
+        await this.writeTimeEntry(tx, principal, task, {
+          userId: existing.userId,
+          startAt: actual.startAt,
+          endAt: actual.endAt,
+          workDate: actual.startAt,
+          timeZone: DEFAULT_TIME_ENTRY_TIME_ZONE,
+          minutes: actual.minutes,
+          workType: existing.workType ?? "delivery",
+          note: existing.notes ?? existing.title,
+          billable: existing.billable ?? true,
+          approvalStatus: DEFAULT_TIME_ENTRY_APPROVAL_STATUS,
+          sourcePlanningBlockId: existing.id,
+          selectedTaskTypeLayer2: isTaskTypeLayer2(task.taskTypeLayer2) ? task.taskTypeLayer2 : null
+        });
+      }
+
       const requestId = `task-planning-block:${existing.id}:${targetStatus}:${expectedUpdatedAt.toISOString()}`;
       await tx.auditEvent.create({
         data: {
@@ -391,6 +420,8 @@ export class TimeEntriesService {
 
       return changed;
     });
+    // V-17: hours logged with the plan can change the status the rules imply, like any other time log.
+    if (actual && existing.projectId) await recomputeStatusProposal?.(existing.projectId, principal);
 
     return mapTaskPlanningBlockSummary(transitioned);
   }
@@ -478,7 +509,7 @@ export class TimeEntriesService {
     this.permissions.assertInternalTaskPrincipal(principal, "Task time entries are internal");
     const entry = await this.prisma.taskTimeEntry.findFirst({
       where: { id: entryId, workspaceId: principal.workspaceId, ...this.permissions.timeRecordAccessWhere(principal) },
-      select: { id: true, userId: true, taskId: true, projectId: true, minutes: true, workDate: true, approvalStatus: true, billable: true, reviewedByUserId: true }
+      select: { id: true, userId: true, taskId: true, projectId: true, minutes: true, workDate: true, approvalStatus: true, billable: true, reviewedByUserId: true, sourcePlanningBlockId: true }
     });
     if (!entry) {
       throw new NotFoundException("Task time entry not found");
@@ -516,6 +547,13 @@ export class TimeEntriesService {
         data: { taskTimeEntryId: null }
       });
       await tx.taskTimeEntry.delete({ where: { id: entry.id } });
+      // Two-way with "Hoàn thành kế hoạch": the hours logged when a plan was completed going away reopens that plan.
+      if (entry.sourcePlanningBlockId) {
+        await tx.taskPlanningBlock.updateMany({
+          where: { id: entry.sourcePlanningBlockId, workspaceId: principal.workspaceId, status: "completed" },
+          data: { status: "planned" }
+        });
+      }
       await this.syncLayer2MismatchWarning(tx, principal.workspaceId, entry.projectId, principal.subjectId);
       await this.permissions.auditMutation(tx, principal, "task.time_entry_deleted", "task_time_entry", entry.id, {
         userId: entry.userId, taskId: entry.taskId, projectId: entry.projectId, minutes: entry.minutes,

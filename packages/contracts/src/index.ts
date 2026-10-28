@@ -1515,6 +1515,11 @@ export interface TransitionTaskPlanningBlockInput {
   status: "in_progress" | "completed" | "cancelled";
   expectedUpdatedAt: string;
   reason?: string;
+  /**
+   * With "completed": the actual hours the person confirms (the plan's window by default). They are logged as a time
+   * entry linked to the plan in the same step; deleting that entry reopens the plan.
+   */
+  actual?: { startAt: string; endAt: string };
 }
 
 /** BRD v2 task governance (EV-029/EV-061). */

@@ -3764,7 +3764,7 @@ test("calendar filters every view and summary by project and member on desktop a
   await expect(page.getByTestId("calendar-filter-summary")).toHaveText("4 mốc trong phạm vi");
 });
 
-test("calendar keeps paginated overlapping events within bounds and completing a plan logs no actual hours", async ({ page }) => {
+test("calendar keeps paginated overlapping events within bounds and completing a plan sends the confirmed actual hours with it", async ({ page }) => {
   const buildPlanningBlock = ({
     id,
     title,
@@ -4060,18 +4060,20 @@ test("calendar keeps paginated overlapping events within bounds and completing a
 
   await detailDialog.getByRole("button", { name: "Hoàn thành kế hoạch", exact: true }).click();
   const completionDialog = page.getByRole("dialog", { name: "Hoàn thành kế hoạch" });
-  await expect(completionDialog).toContainText("Giờ kế hoạch không tự chuyển thành giờ thực tế; bạn cần log giờ thực tế riêng.");
-  await completionDialog.getByRole("button", { name: "Hoàn thành kế hoạch", exact: true }).click();
+  // The actual hours are confirmed in the dialog, pre-filled with the plan's window (D-15: never copied silently).
+  await expect(completionDialog).toContainText("Giờ thực tế dưới đây sẽ được ghi vào công việc");
+  await expect(completionDialog.getByLabel("Bắt đầu thực tế")).not.toHaveValue("");
+  await completionDialog.getByRole("button", { name: "Hoàn thành & ghi giờ", exact: true }).click();
 
   await expect(page.locator(`[data-event-id="${paginatedBlock.id}"]`)).toHaveCount(1);
-  // D-15: completing a plan only closes the plan — no actual hours are logged for it.
-  await expect(page.getByText("Đã hoàn thành kế hoạch. Giờ thực tế không tự ghi theo giờ kế hoạch — hãy log giờ thực tế của bạn.")).toBeVisible();
-  await expect(page.locator('[data-event-id^="actual-"]')).toHaveCount(1);
+  await expect(page.getByText(/Đã hoàn thành kế hoạch và ghi giờ thực tế/)).toBeVisible();
   expect(transitionBodies).toEqual([{
     status: "completed",
     expectedUpdatedAt: paginatedBlock.updatedAt,
-    reason: "Hoàn thành kế hoạch từ Calendar"
+    reason: "Hoàn thành kế hoạch từ Calendar",
+    actual: { startAt: new Date(paginatedBlock.startAt).toISOString(), endAt: new Date(paginatedBlock.endAt).toISOString() }
   }]);
+  // The hours travel with the transition, in one server transaction: the client never posts a separate time entry.
   expect(actualPostBodies).toHaveLength(0);
 
   await page.locator(`[data-event-id="${thirtyMinuteBlock.id}"]`).click();
@@ -4440,7 +4442,7 @@ test("one-hour and two-hour planning blocks preserve the four-hour task estimate
   expect(estimatePatchBodies).toEqual([]);
 });
 
-test("task detail completes a planning block without logging actual hours or a client time-entry POST", async ({ page }) => {
+test("task detail completes a planning block and logs the confirmed hours in the same request", async ({ page }) => {
   const planningPostBodies: Record<string, unknown>[] = [];
   const planningTransitionBodies: Record<string, unknown>[] = [];
   const actualPostBodies: Record<string, unknown>[] = [];
@@ -4547,7 +4549,28 @@ test("task detail completes a planning block without logging actual hours or a c
         updatedAt: "2026-07-13T03:00:00.000Z"
       };
       persistedPlanningBlocks = [completedBlock];
-      // D-15: completing a block only changes the block; the API creates no time log for it.
+      // Like the API: the confirmed actual hours are logged with the completion, linked to the plan.
+      const actual = body.actual as { startAt: string; endAt: string } | undefined;
+      if (actual) {
+        persistedTimeEntries = [{
+          id: "e2e-actual-from-plan",
+          taskId: liveTask.id,
+          accountId: liveProject.accountId,
+          projectId: liveProject.id,
+          userId: liveUser.id,
+          userDisplayName: liveUser.displayName,
+          workDate: actual.startAt,
+          startAt: actual.startAt,
+          endAt: actual.endAt,
+          timeZone: "Asia/Ho_Chi_Minh",
+          minutes: Math.round((Date.parse(actual.endAt) - Date.parse(actual.startAt)) / 60000),
+          billable: true,
+          workType: "delivery",
+          approvalStatus: "approved",
+          sourcePlanningBlockId: currentBlock.id,
+          createdAt: "2026-07-13T03:00:00.000Z"
+        }];
+      }
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(completedBlock) });
       return;
     }
@@ -4598,28 +4621,31 @@ test("task detail completes a planning block without logging actual hours or a c
   await page.getByText("Kế hoạch hiển thị sau khi tải lại", { exact: true }).click();
   await page.getByRole("button", { name: "Hoàn thành kế hoạch", exact: true }).click();
   const completionDialog = page.getByRole("dialog", { name: "Hoàn thành kế hoạch" });
-  await expect(completionDialog).toContainText("Giờ kế hoạch không tự chuyển thành giờ thực tế; bạn cần log giờ thực tế riêng.");
-  await completionDialog.getByRole("button", { name: "Hoàn thành kế hoạch", exact: true }).click();
+  await expect(completionDialog).toContainText("Giờ thực tế dưới đây sẽ được ghi vào công việc");
+  await expect(completionDialog.getByLabel("Bắt đầu thực tế")).toHaveValue("09:00");
+  await expect(completionDialog.getByLabel("Kết thúc thực tế")).toHaveValue("10:00");
+  await completionDialog.getByRole("button", { name: "Hoàn thành & ghi giờ", exact: true }).click();
 
-  // D-15: the plan is closed, nothing is copied into actual hours.
-  await expect(page.getByText("Đã hoàn thành kế hoạch. Giờ thực tế không tự ghi theo giờ kế hoạch — hãy log giờ thực tế của bạn.")).toBeVisible();
-  await expect(page.getByText("0 phút thực tế", { exact: true })).toBeVisible();
-  await expect(page.locator("[data-time-entry-id]")).toHaveCount(0);
+  await expect(page.getByText("Đã hoàn thành kế hoạch và ghi giờ thực tế 09:00 – 10:00.")).toBeVisible();
+  await expect(page.getByText("1 giờ thực tế", { exact: true })).toBeVisible();
+  await expect(page.locator("[data-time-entry-id]")).toHaveCount(1);
   expect(planningTransitionBodies).toHaveLength(1);
   expect(planningTransitionBodies[0]).toMatchObject({
     status: "completed",
     expectedUpdatedAt: "2026-07-13T02:00:00.000Z",
-    reason: "Hoàn thành kế hoạch từ chi tiết công việc"
+    reason: "Hoàn thành kế hoạch từ chi tiết công việc",
+    actual: { startAt: "2026-07-01T02:00:00.000Z", endAt: "2026-07-01T03:00:00.000Z" }
   });
+  // The hours travel with the transition, in one server transaction: the client never posts a separate time entry.
   expect(actualPostBodies).toHaveLength(0);
 
   await page.reload();
   await expect(page.getByRole("heading", { name: liveTask.title })).toBeVisible();
-  await expect(page.getByText("0 phút thực tế", { exact: true })).toBeVisible();
-  await expect(page.locator("[data-time-entry-id]")).toHaveCount(0);
+  await expect(page.getByText("1 giờ thực tế", { exact: true })).toBeVisible();
+  await expect(page.locator("[data-time-entry-id]")).toHaveCount(1);
   await expect(page.getByRole("button", { name: "Hoàn thành kế hoạch", exact: true })).toHaveCount(0);
   expect(actualPostBodies).toHaveLength(0);
-  expect(persistedTimeEntries).toHaveLength(0);
+  expect(persistedTimeEntries).toEqual([expect.objectContaining({ minutes: 60, sourcePlanningBlockId: "e2e-plan-visible-after-reload" })]);
   expect(estimatePatchBodies).toEqual([]);
   expect(estimateMinutes).toBe(240);
   expect(taskDetailGetCount).toBeGreaterThanOrEqual(2);
@@ -4689,7 +4715,7 @@ test("failed planning completion keeps the persisted row planned and actionable"
   await page.getByText(plannedBlock.notes, { exact: true }).click();
   await page.getByRole("button", { name: "Hoàn thành kế hoạch", exact: true }).click();
   const completionDialog = page.getByRole("dialog", { name: "Hoàn thành kế hoạch" });
-  await completionDialog.getByRole("button", { name: "Hoàn thành kế hoạch", exact: true }).click();
+  await completionDialog.getByRole("button", { name: "Hoàn thành & ghi giờ", exact: true }).click();
 
   await expect(page.getByRole("dialog", { name: "Chi tiết giờ kế hoạch" }).getByRole("alert")).toHaveText(
     "Kế hoạch đã được cập nhật ở nơi khác. Dữ liệu mới nhất đã được tải lại."
@@ -4700,12 +4726,13 @@ test("failed planning completion keeps the persisted row planned and actionable"
   expect(transitionBodies).toEqual([{
     status: "completed",
     expectedUpdatedAt: plannedBlock.updatedAt,
-    reason: "Hoàn thành kế hoạch từ chi tiết công việc"
+    reason: "Hoàn thành kế hoạch từ chi tiết công việc",
+    actual: { startAt: new Date(plannedBlock.startAt).toISOString(), endAt: new Date(plannedBlock.endAt).toISOString() }
   }]);
   expect(actualPostBodies).toHaveLength(0);
 
   await page.getByRole("button", { name: "Hoàn thành kế hoạch", exact: true }).click();
-  await page.getByRole("dialog", { name: "Hoàn thành kế hoạch" }).getByRole("button", { name: "Hoàn thành kế hoạch", exact: true }).click();
+  await page.getByRole("dialog", { name: "Hoàn thành kế hoạch" }).getByRole("button", { name: "Hoàn thành & ghi giờ", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Chi tiết giờ kế hoạch" }).getByRole("alert")).toHaveText(
     "Kế hoạch đã được cập nhật ở nơi khác nhưng không thể tải dữ liệu mới nhất. Vui lòng tải lại trang."
   );
