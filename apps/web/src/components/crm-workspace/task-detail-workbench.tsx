@@ -684,7 +684,7 @@ export function TaskDetailWorkbench({
 
       await fetchComments();
       setCommentBody("");
-      triggerToast("Đã thêm bình luận thành công!");
+      triggerToast("Đã thêm bình luận.");
     } catch (err) {
       console.warn("Failed to post comment to API, using offline fallback:", err);
       if (!canUseOfflineDrafts) {
@@ -2166,7 +2166,7 @@ export function TaskDetailWorkbench({
                     })}
 
                     {subtasks.length === 0 && (
-                      <p className="text-xs text-slate-400 italic text-center py-4">Chưa có subtask nào. Thêm bên dưới!</p>
+                      <p className="text-xs text-slate-400 italic text-center py-4">Chưa có subtask. Thêm subtask ở ô bên dưới.</p>
                     )}
 
                     <form onSubmit={handleAddSubtask} className="flex items-center gap-2 mt-2 pt-3 border-t border-slate-100">
@@ -2599,7 +2599,7 @@ export function TaskDetailWorkbench({
                             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                           </svg>
                         </div>
-                        <p className="text-xs text-slate-400">Chưa có bình luận nào. Hãy là người đầu tiên!</p>
+                        <p className="text-xs text-slate-400">Chưa có bình luận.</p>
                       </div>
                     )}
 
@@ -2834,7 +2834,7 @@ export function TaskDetailWorkbench({
                         <input type="number" value={draftEstimateMinutes} onChange={e => setDraftEstimateMinutes(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/15 focus:border-indigo-400 transition" />
                       ) : null}
                       {isGlobalEditing ? (
-                        <p className="mt-1 text-[10px] text-slate-500">Đơn vị phút. {TASK_ESTIMATE_HINT}</p>
+                        <p className="mt-1 text-[10px] text-slate-500">Đơn vị: phút. {TASK_ESTIMATE_HINT}</p>
                       ) : (
                         <p className="text-xs font-semibold text-slate-800">{currentTask.estimateMinutes ? `${currentTask.estimateMinutes} phút` : "—"}</p>
                       )}
@@ -3066,7 +3066,7 @@ export function TaskDetailWorkbench({
                           </span>
                           {!resolveTimeEntryWindow(ent).hasExplicitWindow && (
                             <span className="text-[10px] font-medium text-amber-600">
-                              Log cũ chưa có giờ chi tiết.
+                              Bản ghi cũ chưa có khung giờ chi tiết.
                             </span>
                           )}
                         </div>
@@ -3267,7 +3267,7 @@ export function TaskDetailWorkbench({
             <ConfirmModal
               isOpen={confirmCompletePlanningEntry !== null}
               title="Hoàn thành kế hoạch"
-              message="Giờ thực tế dưới đây sẽ được ghi vào công việc cùng lúc hoàn thành kế hoạch. Mặc định bằng giờ kế hoạch; sửa nếu bạn làm khác. Xóa giờ này sau đó thì kế hoạch mở lại."
+              message="Khi hoàn thành kế hoạch, giờ thực tế bên dưới được ghi vào task. Giá trị mặc định bằng giờ kế hoạch và có thể điều chỉnh. Nếu xóa giờ này, kế hoạch sẽ mở lại."
               confirmLabel="Hoàn thành & ghi giờ"
               cancelLabel="Hủy"
               loading={isCompletingPlanningEntry}

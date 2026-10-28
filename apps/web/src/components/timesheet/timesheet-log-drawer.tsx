@@ -289,7 +289,7 @@ function TimeLogDetail({
 
       <DetailSection title="Ghi chú">
         <p className="rounded-xl border border-border bg-muted/25 p-3 text-[12px] leading-relaxed text-foreground">
-          {log.note || "Không có ghi chú cho dòng log này."}
+          {log.note || "Dòng ghi giờ này không có ghi chú."}
         </p>
       </DetailSection>
 

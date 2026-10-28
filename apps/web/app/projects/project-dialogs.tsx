@@ -39,7 +39,7 @@ export function getProjectCode(project: Project) {
 /** Project.milestoneApprovalRequired. "Không duyệt": no milestone locks, a milestone (or G1–G8 gate) completes with its tasks. */
 export function MilestoneApprovalField({ value, onChange, disabled = false }: { value: boolean; onChange: (value: boolean) => void; disabled?: boolean }) {
   return (
-    <div className="space-y-1.5" title={disabled ? "Chỉ tài khoản Admin (PM) đổi được chế độ này" : undefined}>
+    <div className="space-y-1.5" title={disabled ? "Chỉ tài khoản Admin (PM) được đổi chế độ này" : undefined}>
       <span className="text-xs font-semibold text-muted-foreground">Duyệt milestone</span>
       <CustomDropdown
         ariaLabel="Duyệt milestone"
@@ -48,7 +48,7 @@ export function MilestoneApprovalField({ value, onChange, disabled = false }: { 
         onChange={(next) => onChange(next === "required")}
         disabled={disabled}
       />
-      <p className="text-[11px] text-muted-foreground">{value ? "Gửi hồ sơ và chờ duyệt trước khi sang milestone sau." : "Milestone mở hết từ đầu, hết task là tự hoàn thành."}</p>
+      <p className="text-[11px] text-muted-foreground">{value ? "Milestone cần gửi hồ sơ và được duyệt trước khi chuyển sang milestone tiếp theo." : "Các milestone mở ngay từ đầu và tự hoàn thành khi mọi task đã xong."}</p>
     </div>
   );
 }
@@ -277,7 +277,7 @@ export function ProjectEditModal({
                 value={status}
                 onChange={(value) => setStatus(value as Project["status"])}
               />
-              <p className="text-[11px] text-muted-foreground">Đổi trạng thái khác ở trang dự án</p>
+              <p className="text-[11px] text-muted-foreground">Các trạng thái khác được cập nhật tại trang dự án</p>
             </div>
 
             <div className="space-y-1.5">
@@ -318,7 +318,7 @@ export function ProjectEditModal({
 
             <div className="space-y-1.5">
               <span className="text-xs font-semibold text-muted-foreground">Dự án thử nghiệm</span>
-              <label htmlFor="edit-project-test-flag" title={canEditTestFlag ? undefined : "Chỉ tài khoản Admin (PM) đổi được cờ này"} className="flex w-full items-center gap-2 px-3.5 py-2.5 bg-background border border-input rounded-xl text-sm text-foreground">
+              <label htmlFor="edit-project-test-flag" title={canEditTestFlag ? undefined : "Chỉ tài khoản Admin (PM) được đổi tùy chọn này"} className="flex w-full items-center gap-2 px-3.5 py-2.5 bg-background border border-input rounded-xl text-sm text-foreground">
                 <input id="edit-project-test-flag" type="checkbox" checked={isTestProject} disabled={!canEditTestFlag} onChange={(event) => setIsTestProject(event.target.checked)} />
                 Không tính vào số tổng P&amp;L
               </label>
@@ -444,7 +444,7 @@ export function ProjectDeleteConfirmModal({
             </div>
           )}
           {closeInstead && alreadyClosed && (
-            <p className="text-xs text-muted-foreground">Dự án này đã ở trạng thái Đã đóng nên không cần thao tác thêm.</p>
+            <p className="text-xs text-muted-foreground">Dự án đã ở trạng thái Đã đóng, không cần thao tác thêm.</p>
           )}
           {closeInstead && !alreadyClosed && (
             <div className="space-y-2 rounded-xl border border-border bg-muted/30 p-3">

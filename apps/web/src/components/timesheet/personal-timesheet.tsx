@@ -198,7 +198,7 @@ function TodayTasksCard({ tasks, today, onLog }: { tasks: PersonalTask[]; today:
 export function PersonalProjectTree({ dataset, logs }: { dataset: TimesheetDataset; logs: TimesheetDataset["logs"] }) {
   const rows = buildPersonProjectRows(dataset, logs);
   return (
-    <SectionCard title="Giờ của tôi theo dự án" description="Gập theo Milestone; số giờ lấy từ các dòng Time Log nguồn." id="personal-projects">
+    <SectionCard title="Giờ của tôi theo dự án" description="Nhóm theo milestone; số giờ lấy từ các dòng Time Log nguồn." id="personal-projects">
       {rows.length === 0 ? <EmptyState message="Chưa có dòng ghi giờ theo dự án trong kỳ này." /> : (
         <div className="divide-y divide-border">
           {rows.map((row) => (
@@ -327,7 +327,7 @@ export function PersonalTimesheet() {
 
   if (authLoading || loading) return shell(<LoadingPersonalTimesheet />);
   if (error) return shell(<div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 p-5"><p className="font-semibold text-destructive">Không tải được dữ liệu Timesheet của tôi</p><p className="mt-1 text-[12px] text-muted-foreground">{error}</p></div>);
-  if (!person) return shell(<div role="alert" className="rounded-xl border border-warning/30 bg-warning/5 p-5"><p className="font-semibold text-foreground">Chưa tìm thấy hồ sơ nhân sự của tài khoản hiện tại.</p><p className="mt-1 text-[12px] text-muted-foreground">Kiểm tra User ID trong workspace directory rồi tải lại.</p></div>);
+  if (!person) return shell(<div role="alert" className="rounded-xl border border-warning/30 bg-warning/5 p-5"><p className="font-semibold text-foreground">Chưa tìm thấy hồ sơ nhân sự của tài khoản hiện tại.</p><p className="mt-1 text-[12px] text-muted-foreground">Kiểm tra User ID trong danh bạ workspace, sau đó tải lại trang.</p></div>);
 
   return shell(
     <>

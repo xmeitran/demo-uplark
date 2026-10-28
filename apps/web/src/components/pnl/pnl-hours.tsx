@@ -33,7 +33,7 @@ function byProjectAndPerson(left: PnlSourceEntryRow, right: PnlSourceEntryRow) {
 
 /** The one action that fixes this hour, as a link to the screen where it is done. */
 function FixLink({ entry }: Readonly<{ entry: PnlSourceEntryRow }>) {
-  if (!entry.target) return <NoValue why="Không cần xử lý gì cho giờ này" />;
+  if (!entry.target) return <NoValue why="Giờ này không cần xử lý" />;
   const href = entry.target === "pending_hours" && entry.taskId
     ? `/tasks/${encodeURIComponent(entry.taskId)}`
     : fixTargetHref(entry.target, { projectId: entry.projectId, periodKey: entry.periodKey });
@@ -59,7 +59,7 @@ function EntryTable({ entries, moneyVisible, showDeadline, onReset }: Readonly<{
               <th scope="col" className={thClass}>Nhân sự · Ngày ghi</th>
               <th scope="col" title={moneyVisible ? "Số giờ được tính; chi phí P&L = đơn giá giờ đã duyệt × số giờ" : "Số giờ đã ghi"} className={thNumberClass}>Giờ</th>
               <th scope="col" title="Giờ đã tính vào P&L, đang chờ xử lý hay không tính — kèm lý do" className={thClass}>Trạng thái · Lý do</th>
-              {showDeadline ? <th scope="col" title="Ngày cuối cùng nên xử lý xong giờ này và PIC chịu trách nhiệm xử lý" className={thClass}>Hạn · Người xử lý</th> : null}
+              {showDeadline ? <th scope="col" title="Hạn xử lý giờ này và PIC chịu trách nhiệm" className={thClass}>Hạn · Người xử lý</th> : null}
               <th scope="col" title="Việc cần làm để giờ này được tính, và nơi làm" className={thClass}>Việc cần làm</th>
             </tr>
           </thead>

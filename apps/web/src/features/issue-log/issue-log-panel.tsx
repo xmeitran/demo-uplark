@@ -249,7 +249,7 @@ export function IssueLogPanel({ projectId, teamMembers, milestones, milestoneGro
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div><p className="text-[10px] font-black uppercase tracking-[0.16em] text-primary">SỔ VẤN ĐỀ</p><h2 className="mt-1 !text-base font-black tracking-tight text-foreground">Sổ vấn đề</h2><p className="mt-1 text-xs text-muted-foreground">Blocker, Risk và Issue của dự án. Bình luận và chat không thay cho sổ.</p></div>
+        <div><p className="text-[10px] font-black uppercase tracking-[0.16em] text-primary">SỔ VẤN ĐỀ</p><h2 className="mt-1 !text-base font-black tracking-tight text-foreground">Sổ vấn đề</h2><p className="mt-1 text-xs text-muted-foreground">Blocker, Risk và Issue của dự án. Bình luận và chat không thay thế sổ vấn đề.</p></div>
         <button type="button" onClick={() => openCreate()} className="inline-flex min-h-9 items-center justify-center rounded-lg bg-primary px-3 text-xs font-bold text-primary-foreground"><Plus className="mr-1.5 h-3.5 w-3.5" /> Báo vấn đề</button>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -340,7 +340,7 @@ export function IssueLogPanel({ projectId, teamMembers, milestones, milestoneGro
       </div>
 
       {form && form.mode !== "action" && (
-        <Dialog title={form.mode === "create" ? "Báo vấn đề" : `Sửa ${form.record.code}`} subtitle={form.mode === "create" ? "PM sẽ phân loại trong 1 ngày làm việc. Trạng thái đổi qua các bước của sổ, không sửa tay." : ISSUE_LOG_TYPE_LABELS[form.record.type]} onClose={() => setForm(null)} onSubmit={() => void submit()} submitLabel={form.mode === "create" ? "Ghi vào sổ" : "Lưu thay đổi"} saving={saving} error={formError}>
+        <Dialog title={form.mode === "create" ? "Báo vấn đề" : `Sửa ${form.record.code}`} subtitle={form.mode === "create" ? "PM phân loại trong vòng 1 ngày làm việc. Trạng thái thay đổi theo các bước của sổ, không sửa thủ công." : ISSUE_LOG_TYPE_LABELS[form.record.type]} onClose={() => setForm(null)} onSubmit={() => void submit()} submitLabel={form.mode === "create" ? "Ghi vào sổ" : "Lưu thay đổi"} saving={saving} error={formError}>
           {form.mode === "create" && <div><span className={labelClass}>Loại bản ghi *</span><CustomDropdown ariaLabel="Loại bản ghi" options={ISSUE_LOG_TYPES.map((type) => ({ value: type, label: TYPE_HINT[type] }))} value={values.type ?? "issue"} onChange={set("type")} /></div>}
           <div><span className={labelClass}>Mức ảnh hưởng *</span><CustomDropdown ariaLabel="Mức ảnh hưởng" options={ISSUE_LOG_SEVERITIES.map((severity) => ({ value: severity, label: ISSUE_LOG_SEVERITY_LABELS[severity] }))} value={values.severity ?? "medium"} onChange={set("severity")} /></div>
           <label className="md:col-span-2"><span className={labelClass}>Mô tả *</span><textarea value={values.description ?? ""} onChange={(event) => set("description")(event.target.value)} rows={3} placeholder="Ví dụ: Chờ dữ liệu đầu vào từ khách hàng để hoàn thành stage…" className={`${inputClass} resize-none`} /></label>

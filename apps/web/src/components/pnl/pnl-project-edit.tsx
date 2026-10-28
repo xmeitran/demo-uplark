@@ -77,7 +77,7 @@ export function ProjectValueInlineForm({ projectId, revenue, reload }: Readonly<
       </Field>
       <button type="submit" disabled={disabled || save.busy} className={primaryButtonClass}>{save.busy ? "Đang lưu…" : current === null ? "Lưu doanh thu" : "Cập nhật"}</button>
       <div className="space-y-2 sm:col-span-3">
-        <p className="text-xs text-muted-foreground">Doanh thu này được lưu trực tiếp cho project và dùng để tính EBIT. Không lấy tự động từ hệ thống.</p>
+        <p className="text-xs text-muted-foreground">Doanh thu này được lưu trực tiếp cho dự án và dùng để tính EBIT. Không lấy tự động từ hệ thống.</p>
         <SaveFeedback error={save.error} message={save.message} />
       </div>
     </form>

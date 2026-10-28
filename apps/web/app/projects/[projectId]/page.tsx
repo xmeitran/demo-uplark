@@ -1238,7 +1238,7 @@ function ProjectSheetPanel({
         <div>
           <p className="mb-1 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.16em] text-primary"><FileText className="h-4 w-4" /> Project Sheet</p>
           <h2 className="text-2xl font-black tracking-tight text-foreground">Project control center</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Một màn hình để đối soát phạm vi, kế hoạch, nguồn lực và giờ thực tế của project.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Đối soát phạm vi, kế hoạch, nguồn lực và giờ thực tế của dự án trên một màn hình.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" onClick={onOpenTasks} className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-muted"><ListChecks className="h-4 w-4" /> Mở Tasks</button>
@@ -1265,7 +1265,7 @@ function ProjectSheetPanel({
         <div className="flex flex-col gap-4 border-b border-border p-5 xl:flex-row xl:items-start xl:justify-between">
           <div>
             <h3 className="text-xl font-black tracking-tight text-foreground">Work breakdown &amp; delivery health</h3>
-            <p className="mt-1 text-sm text-muted-foreground">Theo dõi từ Milestone → Stage → Task, luôn truy được về người thực hiện và Time Log.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Theo dõi từ Milestone → Stage → Task, truy xuất được người thực hiện và Time Log.</p>
           </div>
         </div>
         <div className="border-b border-border px-5 py-3">
@@ -1291,7 +1291,7 @@ function ProjectSheetPanel({
               <div className="mt-4 grid grid-cols-3 gap-2 text-xs"><div><p className="text-muted-foreground">Kế hoạch</p><strong className="font-mono text-foreground">{formatHours(plan)}h</strong></div><div><p className="text-muted-foreground">Đã ghi nhận</p><strong className="font-mono text-foreground">{formatHours(actual)}h</strong></div><div><p className="text-muted-foreground">Chênh lệch</p><strong className={`font-mono ${variance > 0 ? "text-red-600" : "text-emerald-600"}`}>{variance > 0 ? "+" : ""}{formatHours(variance)}h</strong></div></div>
             </article>
           ))}
-          {milestoneSummaries.length === 0 && <div className="col-span-full rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">Project chưa có Milestone hoặc Task để đối soát.</div>}
+          {milestoneSummaries.length === 0 && <div className="col-span-full rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">Dự án chưa có milestone hoặc task để đối soát.</div>}
         </div>
 
         <div className="overflow-x-auto">
@@ -1321,9 +1321,9 @@ function ProjectSheetPanel({
 
       <section className="grid gap-5 xl:grid-cols-5">
         <article className="rounded-2xl border border-border bg-card p-5 shadow-sm xl:col-span-3">
-          <div className="mb-4 flex items-start justify-between"><div><h3 className="text-lg font-black text-foreground">Nguồn lực đang tham gia</h3><p className="mt-1 text-sm text-muted-foreground">Active được xác định từ Time Log trong kỳ theo dõi.</p></div></div>
+          <div className="mb-4 flex items-start justify-between"><div><h3 className="text-lg font-black text-foreground">Nguồn lực đang tham gia</h3><p className="mt-1 text-sm text-muted-foreground">Trạng thái Active được xác định theo Time Log trong kỳ theo dõi.</p></div></div>
           <div className="space-y-2">{teamMembers.map((member) => { const memberTasks = rows.filter(({ task }) => task.assigneeUserId === member.id || task.assignee === member.initials); const memberActual = sumHours(memberTasks.map(({ task }) => task.actualHours ?? 0)); return <div key={member.id} className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-3"><div className="flex min-w-0 items-center gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-bold text-white" style={{ backgroundColor: member.color }}>{member.avatarUrl ? <img src={member.avatarUrl} alt="" className="h-full w-full object-cover" /> : member.initials}</span><div className="min-w-0"><p className={`truncate text-sm ${member.id === currentUserId ? "font-bold text-primary" : "font-bold text-foreground"}`}>{member.name}</p><p className="text-xs text-muted-foreground">{member.role}</p></div></div><div className="flex items-center gap-3"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${memberActual > 0 ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{memberActual > 0 ? "Active" : "No log"}</span><span className="font-mono text-sm font-bold text-foreground">{member.done}/{member.tasks}</span></div></div>; })}</div>
-          {teamMembers.length === 0 && <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Chưa có thành viên trong project.</p>}
+          {teamMembers.length === 0 && <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Dự án chưa có thành viên.</p>}
         </article>
 
         <article className="rounded-2xl border border-border bg-card p-5 shadow-sm xl:col-span-2">
@@ -1441,7 +1441,7 @@ function projectMemberAssignmentError(displayName?: string) {
   return `${displayName?.trim() || "Người được chọn"} chưa là thành viên dự án. Hãy thêm vào danh sách thành viên của dự án (nút Invite) rồi thử lại, hoặc chọn một thành viên khác.`;
 }
 /** Shown in an edit form whose current assignee / PIC left the project: the other fields can still be saved. */
-const STALE_ASSIGNEE_NOTE = "Người đang được giao không còn là thành viên dự án. Bạn vẫn lưu được các thông tin khác; muốn đổi người, hãy chọn một thành viên hoặc thêm họ vào danh sách thành viên (nút Invite).";
+const STALE_ASSIGNEE_NOTE = "Người đang được giao không còn là thành viên dự án. Các thông tin khác vẫn lưu được; để đổi người, chọn một thành viên khác hoặc thêm người này vào dự án (nút Invite).";
 
 /** The API names people by display name; an id it could not resolve is never shown. */
 function userFacingAssignmentError(message: string) {
@@ -1681,7 +1681,7 @@ function ProjectStatusEditModal({ projectId, project, color, onClose, onSaved }:
         <div data-initial-focus="true">
           <CustomDropdown ariaLabel="Trạng thái dự án" options={manualProjectStatusOptions(project.status)} value={status} onChange={(value) => setStatus(value as Project["status"])} />
         </div>
-        <p className="mt-1.5 text-[11px] text-muted-foreground">Đã hoàn thành và Đang bảo trì không chọn tay: hệ thống tự chuyển khi điểm chốt G7 / G8 được duyệt.</p>
+        <p className="mt-1.5 text-[11px] text-muted-foreground">“Đã hoàn thành” và “Đang bảo trì” do hệ thống tự chuyển khi điểm chốt G7 / G8 được thông qua.</p>
       </Field>
       {closing ? (
         <Field label={PROJECT_STATUS_CATALOGUE.closed.reasonLabel} required>
@@ -2076,10 +2076,10 @@ function ProjectDeliveryWireframePanels({
 
         <div className="rounded-2xl border border-border bg-card shadow-sm">
           <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
-            <div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Issue register</p><h3 className="mt-1 text-base font-black text-foreground">Sổ Blocker / Risk / Issue</h3><p className="mt-1 text-xs text-muted-foreground">Điều phối owner và tác động ngay từ Overview.</p></div>
+            <div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">Issue register</p><h3 className="mt-1 text-base font-black text-foreground">Sổ Blocker / Risk / Issue</h3><p className="mt-1 text-xs text-muted-foreground">Theo dõi người phụ trách và mức độ ảnh hưởng ngay tại Overview.</p></div>
             <button type="button" onClick={onOpenIssues} className="text-xs font-semibold text-primary hover:underline">Mở sổ →</button>
           </div>
-          {openRisks.length === 0 ? <div className="px-5 py-10 text-center"><CheckCircle2 className="mx-auto h-7 w-7 text-emerald-500" /><p className="mt-2 text-sm font-semibold text-foreground">Chưa có vấn đề mở</p><p className="mt-1 text-xs text-muted-foreground">Các blocker, risk và issue mới sẽ xuất hiện tại đây.</p></div> : <div className="divide-y divide-border">{openRisks.slice(0, 4).map((risk) => <button type="button" key={risk.id} onClick={onOpenIssues} className="flex w-full items-start gap-3 px-5 py-3 text-left transition hover:bg-muted/30"><span className={`mt-0.5 rounded-full px-2 py-1 text-[10px] font-bold ${riskKindTone(risk.category)}`}>{riskKindLabel(risk.category)}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold text-foreground">{risk.description}</span><span className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">Owner: {risk.owner ? <UserAvatar id={risk.ownerUserId} name={risk.owner} size="xs" /> : null}{risk.owner || "Chưa phân công"}</span></span><ChevronRight className="mt-1 h-3.5 w-3.5 shrink-0 text-muted-foreground" /></button>)}</div>}
+          {openRisks.length === 0 ? <div className="px-5 py-10 text-center"><CheckCircle2 className="mx-auto h-7 w-7 text-emerald-500" /><p className="mt-2 text-sm font-semibold text-foreground">Chưa có vấn đề mở</p><p className="mt-1 text-xs text-muted-foreground">Blocker, risk và issue mới sẽ hiển thị tại đây.</p></div> : <div className="divide-y divide-border">{openRisks.slice(0, 4).map((risk) => <button type="button" key={risk.id} onClick={onOpenIssues} className="flex w-full items-start gap-3 px-5 py-3 text-left transition hover:bg-muted/30"><span className={`mt-0.5 rounded-full px-2 py-1 text-[10px] font-bold ${riskKindTone(risk.category)}`}>{riskKindLabel(risk.category)}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold text-foreground">{risk.description}</span><span className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">Owner: {risk.owner ? <UserAvatar id={risk.ownerUserId} name={risk.owner} size="xs" /> : null}{risk.owner || "Chưa phân công"}</span></span><ChevronRight className="mt-1 h-3.5 w-3.5 shrink-0 text-muted-foreground" /></button>)}</div>}
         </div>
       </div>
 
@@ -2090,7 +2090,7 @@ function ProjectDeliveryWireframePanels({
 
       <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
         <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4"><div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">People & capacity</p><h3 className="mt-1 text-base font-black text-foreground">Nguồn lực tham gia</h3><p className="mt-1 text-xs text-muted-foreground">Vai trò, task đang mở, giờ thực tế và lần ghi nhận gần nhất.</p><p className="mt-1 text-xs text-muted-foreground">Trạng thái tham gia và giờ thực tế: {participationLabel}</p></div><div className="flex flex-wrap items-end gap-3"><FilterField label="Kỳ ghi nhận giờ" className="w-[230px]"><DateRangeFilter value={participationRange} onChange={(range) => { if (range.from && range.to) setParticipationRange(range); }} presets={participationPresets} clearable={false} ariaLabel="Kỳ ghi nhận giờ của nguồn lực" /></FilterField><button type="button" onClick={onOpenTasks} className="h-10 text-xs font-semibold text-primary hover:underline">Xem Project Sheet →</button></div></div>
-        {memberRows.length === 0 ? <div className="px-5 py-10 text-center text-xs text-muted-foreground">Chưa có nguồn lực được gán cho project.</div> : <div className="overflow-x-auto"><div className="min-w-[860px]"><div className="grid grid-cols-[minmax(0,1.2fr)_160px_90px_140px_130px_120px] gap-3 border-b border-border bg-muted/30 px-5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><span>Nhân sự / Vai trò</span><span>Trạng thái</span><span>Task mở</span><span>Giờ thực tế trong kỳ</span><span>Thực tế / Kế hoạch</span><span>Log gần nhất</span></div>{memberRows.map(({ member, openTasks, periodMinutes, actualVsPlan, latestLog }) => <div key={member.id} className="grid grid-cols-[minmax(0,1.2fr)_160px_90px_140px_130px_120px] items-center gap-3 border-b border-border px-5 py-3 last:border-b-0"><div className="flex min-w-0 items-center gap-2.5"><TeamMemberAvatar member={member} /><div className="min-w-0"><p className="truncate text-xs font-semibold text-foreground">{member.name}</p><p className="truncate text-[11px] text-muted-foreground">{member.role}</p></div></div>{(() => { const item = participation?.get(member.id); return item ? <span title={item.participationReason} className={`w-fit rounded-full px-2 py-1 text-[10px] font-bold ${PARTICIPATION_STATE[item.participationState].className}`}>{PARTICIPATION_STATE[item.participationState].label}</span> : <span className="text-xs text-muted-foreground">—</span>; })()}<span className="text-xs font-semibold text-foreground">{openTasks}</span><span className="text-xs font-semibold text-foreground">{periodMinutes === undefined ? "—" : `${formatHours(periodMinutes / 60)}h`}</span><span className={`text-xs font-semibold ${(actualVsPlan ?? 0) > 100 ? "text-rose-600" : "text-foreground"}`}>{actualVsPlan === null ? "—" : `${actualVsPlan}%`}</span><span className="text-[11px] text-muted-foreground">{latestLog}</span></div>)}</div></div>}
+        {memberRows.length === 0 ? <div className="px-5 py-10 text-center text-xs text-muted-foreground">Chưa có nhân sự được gán vào dự án.</div> : <div className="overflow-x-auto"><div className="min-w-[860px]"><div className="grid grid-cols-[minmax(0,1.2fr)_160px_90px_140px_130px_120px] gap-3 border-b border-border bg-muted/30 px-5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><span>Nhân sự / Vai trò</span><span>Trạng thái</span><span>Task mở</span><span>Giờ thực tế trong kỳ</span><span>Thực tế / Kế hoạch</span><span>Log gần nhất</span></div>{memberRows.map(({ member, openTasks, periodMinutes, actualVsPlan, latestLog }) => <div key={member.id} className="grid grid-cols-[minmax(0,1.2fr)_160px_90px_140px_130px_120px] items-center gap-3 border-b border-border px-5 py-3 last:border-b-0"><div className="flex min-w-0 items-center gap-2.5"><TeamMemberAvatar member={member} /><div className="min-w-0"><p className="truncate text-xs font-semibold text-foreground">{member.name}</p><p className="truncate text-[11px] text-muted-foreground">{member.role}</p></div></div>{(() => { const item = participation?.get(member.id); return item ? <span title={item.participationReason} className={`w-fit rounded-full px-2 py-1 text-[10px] font-bold ${PARTICIPATION_STATE[item.participationState].className}`}>{PARTICIPATION_STATE[item.participationState].label}</span> : <span className="text-xs text-muted-foreground">—</span>; })()}<span className="text-xs font-semibold text-foreground">{openTasks}</span><span className="text-xs font-semibold text-foreground">{periodMinutes === undefined ? "—" : `${formatHours(periodMinutes / 60)}h`}</span><span className={`text-xs font-semibold ${(actualVsPlan ?? 0) > 100 ? "text-rose-600" : "text-foreground"}`}>{actualVsPlan === null ? "—" : `${actualVsPlan}%`}</span><span className="text-[11px] text-muted-foreground">{latestLog}</span></div>)}</div></div>}
         {teamMembers.length > MEMBER_PREVIEW_COUNT ? <div className="border-t border-border px-5 py-3"><button type="button" aria-expanded={showAllMembers} onClick={() => setShowAllMembers((value) => !value)} className="text-xs font-semibold text-primary hover:underline">{showAllMembers ? "Thu gọn" : `Xem tất cả (${teamMembers.length})`}</button></div> : null}
       </div>
     </section>
@@ -2513,7 +2513,7 @@ function AddStageModal({ milestoneName, color, onClose, onSave, members = EMPTY_
               onChange={setPicIds}
               placeholder="Select stage PICs"
             />
-            {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected PIC: {pic.name}{picIds.length > 1 ? ` +${picIds.length - 1}` : ""}{pic.id === currentUserId ? " · tài khoản đang đăng nhập" : ""}</p>}
+            {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected PIC: {pic.name}{picIds.length > 1 ? ` +${picIds.length - 1}` : ""}{pic.id === currentUserId ? " (bạn)" : ""}</p>}
           </Field>
 
           <div className="space-y-2">
@@ -2634,7 +2634,7 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
             />
           </Field>
           <Field label={TASK_TYPE_LAYER2_FIELD_LABEL}>
-            <div className="px-3 py-2.5 rounded-xl border border-border bg-muted/30 text-sm text-muted-foreground" title="Hệ thống suy ra từ dự án và stage; không chọn tay.">{taskTypeLayer2Text}</div>
+            <div className="px-3 py-2.5 rounded-xl border border-border bg-muted/30 text-sm text-muted-foreground" title="Hệ thống tự xác định theo dự án và stage.">{taskTypeLayer2Text}</div>
           </Field>
         </div>
         <Field label="Loại công việc">
@@ -2682,7 +2682,7 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
               );
             })}
           </div>
-          <p className="mt-1.5 text-[11px] text-muted-foreground">“Đang thực hiện” và “Quá hạn” được hệ thống xác định từ kế hoạch, ngày hạn và giờ đã ghi.</p>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">“Đang thực hiện” và “Quá hạn” do hệ thống tự xác định theo kế hoạch, ngày hạn và giờ thực tế.</p>
         </Field>
         <Field label="Assignee">
           <TeamMemberMultiSelect
@@ -2691,7 +2691,7 @@ function AddTaskModal({ stageName, color, onClose, onSave, members = EMPTY_TEAM_
             onChange={setSelectedAssigneeIds}
             placeholder="Select task assignees"
           />
-          {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected {selectedAssigneeIds.length === 1 ? "assignee" : "assignees"}: {pic.name}{selectedAssigneeIds.length > 1 ? ` +${selectedAssigneeIds.length - 1}` : ""}{pic.id === currentUserId ? " · tài khoản đang đăng nhập" : ""}</p>}
+          {pic && <p className="text-[10px] text-muted-foreground mt-1">Selected {selectedAssigneeIds.length === 1 ? "assignee" : "assignees"}: {pic.name}{selectedAssigneeIds.length > 1 ? ` +${selectedAssigneeIds.length - 1}` : ""}{pic.id === currentUserId ? " (bạn)" : ""}</p>}
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Start Date (optional)">
@@ -3221,7 +3221,7 @@ function AddDocModal({
               onChange={setMilestoneId}
             />
           ) : (
-            <p className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">Project chưa có milestone. Tài liệu vẫn được lưu và bạn có thể gán sau.</p>
+            <p className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">Dự án chưa có milestone. Tài liệu vẫn được lưu và có thể gán sau.</p>
           )}
           {milestones.length > 0 ? <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">Tài liệu sẽ được tính vào số lượng hồ sơ của milestone này.</p> : null}
         </Field>
@@ -3312,13 +3312,13 @@ function AddLinkDocModal({
         {milestones.length > 0 ? (
           <CustomDropdown ariaLabel="Gán link vào milestone" options={milestones.map((milestone) => ({ value: milestone.id, label: `${milestone.order}. ${milestone.name}` }))} value={milestoneId} onChange={setMilestoneId} />
         ) : (
-          <p className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">Project chưa có milestone. Bạn có thể gán sau.</p>
+          <p className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">Dự án chưa có milestone. Có thể gán sau.</p>
         )}
         {milestones.length > 0 ? <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">Link cũng được tính vào số lượng hồ sơ của milestone.</p> : null}
       </Field>
       {error ? <p className="text-xs font-semibold text-red-600" role="alert">{error}</p> : null}
       <Field label="Ghi chú"><textarea value={note} onChange={(event) => setNote(event.target.value)} rows={2} className="w-full resize-none rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm text-foreground focus:outline-none" /></Field>
-      <p className="rounded-xl border border-sky-100 bg-sky-50/70 px-3 py-2 text-xs leading-relaxed text-sky-800">Link được lưu như một bằng chứng của Project và được tính vào rule “Link” hoặc “File hoặc link”.</p>
+      <p className="rounded-xl border border-sky-100 bg-sky-50/70 px-3 py-2 text-xs leading-relaxed text-sky-800">Link được lưu làm bằng chứng của dự án và được tính vào điều kiện “Link” hoặc “File hoặc link”.</p>
   </ModalShell>
   </AnimatePresence>;
 }
@@ -3373,7 +3373,7 @@ function AssignDocumentModal({
         <div className="rounded-xl border border-border bg-muted/30 px-3.5 py-3">
           <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Tài liệu</p>
           <p className="mt-1 text-sm font-bold text-foreground">{doc.name}</p>
-          <p className="mt-1 text-xs text-muted-foreground">Sau khi lưu, hồ sơ sẽ được tính vào rule số lượng của milestone đã chọn.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Sau khi lưu, hồ sơ được tính vào điều kiện số lượng của milestone đã chọn.</p>
         </div>
         <Field label="Milestone" required>
           <CustomDropdown
@@ -4087,7 +4087,7 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
             />
           </Field>
           <Field label={TASK_TYPE_LAYER2_FIELD_LABEL}>
-            <div className="px-3 py-2.5 rounded-xl border border-border bg-muted/30 text-sm text-muted-foreground" title="Hệ thống suy ra từ dự án và stage; không chọn tay.">{taskTypeLayer2Text}</div>
+            <div className="px-3 py-2.5 rounded-xl border border-border bg-muted/30 text-sm text-muted-foreground" title="Hệ thống tự xác định theo dự án và stage.">{taskTypeLayer2Text}</div>
           </Field>
         </div>
         <Field label="Loại công việc">
@@ -4116,7 +4116,7 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
             options={placementOptions}
             onChange={setSelectedStageId}
           />
-          <p className="mt-1.5 text-[11px] text-muted-foreground">Chọn nơi đặt task. Có thể chọn “Chưa gắn Stage” để đưa task về nhóm tạm.</p>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">Chọn vị trí của task. Chọn “Chưa gắn Stage” để chuyển task về nhóm tạm.</p>
         </Field>
         <Field label="Priority">
           <div className="flex gap-2 flex-wrap">
@@ -4143,7 +4143,7 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
             })}
             {(["in-progress", "overdue", "blocked"] as TaskItem["status"][]).includes(status) && <span className="inline-flex items-center rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700">{TASK_STATUS[status].label} · hệ thống</span>}
           </div>
-          <p className="mt-1.5 text-[11px] text-muted-foreground">Chỉ trạng thái đầu vào được chỉnh tay; trạng thái đang làm/quá hạn được suy ra tự động.</p>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">Chỉ cập nhật thủ công trạng thái ban đầu; “Đang thực hiện” và “Quá hạn” do hệ thống tự xác định.</p>
         </Field>
         <Field label="Assignees (unlimited)">
           <TeamMemberMultiSelect
@@ -4167,7 +4167,7 @@ function EditTaskModal({ task, color, onClose, onSave, members = EMPTY_TEAM_MEMB
           <PlannedHoursField value={plannedHoursText} onChange={setPlannedHoursText} invalid={plannedHoursInvalid} />
           <Field label="Giờ thực tế đã ghi">
             <div className="px-3.5 py-2.5 rounded-xl border border-border bg-muted/30 text-sm text-muted-foreground">{formatHours(task.actualHours ?? 0)} giờ</div>
-            <p className="mt-1 text-[11px] text-muted-foreground">Tự tính từ giờ log. Ghi giờ ở trang chi tiết task.</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">Tổng hợp tự động từ giờ đã ghi. Ghi giờ tại trang chi tiết task.</p>
           </Field>
         </div>
 
@@ -4411,7 +4411,7 @@ function StageSection({ stage, projectColor, onAddTask, onAddSubtask, onEditTask
       {gateBlock && !locked && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-amber-200 bg-amber-50/70 px-3 py-1.5 text-[11px] font-semibold text-amber-800">
           <Lock className="h-3 w-3 shrink-0" />
-          <span>{gateBlockLabel(gateBlock)} chưa được duyệt: chưa bắt đầu stage hoặc ghi giờ được.</span>
+          <span>{gateBlockLabel(gateBlock)} chưa được duyệt nên chưa thể bắt đầu stage hoặc ghi giờ.</span>
           <OpenGatesTabLink />
         </div>
       )}
@@ -4557,7 +4557,7 @@ function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onA
             <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg" style={{ backgroundColor:cfg.bg, color:cfg.color }}>{cfg.label}</span>
 
             {totalTasks > 0 && (
-              <span className="text-[10px] text-muted-foreground font-mono">{doneTasks}/{totalTasks} tác vụ</span>
+              <span className="text-[10px] text-muted-foreground font-mono">{doneTasks}/{totalTasks} task</span>
             )}
 
             {/* Hours indicator styled dynamically with milestone status color */}
@@ -4623,8 +4623,8 @@ function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onA
         <div className="mx-1 mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-[11px] font-semibold text-amber-800">
           <Lock className="h-3.5 w-3.5 shrink-0" />
           <span>{milestoneGateBlock
-            ? `Milestone đang khóa: ${gateBlockLabel(milestoneGateBlock)} chưa được duyệt nên chưa thêm stage, tạo task hoặc ghi giờ ở đây được.`
-            : "Milestone đang khóa: milestone trước chưa được duyệt nên chưa thêm stage, tạo task hoặc ghi giờ ở đây được."}</span>
+            ? `Milestone đang khóa: ${gateBlockLabel(milestoneGateBlock)} chưa được duyệt nên chưa thể thêm stage, tạo task hoặc ghi giờ.`
+            : "Milestone đang khóa: milestone trước chưa được duyệt nên chưa thể thêm stage, tạo task hoặc ghi giờ."}</span>
           <OpenGatesTabLink />
         </div>
       )}
@@ -7264,7 +7264,7 @@ export default function ProjectDetailPage() {
                         <MultiSelectFilter label="Ưu tiên" options={TASK_PRIORITY_FILTER_OPTIONS} values={taskTabFilters.priorities} onChange={setTaskTabFilter("priorities")} searchable={false} />
                         <MultiSelectFilter label="Giai đoạn" options={milestoneFilterOptions} values={taskTabFilters.milestoneIds} onChange={setTaskTabFilter("milestoneIds")} />
                       </FilterBar>
-                      {taskTabFilterCount > 0 && canReorderHierarchy ? <p className="mt-2 text-[11px] text-muted-foreground">Đang lọc: tạm tắt kéo-thả sắp xếp. Đặt lại bộ lọc để sắp xếp lại thứ tự.</p> : null}
+                      {taskTabFilterCount > 0 && canReorderHierarchy ? <p className="mt-2 text-[11px] text-muted-foreground">Kéo thả sắp xếp tạm tắt khi đang lọc. Đặt lại bộ lọc để sắp xếp thứ tự.</p> : null}
                     </div>
                   ) : null}
 
@@ -8083,7 +8083,7 @@ export default function ProjectDetailPage() {
                     </div>
                     <ProjectGatesPanel projectId={projectId} members={teamMembers} onChanged={refreshProject} onDocumentTypes={setGateDocumentTypes} refreshKey={documents.map((doc) => `${doc.id}:${doc.versions.length}:${getDocumentMilestoneId(doc)}`).join("|")} />
                     <div className="grid gap-3 sm:grid-cols-3">
-                      <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Tổng tài liệu theo template</p><p className="mt-1 text-xl font-black text-foreground">{documents.length}</p><p className="mt-1 text-[11px] text-muted-foreground">Từ project hiện tại</p></div>
+                      <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Tổng tài liệu theo template</p><p className="mt-1 text-xl font-black text-foreground">{documents.length}</p><p className="mt-1 text-[11px] text-muted-foreground">Thuộc dự án hiện tại</p></div>
                       <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Đã nộp &amp; có version</p><p className="mt-1 text-xl font-black text-emerald-700">{documents.filter((doc) => doc.versions.length > 0).length}</p><p className="mt-1 text-[11px] text-muted-foreground">Có thể mở lịch sử</p></div>
                       <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm"><p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Đang chờ bổ sung</p><p className="mt-1 text-xl font-black text-amber-700">{documents.filter((doc) => doc.versions.length === 0).length}</p><p className="mt-1 text-[11px] text-muted-foreground">Cần gắn link hoặc tải file</p></div>
                     </div>
@@ -8342,7 +8342,7 @@ export default function ProjectDetailPage() {
                     </div>
                     <aside className="space-y-4">
                       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm"><div className="flex items-center justify-between gap-2"><h3 className="text-sm font-bold text-foreground">Danh mục tài liệu bắt buộc</h3><span className="rounded-full bg-muted px-2 py-1 text-[10px] font-bold text-muted-foreground">Template</span></div><div className="mt-4 space-y-3"><div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">Tổng số theo template</span><span className="font-bold text-foreground">{documents.length}</span></div><div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">Đã nộp và có version</span><span className="font-bold text-emerald-700">{documents.filter((doc) => doc.versions.length > 0).length}</span></div><div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">Đang chờ bổ sung</span><span className="font-bold text-amber-700">{documents.filter((doc) => doc.versions.length === 0).length}</span></div></div><p className="mt-4 rounded-lg bg-muted/30 px-3 py-2 text-[11px] leading-5 text-muted-foreground">Tài liệu bắt buộc và xác nhận khách hàng là điều kiện để mở milestone tiếp theo.</p></div>
-                      <div className="rounded-2xl border border-border bg-card p-4 shadow-sm"><h3 className="text-sm font-bold text-foreground">Hai cách gắn tài liệu</h3><div className="mt-3 space-y-2"><button type="button" onClick={() => setShowAddLinkModal(true)} className="flex w-full items-center justify-between rounded-lg border border-dashed border-sky-300 bg-sky-50/40 px-3 py-2 text-left text-xs font-semibold text-sky-800 transition hover:bg-sky-50"><span>Gắn link Lark / URL <small className="block font-normal text-sky-700">Được tính vào rule bằng chứng</small></span><ChevronRight className="h-3.5 w-3.5 text-sky-600" /></button><button type="button" onClick={() => setShowAddDocModal(true)} className="flex w-full items-center justify-between rounded-lg border border-border px-3 py-2 text-xs font-semibold text-foreground transition hover:bg-muted"><span>Tải file lên</span><ChevronRight className="h-3.5 w-3.5 text-muted-foreground" /></button></div></div>
+                      <div className="rounded-2xl border border-border bg-card p-4 shadow-sm"><h3 className="text-sm font-bold text-foreground">Hai cách gắn tài liệu</h3><div className="mt-3 space-y-2"><button type="button" onClick={() => setShowAddLinkModal(true)} className="flex w-full items-center justify-between rounded-lg border border-dashed border-sky-300 bg-sky-50/40 px-3 py-2 text-left text-xs font-semibold text-sky-800 transition hover:bg-sky-50"><span>Gắn link Lark / URL <small className="block font-normal text-sky-700">Được tính vào điều kiện bằng chứng</small></span><ChevronRight className="h-3.5 w-3.5 text-sky-600" /></button><button type="button" onClick={() => setShowAddDocModal(true)} className="flex w-full items-center justify-between rounded-lg border border-border px-3 py-2 text-xs font-semibold text-foreground transition hover:bg-muted"><span>Tải file lên</span><ChevronRight className="h-3.5 w-3.5 text-muted-foreground" /></button></div></div>
                       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm"><h3 className="text-sm font-bold text-foreground">Nhật ký điểm chốt</h3><div className="mt-3 space-y-3"><div className="border-l-2 border-emerald-200 pl-3"><p className="text-xs font-semibold text-foreground">Chưa có sự kiện</p><p className="mt-0.5 text-[11px] text-muted-foreground">Lịch sử gắn link, tải file và duyệt tài liệu sẽ hiển thị tại đây.</p></div></div></div>
                     </aside>
                     </div>

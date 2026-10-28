@@ -342,7 +342,7 @@ export function TimesheetWorkbench() {
       <Drawer
         open={alertsOpen}
         title="Cảnh báo Timesheet"
-        description="Các cảnh báo được tính trực tiếp từ dữ liệu live trong phạm vi đang xem."
+        description="Cảnh báo được tính trực tiếp từ dữ liệu hiện tại trong phạm vi đang xem."
         icon={AlertTriangle}
         onClose={() => setAlertsOpen(false)}
       >

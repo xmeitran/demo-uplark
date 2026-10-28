@@ -311,7 +311,7 @@ export default function UsersPage() {
 
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/10 px-4 py-2.5 text-xs">
               <p className="text-muted-foreground">
-                Logwork đang hiển thị cho <span className="font-semibold text-foreground">{logworkPeriodLabel(period)}</span>.
+                Giờ đã ghi đang hiển thị cho <span className="font-semibold text-foreground">{logworkPeriodLabel(period)}</span>.
                 <span className="ml-1">Đổi “Kỳ tính giờ” để xem tháng hoặc khoảng ngày khác.</span>
               </p>
             </div>
@@ -334,7 +334,7 @@ export default function UsersPage() {
                     ))}
                     <th className="py-3 px-4 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">System role</th>
                     <th className="py-3 px-4 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Quyền P&amp;L</th>
-                    <th className="py-3 px-4 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground" title={`Tổng số giờ logwork trong ${logworkPeriodLabel(period)}`}>
+                    <th className="py-3 px-4 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground" title={`Tổng số giờ đã ghi trong ${logworkPeriodLabel(period)}`}>
                       <span className="block">Logwork</span>
                       <span className="mt-0.5 block normal-case tracking-normal text-[10px] font-medium text-muted-foreground">{logworkPeriodLabel(period)} (h)</span>
                     </th>
@@ -371,7 +371,7 @@ export default function UsersPage() {
                               <div>
                                 <p className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors">{user.name}</p>
                                 <p className="text-[11px] text-muted-foreground">{user.email}</p>
-                                <p className="mt-0.5 font-mono text-[10px] text-slate-500">{user.larkOpenId ?? "Chưa map Lark User ID"}</p>
+                                <p className="mt-0.5 font-mono text-[10px] text-slate-500">{user.larkOpenId ?? "Chưa liên kết Lark User ID"}</p>
                               </div>
                             </Link>
                           </td>

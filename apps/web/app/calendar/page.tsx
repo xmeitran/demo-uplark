@@ -947,7 +947,7 @@ export default function CalendarPage() {
         setBlocks(current => upsertCalendarEvent(current, savedEvent));
       }
 
-      triggerToast("Đã thêm kế hoạch mới thành công!", "success");
+      triggerToast("Đã thêm kế hoạch mới.", "success");
       setShowAddModal(false);
 
       // Reset form
@@ -1622,7 +1622,7 @@ export default function CalendarPage() {
       <CalendarConfirmModal
         isOpen={blockToComplete !== null}
         title="Hoàn thành kế hoạch"
-        message="Giờ thực tế dưới đây sẽ được ghi vào công việc cùng lúc hoàn thành kế hoạch. Mặc định bằng giờ kế hoạch; sửa nếu bạn làm khác. Xóa giờ này sau đó thì kế hoạch mở lại."
+        message="Khi hoàn thành kế hoạch, giờ thực tế bên dưới được ghi vào task. Giá trị mặc định bằng giờ kế hoạch và có thể điều chỉnh. Nếu xóa giờ này, kế hoạch sẽ mở lại."
         confirmLabel="Hoàn thành & ghi giờ"
         cancelLabel="Hủy"
         loading={isCompletingBlock}
@@ -1893,7 +1893,7 @@ export default function CalendarPage() {
                 </p>
                 {detailBlock.kind === "actual" && !detailBlock.hasExplicitWindow ? (
                   <p className="mt-1 text-[10.5px] font-medium text-amber-600">
-                    Log cũ chưa có giờ bắt đầu/kết thúc; đang hiển thị theo khung làm việc GMT+7.
+                    Bản ghi cũ chưa có giờ bắt đầu/kết thúc; đang hiển thị theo khung làm việc GMT+7.
                   </p>
                 ) : null}
               </div>

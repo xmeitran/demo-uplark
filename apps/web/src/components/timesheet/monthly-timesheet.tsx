@@ -240,8 +240,8 @@ export function MonthlyTimesheet({
                             <button
                               type="button"
                               onClick={() => setDayDetailPersonId(row.person.id)}
-                              aria-label={`Xem ${row.missingDays.length} ngày công chưa có log của ${row.person.name}`}
-                              title="Xem ngày công chưa có log"
+                              aria-label={`Xem ${row.missingDays.length} ngày công chưa ghi giờ của ${row.person.name}`}
+                              title="Xem ngày công chưa ghi giờ"
                               className={LOG_LINK_CLASS}
                             >
                               {row.missingDays.length}
@@ -339,7 +339,7 @@ function PersonDayDetailDrawer({
           </div>
 
           <div className="rounded-lg border border-primary/20 bg-primary/[0.04] px-3 py-2.5 text-[11.5px] leading-5 text-muted-foreground">
-            Danh sách dưới đây hiển thị cả ngày làm việc, cuối tuần và ngày lễ. Ngày làm việc không có log được đánh dấu để dễ nhắc bổ sung.
+            Danh sách dưới đây hiển thị cả ngày làm việc, cuối tuần và ngày lễ. Ngày làm việc chưa ghi giờ được đánh dấu để nhắc bổ sung.
           </div>
 
           <div className="space-y-2">
@@ -357,7 +357,7 @@ function PersonDayDetailDrawer({
                       </span>
                       <div className="min-w-0">
                         <p className="text-[12.5px] font-bold text-foreground">{formatDate(cell.date)}</p>
-                        <p className="mt-0.5 text-[11px] text-muted-foreground">{holiday ? "Ngày lễ / ngày off" : offDay ? "Cuối tuần" : logged ? `${dayLogs.length} dòng ghi nhận` : "Ngày làm việc chưa có log"}</p>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">{holiday ? "Ngày lễ / ngày off" : offDay ? "Cuối tuần" : logged ? `${dayLogs.length} dòng ghi nhận` : "Ngày làm việc chưa ghi giờ"}</p>
                       </div>
                     </div>
                     <div className="shrink-0 text-right">
@@ -376,7 +376,7 @@ function PersonDayDetailDrawer({
                       ))}
                       {dayLogs.length > 3 ? <p className="text-[10.5px] text-muted-foreground">+{dayLogs.length - 3} dòng khác</p> : null}
                       <button type="button" onClick={() => onOpenLogs(row)} className="mt-1 inline-flex items-center gap-1 text-[10.5px] font-semibold text-primary hover:underline">
-                        <FileSearch className="h-3 w-3" aria-hidden /> Mở toàn bộ log của nhân sự
+                        <FileSearch className="h-3 w-3" aria-hidden /> Mở toàn bộ Time Log của nhân sự
                       </button>
                     </div>
                   ) : null}

@@ -175,7 +175,7 @@ export function StaffCostsPage() {
             <tbody>
               {rows.map((row) => {
                 const waiting = row.waitingMinutes > 0;
-                const waitingText = `${formatHoursValue(row.waitingMinutes)} giờ log trong tháng đang chờ chi phí tháng này`;
+                const waitingText = `${formatHoursValue(row.waitingMinutes)} giờ đã ghi trong tháng đang chờ chi phí tháng này`;
                 return (
                   <tr key={row.userId} className={waiting ? "bg-amber-50" : "hover:bg-muted/25"}>
                     <td className={`${cell} font-mono text-xs`}>{row.employeeCode ?? <span className={toneClass.warn}>Chưa gán mã</span>}</td>
@@ -227,7 +227,7 @@ export function StaffCostsPage() {
         <PageHeader
           back={{ href: "/users", label: "Nhân sự" }}
           title="Chi phí nhân sự theo tháng"
-          subtitle="Nhập đơn giá cho một giờ làm việc, duyệt một lần, rồi P&L nhân với số giờ được tính."
+          subtitle="Nhập đơn giá một giờ làm việc và duyệt; P&L lấy đơn giá đã duyệt nhân với số giờ được tính."
           meta="Chỉ nhóm quyền chi phí · đơn vị nhập là đồng/giờ"
         />
         {body}
@@ -337,7 +337,7 @@ export function StaffMonthlyCosts({ userId }: Readonly<{ userId: string; default
             );
           })}</tbody>
         </table>
-        {!rows.length ? <p className="px-4 py-8 text-center text-sm text-muted-foreground">{api.loading ? "Đang tải…" : api.error ? "" : "Chưa có chi phí tháng nào cho nhân sự này. Tháng chưa có chi phí Đã duyệt thì giờ log của tháng đó ở Chờ xử lý."}</p> : null}
+        {!rows.length ? <p className="px-4 py-8 text-center text-sm text-muted-foreground">{api.loading ? "Đang tải…" : api.error ? "" : "Chưa có chi phí tháng nào cho nhân sự này. Tháng chưa có chi phí Đã duyệt thì giờ đã ghi của tháng đó ở trạng thái Chờ xử lý."}</p> : null}
       </div>
       {editing ? <StaffCostModal target={editing} locked={lockedKeys.includes(editing.periodKey)} reload={api.reload} onClose={() => setEditing(null)} /> : null}
     </section>

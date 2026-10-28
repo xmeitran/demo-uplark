@@ -263,9 +263,9 @@ export function ProjectMonths({ projectId, months, moneyVisible }: Readonly<{ pr
         <HelpToggle label="Cách đọc bảng này" storageKey="pnl-help-project-months">
           <li>Mỗi dòng là một tháng. Giờ đã ghi = đã tính vào P&amp;L + chờ xử lý + không tính. Chỉ giờ “đã tính” mới thành chi phí nhân sự.</li>
           <li>Chờ xử lý: giờ còn thiếu một thông tin (chưa có {STAFF_COST_PHRASE}, chưa phân loại…). Cột “Dữ liệu” báo còn thiếu và dẫn tới nơi bổ sung.</li>
-          <li>Không tính: giờ không thuộc P&amp;L dự án (việc nội bộ, ghi sau nghiệm thu, pre-sale của deal thua) — rê chuột vào “Giờ đã ghi” để xem.</li>
+          <li>Không tính: giờ không thuộc P&amp;L dự án (việc nội bộ, ghi sau nghiệm thu, pre-sale của deal thua) — di chuột vào “Giờ đã ghi” để xem.</li>
           <li>Trạng thái kỳ: tháng “Đã khóa” lấy số đã chốt khi khóa sổ; tháng chưa khóa tính theo dữ liệu hiện tại nên còn có thể đổi.</li>
-          <li>Chi phí = chi phí nhân sự + chi phí khác của tháng; rê chuột vào số để xem từng phần.</li>
+          <li>Chi phí = chi phí nhân sự + chi phí khác của tháng; di chuột vào số để xem từng phần.</li>
         </HelpToggle>
       </div>
       <div className="overflow-x-auto">
@@ -277,8 +277,8 @@ export function ProjectMonths({ projectId, months, moneyVisible }: Readonly<{ pr
               <th scope="col" title="Tháng đang mở, chờ khóa sổ hay đã khóa sổ" className={thClass}>Trạng thái kỳ</th>
               <th scope="col" title="Tổng giờ mọi người đã ghi cho dự án trong tháng (gồm cả giờ không tính)" className={thNumberClass}>Giờ đã ghi</th>
               <th scope="col" title="Phần giờ đủ điều kiện để quy ra chi phí của dự án (giờ đã tính vào P&L)" className={thNumberClass}>Đã tính</th>
-              <th scope="col" title="Giờ còn thiếu một thông tin nên chưa tính được — rê chuột vào số để xem lý do" className={thNumberClass}>Chờ xử lý</th>
-              {moneyVisible ? <th scope="col" title="Chi phí nhân sự + chi phí khác của tháng (đồng) — rê chuột vào số để xem từng phần" className={thNumberClass}>Chi phí</th> : null}
+              <th scope="col" title="Giờ còn thiếu một thông tin nên chưa tính được — di chuột vào số để xem lý do" className={thNumberClass}>Chờ xử lý</th>
+              {moneyVisible ? <th scope="col" title="Chi phí nhân sự + chi phí khác của tháng (đồng) — di chuột vào số để xem từng phần" className={thNumberClass}>Chi phí</th> : null}
               <th scope="col" title="Đủ, hoặc còn thiếu dữ liệu — bấm để mở nơi bổ sung" className={`${thClass} !text-center`}>Dữ liệu</th>
             </tr>
           </thead>

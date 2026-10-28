@@ -1081,7 +1081,7 @@ test("/users/costs: header back to Nhân sự, filter bar (search, month, status
   await expect(rowA.getByRole("cell")).toContainText(["NS-001", "Nhân sự A", "20,00", "3,00", "0", "1,28", "0", "4,30", "28,58", "162.381", "Import Excel", "Đã duyệt"]);
   const rowB = table.getByRole("row", { name: /Nhân sự B/ });
   await expect(rowB).toContainText("Chưa gán mã");
-  await expect(rowB).toContainText("105,5 giờ log trong tháng đang chờ chi phí tháng này");
+  await expect(rowB).toContainText("105,5 giờ đã ghi trong tháng đang chờ chi phí tháng này");
   await expect(rowB).toContainText("Chưa có");
   await expect(table.getByRole("button", { name: "Nhập chi phí tháng của Nhân sự B" })).toBeVisible();
 

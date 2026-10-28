@@ -117,7 +117,7 @@ function UserProjectParticipation({ userId }: { userId: string }) {
   if (!data) return <div className="space-y-3">{filter}<p className="text-xs text-muted-foreground">Đang tải trạng thái tham gia {periodLabel}…</p></div>;
 
   const groups = [
-    { title: `Project đang tham gia (${data.activeProjects.length})`, empty: "Không có Project đang tham gia trong kỳ.", items: data.activeProjects.map((project) => ({ ...project, note: `${Math.round(project.actualMinutes / 6) / 10}h trong kỳ` })) },
+    { title: `Project đang tham gia (${data.activeProjects.length})`, empty: "Không tham gia dự án nào trong kỳ.", items: data.activeProjects.map((project) => ({ ...project, note: `${Math.round(project.actualMinutes / 6) / 10}h trong kỳ` })) },
     { title: `Project ${PROJECT_STATUS_LABELS.on_hold} (${data.onHoldProjects.length})`, empty: `Không có Project ${PROJECT_STATUS_LABELS.on_hold}.`, items: data.onHoldProjects.map((project) => ({ ...project, note: "" })) }
   ];
   return (
@@ -140,7 +140,7 @@ function UserProjectParticipation({ userId }: { userId: string }) {
           </div>
         ))}
       </div>
-      <p className="text-xs text-muted-foreground">Khả năng nhận việc mới phải xét toàn bộ Project đang tham gia.</p>
+      <p className="text-xs text-muted-foreground">Khả năng nhận việc mới cần xét trên toàn bộ dự án đang tham gia.</p>
     </div>
   );
 }
@@ -363,7 +363,7 @@ export default function UserProfilePage() {
                       ))}
                     </div>
                   ) : (
-                    <EmptyPanel title="Chưa có project được gán" description="User này đã đồng bộ vào hệ thống nhưng chưa có grant hoặc project membership trong database." />
+                    <EmptyPanel title="Chưa có project được gán" description="Người dùng đã được đồng bộ nhưng chưa được cấp quyền hoặc thêm vào dự án nào." />
                   )}
 
                   {accounts.length ? (
@@ -432,7 +432,7 @@ export default function UserProfilePage() {
                     </div>
                   ) : null}
                   {!isTasksLoading && !tasksError && !tasks.length && (
-                    <EmptyPanel title="Chưa có task được gán" description="Không có task active nào đang gán cho user này trong bảng ProjectTask." />
+                    <EmptyPanel title="Chưa có task được gán" description="Người dùng này hiện không được giao task nào đang mở." />
                   )}
                 </section>
               )}

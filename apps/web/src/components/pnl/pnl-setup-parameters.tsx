@@ -77,7 +77,7 @@ export function PnlSetupParameters() {
         {data.moved.length ? (
           <section aria-label="Tham số đã chuyển đi" className="rounded-xl border border-border bg-muted/50 p-4 sm:p-5">
             <h2 className="!text-base font-bold text-foreground">Tham số đã chuyển đi</h2>
-            <p className="text-sm text-muted-foreground">Hiện trong giai đoạn chuyển, chuyển xong thì ẩn</p>
+            <p className="text-sm text-muted-foreground">Mục này chỉ hiển thị trong giai đoạn chuyển đổi.</p>
             <ul className="mt-3 space-y-2.5 text-sm text-foreground">
               {data.moved.map((entry) => { const href = movedHref(entry.movedTo); return <li key={entry.label}>{entry.label} → {href ? <Link href={href} className={linkClass}>{entry.movedTo}</Link> : entry.movedTo}</li>; })}
             </ul>

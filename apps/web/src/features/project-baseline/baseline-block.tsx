@@ -69,7 +69,7 @@ export function ProjectBaselineBlock({ projectId, refreshKey, className = "" }: 
           {baseline.locked ? <Lock aria-hidden="true" className="h-3 w-3" /> : <LockOpen aria-hidden="true" className="h-3 w-3" />}
           {baseline.locked ? "Baseline đã khóa" : "Chưa khóa"}
         </span>
-        <span className="text-xs text-muted-foreground">{baseline.locked ? "Đổi timeline hoặc giờ dự kiến phải được Admin duyệt, có lý do." : "Khóa khi G1 được duyệt."}</span>
+        <span className="text-xs text-muted-foreground">{baseline.locked ? "Thay đổi timeline hoặc giờ dự kiến cần nêu lý do và được Admin duyệt." : "Khóa khi G1 được duyệt."}</span>
         <span className="ml-auto flex items-center gap-3">
           {baseline.canCapture && !capturing ? <button type="button" onClick={() => { setCapturing(true); setError(null); }} className="text-xs font-semibold text-primary hover:underline">{baseline.locked ? "Cập nhật baseline" : "Khóa baseline"}</button> : null}
           {baseline.history.length ? (

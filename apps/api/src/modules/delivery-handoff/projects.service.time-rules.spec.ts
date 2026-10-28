@@ -179,6 +179,8 @@ describe("time log rules (D-03, D-09, D-13, D-14, D-16, V-07)", () => {
     // The cap reads every project: the daily total is not filtered by task or project.
     expect(full.prisma.taskTimeEntry.aggregate.mock.calls[0][0].where).not.toHaveProperty("projectId");
     expect(full.prisma.taskTimeEntry.aggregate.mock.calls[0][0].where).not.toHaveProperty("taskId");
+    // ...and it is per person: the other PICs of the same task never add up into this person's 8 hours.
+    expect(full.prisma.taskTimeEntry.aggregate.mock.calls[0][0].where).toMatchObject({ userId: "usr-1" });
 
     const fits = setup({ logged: { minutes: STANDARD_DAY_MINUTES - 120 } });
     await expect(fits.service.createTimeEntry("task-1", log(120), actor, "usr-1")).resolves.toMatchObject({ id: "time-1" });
@@ -231,6 +233,9 @@ describe("planning blocks (D-09, D-13, D-15)", () => {
     await expect(full.service.createTaskPlanningBlock("task-1", block, admin, "usr-1")).rejects.toBeInstanceOf(ConflictException);
     // The day is the person's local day, the same window actual hours use.
     expect(full.prisma.taskPlanningBlock.aggregate.mock.calls[0][0].where.startAt).toEqual({ gte: new Date("2026-10-05T17:00:00.000Z"), lt: new Date("2026-10-06T17:00:00.000Z") });
+    // Per person, across every task: other PICs' plans on the same task are not added in.
+    expect(full.prisma.taskPlanningBlock.aggregate.mock.calls[0][0].where).toMatchObject({ userId: "usr-1" });
+    expect(full.prisma.taskPlanningBlock.aggregate.mock.calls[0][0].where).not.toHaveProperty("taskId");
 
     const holiday = setup({ dayOff: { name: "Nghỉ lễ" } });
     await expect(holiday.service.createTaskPlanningBlock("task-1", block, admin, "usr-1")).rejects.toThrow("Nghỉ lễ");

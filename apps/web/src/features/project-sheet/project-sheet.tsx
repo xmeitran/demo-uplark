@@ -91,7 +91,7 @@ export function ProjectSheet({ projects, returnTo, pushedIds, sortKey, sortDir, 
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"><BriefcaseBusiness className="h-4 w-4" /></span>
             <h2 className="text-lg font-bold text-foreground">Project Sheet</h2>
           </div>
-          <p className="text-sm text-muted-foreground">Tổng quan kế hoạch, tiến độ và giờ của từng project.</p>
+          <p className="text-sm text-muted-foreground">Tổng quan kế hoạch, tiến độ và giờ của từng dự án.</p>
         </div>
         <span className="w-fit rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">{projects.length} project đang hiển thị</span>
       </header>

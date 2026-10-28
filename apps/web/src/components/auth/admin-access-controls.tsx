@@ -109,7 +109,7 @@ export function AdminMemberControls({userId,status,currentRole,employmentStatus=
   if(!isAdminView(user))return null;
   return <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
     <h2 className="!text-sm font-bold text-foreground">Workspace access</h2>
-    <p className="mt-0.5 text-xs text-muted-foreground">Chỉ admin thấy mục này. Đổi vai trò sẽ thu hồi session hiện tại của user.</p>
+    <p className="mt-0.5 text-xs text-muted-foreground">Mục này chỉ hiển thị với Admin. Đổi vai trò sẽ thu hồi phiên đăng nhập hiện tại của người dùng.</p>
     <div className="mt-4 space-y-2">
       <label className={controlLabel}>Vai trò nghiệp vụ</label>
       <CustomDropdown label="" value={businessRole} options={businessRoleOptions} onChange={setBusinessRole}/>

@@ -29,7 +29,7 @@ export default function SettingsPage() {
         <main className={pageMainClassName}>
           <PageHeader
             title="Cấu hình workspace"
-            subtitle="Hồ sơ, bảo mật, phiên đăng nhập, workspace và giao diện của tài khoản bạn."
+            subtitle="Hồ sơ, bảo mật, phiên đăng nhập, workspace và giao diện của tài khoản."
             actions={isWorkspaceAdmin ? <HeaderLinkButton href="/admin" icon={<Shield className="h-4 w-4" />}>Admin</HeaderLinkButton> : undefined}
           />
 

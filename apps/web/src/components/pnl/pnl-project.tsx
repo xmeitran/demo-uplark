@@ -221,7 +221,7 @@ function ProjectPeople({ people, moneyVisible }: Readonly<{ people: PnlProjectPe
     <section aria-labelledby="pnl-people-title" className={cardClass}>
       <div className="px-4 pb-3 pt-4 sm:px-5">
         <h2 id="pnl-people-title" className={sectionTitleClass}>Nhân sự tham gia</h2>
-        <p className={`!mt-0.5 ${mutedNoteClass}`}>Giờ và chi phí của từng người, cộng dồn cả dự án. Rê chuột vào “Thiếu” để xem còn thiếu dữ liệu gì.</p>
+        <p className={`!mt-0.5 ${mutedNoteClass}`}>Giờ và chi phí của từng người, cộng dồn cả dự án. Di chuột vào “Thiếu” để xem dữ liệu còn thiếu.</p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[640px] table-fixed border-separate border-spacing-0 text-left">

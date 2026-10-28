@@ -2075,7 +2075,7 @@ test("Create Project sends the \"Không duyệt\" milestone mode", async ({ page
   await mode.click();
   await expect(page.getByRole("option")).toHaveText(["Yêu cầu duyệt", "Không duyệt"]);
   await page.getByRole("option", { name: "Không duyệt", exact: true }).click();
-  await expect(page.getByText("Milestone mở hết từ đầu, hết task là tự hoàn thành.")).toBeVisible();
+  await expect(page.getByText("Các milestone mở ngay từ đầu và tự hoàn thành khi mọi task đã xong.")).toBeVisible();
   await page.getByRole("button", { name: "Create Project", exact: true }).click();
   await expect.poll(() => submitted).not.toBeNull();
   expect(submitted).toMatchObject({ name: "No Review Project", milestoneApprovalRequired: false });
@@ -4116,7 +4116,7 @@ test("calendar keeps paginated overlapping events within bounds and completing a
   await detailDialog.getByRole("button", { name: "Hoàn thành kế hoạch", exact: true }).click();
   const completionDialog = page.getByRole("dialog", { name: "Hoàn thành kế hoạch" });
   // The actual hours are confirmed in the dialog, pre-filled with the plan's window (D-15: never copied silently).
-  await expect(completionDialog).toContainText("Giờ thực tế dưới đây sẽ được ghi vào công việc");
+  await expect(completionDialog).toContainText("Khi hoàn thành kế hoạch, giờ thực tế bên dưới được ghi vào task.");
   await expect(completionDialog.getByLabel("Bắt đầu thực tế")).not.toHaveValue("");
   await completionDialog.getByRole("button", { name: "Hoàn thành & ghi giờ", exact: true }).click();
 
@@ -4676,7 +4676,7 @@ test("task detail completes a planning block and logs the confirmed hours in the
   await page.getByText("Kế hoạch hiển thị sau khi tải lại", { exact: true }).click();
   await page.getByRole("button", { name: "Hoàn thành kế hoạch", exact: true }).click();
   const completionDialog = page.getByRole("dialog", { name: "Hoàn thành kế hoạch" });
-  await expect(completionDialog).toContainText("Giờ thực tế dưới đây sẽ được ghi vào công việc");
+  await expect(completionDialog).toContainText("Khi hoàn thành kế hoạch, giờ thực tế bên dưới được ghi vào task.");
   await expect(completionDialog.getByLabel("Bắt đầu thực tế")).toHaveValue("09:00");
   await expect(completionDialog.getByLabel("Kết thúc thực tế")).toHaveValue("10:00");
   await completionDialog.getByRole("button", { name: "Hoàn thành & ghi giờ", exact: true }).click();
@@ -4906,7 +4906,7 @@ test("task detail subtasks are loaded, created, and checked through backend task
   await page.goto(`/tasks/${liveTask.id}`);
   await expect(page.getByRole("heading", { name: liveTask.title })).toBeVisible();
   await expect(page.getByText("Khảo sát và ghi nhận yêu cầu chi tiết")).toHaveCount(0);
-  await expect(page.getByText("Chưa có subtask nào. Thêm bên dưới!")).toBeVisible();
+  await expect(page.getByText("Chưa có subtask. Thêm subtask ở ô bên dưới.")).toBeVisible();
 
   await page.getByPlaceholder("Thêm subtask mới...").fill("Checklist backend thật");
   await page.getByRole("button", { name: "Thêm" }).click();

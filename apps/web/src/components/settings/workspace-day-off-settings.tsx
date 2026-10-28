@@ -133,7 +133,7 @@ export function WorkspaceDayOffSettings() {
       const body = await response.json().catch(() => null);
       if (!response.ok) throw new Error(responseError(body, "Không lưu được ngày nghỉ."));
       const count = Number((body as { meta?: { created?: number } })?.meta?.created ?? 1);
-      setNotice(editing ? "Đã cập nhật ngày nghỉ." : `Đã khóa ${count} ngày; user sẽ không thể lập kế hoạch hoặc logwork trong các ngày này.`);
+      setNotice(editing ? "Đã cập nhật ngày nghỉ." : `Đã khóa ${count} ngày; không thể lập kế hoạch hoặc ghi giờ trong các ngày này.`);
       resetEditor();
       await load();
     } catch (reason) {
@@ -145,7 +145,7 @@ export function WorkspaceDayOffSettings() {
 
   const toggleActive = async (item: WorkspaceDayOffSummary) => {
     const nextActive = !item.isActive;
-    if (!nextActive && !window.confirm(`Ngừng áp dụng ngày nghỉ ${dateLabel(item.date)}? Các giờ trên ngày này sẽ được tính billable trở lại nếu log gốc đã bật tính phí.`)) return;
+    if (!nextActive && !window.confirm(`Ngừng áp dụng ngày nghỉ ${dateLabel(item.date)}? Giờ đã ghi trong ngày này sẽ được tính phí trở lại nếu bản ghi gốc có bật tính phí.`)) return;
     setSaving(true);
     setError(null);
     setNotice(null);
@@ -160,7 +160,7 @@ export function WorkspaceDayOffSettings() {
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) throw new Error(responseError(body, "Không đổi được trạng thái ngày nghỉ."));
-      setNotice(nextActive ? `Đã khóa ngày ${dateLabel(item.date)}; user không thể lập kế hoạch hoặc logwork.` : `Đã bỏ khóa ngày ${dateLabel(item.date)}.`);
+      setNotice(nextActive ? `Đã khóa ngày ${dateLabel(item.date)}; không thể lập kế hoạch hoặc ghi giờ.` : `Đã bỏ khóa ngày ${dateLabel(item.date)}.`);
       await load();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Không đổi được trạng thái ngày nghỉ.");
@@ -181,7 +181,7 @@ export function WorkspaceDayOffSettings() {
             <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-amber-700">WORKSPACE POLICY</p>
             <h2 id="workspace-day-off-title" className="mt-1 text-lg font-bold tracking-tight text-foreground">Ngày nghỉ &amp; ngày lễ</h2>
             <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-              Đăng ký một lần cho toàn workspace. Ngày đã khóa sẽ được đánh dấu trên Calendar, loại khỏi ngày làm việc chuẩn và chặn user lập kế hoạch/logwork.
+              Áp dụng cho toàn workspace. Ngày đã khóa được đánh dấu trên Calendar, loại khỏi ngày làm việc chuẩn và không cho phép lập kế hoạch hoặc ghi giờ.
             </p>
           </div>
         </div>
@@ -211,7 +211,7 @@ export function WorkspaceDayOffSettings() {
           <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
           <div>
             <p className="font-semibold text-slate-700">Chế độ chỉ đọc</p>
-            <p className="mt-0.5">Chỉ Founder/GM hoặc Workspace Admin được tạo, sửa và khóa ngày nghỉ. Bạn vẫn xem được lịch đã cấu hình.</p>
+            <p className="mt-0.5">Chỉ Founder/GM hoặc Workspace Admin được tạo, sửa và khóa ngày nghỉ. Các tài khoản khác chỉ xem được lịch đã cấu hình.</p>
           </div>
         </div>
       ) : (
@@ -219,7 +219,7 @@ export function WorkspaceDayOffSettings() {
           <div className="mb-3 flex items-center justify-between gap-2">
             <div>
               <h3 className="text-sm font-bold text-foreground">{editing ? "Sửa chính sách ngày nghỉ" : "Khóa ngày nghỉ mới"}</h3>
-              {!editing ? <p className="mt-0.5 text-xs text-muted-foreground">Chọn một ngày hoặc một khoảng ngày. Mỗi ngày sẽ được lưu thành một record riêng.</p> : null}
+              {!editing ? <p className="mt-0.5 text-xs text-muted-foreground">Chọn một ngày hoặc một khoảng ngày. Mỗi ngày được lưu thành một bản ghi riêng.</p> : null}
             </div>
             {editing ? <button type="button" onClick={resetEditor} className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted" aria-label="Hủy sửa"><X className="h-4 w-4" /></button> : null}
           </div>
@@ -246,7 +246,7 @@ export function WorkspaceDayOffSettings() {
           </div>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <span className="inline-flex items-center gap-1.5 text-[11px] text-success">
-              <LockKeyhole className="h-3.5 w-3.5" /> User sẽ không thể lập kế hoạch hoặc logwork vào ngày đã khóa.
+              <LockKeyhole className="h-3.5 w-3.5" /> Không thể lập kế hoạch hoặc ghi giờ vào ngày đã khóa.
             </span>
             <button disabled={saving} type="submit" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-sm transition hover:opacity-90 disabled:cursor-wait disabled:opacity-60">
               {editing ? <Save className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
@@ -294,7 +294,7 @@ export function WorkspaceDayOffSettings() {
                       <p className="font-semibold text-foreground">{item.name}</p>
                       <p className="mt-0.5 text-[10px] text-muted-foreground">{categoryLabel(item.category)}{item.note ? ` · ${item.note}` : ""}</p>
                     </td>
-                    <td className="px-4 py-3">{item.isActive ? <span className="inline-flex flex-col gap-0.5 text-success"><span className="inline-flex items-center gap-1.5 font-semibold"><LockKeyhole className="h-3.5 w-3.5" />Đã block workspace</span><span className="pl-5 text-[10px] text-muted-foreground">Không lập kế hoạch / logwork</span></span> : <span className="text-muted-foreground">Không còn block</span>}</td>
+                    <td className="px-4 py-3">{item.isActive ? <span className="inline-flex flex-col gap-0.5 text-success"><span className="inline-flex items-center gap-1.5 font-semibold"><LockKeyhole className="h-3.5 w-3.5" />Đã khóa toàn workspace</span><span className="pl-5 text-[10px] text-muted-foreground">Không lập kế hoạch / ghi giờ</span></span> : <span className="text-muted-foreground">Không còn khóa</span>}</td>
                     <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${item.isActive ? "bg-success/10 text-success" : "bg-muted text-muted-foreground"}`}>{item.isActive ? "Đang off" : "Đã mở khóa"}</span></td>
                     {canManage ? <td className="px-4 py-3 text-right">
                       <div className="inline-flex items-center gap-1">
@@ -313,7 +313,7 @@ export function WorkspaceDayOffSettings() {
       </div>
 
       <p className="mt-3 flex items-start gap-1.5 text-[10.5px] leading-relaxed text-muted-foreground">
-        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Ngày nghỉ chỉ chặn phát sinh công việc mới và loại khỏi billable; dữ liệu cũ vẫn được giữ để đối soát, không tự sửa hóa đơn đã phát hành.
+        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Ngày nghỉ chỉ chặn phát sinh công việc mới và loại khỏi giờ tính phí; dữ liệu cũ vẫn được giữ để đối soát, không tự sửa hóa đơn đã phát hành.
       </p>
     </section>
   );

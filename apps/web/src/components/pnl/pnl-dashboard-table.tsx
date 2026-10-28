@@ -14,7 +14,7 @@ type Column = { label: string; title: string; sort?: PnlDashboardSort; numeric?:
 const PROJECT: Column = { label: "Dự án", title: "Tên dự án (bấm để mở P&L chi tiết), khách hàng và PIC", sort: "name" };
 const LABOR: Column = { label: "Chi phí nhân sự", title: "Giờ được tính vào P&L × đơn giá giờ của từng người trong tháng (đồng)", sort: "laborCost", numeric: true, width: "w-[148px]" };
 const OTHER: Column = { label: "Chi phí khác", title: "Quỹ chi phí chung được chia, chi phí riêng của dự án, hoa hồng… (đồng)", sort: "otherCost", numeric: true, width: "w-[140px]" };
-const RESULT: Column = { label: "Kết quả", title: "Chính thức, Tạm tính hay Không tính được — rê chuột vào nhãn để xem lý do", center: true, width: "w-[136px]" };
+const RESULT: Column = { label: "Kết quả", title: "Chính thức, Tạm tính hay Không tính được — di chuột vào nhãn để xem lý do", center: true, width: "w-[136px]" };
 
 // Seven columns at most, fixed widths: the table fits its card from 1280px up without scrolling sideways.
 const ACCEPTED_COLUMNS: Column[] = [
@@ -140,7 +140,7 @@ export function DashboardProjectTable({ data, state, moneyVisible, returnTo, onC
           <li>Doanh thu dự án do Admin/PM nhập tay theo từng dự án. Dự án đang triển khai vẫn hiện trong bảng; EBIT chỉ tính khi đủ dữ liệu theo kỳ.</li>
           <li>EBIT = doanh thu dự án − chi phí nhân sự − chi phí khác. Dòng nhỏ dưới EBIT là biên EBIT = EBIT ÷ doanh thu dự án.</li>
           <li>{RESULT_MEANING.official} {RESULT_MEANING.provisional}</li>
-          <li>{RESULT_MEANING.not_computable} Lý do ghi ngay dưới tên dự án; rê chuột vào nhãn ở cột Kết quả để xem đủ.</li>
+          <li>{RESULT_MEANING.not_computable} Lý do ghi ngay dưới tên dự án; di chuột vào nhãn ở cột Kết quả để xem đủ.</li>
         </HelpToggle>
       </div>
       <Tabs

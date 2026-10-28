@@ -81,7 +81,7 @@ export function PersonalLeavePanel() {
         <div className="min-w-0 flex-1">
           <h2 className="!text-base font-bold text-slate-900">Ngày nghỉ cá nhân</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Lấy từ đơn nghỉ phép đã duyệt trên Lark Approval, chỉ xem. Nghỉ cả ngày thì không ghi giờ và không bị nhắc thiếu log; nghỉ nửa ngày thì trần giờ của ngày còn một nửa.
+            Đồng bộ từ đơn nghỉ phép đã duyệt trên Lark Approval (chỉ xem). Ngày nghỉ cả ngày không ghi giờ và không nhận nhắc thiếu giờ; ngày nghỉ nửa ngày có giới hạn giờ giảm một nửa.
           </p>
           <p className="mt-1 text-sm text-slate-600">
             {lastSync ? `Đồng bộ gần nhất: ${dateTime(lastSync.at)} · ${SYNC_STATUS_LABELS[lastSync.status] ?? lastSync.status}${lastSync.detail ? ` — ${lastSync.detail}` : ""}` : "Chưa đồng bộ lần nào."}

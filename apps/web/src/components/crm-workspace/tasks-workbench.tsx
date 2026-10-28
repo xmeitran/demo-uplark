@@ -1500,7 +1500,7 @@ export function EditTaskModal({
             onChange={() => undefined}
             disabled
           />
-          <p className="col-span-full -mt-2 text-[11px] text-slate-500">{task?.parentTaskId ? "Sub-task theo Lớp 1 của task cha. " : "Chỉ PM/Admin đổi Lớp 1 của task. "}Lớp 2 do hệ thống suy ra, chỉ đọc.</p>
+          <p className="col-span-full -mt-2 text-[11px] text-slate-500">{task?.parentTaskId ? "Sub-task dùng Lớp 1 của task cha. " : "Chỉ PM/Admin được đổi Lớp 1 của task. "}Lớp 2 do hệ thống tự xác định (chỉ đọc).</p>
         </div>
 
         <div className="task-form-grid" style={{ zIndex: 1002 }}>
@@ -1862,7 +1862,7 @@ export function LogWorkModal({
     >
       {step === "choice" && (
         <div className="py-4">
-          <p className="text-xs text-slate-500 text-center" style={{ marginBottom: "28px", marginTop: "4px" }}>Chọn hình thức bạn muốn thực hiện cho công việc này:</p>
+          <p className="text-xs text-slate-500 text-center" style={{ marginBottom: "28px", marginTop: "4px" }}>Chọn thao tác cho task này:</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-stretch">
             {/* Log Actual Card */}
             <button
@@ -1878,7 +1878,7 @@ export function LogWorkModal({
                 </div>
                 <h3 className="text-sm font-bold text-slate-800 mb-1.5">Ghi giờ thực tế</h3>
                 <p className="text-[11px] text-slate-400 font-normal leading-normal max-w-[200px]">
-                  Ghi nhận số giờ/khung giờ làm thực tế bạn đã thực hiện để lưu vào lịch sử công việc.
+                  Ghi số giờ hoặc khung giờ đã làm thực tế vào lịch sử của task.
                 </p>
               </div>
             </button>
@@ -1895,7 +1895,7 @@ export function LogWorkModal({
                 </div>
                 <h3 className="text-sm font-bold text-slate-800 mb-1.5">Lên kế hoạch dự kiến</h3>
                 <p className="text-[11px] text-slate-400 font-normal leading-normal max-w-[200px]">
-                  Đặt/Cập nhật giờ kế hoạch để lập kế hoạch phân bổ thời gian.
+                  Đặt hoặc cập nhật giờ kế hoạch để phân bổ thời gian.
                 </p>
               </div>
             </button>
@@ -2001,7 +2001,7 @@ export function LogWorkModal({
             />
           </div>
           {people.principalUserId && userId === people.principalUserId ? (
-            <p className="-mt-2 mb-3 text-[11px] text-slate-500">Mặc định là tài khoản đang đăng nhập. Bạn có thể đổi người thực hiện nếu có quyền.</p>
+            <p className="-mt-2 mb-3 text-[11px] text-slate-500">Mặc định là tài khoản đang đăng nhập; có thể đổi người thực hiện nếu có quyền.</p>
           ) : null}
           {step === "actual" ? (
             <>

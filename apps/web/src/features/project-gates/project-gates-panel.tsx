@@ -92,6 +92,7 @@ function GateCard({ gate, onAction, extend }: { gate: ProjectGateSummary; onActi
   const { definition, sla } = gate;
   const passed = gate.status === "approved" || gate.status === "exception";
   // The G7 hours condition gets its own block (counts by reason + link), so its sentence is not repeated in the list.
+  // Matches the API's message (gates.ts g7PendingHoursMessage): a key, not display text — keep in step with the API.
   const otherRequirements = gate.missingRequirements.filter((item) => !(gate.pnlPendingCheck?.blocked && item.startsWith("Còn giờ log Chờ xử lý")));
   return (
     <article aria-label={`Điểm chốt ${gate.code}`} className={`rounded-xl border border-border bg-card p-4 shadow-sm ${gate.reachable || passed ? "" : "opacity-70"}`}>
@@ -155,11 +156,11 @@ function GateCard({ gate, onAction, extend }: { gate: ProjectGateSummary; onActi
       {/* P&L spec 12/10 point 6: the data condition of G7, shown before the approve action. */}
       {gate.pnlPendingCheck?.blocked ? (
         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status" aria-label={`Giờ Chờ xử lý chặn duyệt ${gate.code}`}>
-          <p className="font-semibold">Chưa duyệt được {gate.code}: còn giờ log Chờ xử lý vì thiếu hoặc sai phân loại</p>
+          <p className="font-semibold">Chưa duyệt được {gate.code}: còn giờ đã ghi ở trạng thái Chờ xử lý do thiếu hoặc sai phân loại</p>
           <ul className="mt-1 space-y-0.5">
             {gate.pnlPendingCheck.reasons.map((item) => <li key={item.reason}>{item.label}: {item.entryCount} giờ log · {(Math.round(item.minutes / 6) / 10).toLocaleString("vi-VN")} giờ</li>)}
           </ul>
-          <p className="mt-1"><a href={gate.pnlPendingCheck.worklistHref} className="font-semibold underline">Mở danh sách giờ chờ</a> · Giờ chỉ chờ cost rate không chặn {gate.code} (P&amp;L để Tạm tính).</p>
+          <p className="mt-1"><a href={gate.pnlPendingCheck.worklistHref} className="font-semibold underline">Mở danh sách giờ chờ</a> · Giờ chỉ chờ đơn giá giờ thì không chặn {gate.code} (P&amp;L để Tạm tính).</p>
         </div>
       ) : null}
 
@@ -246,7 +247,7 @@ export function ProjectGatesPanel({ projectId, members, onChanged, onDocumentTyp
         <div>
           <h3 className="text-sm font-bold text-foreground">Điểm chốt chuyển tiếp G1–G8</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">{list.milestoneApprovalRequired === false
-            ? "Dự án không duyệt milestone: mọi stage đều mở, điểm chốt tự qua theo thứ tự khi stage hết task, không cần nộp hay duyệt hồ sơ."
+            ? "Dự án không yêu cầu duyệt milestone: mọi stage đều mở; điểm chốt tự thông qua theo thứ tự khi stage hoàn thành hết task, không cần nộp hoặc duyệt hồ sơ."
             : "Stage hoặc milestone kế tiếp chỉ mở khi hồ sơ đủ tài liệu bắt buộc và được duyệt. G1, G2, G4, G7 chờ khách xác nhận sau khi PM duyệt nội bộ."}</p>
         </div>
         <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-bold text-muted-foreground">{gatesPassedCount(list.data)}/{list.data.length} điểm chốt đã mở</span>
