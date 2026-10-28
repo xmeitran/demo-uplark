@@ -117,12 +117,14 @@ function extensionPayload(type: IssueLogType, values: Values, keys?: (key: strin
   return extension;
 }
 
-export function IssueLogPanel({ projectId, teamMembers, milestones, milestoneGroups, initialRiskId, onRecordsChange, onChanged }: {
+export function IssueLogPanel({ projectId, teamMembers, milestones, milestoneGroups, initialRiskId, initialReportTaskId, onRecordsChange, onChanged }: {
   projectId: string;
   teamMembers: Member[];
   milestones: LocationMilestone[];
   milestoneGroups: LocationGroup[];
   initialRiskId?: string;
+  /** "Báo vấn đề cho task này" on the Task Board: opens the report dialog already placed on that task. */
+  initialReportTaskId?: string;
   /** Lets the page keep its own summaries (tab badge, overview) in step with the log. */
   onRecordsChange?: (records: ProjectRiskSummary[]) => void;
   /** A step of the log can change the project server-side (status proposal, warnings): lets the page reload it. */
@@ -178,7 +180,18 @@ export function IssueLogPanel({ projectId, teamMembers, milestones, milestoneGro
   const count = (type: IssueLogType) => open.filter((record) => record.type === type).length;
   const set = (key: string) => (value: string) => setValues((current) => ({ ...current, [key]: value }));
 
-  const openCreate = () => { setValues({ type: "issue", severity: "medium" }); setFormError(null); setForm({ mode: "create" }); };
+  const openCreate = (location: Values = {}) => { setValues({ type: "issue", severity: "medium", ...location }); setFormError(null); setForm({ mode: "create" }); };
+  useEffect(() => {
+    if (!initialReportTaskId) return;
+    const group = milestoneGroups.find((candidate) => candidate.stages.some((stage) => stage.tasks.some((task) => task.id === initialReportTaskId)));
+    const stage = group?.stages.find((candidate) => candidate.tasks.some((task) => task.id === initialReportTaskId));
+    openCreate({ milestoneId: group && isReal(group.milestoneId) ? group.milestoneId : "", stageId: stage && isReal(stage.id) ? stage.id : "", taskId: initialReportTaskId });
+    // Once per link: drop the parameter so coming back to the tab does not reopen the dialog.
+    const url = new URL(window.location.href);
+    url.searchParams.delete("reportTask");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialReportTaskId]);
   const openEdit = (record: ProjectRiskSummary) => { setValues(recordValues(record)); setFormError(null); setForm({ mode: "edit", record }); };
   const openAction = (record: ProjectRiskSummary, action: IssueLogAllowedAction) => { setValues({ ...recordValues(record), note: "", targetType: "" }); setFormError(null); setForm({ mode: "action", record, action }); };
 
@@ -237,7 +250,7 @@ export function IssueLogPanel({ projectId, teamMembers, milestones, milestoneGro
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div><p className="text-[10px] font-black uppercase tracking-[0.16em] text-primary">SỔ VẤN ĐỀ</p><h2 className="mt-1 !text-base font-black tracking-tight text-foreground">Sổ vấn đề</h2><p className="mt-1 text-xs text-muted-foreground">Blocker, Risk và Issue của dự án. Bình luận và chat không thay cho sổ.</p></div>
-        <button type="button" onClick={openCreate} className="inline-flex min-h-9 items-center justify-center rounded-lg bg-primary px-3 text-xs font-bold text-primary-foreground"><Plus className="mr-1.5 h-3.5 w-3.5" /> Báo vấn đề</button>
+        <button type="button" onClick={() => openCreate()} className="inline-flex min-h-9 items-center justify-center rounded-lg bg-primary px-3 text-xs font-bold text-primary-foreground"><Plus className="mr-1.5 h-3.5 w-3.5" /> Báo vấn đề</button>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {[

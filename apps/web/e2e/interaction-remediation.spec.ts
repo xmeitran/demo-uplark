@@ -647,6 +647,71 @@ test.describe("interaction audit remediation", () => {
     expect(belowControls.timeEntryCalls()).toBe(1);
   });
 
+  test("task detail attaches a link next to file uploads", async ({ page }) => {
+    await installCoreReadMocks(page);
+    await installProjectListMocks(page);
+    await installTaskDetailMocks(page, {});
+
+    let fileBody: Record<string, unknown> = {};
+    const linkFile = () => ({
+      id: "file-link-qa",
+      accountId: account.id,
+      projectId: project.id,
+      fileName: String(fileBody.fileName),
+      contentType: "text/uri-list",
+      byteSize: 0,
+      storageProvider: "external",
+      externalUrl: String(fileBody.externalUrl),
+      ownerType: "task",
+      ownerId: task.id,
+      customerVisible: false,
+      internalOnly: true,
+      allowedRoles: [],
+      scanStatus: "pending",
+      status: "active",
+      createdAt: "2026-07-15T03:00:00.000Z"
+    });
+    await page.route("**/api/files**", async route => {
+      fileBody = route.request().postDataJSON();
+      await fulfillJson(route, linkFile(), 201);
+    });
+    await page.route(`**/api/tasks/${task.id}/attachments**`, async route => {
+      if (route.request().method() !== "POST") return route.fallback();
+      expect(route.request().postDataJSON()).toEqual({ fileObjectId: "file-link-qa" });
+      await fulfillJson(route, {
+        id: "att-link-qa",
+        taskId: task.id,
+        accountId: account.id,
+        projectId: project.id,
+        fileObjectId: "file-link-qa",
+        syncStatus: "not_synced",
+        file: linkFile(),
+        createdAt: "2026-07-15T03:00:00.000Z"
+      }, 201);
+    });
+
+    await page.goto(`/tasks/${task.id}`);
+    await page.getByRole("button", { name: "Đính kèm link" }).click();
+    // No scheme typed: the page adds https:// before the API (which only takes http/https) sees it.
+    await page.getByLabel("Đường dẫn").fill("figma.com/file/qa");
+    await page.getByLabel("Tên hiển thị").fill("Spec Figma");
+    await page.getByRole("button", { name: "Thêm link" }).click();
+
+    const link = page.getByRole("link", { name: "Spec Figma" });
+    await expect(link).toHaveAttribute("href", "https://figma.com/file/qa");
+    await expect(link).toHaveAttribute("target", "_blank");
+    await expect(page.getByText("Tài liệu đính kèm (1)")).toBeVisible();
+    await expect(page.getByLabel("Đường dẫn")).toHaveCount(0);
+    expect(fileBody).toMatchObject({
+      storageProvider: "external",
+      externalUrl: "https://figma.com/file/qa",
+      fileName: "Spec Figma",
+      ownerType: "task",
+      ownerId: task.id,
+      accountId: account.id
+    });
+  });
+
   test("project document upload links bytes, while version and grant failures remain visible", async ({ page }) => {
     await installCoreReadMocks(page);
     await installProjectListMocks(page);

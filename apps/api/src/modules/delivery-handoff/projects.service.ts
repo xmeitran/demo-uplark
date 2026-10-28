@@ -259,7 +259,8 @@ const taskInclude = {
   ownerTeam: true,
   archivedBy: true,
   statusHistory: { orderBy: { changedAt: "desc" as const }, take: 20 },
-  timeEntries: { include: { user: true, dayOff: true }, orderBy: { workDate: "desc" as const }, take: 100 }
+  timeEntries: { include: { user: true, dayOff: true }, orderBy: { workDate: "desc" as const }, take: 100 },
+  _count: { select: { attachments: true } }
 };
 
 const portalTaskInclude = {

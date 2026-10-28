@@ -377,6 +377,7 @@ export function mapTaskSummary(task: any): ProjectTaskSummary {
     ticketId: task.ticketId ?? undefined,
     parentTaskId: task.parentTaskId ?? undefined,
     sortOrder: task.sortOrder ?? 10,
+    attachmentCount: task._count?.attachments,
     title: task.title,
     description: task.description ?? undefined,
     taskType: task.taskType,

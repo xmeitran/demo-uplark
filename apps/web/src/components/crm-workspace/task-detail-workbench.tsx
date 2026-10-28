@@ -24,12 +24,12 @@ import type {
   OpportunitySummary,
   ProjectTaskSummary,
   TaskPlanningBlockSummary,
-  TaskAttachmentSummary,
   TransitionProjectTaskInput,
   CreateTaskTimeEntryResponse,
   CreateTaskTimeEntryInput
 } from "@b2b-crm/contracts";
 import { ShopifyIcon, PolarisFallbackText, type ShopifyIconName } from "../shopify-ui";
+import { attachmentStyle, createTaskAttachment, formatAttachmentSize, linkFileInput, listTaskAttachments, readFileAsBase64, type TaskAttachmentView } from "@/lib/task-attachments";
 import {
   loadTaskDrafts,
   persistTaskDrafts,
@@ -249,56 +249,6 @@ const ConfirmModal = ({
   );
 };
 
-type TaskAttachmentView = {
-  id: string;
-  fileObjectId?: string;
-  ext: string;
-  name: string;
-  size: string;
-  date: string;
-  initials: string;
-  bg: string;
-  color: string;
-};
-
-function attachmentStyle(ext: string) {
-  const normalized = ext.toUpperCase();
-  const bgMap: Record<string, string> = {
-    PDF: "bg-red-50 text-red-600",
-    PNG: "bg-emerald-50 text-emerald-600",
-    JPG: "bg-emerald-50 text-emerald-600",
-    JPEG: "bg-emerald-50 text-emerald-600",
-    DOCX: "bg-blue-50 text-blue-600",
-    DOC: "bg-blue-50 text-blue-600",
-    XLSX: "bg-green-50 text-green-600",
-    ZIP: "bg-purple-50 text-purple-600",
-  };
-  const [bg, color] = (bgMap[normalized] || "bg-slate-50 text-slate-600").split(" ");
-  return { bg, color };
-}
-
-function formatAttachmentSize(byteSize: number) {
-  const sizeMB = (byteSize / (1024 * 1024)).toFixed(1);
-  return Number(sizeMB) > 0 ? `${sizeMB} MB` : `${(byteSize / 1024).toFixed(0)} KB`;
-}
-
-function mapTaskAttachmentToView(attachment: TaskAttachmentSummary): TaskAttachmentView {
-  const name = attachment.file.fileName;
-  const ext = name.split(".").pop()?.toUpperCase() || "FILE";
-  const { bg, color } = attachmentStyle(ext);
-  return {
-    id: attachment.id,
-    fileObjectId: attachment.fileObjectId,
-    ext,
-    name,
-    size: formatAttachmentSize(attachment.file.byteSize),
-    date: new Date(attachment.createdAt).toLocaleDateString("vi-VN", { day: "2-digit", month: "long", year: "numeric" }),
-    initials: "KN",
-    bg,
-    color
-  };
-}
-
 function appendPrincipal(url: string, principal?: string) {
   if (!principal) return url;
   return `${url}${url.includes("?") ? "&" : "?"}principal=${encodeURIComponent(principal)}`;
@@ -311,19 +261,6 @@ function buildTaskListBackUrl(task?: ProjectTaskSummary, principal?: string) {
 
   return appendPrincipal("/tasks", principal);
 }
-
-function readFileAsBase64(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result ?? "");
-      resolve(result.includes(",") ? result.split(",").pop() ?? "" : result);
-    };
-    reader.onerror = () => reject(reader.error ?? new Error("Could not read file"));
-    reader.readAsDataURL(file);
-  });
-}
-
 
 export function TaskDetailWorkbench({
   taskId,
@@ -369,12 +306,7 @@ export function TaskDetailWorkbench({
 
     async function loadAttachments() {
       try {
-        const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/attachments?principal=${encodeURIComponent(principal || "founder")}`);
-        if (!response.ok) {
-          throw new Error(`Could not load attachments: ${response.status}`);
-        }
-        const payload = await response.json();
-        const apiAttachments = Array.isArray(payload?.data) ? payload.data.map(mapTaskAttachmentToView) : [];
+        const apiAttachments = await listTaskAttachments(taskId, principal || "founder");
         if (cancelled) return;
         setAttachments(apiAttachments);
         localStorage.setItem(localKey, JSON.stringify(apiAttachments));
@@ -410,6 +342,27 @@ export function TaskDetailWorkbench({
     localStorage.setItem(`attachments_${taskId}`, JSON.stringify(nextAtts));
   };
 
+  const [linkDraft, setLinkDraft] = useState<{ url: string; name: string } | null>(null);
+  const [isSavingLink, setIsSavingLink] = useState(false);
+
+  const handleAddLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const rawUrl = linkDraft?.url.trim();
+    if (!rawUrl || !currentTask?.accountId) return;
+    setIsSavingLink(true);
+    try {
+      const savedAttachment = await createTaskAttachment({ id: taskId, accountId: currentTask.accountId, projectId: currentTask.projectId }, linkFileInput(rawUrl, linkDraft?.name ?? ""), principal || "founder");
+      saveAttachments([savedAttachment, ...attachments]);
+      setLinkDraft(null);
+      triggerToast(`Đã đính kèm link: ${savedAttachment.name}`, "success");
+    } catch (error) {
+      console.warn("Failed to attach link to task:", error);
+      triggerToast("Không thể đính kèm link. Kiểm tra lại đường dẫn (http/https).", "danger");
+    } finally {
+      setIsSavingLink(false);
+    }
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -438,37 +391,11 @@ export function TaskDetailWorkbench({
 
     try {
       const base64Data = await readFileAsBase64(file);
-      const fileResponse = await fetch(`/api/files?principal=${encodeURIComponent(principal || "founder")}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accountId: currentTask.accountId,
-          projectId: currentTask.projectId,
-          fileName: file.name,
-          contentType: file.type || "application/octet-stream",
-          base64Data,
-          ownerType: "task",
-          ownerId: taskId,
-          customerVisible: false,
-          internalOnly: true,
-          allowedRoles: []
-        })
-      });
-
-      if (!fileResponse.ok) {
-        throw new Error(`File upload failed: ${fileResponse.status}`);
-      }
-      const fileObject = await fileResponse.json();
-      const attachmentResponse = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/attachments?principal=${encodeURIComponent(principal || "founder")}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fileObjectId: fileObject.id })
-      });
-      if (!attachmentResponse.ok) {
-        throw new Error(`Task attachment link failed: ${attachmentResponse.status}`);
-      }
-
-      const savedAttachment = mapTaskAttachmentToView(await attachmentResponse.json() as TaskAttachmentSummary);
+      const savedAttachment = await createTaskAttachment({ id: taskId, accountId: currentTask.accountId, projectId: currentTask.projectId }, {
+        fileName: file.name,
+        contentType: file.type || "application/octet-stream",
+        base64Data
+      }, principal || "founder");
       saveAttachments([savedAttachment, ...attachments]);
       triggerToast(`Đã tải lên tập tin: ${name}`, "success");
     } catch (error) {
@@ -2280,7 +2207,7 @@ export function TaskDetailWorkbench({
                         <table className="w-full text-left border-collapse">
                           <thead>
                             <tr className="border-b border-slate-100 bg-slate-50/50">
-                              <th className="px-6 py-2.5 text-[9px] font-bold text-slate-400 uppercase tracking-wider">Tên tập tin</th>
+                              <th className="px-6 py-2.5 text-[9px] font-bold text-slate-400 uppercase tracking-wider">Tên tài liệu</th>
                               <th className="px-6 py-2.5 text-[9px] font-bold text-slate-400 uppercase tracking-wider">Kích thước</th>
                               <th className="px-6 py-2.5 text-[9px] font-bold text-slate-400 uppercase tracking-wider">Ngày tải</th>
                               <th className="px-6 py-2.5 text-[9px] font-bold text-slate-400 uppercase tracking-wider">Người tải</th>
@@ -2294,9 +2221,15 @@ export function TaskDetailWorkbench({
                                   <div className={`h-7 w-7 rounded-lg ${file.bg} ${file.color} flex items-center justify-center font-bold text-[9px] shrink-0`}>
                                     {file.ext}
                                   </div>
-                                  <span className="text-xs font-semibold text-slate-700 truncate group-hover:text-indigo-600 transition-colors max-w-[180px]" title={file.name}>
-                                    {file.name}
-                                  </span>
+                                  {file.url ? (
+                                    <a href={file.url} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-indigo-600 truncate hover:underline max-w-[180px]" title={file.url}>
+                                      {file.name}
+                                    </a>
+                                  ) : (
+                                    <span className="text-xs font-semibold text-slate-700 truncate group-hover:text-indigo-600 transition-colors max-w-[180px]" title={file.name}>
+                                      {file.name}
+                                    </span>
+                                  )}
                                 </td>
                                 <td className="px-6 py-2.5 text-[11px] text-slate-500 whitespace-nowrap">{file.size}</td>
                                 <td className="px-6 py-2.5 text-[11px] text-slate-400 whitespace-nowrap">{file.date}</td>
@@ -2325,24 +2258,73 @@ export function TaskDetailWorkbench({
                       <p className="text-xs text-slate-400 italic text-center py-6">Chưa có tài liệu đính kèm nào.</p>
                     )}
 
-                    <div className="px-6 py-4 bg-slate-50/50 border-t border-slate-100 flex justify-center">
-                      <input
-                        type="file"
-                        id="task-file-uploader"
-                        className="hidden"
-                        onChange={handleFileChange}
-                      />
-                      <label
-                        htmlFor="task-file-uploader"
-                        className="flex items-center gap-2 px-4 py-2 rounded-xl border border-dashed border-slate-300 bg-white hover:border-indigo-500 hover:text-indigo-600 text-xs font-semibold text-slate-600 transition-all cursor-pointer shadow-sm hover:shadow"
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                          <polyline points="17 8 12 3 7 8" />
-                          <line x1="12" y1="3" x2="12" y2="15" />
-                        </svg>
-                        Tải lên tập tin mới
-                      </label>
+                    <div className="px-6 py-4 bg-slate-50/50 border-t border-slate-100 flex flex-col items-center gap-3">
+                      {linkDraft && (
+                        <form onSubmit={handleAddLink} className="flex w-full flex-wrap items-center gap-2">
+                          <input
+                            type="text"
+                            inputMode="url"
+                            autoFocus
+                            aria-label="Đường dẫn"
+                            value={linkDraft.url}
+                            onChange={e => setLinkDraft({ ...linkDraft, url: e.target.value })}
+                            placeholder="Dán link (https://...)"
+                            className="flex-[2] min-w-[200px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/15 focus:border-indigo-400 transition"
+                          />
+                          <input
+                            type="text"
+                            aria-label="Tên hiển thị"
+                            value={linkDraft.name}
+                            onChange={e => setLinkDraft({ ...linkDraft, name: e.target.value })}
+                            placeholder="Tên hiển thị (không bắt buộc)"
+                            className="flex-1 min-w-[140px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/15 focus:border-indigo-400 transition"
+                          />
+                          <button
+                            type="submit"
+                            disabled={isSavingLink || !linkDraft.url.trim()}
+                            className="rounded-xl bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-indigo-700 transition shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {isSavingLink ? "Đang lưu" : "Thêm link"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setLinkDraft(null)}
+                            className="rounded-xl px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100 transition"
+                          >
+                            Hủy
+                          </button>
+                        </form>
+                      )}
+                      <div className="flex flex-wrap justify-center gap-2">
+                        <input
+                          type="file"
+                          id="task-file-uploader"
+                          className="hidden"
+                          onChange={handleFileChange}
+                        />
+                        <label
+                          htmlFor="task-file-uploader"
+                          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-dashed border-slate-300 bg-white hover:border-indigo-500 hover:text-indigo-600 text-xs font-semibold text-slate-600 transition-all cursor-pointer shadow-sm hover:shadow"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="17 8 12 3 7 8" />
+                            <line x1="12" y1="3" x2="12" y2="15" />
+                          </svg>
+                          Tải lên tập tin mới
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setLinkDraft(linkDraft ?? { url: "", name: "" })}
+                          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-dashed border-slate-300 bg-white hover:border-indigo-500 hover:text-indigo-600 text-xs font-semibold text-slate-600 transition-all cursor-pointer shadow-sm hover:shadow"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                          </svg>
+                          Đính kèm link
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>

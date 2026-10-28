@@ -1265,6 +1265,8 @@ export interface ProjectTaskSummary {
   ticketId?: string;
   parentTaskId?: string;
   sortOrder: number;
+  /** Files and links attached to the task (internal only, not sent to portal users). */
+  attachmentCount?: number;
   title: string;
   description?: string;
   taskType: string;

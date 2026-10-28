@@ -77,6 +77,8 @@ import {
 import { allMilestonesComplete, isMilestoneAccepted, isMilestoneWorkLocked, selectActiveMilestone } from "@/features/project-hierarchy/milestone-gate-ui";
 import { deriveMilestoneWorkStatus } from "@/features/project-hierarchy/work-status";
 import { IssueLogPanel } from "@/features/issue-log/issue-log-panel";
+import { TaskRowExtrasContext, groupIssuesByTask, useTaskRowExtras } from "@/features/task-board/task-row-extras";
+import { createFileDownloadUrl, openFileObject } from "@/lib/task-attachments";
 import { ApiResponseError, readApiError } from "@/lib/api-error";
 import { fetchAllPages } from "@/lib/api-pages";
 import { HeaderLinkButton, PageBackLink } from "@/components/page-header";
@@ -585,6 +587,7 @@ interface TaskItem {
   sortOrder?: number;
   subtasks?: TaskItem[];
   parentTaskId?: string;
+  attachmentCount?: number;
 }
 
 interface StageItem {
@@ -757,7 +760,8 @@ function mapProjectRiskToRiskItem(risk: ProjectRiskSummary): RiskItem {
     ownerUserId: risk.ownerUserId,
     owner: risk.ownerDisplayName ?? "PMO",
     // The page-level summaries only tell open from handled; the issue-log panel shows the real status.
-    status: risk.isOpen === false ? "resolved" : "open"
+    status: risk.isOpen === false ? "resolved" : "open",
+    record: risk
   };
 }
 
@@ -1019,6 +1023,7 @@ function mapProjectTaskToTaskItem(task: ProjectTaskSummary): TaskItem {
     description: task.description,
     timeEntries: (task.timeEntries ?? []).map(mapTimeEntryToUi),
     sortOrder: task.sortOrder,
+    attachmentCount: task.attachmentCount,
     subtasks: (task.subtasks ?? []).map(mapProjectTaskToTaskItem)
   };
 }
@@ -1517,6 +1522,8 @@ interface RiskItem {
   ownerUserId?: string;
   owner: string;
   status: string;
+  /** The issue-log record behind this summary (Task Board rows list the records linked to each task). */
+  record?: ProjectRiskSummary;
 }
 
 const EMPTY_RISK_REGISTRY: RiskItem[] = [];
@@ -4197,6 +4204,7 @@ function TaskRow({ task, projectColor, onEdit, onDelete, onViewDetails, onAddSub
   const assigneeMember = findTeamMember(members, task.assignee, undefined, task.assigneeUserId);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const extras = useTaskRowExtras(task);
 
   const menuItems: MenuItem[] = [
     { label:"View Details", icon:ListChecks, onClick:() => onViewDetails(task) },
@@ -4236,6 +4244,7 @@ function TaskRow({ task, projectColor, onEdit, onDelete, onViewDetails, onAddSub
         </div>
       </div>
       <div className="flex items-center gap-2.5 shrink-0">
+        {extras.buttons}
         <span className="hidden sm:inline text-[10px] font-semibold px-2 py-0.5 rounded-md" style={{ backgroundColor:tp.bg, color:tp.color }}>{tp.label}</span>
         <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md" style={{ backgroundColor: overdue ? "#fee2e2" : ts.bg, color: overdue ? C.danger : ts.color }}>{overdue ? "Quá hạn" : ts.label}</span>
 
@@ -4278,6 +4287,7 @@ function TaskRow({ task, projectColor, onEdit, onDelete, onViewDetails, onAddSub
         </div>
       </div>
     </div>
+    {extras.panel}
     {task.subtasks?.length ? <div className="ml-10 border-l border-border/60 bg-muted/10">{task.subtasks.map((subtask) => <TaskRow key={subtask.id} task={subtask} projectColor={projectColor} onEdit={onEdit} onDelete={onDelete} onViewDetails={onViewDetails} onAddSubtask={onAddSubtask} disabled={disabled} members={members} />)}</div> : null}
     </>
   );
@@ -5388,27 +5398,12 @@ export default function ProjectDetailPage() {
   const [documentMutationError, setDocumentMutationError] = useState<string | null>(null);
   const uploadedProjectFileCache = useRef(new WeakMap<File, FileObjectSummary>());
 
-  const createDocumentDownloadUrl = useCallback(async (fileObjectId: string, inline = false) => {
-    const response = await fetch(`/api/files/${encodeURIComponent(fileObjectId)}/download-grants`, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ expiresInSeconds: 300 })
-    });
-    if (!response.ok) throw new Error(`Could not create download grant: ${response.status}`);
-    const payload = await response.json() as { signedUrl?: string };
-    if (!payload.signedUrl?.startsWith("/")) throw new Error("Download grant returned an invalid URL.");
-    const url = new URL(payload.signedUrl, window.location.origin);
-    if (inline) url.searchParams.set("inline", "1");
-    return `${url.pathname}${url.search}`;
-  }, []);
-
   const handleDownloadDocument = useCallback(async (fileObjectId: string) => {
     if (downloadingFileId) return;
     setDownloadingFileId(fileObjectId);
     setDocumentMutationError(null);
     try {
-      const downloadUrl = await createDocumentDownloadUrl(fileObjectId);
+      const downloadUrl = await createFileDownloadUrl(fileObjectId);
       const anchor = document.createElement("a");
       anchor.href = downloadUrl;
       anchor.download = "";
@@ -5421,28 +5416,20 @@ export default function ProjectDetailPage() {
     } finally {
       setDownloadingFileId(null);
     }
-  }, [createDocumentDownloadUrl, downloadingFileId]);
+  }, [downloadingFileId]);
 
   const handleOpenDocument = useCallback(async (fileObjectId: string) => {
     if (downloadingFileId) return;
-    const openedWindow = window.open("about:blank", "_blank");
-    if (openedWindow) openedWindow.opener = null;
     setDownloadingFileId(fileObjectId);
     setDocumentMutationError(null);
     try {
-      const openUrl = await createDocumentDownloadUrl(fileObjectId, true);
-      if (openedWindow && !openedWindow.closed) {
-        openedWindow.location.href = openUrl;
-      } else {
-        window.location.assign(openUrl);
-      }
+      await openFileObject(fileObjectId);
     } catch (error) {
-      openedWindow?.close();
       setDocumentMutationError(error instanceof Error ? error.message : "Could not open this file.");
     } finally {
       setDownloadingFileId(null);
     }
-  }, [createDocumentDownloadUrl, downloadingFileId]);
+  }, [downloadingFileId]);
 
   const uploadProjectFile = useCallback(async (file: File) => {
     const cached = uploadedProjectFileCache.current.get(file);
@@ -6588,6 +6575,7 @@ export default function ProjectDetailPage() {
                   milestones={milestones}
                   milestoneGroups={milestoneGroups}
                   initialRiskId={searchParams.get("issueId") ?? undefined}
+                  initialReportTaskId={searchParams.get("reportTask") ?? undefined}
                   onRecordsChange={(records) => setRiskRegistry(toRiskRegistry(records))}
                   onChanged={refreshProject}
                 />
@@ -7200,6 +7188,12 @@ export default function ProjectDetailPage() {
                 );
               })()}              {/* ─── TASKS (Milestone → Stage → Task) ─── */}
               {tab === "Tasks" && (
+                <TaskRowExtrasContext.Provider value={{
+                  projectId,
+                  accountId: project.accountId,
+                  principal: searchParams.get("principal") ?? undefined,
+                  issuesByTask: groupIssuesByTask(riskRegistry.flatMap((risk) => risk.record ? [risk.record] : []))
+                }}>
                 <div>
                   <p className="sr-only" role="status" aria-live="polite">{hierarchyAnnouncement}</p>
                   {/* Header */}
@@ -7397,6 +7391,7 @@ export default function ProjectDetailPage() {
                     />
                   )}
                 </div>
+                </TaskRowExtrasContext.Provider>
               )}
 
               {/* ─── TIMELINE (Milestone → Stage Gantt Chart) ─── */}
