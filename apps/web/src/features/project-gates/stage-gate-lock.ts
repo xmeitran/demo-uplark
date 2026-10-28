@@ -41,12 +41,13 @@ export function gateBlockNote(block: StageGateBlock, action: string) {
 export async function loadStageGateBlocks(projectId: string, signal?: AbortSignal): Promise<StageGateBlocks> {
   const get = async (path: string) => {
     const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/${path}`, { cache: "no-store", credentials: "same-origin", signal });
-    if (!response.ok) return [];
-    const body = await response.json();
-    return Array.isArray(body) ? body : Array.isArray(body?.data) ? body.data : [];
+    return response.ok ? response.json() : null;
   };
+  const rows = (body: any) => Array.isArray(body) ? body : Array.isArray(body?.data) ? body.data : [];
   const [stages, gates] = await Promise.all([get("stages"), get("gates")]);
-  return stageGateBlocks(stages, gates);
+  // "Không duyệt": no stage waits for a gate (the API skips the check the same way).
+  if (gates?.milestoneApprovalRequired === false) return {};
+  return stageGateBlocks(rows(stages), rows(gates));
 }
 
 /** Blocks of one project; empty while loading, for a project without gates, or when the read fails (the API still decides). */

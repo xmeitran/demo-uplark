@@ -38,6 +38,7 @@ interface CustomDropdownProps {
   onOptionInfo?: (option: DropdownOption) => void;
   /** Passed to CrmSelect: menu in a body portal, for dropdowns inside a scrolling dialog body. */
   menuPortal?: boolean;
+  disabled?: boolean;
 }
 
 interface CustomDatePickerProps {
@@ -53,7 +54,7 @@ interface CustomDatePickerProps {
 
 // ─── CUSTOM DROPDOWN COMPONENT ────────────────────────────────────────────────
 
-export function CustomDropdown({ options, value, onChange, placeholder = "Select option", className = "", ariaLabel, onOptionInfo, menuPortal }: CustomDropdownProps) {
+export function CustomDropdown({ options, value, onChange, placeholder = "Select option", className = "", ariaLabel, onOptionInfo, menuPortal, disabled }: CustomDropdownProps) {
   return <CrmSelect
     options={options.map((option) => ({ ...option, color: option.avatarColor ?? option.color }))}
     value={value}
@@ -62,6 +63,7 @@ export function CustomDropdown({ options, value, onChange, placeholder = "Select
     className={className}
     ariaLabel={ariaLabel}
     menuPortal={menuPortal}
+    disabled={disabled}
     onOptionInfo={onOptionInfo ? (option) => onOptionInfo(option as DropdownOption) : undefined}
   />;
 }

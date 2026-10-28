@@ -41,4 +41,11 @@ describe("milestone gate evaluation", () => {
       satisfied: true
     });
   });
+
+  it("\"Không duyệt\": only the tasks count, and a milestone without tasks is not done", () => {
+    const facts = { requiredDocumentCount: 2, submittedDocumentCount: 0, customerConfirmationRequired: true, approvalRequired: false };
+    expect(evaluateMilestoneGate({ ...facts, taskStatuses: ["done", "cancelled"] })).toMatchObject({ documentsSatisfied: true, confirmationSatisfied: true, missingRequirements: [], satisfied: true });
+    expect(evaluateMilestoneGate({ ...facts, taskStatuses: ["done", "todo"] }).missingRequirements).toEqual(["Còn 1 task chưa hoàn tất."]);
+    expect(evaluateMilestoneGate({ ...facts, taskStatuses: [] })).toMatchObject({ missingRequirements: ["Milestone chưa có task."], satisfied: false });
+  });
 });

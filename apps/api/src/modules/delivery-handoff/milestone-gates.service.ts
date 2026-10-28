@@ -24,8 +24,8 @@ import {
   MILESTONE_REVIEWER_MODES,
   normalizeMilestoneReviewerMode
 } from "./milestone-reviewer";
-import { projectUsesStageGates } from "./gates.service";
-import { PROJECT_HIERARCHY_EDIT_ROLE_CODES, normalizeMilestoneEvidenceMode, MilestoneReviewerUser, mapMilestoneGateSummary } from "./projects.shared";
+import { autoPassStageGates, projectUsesStageGates } from "./gates.service";
+import { PROJECT_HIERARCHY_EDIT_ROLE_CODES, NO_MILESTONE_APPROVAL_MESSAGE, normalizeMilestoneEvidenceMode, MilestoneReviewerUser, mapMilestoneGateSummary } from "./projects.shared";
 import { ProjectPermissionsService } from "./project-permissions.service";
 
 
@@ -141,7 +141,8 @@ export class MilestoneGatesService {
         ),
         milestone.reviewerUserId ? reviewerUsers.get(milestone.reviewerUserId) : undefined,
         milestone.reviewerApprovedByUserId ? reviewerUsers.get(milestone.reviewerApprovedByUserId) : undefined,
-        principal
+        principal,
+        project.milestoneApprovalRequired !== false
       ))
     };
   }
@@ -318,7 +319,8 @@ export class MilestoneGatesService {
         estimateMinutes: task.estimateMinutes,
         timeEntries: task.timeEntries,
         subtasks: task.subtasks
-      }))
+      })),
+      approvalRequired: project.milestoneApprovalRequired !== false
     });
     // Evaluation only proves the visible requirements. It must never impersonate
     // the configured reviewer or unlock the next milestone by itself.
@@ -326,12 +328,16 @@ export class MilestoneGatesService {
     // (requestProjectMilestoneApproval). A pending_review that was never sent (older data) goes back to open.
     const reopeningApprovedGate = !evaluation.satisfied && ["approved", "pending_review"].includes(milestone.gateStatus);
     const unsentReview = milestone.gateStatus === "pending_review" && !milestone.approvalRequestedAt;
-    const nextStatus = reopeningApprovedGate || unsentReview ? "open" : milestone.gateStatus;
+    // "Không duyệt": the milestone completes by itself when its tasks are done (and reopens with them); nothing locks.
+    const noApproval = project.milestoneApprovalRequired === false;
+    const completing = noApproval && evaluation.satisfied && milestone.gateStatus !== "approved";
+    const nextStatus = completing ? "approved" : reopeningApprovedGate || unsentReview ? "open" : milestone.gateStatus;
     const updated = await this.prisma.$transaction(async (tx) => {
       const result = await tx.projectMilestone.update({
         where: { id: milestone.id },
         data: {
           gateStatus: nextStatus,
+          ...(completing ? { reviewerApprovedAt: new Date(), reviewerApprovedByUserId: principal.subjectId } : {}),
           ...(reopeningApprovedGate ? {
             reviewerApprovedAt: null,
             reviewerApprovedByUserId: null,
@@ -341,8 +347,9 @@ export class MilestoneGatesService {
           } : {})
         }
       });
+      if (completing) await this.permissions.auditMutation(tx, principal, "project.milestone_completed", "project_milestone", result.id, JSON.parse(JSON.stringify(milestone)), JSON.parse(JSON.stringify(result)));
       // A reopened milestone closes the door it had opened, as a reviewer change does (updateProjectMilestoneGate).
-      if (reopeningApprovedGate && milestone.gateStatus === "approved") {
+      if (reopeningApprovedGate && milestone.gateStatus === "approved" && !noApproval) {
         const next = await tx.projectMilestone.findFirst({
           where: { projectId: project.id, workspaceId: principal.workspaceId, sortOrder: { gt: milestone.sortOrder } },
           orderBy: { sortOrder: "asc" }
@@ -352,7 +359,7 @@ export class MilestoneGatesService {
       return result;
     });
     // The old request no longer exists: its "Duyệt" buttons in the bell would only fail.
-    if (reopeningApprovedGate) await this.notifications?.resolveMilestoneNotifications(milestoneId, principal);
+    if (reopeningApprovedGate || completing) await this.notifications?.resolveMilestoneNotifications(milestoneId, principal);
     return {
       ...updated,
       requiredDocumentCount,
@@ -364,8 +371,8 @@ export class MilestoneGatesService {
       // A reopened gate explicitly clears the previous approval. Do not fall back
       // to the stale reviewer from the pre-update row in the response.
       reviewerApprovedByUserId: updated.reviewerApprovedByUserId ?? (reopeningApprovedGate ? undefined : milestone.reviewerApprovedByUserId ?? undefined),
-      reviewerApprovalRequired: updated.gateStatus !== "approved",
-      canApprove: canApproveMilestoneReviewer({
+      reviewerApprovalRequired: !noApproval && updated.gateStatus !== "approved",
+      canApprove: !noApproval && canApproveMilestoneReviewer({
         reviewerMode: normalizeMilestoneReviewerMode(updated.reviewerMode ?? milestone.reviewerMode),
         reviewerUserId: updated.reviewerUserId ?? milestone.reviewerUserId,
         principalUserId: principal.subjectId,
@@ -379,6 +386,7 @@ export class MilestoneGatesService {
     const project = await this.permissions.ensureProject(projectId, principal.workspaceId);
     const milestone = await this.prisma.projectMilestone.findFirst({ where: { id: milestoneId, projectId: project.id, workspaceId: principal.workspaceId } });
     if (!milestone) throw new NotFoundException("Project milestone not found");
+    if (project.milestoneApprovalRequired === false) throw new BadRequestException(NO_MILESTONE_APPROVAL_MESSAGE);
     if (milestone.gateStatus !== "pending_review" || !milestone.approvalRequestedAt) {
       throw new BadRequestException("Hồ sơ milestone chưa được gửi duyệt. Bấm “Gửi hồ sơ chờ duyệt” trước.");
     }
@@ -444,6 +452,8 @@ export class MilestoneGatesService {
 
   async requestProjectMilestoneApproval(projectId: string, milestoneId: string, principal: PrincipalContext) {
     this.permissions.assertInternalTaskPrincipal(principal, "Project milestone approval is internal");
+    const project = await this.permissions.ensureProject(projectId, principal.workspaceId);
+    if (project.milestoneApprovalRequired === false) throw new BadRequestException(NO_MILESTONE_APPROVAL_MESSAGE);
     const evaluation = await this.evaluateProjectMilestoneGate(projectId, milestoneId, principal);
     if (!evaluation.satisfied) {
       throw new BadRequestException({
@@ -478,7 +488,11 @@ export class MilestoneGatesService {
         },
         select: { milestoneId: true }
       });
-      if (stage?.milestoneId) {
+      if (!stage?.milestoneId) return;
+      // "Không duyệt" on G1–G8: the gates, not the milestone rows, follow the tasks.
+      if (await this.autoPassesStageGates(task.projectId, principal.workspaceId)) {
+        await this.passFinishedMilestones(task.projectId, principal);
+      } else {
         await this.evaluateProjectMilestoneGate(task.projectId, stage.milestoneId, principal);
       }
     } catch (error) {
@@ -486,6 +500,21 @@ export class MilestoneGatesService {
       // cannot be re-evaluated. The handoff endpoint remains retryable.
       this.logger.warn(`Milestone gate re-evaluation failed for task ${task.projectId}/${task.stageId}: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  /** "Không duyệt": completes whatever is finished — the G1–G8 gates in order, or every hand-built milestone. */
+  async passFinishedMilestones(projectId: string, principal: PrincipalContext) {
+    if (await this.autoPassesStageGates(projectId, principal.workspaceId)) {
+      await this.prisma.$transaction((tx) => autoPassStageGates(tx, principal.workspaceId, projectId, principal.subjectId, new Date()));
+      return;
+    }
+    const milestones = await this.prisma.projectMilestone.findMany({ where: { projectId, workspaceId: principal.workspaceId }, select: { id: true } });
+    for (const milestone of milestones) await this.evaluateProjectMilestoneGate(projectId, milestone.id, principal);
+  }
+
+  private async autoPassesStageGates(projectId: string, workspaceId: string) {
+    const project = await this.permissions.ensureProject(projectId, workspaceId);
+    return project.milestoneApprovalRequired === false && await projectUsesStageGates(this.prisma, workspaceId, projectId);
   }
 
   private assertCanEditMilestoneGate(principal: PrincipalContext) {

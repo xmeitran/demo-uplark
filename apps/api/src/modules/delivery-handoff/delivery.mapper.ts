@@ -102,6 +102,7 @@ export function mapProjectSummary(project: any): ProjectSummary {
     startIsActual: startIsActual(stages) ? true : undefined,
     hierarchyOrderVersion: project.hierarchyOrderVersion ?? 0,
     isTestProject: project.isTestProject === true ? true : undefined,
+    milestoneApprovalRequired: project.milestoneApprovalRequired === false ? false : undefined,
     milestoneMode: project.milestoneMode ?? "auto",
     milestoneTemplateKey: project.milestoneTemplateKey ?? undefined,
     isInternalWorklog: isInternalWorklogProjectType(project.projectType) || undefined

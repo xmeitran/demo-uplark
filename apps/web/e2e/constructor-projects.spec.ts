@@ -1038,6 +1038,7 @@ test.beforeEach(async ({ context, page, baseURL }) => {
           status: patch.status ?? liveProject.status,
           plannedStartAt: patch.plannedStartAt ?? liveProject.plannedStartAt,
           plannedEndAt: patch.plannedEndAt ?? liveProject.plannedEndAt,
+          milestoneApprovalRequired: patch.milestoneApprovalRequired === false ? false : undefined,
           memberUserIds,
           members: projectMembersForIds(memberUserIds)
         })
@@ -2054,6 +2055,57 @@ test("projects page can edit and delete a project through the persisted API", as
 
   await expect(page.getByText("Live CRM Project Updated")).toHaveCount(0);
   await expect(page.getByText("No projects found")).toBeVisible();
+});
+
+test("Create Project sends the \"Không duyệt\" milestone mode", async ({ page }) => {
+  let submitted: Record<string, unknown> | null = null;
+  await page.route("**/api/projects", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    submitted = route.request().postDataJSON();
+    await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ ...liveProject, ...submitted, id: "prj-no-review" }) });
+  });
+  await page.goto("/projects");
+  await page.locator("main").getByRole("button", { name: /New Project/ }).click();
+  await page.getByPlaceholder("e.g. Mobile App Redesign").fill("No Review Project");
+  await page.getByText("Loại dự án *", { exact: true }).locator("..").getByRole("button").click();
+  await page.getByRole("option", { name: "Khách hàng", exact: true }).click();
+
+  const mode = page.getByLabel("Duyệt milestone");
+  await expect(mode).toContainText("Yêu cầu duyệt");
+  await mode.click();
+  await expect(page.getByRole("option")).toHaveText(["Yêu cầu duyệt", "Không duyệt"]);
+  await page.getByRole("option", { name: "Không duyệt", exact: true }).click();
+  await expect(page.getByText("Milestone mở hết từ đầu, hết task là tự hoàn thành.")).toBeVisible();
+  await page.getByRole("button", { name: "Create Project", exact: true }).click();
+  await expect.poll(() => submitted).not.toBeNull();
+  expect(submitted).toMatchObject({ name: "No Review Project", milestoneApprovalRequired: false });
+});
+
+test("only an Admin switches an existing project's milestone approval mode", async ({ page }) => {
+  const patches: Array<Record<string, unknown>> = [];
+  page.on("request", (request) => {
+    if (request.method() === "PATCH" && new URL(request.url()).pathname === `/api/projects/${liveProject.id}`) patches.push(request.postDataJSON());
+  });
+  await page.goto("/projects");
+  await page.locator('button[title="Edit project"]').first().click();
+  const editDialog = page.getByRole("dialog", { name: "Chỉnh sửa dự án" });
+  await expect(editDialog.getByLabel("Duyệt milestone")).toContainText("Yêu cầu duyệt");
+  await editDialog.getByLabel("Duyệt milestone").click();
+  await page.getByRole("option", { name: "Không duyệt", exact: true }).click();
+  await page.getByRole("button", { name: "Save Changes" }).click();
+  await expect(editDialog).toHaveCount(0);
+  expect(patches[0]).toMatchObject({ milestoneApprovalRequired: false });
+  await page.locator('button[title="Edit project"]').first().click();
+  await expect(page.getByRole("dialog", { name: "Chỉnh sửa dự án" }).getByLabel("Duyệt milestone")).toContainText("Không duyệt");
+  await page.keyboard.press("Escape");
+
+  // A User account sees the mode but cannot change it (the API refuses it too).
+  await page.route("**/api/auth/me", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ subjectId: liveUser.id, displayName: liveUser.displayName, email: liveUser.email, tenantKey: "prod", workspaceId: "twk-e2e", roleCodes: ["DELIVERY_LEAD"] }) });
+  });
+  await page.goto("/projects");
+  await page.locator('button[title="Edit project"]').first().click();
+  await expect(page.getByRole("dialog", { name: "Chỉnh sửa dự án" }).getByLabel("Duyệt milestone")).toBeDisabled();
 });
 
 test("dashboard redirects to login instead of rendering seed data when projects API is unauthorized", async ({ page }) => {

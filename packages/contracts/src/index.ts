@@ -519,6 +519,8 @@ export interface ProjectSummary {
   hierarchyOrderVersion: number;
   /** PL-02 "Dự án thử nghiệm": left out of every P&L total, fund split and warning. */
   isTestProject?: boolean;
+  /** false = "Không duyệt": milestones never lock and complete by themselves when their tasks are done. Absent = true. */
+  milestoneApprovalRequired?: boolean;
   milestoneMode?: ProjectMilestoneMode;
   milestoneTemplateKey?: string;
   /** The fixed "DX Internal Worklog" project (D-08): no Giá trị dự án, never part of project P&L. Read-only. */
@@ -656,6 +658,8 @@ export interface CreateProjectInput {
   createStageTemplate?: boolean;
   /** PL-02 "Dự án thử nghiệm". */
   isTestProject?: boolean;
+  /** false = "Không duyệt" mode; default true. */
+  milestoneApprovalRequired?: boolean;
   /** How the delivery hierarchy is provisioned for a new project. */
   milestoneMode?: ProjectMilestoneMode;
   /** Standard template key used when milestoneMode is auto. */
@@ -804,6 +808,8 @@ export interface UpdateProjectInput {
   budgetAmount?: number | null;
   /** PL-02 "Dự án thử nghiệm" — Admin (PM) only. */
   isTestProject?: boolean;
+  /** "Không duyệt" mode — Admin (PM) only. */
+  milestoneApprovalRequired?: boolean;
   plannedStartAt?: string | null;
   plannedEndAt?: string | null;
   scopeSummary?: string | null;

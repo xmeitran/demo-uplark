@@ -528,3 +528,49 @@ describe("milestone gate", () => {
     expect(unchanged.notifications.resolveMilestoneNotifications).not.toHaveBeenCalled();
   });
 });
+
+describe("\"Không duyệt\" milestone mode", () => {
+  function createSetup() {
+    const ctx = setup();
+    ctx.prisma.tenantWorkspace.findUnique.mockResolvedValue({ id: "twk-1", status: "active", tenantKey: "prod" });
+    const created = { ...project, id: "prj-new", account: { name: "Acme" }, members: [], budgets: [], costs: [], stages: [], tasks: [] };
+    ctx.prisma.project.create.mockImplementation(async ({ data }: any) => ({ ...created, ...data }));
+    ctx.prisma.project.findFirstOrThrow.mockResolvedValue(created);
+    return ctx;
+  }
+  const manualInput = (extra: Record<string, unknown> = {}) => ({
+    accountId: "acc-1", name: "New project", code: "NEW", projectType: "delivery", milestoneMode: "manual",
+    manualMilestones: [{ name: "Thiết kế", stages: [{ activity: "Design" }] }, { name: "Triển khai", stages: [{ activity: "Build" }] }], ...extra
+  });
+  const createdGateStatuses = (prisma: any) => prisma.projectMilestone.create.mock.calls.map((call: any[]) => call[0].data.gateStatus);
+
+  it("is chosen on create: without review every milestone starts open, with review only the first one does", async () => {
+    const free = createSetup();
+    await free.service.createProject(manualInput({ milestoneApprovalRequired: false }) as any, as("usr-1"));
+    expect(free.prisma.project.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ milestoneApprovalRequired: false }) }));
+    expect(createdGateStatuses(free.prisma)).toEqual(["open", "open"]);
+
+    const reviewed = createSetup();
+    await reviewed.service.createProject(manualInput() as any, as("usr-1"));
+    expect(reviewed.prisma.project.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ milestoneApprovalRequired: true }) }));
+    expect(createdGateStatuses(reviewed.prisma)).toEqual(["open", "locked"]);
+  });
+
+  it("only an Admin account switches it on an existing project; switching off unlocks the milestones and is audited", async () => {
+    const stored = { ...project, account: { name: "Acme" }, members: [], budgets: [], costs: [], stages: [], tasks: [] };
+    const user = setup({ pic: "usr-1" });
+    await expect(user.service.updateProject("prj-1", { milestoneApprovalRequired: false } as any, as("usr-1"))).rejects.toThrow("Chỉ tài khoản Admin (PM) mới được đổi chế độ duyệt milestone.");
+    expect(user.prisma.project.update).not.toHaveBeenCalled();
+    // Re-sending the current value (the edit modal always does) is not a change.
+    user.prisma.project.findFirstOrThrow.mockResolvedValue(stored);
+    await expect(user.service.updateProject("prj-1", { name: "Renamed", milestoneApprovalRequired: true } as any, as("usr-1"))).resolves.toMatchObject({ id: "prj-1" });
+
+    const pm = setup({ pic: "usr-pm" });
+    pm.prisma.project.findFirstOrThrow.mockResolvedValue({ ...stored, milestoneApprovalRequired: false });
+    const result = await pm.service.updateProject("prj-1", { milestoneApprovalRequired: false } as any, as("usr-pm", "PM"));
+    expect(pm.prisma.project.update.mock.calls[0][0].data.milestoneApprovalRequired).toBe(false);
+    expect(auditActions(pm.prisma)).toContain("project.milestone_approval_mode_changed");
+    expect(pm.prisma.projectMilestone.updateMany).toHaveBeenCalledWith({ where: { workspaceId: "twk-1", projectId: "prj-1", gateStatus: "locked" }, data: { gateStatus: "open" } });
+    expect(result.milestoneApprovalRequired).toBe(false);
+  });
+});

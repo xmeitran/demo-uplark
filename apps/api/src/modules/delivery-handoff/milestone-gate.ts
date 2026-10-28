@@ -7,6 +7,8 @@ export type MilestoneGateFacts = {
   customerConfirmationRequired: boolean;
   customerConfirmationAt?: Date | string | null;
   taskStatuses: readonly unknown[];
+  /** false = "Không duyệt": only the tasks count, and a milestone without tasks is not done. */
+  approvalRequired?: boolean;
 };
 
 export type MilestoneGateEvaluation = {
@@ -26,9 +28,10 @@ export function evaluateMilestoneGate(facts: MilestoneGateFacts): MilestoneGateE
   const taskCount = facts.taskStatuses.length;
   const completedTaskCount = facts.taskStatuses.filter(isClosedTaskStatus).length;
   const remainingTaskCount = Math.max(0, taskCount - completedTaskCount);
-  const documentsSatisfied = submittedDocumentCount >= requiredDocumentCount;
-  const confirmationSatisfied = !facts.customerConfirmationRequired || Boolean(facts.customerConfirmationAt);
-  const tasksSatisfied = remainingTaskCount === 0;
+  const noApproval = facts.approvalRequired === false;
+  const documentsSatisfied = noApproval || submittedDocumentCount >= requiredDocumentCount;
+  const confirmationSatisfied = noApproval || !facts.customerConfirmationRequired || Boolean(facts.customerConfirmationAt);
+  const tasksSatisfied = remainingTaskCount === 0 && (!noApproval || taskCount > 0);
   const missingRequirements: string[] = [];
 
   if (!documentsSatisfied) {
@@ -42,7 +45,7 @@ export function evaluateMilestoneGate(facts: MilestoneGateFacts): MilestoneGateE
     missingRequirements.push("Chưa có xác nhận khách hàng.");
   }
   if (!tasksSatisfied) {
-    missingRequirements.push(`Còn ${remainingTaskCount} task chưa hoàn tất.`);
+    missingRequirements.push(taskCount === 0 ? "Milestone chưa có task." : `Còn ${remainingTaskCount} task chưa hoàn tất.`);
   }
 
   return {

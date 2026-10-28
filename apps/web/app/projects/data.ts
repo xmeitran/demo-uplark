@@ -53,6 +53,8 @@ export interface Project {
   loggedHours?: number;
   /** PL-02 "Dự án thử nghiệm". */
   isTestProject?: boolean;
+  /** false = "Không duyệt": milestones never lock and complete by themselves when their tasks are done. */
+  milestoneApprovalRequired?: boolean;
   client: string;
   color: string;
   tags: string[];

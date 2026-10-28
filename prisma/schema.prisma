@@ -1287,6 +1287,8 @@ model Project {
   hierarchyOrderVersion  Int                         @default(0)
   /// PL-02 "Dự án thử nghiệm": the P&L record exists but is left out of every total, fund split and warning.
   isTestProject          Boolean                     @default(false)
+  /// false = "Không duyệt": no milestone locks, a milestone (or G1–G8 gate) passes by itself once all its tasks are done. Admin-only after creation.
+  milestoneApprovalRequired Boolean                  @default(true)
   /// V-02: Lark chat ids of the project's two groups (nội bộ, khách hàng).
   larkInternalChatId     String?
   larkCustomerChatId     String?

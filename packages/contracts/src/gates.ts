@@ -252,6 +252,8 @@ export interface ProjectGateListResponse {
   stageSla: ProjectStageSlaSummary[];
   /** Whether the caller may open a gate by exception (V-11: Dx Director / Admin only). */
   canException: boolean;
+  /** false = "Không duyệt": gates pass by themselves in order once their stages have no open task; nothing blocks a stage. */
+  milestoneApprovalRequired: boolean;
 }
 
 export type ProjectStatusProposalState = "pending" | "confirmed" | "declined" | "superseded";

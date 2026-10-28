@@ -84,7 +84,7 @@ import type { DecideProjectStatusProposalInput, ProjectGateActionInput, UpdateTa
 import { isStartedStageStatus } from "./gates";
 import { AUTOMATIC_PROJECT_STATUSES } from "./status-proposal";
 import { actOnProjectGate, assertStageGateOpen, createProjectGate, decideStatusProposal, listProjectGates, pendingStatusProposal, projectIdsWithPendingProposal, loadProjectGatePosition, projectUsesStageGates, syncProjectStatus, type StatusSyncContext } from "./gates.service";
-import { PROJECT_HIERARCHY_EDIT_ROLE_CODES, BUILTIN_MILESTONE_TEMPLATE_KEY, TASK_PLAN_APPROVER_ROLES, taskPlanningBlockInclude, taskTimeEntryInclude, isPrismaWriteConflict, normalizeMilestoneEvidenceMode, mapMilestoneGateSummary, omitUndefined, hasInputKey, optionalEnum, validateTaskEstimateMinutes, templateTaskTypeLayer1, assertTaskTypePair, normalizeTemplateTasks, normalizeMilestoneTemplateMilestones } from "./projects.shared";
+import { PROJECT_HIERARCHY_EDIT_ROLE_CODES, BUILTIN_MILESTONE_TEMPLATE_KEY, NO_MILESTONE_APPROVAL_MESSAGE, TASK_PLAN_APPROVER_ROLES, taskPlanningBlockInclude, taskTimeEntryInclude, isPrismaWriteConflict, normalizeMilestoneEvidenceMode, mapMilestoneGateSummary, omitUndefined, hasInputKey, optionalEnum, validateTaskEstimateMinutes, templateTaskTypeLayer1, assertTaskTypePair, normalizeTemplateTasks, normalizeMilestoneTemplateMilestones } from "./projects.shared";
 import { PROJECT_MANAGE_FORBIDDEN_MESSAGE, ProjectPermissionsService } from "./project-permissions.service";
 import { TimeEntriesService } from "./time-entries.service";
 import { MilestoneGatesService } from "./milestone-gates.service";
@@ -1338,6 +1338,7 @@ export class ProjectsService {
       if (teamCount !== requestedTeamIds.length) throw new BadRequestException("Một hoặc nhiều team phụ trách không tồn tại trong workspace");
     }
 
+    const milestoneApprovalRequired = optionalBoolean(input.milestoneApprovalRequired, "milestoneApprovalRequired") ?? true;
     const response = await this.prisma.$transaction(async (tx) => {
       await this.permissions.ensureActiveWorkspaceUsers(tx, principal.workspaceId, principal.tenantKey, [principal.subjectId]);
       const workspace = await tx.tenantWorkspace.findUnique({ where: { id: principal.workspaceId } });
@@ -1372,6 +1373,7 @@ export class ProjectsService {
           tags,
           color,
           isTestProject: optionalBoolean(input.isTestProject, "isTestProject") ?? false,
+          milestoneApprovalRequired,
           milestoneMode: input.milestoneMode === "manual" ? "manual" : "auto",
           milestoneTemplateKey: input.milestoneMode === "manual" ? undefined : (input.milestoneTemplateKey?.trim() || "pilot-v1")
         },
@@ -1420,7 +1422,8 @@ export class ProjectsService {
                 evidenceMode: configuredGate?.evidenceMode ?? milestoneTemplate.evidenceMode ?? "file_or_link",
                 ownerTeamId: configuredGate?.ownerTeamId ?? milestoneTemplate.ownerTeamId ?? undefined
               } : undefined,
-              gateStatus: milestoneIndex === 0 ? "open" : "locked",
+              // "Không duyệt": nothing waits for the milestone before it.
+              gateStatus: milestoneIndex === 0 || !milestoneApprovalRequired ? "open" : "locked",
               customerConfirmationRequired: configuredGate?.customerConfirmationRequired ?? milestoneTemplate.customerConfirmationRequired ?? false,
               reviewerMode: configuredGate?.reviewerMode ?? milestoneTemplate.reviewerMode ?? DEFAULT_MILESTONE_REVIEWER_MODE,
               reviewerUserId: (configuredGate?.reviewerMode ?? milestoneTemplate.reviewerMode ?? DEFAULT_MILESTONE_REVIEWER_MODE) === "specific_user"
@@ -1576,6 +1579,10 @@ export class ProjectsService {
     const requestedTestFlag = hasInputKey(input, "isTestProject") ? optionalBoolean(input.isTestProject, "isTestProject") ?? false : undefined;
     const isTestProject = requestedTestFlag !== undefined && requestedTestFlag !== Boolean((existingProject as { isTestProject?: boolean }).isTestProject) ? requestedTestFlag : undefined;
     if (isTestProject !== undefined && !isAdminAccount(principal)) throw new ForbiddenException("Chỉ tài khoản Admin (PM) mới được đổi cờ Dự án thử nghiệm.");
+    // "Không duyệt" unlocks milestones and lets them (and G1–G8, P&L closing) pass without review: after creation only an Admin switches it.
+    const requestedApprovalMode = hasInputKey(input, "milestoneApprovalRequired") ? optionalBoolean(input.milestoneApprovalRequired, "milestoneApprovalRequired") ?? true : undefined;
+    const milestoneApprovalRequired = requestedApprovalMode !== undefined && requestedApprovalMode !== (existingProject.milestoneApprovalRequired !== false) ? requestedApprovalMode : undefined;
+    if (milestoneApprovalRequired !== undefined && !isAdminAccount(principal)) throw new ForbiddenException("Chỉ tài khoản Admin (PM) mới được đổi chế độ duyệt milestone.");
     const updatesProjectType = hasInputKey(input, "projectType");
     const updatesPriority = hasInputKey(input, "priority");
     const updatesTags = hasInputKey(input, "tags");
@@ -1668,12 +1675,18 @@ export class ProjectsService {
           priority: updatesPriority ? priority : undefined,
           tags,
           color: updatesColor ? color : undefined,
-          isTestProject
+          isTestProject,
+          milestoneApprovalRequired
         }
       });
       if (isTestProject !== undefined) {
         await this.permissions.auditMutation(tx, principal, "project.test_flag_changed", "project", projectId, { isTestProject: Boolean((existingProject as { isTestProject?: boolean }).isTestProject) }, { isTestProject });
         await this.timeEntries.syncLayer2MismatchWarning(tx, principal.workspaceId, projectId, principal.subjectId); // PL-02: a trial project raises no warning
+      }
+      if (milestoneApprovalRequired !== undefined) {
+        await this.permissions.auditMutation(tx, principal, "project.milestone_approval_mode_changed", "project", projectId, { milestoneApprovalRequired: !milestoneApprovalRequired }, { milestoneApprovalRequired });
+        // Switching back to review keeps the milestones as they are; only the next approvals need a reviewer again.
+        if (!milestoneApprovalRequired) await tx.projectMilestone.updateMany({ where: { workspaceId: principal.workspaceId, projectId, gateStatus: "locked" }, data: { gateStatus: "open" } });
       }
 
       // Table 4.2: the project kind decides Layer 2, so a kind change re-derives every task of the project.
@@ -1760,7 +1773,9 @@ export class ProjectsService {
       });
     });
 
-    if (nextStatus) await this.recomputeStatusProposal(projectId, principal);
+    // Work finished while milestones waited for review completes now; if this fails, the next task change catches up.
+    if (milestoneApprovalRequired === false) await this.milestoneGates.passFinishedMilestones(projectId, principal).catch((error) => console.error("Milestone catch-up failed", error));
+    if (nextStatus || milestoneApprovalRequired !== undefined) await this.recomputeStatusProposal(projectId, principal);
     if (assignedBefore) await this.notifyNewlyAssigned(principal, { entityType: "project", entityId: projectId, name: project.name }, assignedBefore, await this.projectAssignedUserIds(projectId, principal.workspaceId));
     projectLifecycleHooks.onProjectChanged(projectId); // Kept as a no-op extension point; project changes do not sync Lark groups.
     return withoutProjectFinancials(mapProjectSummary(project), principal);
@@ -1802,6 +1817,7 @@ export class ProjectsService {
   async actOnProjectGate(projectId: string, gateId: string, input: ProjectGateActionInput, principal: PrincipalContext) {
     this.permissions.assertInternalTaskPrincipal(principal, "Project gates are internal");
     const project = await this.permissions.ensureProject(projectId, principal.workspaceId);
+    if (project.milestoneApprovalRequired === false) throw new ConflictException(NO_MILESTONE_APPROVAL_MESSAGE);
     return actOnProjectGate({ ...(await this.permissions.issueLogContext(projectId, principal)), status: this.statusSyncContext(principal.workspaceId, principal) }, project, gateId, input);
   }
 
@@ -1949,7 +1965,8 @@ export class ProjectsService {
         ),
         milestone.reviewerUserId ? reviewerUsers.get(milestone.reviewerUserId) : undefined,
         milestone.reviewerApprovedByUserId ? reviewerUsers.get(milestone.reviewerApprovedByUserId) : undefined,
-        principal
+        principal,
+        project.milestoneApprovalRequired !== false
       ))
     };
   }

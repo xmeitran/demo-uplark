@@ -1,7 +1,7 @@
 /**
  * Test helper: an in-memory stand-in for the few Prisma calls the baseline / stage-extension / conversion code makes.
  * Supports equality, `in`, `notIn`, `not`, `lt/lte/gt/gte` in `where`, a single-key `orderBy`, `increment`, and the
- * two `groupBy` shapes used (`_sum.minutes`, `_max.version`). Not a general Prisma fake.
+ * `groupBy` shapes used (`_sum.minutes`, `_max.version`, `_count._all`) on the first `by` key. Not a general Prisma fake.
  */
 type Row = Record<string, any>;
 
@@ -69,7 +69,7 @@ export function fakePrisma(seed: Record<string, Row[]> = {}) {
     groupBy: async ({ by, where }: any) => {
       const groups = new Map<string, Row[]>();
       for (const row of table(name).filter((item) => matches(item, where))) groups.set(row[by[0]], [...(groups.get(row[by[0]]) ?? []), row]);
-      return [...groups].map(([key, rows]) => ({ [by[0]]: key, _sum: { minutes: rows.reduce((total, row) => total + (row.minutes ?? 0), 0) }, _max: { version: Math.max(...rows.map((row) => row.version ?? 0)) } }));
+      return [...groups].map(([key, rows]) => ({ [by[0]]: key, _count: { _all: rows.length }, _sum: { minutes: rows.reduce((total, row) => total + (row.minutes ?? 0), 0) }, _max: { version: Math.max(...rows.map((row) => row.version ?? 0)) } }));
     }
   });
   const prisma: any = new Proxy({ $transaction: async (run: any) => run(prisma), $queryRaw: async () => [] }, {

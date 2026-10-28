@@ -26,6 +26,8 @@ import { deriveTaskStatus } from "./task-status";
 export const TIME_REVIEW_ROLE_CODES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN", "DELIVERY_LEAD"]);
 export const PROJECT_HIERARCHY_EDIT_ROLE_CODES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN", "DELIVERY_LEAD"]);
 export const BUILTIN_MILESTONE_TEMPLATE_KEY = "pilot-v1";
+/** Refusal of a submit / review step on a project in "Không duyệt" mode (Project.milestoneApprovalRequired = false). */
+export const NO_MILESTONE_APPROVAL_MESSAGE = "Dự án không duyệt milestone: milestone và điểm chốt tự hoàn thành khi hết task, không cần nộp hay duyệt hồ sơ.";
 // Mirrors MANAGER_ROLES in brd-governance.service.ts: the roles that approve task plans and timeline change requests.
 // Admin accounts only (D-21): FINANCE_ADMIN (Kế toán) is a User-type role in ROLE_CATALOGUE and approves no plan.
 export const TASK_PLAN_APPROVER_ROLES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN", "DX_DIRECTOR", "PM", "BD_LEAD"]);
@@ -70,7 +72,8 @@ export function mapMilestoneGateSummary(
   evidenceCounts: MilestoneEvidenceCounts,
   reviewerUser?: MilestoneReviewerUser,
   approvedByUser?: MilestoneReviewerUser,
-  principal?: PrincipalContext
+  principal?: PrincipalContext,
+  approvalRequired = true
 ) {
   const evidenceMode = normalizeMilestoneEvidenceMode(milestone.evidenceMode);
   const requiredDocumentCount = effectiveMilestoneRequiredDocumentCount(milestone);
@@ -98,7 +101,8 @@ export function mapMilestoneGateSummary(
     missingDocumentTypes: evidenceCounts.missingRequiredTypes,
     customerConfirmationRequired: Boolean(milestone.customerConfirmationRequired),
     customerConfirmationAt: milestone.customerConfirmationAt,
-    taskStatuses
+    taskStatuses,
+    approvalRequired
   });
 
   return {
@@ -132,8 +136,8 @@ export function mapMilestoneGateSummary(
     reviewerApprovedAt: milestone.reviewerApprovedAt?.toISOString(),
     reviewerApprovedByUserId: milestone.reviewerApprovedByUserId ?? undefined,
     reviewerApprovedByUserName: approvedByUser?.displayName,
-    reviewerApprovalRequired: milestone.gateStatus !== "approved",
-    canApprove: principal
+    reviewerApprovalRequired: approvalRequired && milestone.gateStatus !== "approved",
+    canApprove: approvalRequired && principal
       ? canApproveMilestoneReviewer({
           reviewerMode: normalizeMilestoneReviewerMode(milestone.reviewerMode),
           reviewerUserId: milestone.reviewerUserId,

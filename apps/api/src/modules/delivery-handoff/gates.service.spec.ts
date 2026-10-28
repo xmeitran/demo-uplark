@@ -2,7 +2,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fakePrisma } from "./fake-prisma.testing";
 import { gateHooks } from "./gates";
-import { actOnProjectGate, decideStatusProposal, listProjectGates } from "./gates.service";
+import { MilestoneGatesService } from "./milestone-gates.service";
+import { ProjectPermissionsService } from "./project-permissions.service";
+import { actOnProjectGate, assertStageGateOpen, autoPassStageGates, decideStatusProposal, listProjectGates } from "./gates.service";
 
 const principal = { subjectType: "internal_user", subjectId: "usr-director", displayName: "Dx Director", workspaceId: "w", tenantKey: "prod", roleCodes: ["DX_DIRECTOR", "WORKSPACE_ADMIN"] } as any;
 
@@ -79,5 +81,63 @@ describe("status proposal decisions (review 19/10: D7)", () => {
     const { ctx, current } = setup();
     await expect(decideStatusProposal(ctx, "p1", "sp-1", { decision: "confirm" } as any, async () => { throw new Error("cần lý do"); })).rejects.toThrow("cần lý do");
     expect(current().status).toBe("pending");
+  });
+});
+
+describe("\"Không duyệt\" milestone mode on G1–G8", () => {
+  const captureBaseline = gateHooks.captureBaseline;
+  afterEach(() => { gateHooks.captureBaseline = captureBaseline; });
+  const at = new Date("2026-10-28T03:00:00.000Z");
+  function seedFree() {
+    const stage = (id: string, milestoneId: string, sortOrder: number) => ({ id, workspaceId: "w", projectId: "p1", milestoneId, activity: id, stageKey: id, sortOrder, status: "in_progress", project: { milestoneApprovalRequired: false } });
+    const gate = (id: string, code: string, stageId: string, milestoneId: string, sortOrder: number, status = "not_submitted") => ({ id, workspaceId: "w", projectId: "p1", milestoneId, stageId, code, status, sortOrder, history: [] });
+    const task = (id: string, stageId: string, status: string) => ({ id, workspaceId: "w", projectId: "p1", stageId, status, archivedAt: null });
+    return fakePrisma({
+      project: [{ id: "p1", workspaceId: "w", accountId: "acc-1", status: "planning", milestoneApprovalRequired: false }],
+      projectMilestone: [{ id: "m1", workspaceId: "w", projectId: "p1", sortOrder: 10, gateStatus: "open" }, { id: "m2", workspaceId: "w", projectId: "p1", sortOrder: 20, gateStatus: "open" }],
+      // Intake has no gate of its own: G1 closes it together with Validate.
+      projectStage: [stage("s-intake", "m1", 1), stage("s-validate", "m1", 2), stage("s-design", "m2", 3), stage("s-build", "m2", 4)],
+      projectGate: [gate("g1", "G1", "s-validate", "m1", 1), gate("g2", "G2", "s-design", "m2", 2, "submitted"), gate("g3", "G3", "s-build", "m2", 3)],
+      projectTask: [task("t1", "s-intake", "done"), task("t2", "s-validate", "done"), task("t3", "s-design", "cancelled"), task("t4", "s-build", "todo")]
+    });
+  }
+
+  it("passes gates in order once their stages have no open task, approving the milestone a gate closes; a stage without tasks waits", async () => {
+    const { prisma, table } = seedFree();
+    gateHooks.captureBaseline = vi.fn();
+    await autoPassStageGates(prisma, "w", "p1", "usr-1", at);
+    expect(table("projectGate").map((gate) => gate.status)).toEqual(["approved", "approved", "not_submitted"]);
+    expect(table("projectGate")[0]).toMatchObject({ decidedByUserId: "usr-1", decidedAt: at, history: [expect.objectContaining({ label: "Tự qua", toStatus: "approved" })] });
+    expect(table("projectMilestone").map((milestone) => milestone.gateStatus)).toEqual(["approved", "open"]);
+    expect(gateHooks.captureBaseline).toHaveBeenCalledTimes(2);
+    expect((gateHooks.captureBaseline as any).mock.calls[0][0].gate.code).toBe("G1");
+
+    table("projectTask")[3].archivedAt = at;
+    await autoPassStageGates(prisma, "w", "p1", "usr-1", at);
+    expect(table("projectGate")[2].status).toBe("not_submitted");
+    Object.assign(table("projectTask")[3], { archivedAt: null, status: "done" });
+    await autoPassStageGates(prisma, "w", "p1", "usr-1", at);
+    expect(table("projectGate")[2].status).toBe("approved");
+  });
+
+  it("runs on every task change of the project", async () => {
+    const { prisma, table } = seedFree();
+    gateHooks.captureBaseline = vi.fn();
+    await new MilestoneGatesService(prisma, new ProjectPermissionsService(prisma)).evaluateMilestoneGateForTask({ projectId: "p1", stageId: "s-validate" }, principal);
+    expect(table("projectGate").map((gate) => gate.status)).toEqual(["approved", "approved", "not_submitted"]);
+  });
+
+  it("blocks no stage, offers no gate action and lists only the open tasks as missing", async () => {
+    const { prisma, table } = seedFree();
+    await expect(assertStageGateOpen(prisma, "w", "s-build", "log giờ")).resolves.toBeUndefined();
+    table("projectStage").forEach((stage) => { stage.project = { milestoneApprovalRequired: true }; });
+    await expect(assertStageGateOpen(prisma, "w", "s-build", "log giờ")).rejects.toThrow("Điểm chốt G2");
+
+    const ctx = { prisma, principal, actor: { userId: "usr-director", isAdmin: true, isPm: true, isBd: false, isMember: true, canGrantGateException: true }, now: at } as any;
+    const list = await listProjectGates(ctx, { id: "p1", milestoneApprovalRequired: false });
+    expect(list).toMatchObject({ milestoneApprovalRequired: false, canException: false });
+    expect(list.data.map((gate) => gate.allowedActions)).toEqual([[], [], []]);
+    expect(list.data[2].missingRequirements).toEqual(["Còn 1 task của stage chưa hoàn thành."]);
+    expect((await listProjectGates(ctx, { id: "p1" })).data[0].allowedActions).toContain("submit");
   });
 });

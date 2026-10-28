@@ -83,8 +83,9 @@ async function orderedStages(client: any, workspaceId: string, projectId: string
  */
 export async function assertStageGateOpen(client: any, workspaceId: string, stageId: string | null | undefined, action: string) {
   if (!stageId || !hasModel(client, "projectGate") || !hasModel(client, "projectStage", "findFirst")) return;
-  const stage = await client.projectStage.findFirst({ where: { id: stageId, workspaceId }, select: { projectId: true } });
-  if (!stage) return;
+  const stage = await client.projectStage.findFirst({ where: { id: stageId, workspaceId }, select: { projectId: true, project: { select: { milestoneApprovalRequired: true } } } });
+  // "Không duyệt": no stage waits for a gate.
+  if (!stage || stage.project?.milestoneApprovalRequired === false) return;
   const gates = await client.projectGate.findMany({ where: { workspaceId, projectId: stage.projectId }, select: { stageId: true, code: true, status: true } });
   if (!gates?.length) return;
   const stages = await orderedStages(client, workspaceId, stage.projectId);
@@ -124,6 +125,17 @@ interface GateBundle {
   dayOffKeys: Set<string>;
 }
 
+/** The gate closes its own stage plus the gate-less stages right before it in the same milestone (Intake → G1, Optimize → G8). */
+function gateStageIds(gate: any, gates: any[], stages: any[]): string[] {
+  const ids: string[] = [];
+  for (let index = stages.findIndex((stage) => stage.id === gate.stageId); index >= 0; index -= 1) {
+    const stage = stages[index];
+    if (stage.milestoneId !== gate.milestoneId || (stage.id !== gate.stageId && gates.some((item) => item.stageId === stage.id))) break;
+    ids.push(stage.id);
+  }
+  return ids;
+}
+
 async function loadGateBundle(client: any, workspaceId: string, projectId: string, now: Date, pendingHours?: IssueLogContext["pendingHoursBlockingG7"]): Promise<GateBundle> {
   const gates: any[] = hasModel(client, "projectGate") ? await client.projectGate.findMany({ where: { workspaceId, projectId }, orderBy: { sortOrder: "asc" } }) : [];
   const stages = gates.length ? await orderedStages(client, workspaceId, projectId) : [];
@@ -154,13 +166,7 @@ async function loadGateBundle(client: any, workspaceId: string, projectId: strin
 
   for (const gate of gates) {
     const definition = gateDefinition(gate.code);
-    // The gate closes its own stage plus the gate-less stages right before it in the same milestone (Intake → G1, Optimize → G8).
-    let openTaskCount = 0;
-    for (let index = stageIds.indexOf(gate.stageId); index >= 0; index -= 1) {
-      const stage = stages[index];
-      if (stage.milestoneId !== gate.milestoneId || (stage.id !== gate.stageId && gates.some((item) => item.stageId === stage.id))) break;
-      openTaskCount += openTasksByStage.get(stage.id) ?? 0;
-    }
+    const openTaskCount = gateStageIds(gate, gates, stages).reduce((sum, stageId) => sum + (openTasksByStage.get(stageId) ?? 0), 0);
     facts.set(gate.id, {
       reachable: blockingGateForStage(stageIds, gates, gate.stageId) === null,
       documents: gateDocumentTicks(definition, documents.filter((document: any) => document.milestoneId === gate.milestoneId)),
@@ -185,8 +191,9 @@ function mapStageSlaClock(stage: any, now: Date, dayOffKeys: Set<string>): Proje
   };
 }
 
-export async function listProjectGates(ctx: IssueLogContext, project: { id: string }): Promise<ProjectGateListResponse> {
+export async function listProjectGates(ctx: IssueLogContext, project: { id: string; milestoneApprovalRequired?: boolean }): Promise<ProjectGateListResponse> {
   const now = ctx.now ?? new Date();
+  const approvalRequired = project.milestoneApprovalRequired !== false;
   const workspaceId = ctx.principal.workspaceId;
   const bundle = await loadGateBundle(ctx.prisma, workspaceId, project.id, now, ctx.pendingHoursBlockingG7);
   const names = await displayNames(ctx.prisma, bundle.gates.flatMap((gate) => [gate.submittedByUserId, gate.decidedByUserId, gate.paymentConfirmedByUserId, gate.customerRecordedByUserId, gate.exceptionByUserId]));
@@ -212,7 +219,8 @@ export async function listProjectGates(ctx: IssueLogContext, project: { id: stri
       id: gate.id, code: gate.code, definition, projectId: gate.projectId, milestoneId: gate.milestoneId, milestoneName: stage?.milestone?.name ?? "", stageId: gate.stageId, stageName: stage?.activity ?? "",
       status: gate.status, statusLabel: PROJECT_GATE_STATUS_LABELS[gate.status as ProjectGateStatus] ?? gate.status,
       reachable: facts.reachable, documents: facts.documents, openTaskCount: facts.openTaskCount,
-      missingRequirements: passed ? [] : gateRequirements(definition, gate, facts).map((item) => item.text),
+      // "Không duyệt": the open tasks are the only thing a gate waits for.
+      missingRequirements: passed ? [] : !approvalRequired ? (facts.openTaskCount ? [`Còn ${facts.openTaskCount} task của stage chưa hoàn thành.`] : []) : gateRequirements(definition, gate, facts).map((item) => item.text),
       submittedAt: iso(gate.submittedAt), submittedByUserId: gate.submittedByUserId ?? undefined, submittedByName: names.get(gate.submittedByUserId),
       decision: gate.decision ?? undefined, decidedAt: iso(gate.decidedAt), decidedByUserId: gate.decidedByUserId ?? undefined, decidedByName: names.get(gate.decidedByUserId), decisionReason: gate.decisionReason ?? undefined,
       conditionIssueId: gate.conditionIssueId ?? undefined, conditionIssueCode: issues.find((issue) => issue.id === gate.conditionIssueId)?.code,
@@ -226,7 +234,7 @@ export async function listProjectGates(ctx: IssueLogContext, project: { id: stri
       passedAt: iso(gatePassedAt(gate)),
       pnlPendingCheck: facts.pnlPending,
       sla: stage ? mapStageSla(stage, now, bundle.dayOffKeys) : undefined,
-      allowedActions: allowedGateActions(definition, gate, facts, ctx.actor),
+      allowedActions: approvalRequired ? allowedGateActions(definition, gate, facts, ctx.actor) : [],
       history: Array.isArray(gate.history) ? (gate.history as ProjectGateHistoryEntry[]) : []
     };
   });
@@ -235,7 +243,8 @@ export async function listProjectGates(ctx: IssueLogContext, project: { id: stri
     usesStageGates: data.length > 0,
     data,
     stageSla: bundle.stages.filter((stage) => stage.slaDays !== null && stage.slaDays !== undefined).map((stage) => mapStageSla(stage, now, bundle.dayOffKeys)),
-    canException: canGrantGateException(ctx.actor)
+    canException: approvalRequired && canGrantGateException(ctx.actor),
+    milestoneApprovalRequired: approvalRequired
   };
 }
 
@@ -249,6 +258,32 @@ async function openWhatComesNext(tx: any, gate: any, actorUserId: string, now: D
   await tx.projectMilestone.update({ where: { id: milestone.id }, data: { gateStatus: "approved", reviewerApprovedAt: now, reviewerApprovedByUserId: actorUserId } });
   const next = await tx.projectMilestone.findFirst({ where: { projectId: gate.projectId, workspaceId: gate.workspaceId, sortOrder: { gt: milestone.sortOrder } }, orderBy: { sortOrder: "asc" } });
   if (next?.gateStatus === "locked") await tx.projectMilestone.update({ where: { id: next.id }, data: { gateStatus: "open" } });
+}
+
+/**
+ * "Không duyệt" (Project.milestoneApprovalRequired = false): no submission, review, payment tick or customer wait. Gates pass
+ * by themselves, in order, once the stages they close have tasks and none is open; a pass does what an approval does
+ * (next milestone, G1 baseline). A passed gate stays passed, as an approved one does. The caller re-syncs the project status.
+ */
+export async function autoPassStageGates(tx: any, workspaceId: string, projectId: string, actorUserId: string, now: Date) {
+  const gates: any[] = await tx.projectGate.findMany({ where: { workspaceId, projectId }, orderBy: { sortOrder: "asc" } });
+  if (!gates.length) return;
+  const stages = await orderedStages(tx, workspaceId, projectId);
+  const tasks: any[] = await tx.projectTask.findMany({ where: { workspaceId, projectId, archivedAt: null }, select: { stageId: true, status: true } });
+  for (const gate of gates) {
+    if (isGatePassed(gate.status)) continue;
+    const stageIds = gateStageIds(gate, gates, stages);
+    const stageTasks = tasks.filter((task) => stageIds.includes(task.stageId));
+    if (!stageTasks.length || stageTasks.some((task) => !OPEN_TASK_STATUSES_EXCLUDED.includes(task.status))) return;
+    const entry: ProjectGateHistoryEntry = { at: now.toISOString(), action: "approve", label: "Tự qua", byUserId: actorUserId, byName: null, fromStatus: gate.status, toStatus: "approved", note: "Dự án không duyệt milestone: stage đã hết task" };
+    const updated = await tx.projectGate.update({
+      where: { id: gate.id },
+      data: { status: "approved", decision: "approved", decidedAt: now, decidedByUserId: actorUserId, history: [...(Array.isArray(gate.history) ? gate.history : []), entry] }
+    });
+    await openWhatComesNext(tx, gate, actorUserId, now);
+    await gateHooks.captureBaseline?.(Object.assign({ tx, actor: { userId: actorUserId } }, { gate: updated, project: { id: projectId } }));
+    // ponytail: the after-commit hooks (closeProjectPnl, pushDocumentsToWiki) are still empty TODOs; run them here too once they do something.
+  }
 }
 
 export async function actOnProjectGate(ctx: GateContext, project: { id: string; accountId: string }, gateId: string, input: ProjectGateActionInput): Promise<ProjectGateListResponse> {

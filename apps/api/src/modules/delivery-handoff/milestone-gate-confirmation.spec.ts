@@ -234,3 +234,35 @@ describe("ProjectsService milestone customer confirmation", () => {
     expect(prisma.projectMilestone.update).not.toHaveBeenCalled();
   });
 });
+
+describe("\"Không duyệt\" milestone mode (hand-built milestones)", () => {
+  const noReview = (prisma: any) => { prisma.project.findFirst.mockResolvedValue({ id: "project-1", workspaceId: "workspace-1", milestoneApprovalRequired: false }); return prisma; };
+  const milestone = (extra: Record<string, unknown> = {}) => ({
+    id: "milestone-1", projectId: "project-1", workspaceId: "workspace-1", sortOrder: 1, gateStatus: "open", requiredDocumentCount: 2, requiredDocumentTypes: [], evidenceMode: "file_or_link",
+    customerConfirmationRequired: true, customerConfirmationAt: null, reviewerMode: "workspace_admin", reviewerUserId: null, ...extra
+  });
+
+  it("completes the milestone by itself once its tasks are done — no documents, customer tick or reviewer", async () => {
+    const prisma = noReview(createPrisma(milestone(), ["done", "cancelled"]));
+    const result = await new ProjectsService(prisma as any).evaluateProjectMilestoneGate("project-1", "milestone-1", principal);
+    expect(result).toMatchObject({ gateStatus: "approved", reviewerApprovedByUserId: principal.subjectId, reviewerApprovalRequired: false, canApprove: false });
+    expect(prisma.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "project.milestone_completed" }) }));
+  });
+
+  it("reopens with an open task without locking the next milestone; a milestone without tasks is not done", async () => {
+    const reopened = noReview(createPrisma(milestone({ gateStatus: "approved", reviewerApprovedAt: new Date() }), ["done", "todo"]));
+    expect(await new ProjectsService(reopened as any).evaluateProjectMilestoneGate("project-1", "milestone-1", principal)).toMatchObject({ gateStatus: "open", missingRequirements: ["Còn 1 task chưa hoàn tất."] });
+    expect(reopened.projectMilestone.update).toHaveBeenCalledTimes(1);
+
+    const empty = noReview(createPrisma(milestone(), []));
+    expect(await new ProjectsService(empty as any).evaluateProjectMilestoneGate("project-1", "milestone-1", principal)).toMatchObject({ gateStatus: "open", missingRequirements: ["Milestone chưa có task."] });
+  });
+
+  it("refuses sending or approving a dossier", async () => {
+    const prisma = noReview(createPrisma(milestone({ gateStatus: "pending_review", approvalRequestedAt: new Date() }), ["done"]));
+    const service = new ProjectsService(prisma as any);
+    await expect(service.requestProjectMilestoneApproval("project-1", "milestone-1", principal)).rejects.toThrow("Dự án không duyệt milestone");
+    await expect(service.approveProjectMilestone("project-1", "milestone-1", adminPrincipal)).rejects.toThrow("Dự án không duyệt milestone");
+    expect(prisma.projectMilestone.update).not.toHaveBeenCalled();
+  });
+});

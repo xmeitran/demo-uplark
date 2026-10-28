@@ -433,6 +433,23 @@ const PRIORITY_OPTIONS = [
   { value: "Low", label: "Low", color: "#16a34a" },
 ];
 
+/** Project.milestoneApprovalRequired. "Không duyệt": no milestone locks, a milestone (or G1–G8 gate) completes with its tasks. */
+function MilestoneApprovalField({ value, onChange, disabled = false }: { value: boolean; onChange: (value: boolean) => void; disabled?: boolean }) {
+  return (
+    <div className="space-y-1.5" title={disabled ? "Chỉ tài khoản Admin (PM) đổi được chế độ này" : undefined}>
+      <span className="text-xs font-semibold text-muted-foreground">Duyệt milestone</span>
+      <CustomDropdown
+        ariaLabel="Duyệt milestone"
+        options={[{ value: "required", label: "Yêu cầu duyệt" }, { value: "none", label: "Không duyệt" }]}
+        value={value ? "required" : "none"}
+        onChange={(next) => onChange(next === "required")}
+        disabled={disabled}
+      />
+      <p className="text-[11px] text-muted-foreground">{value ? "Gửi hồ sơ và chờ duyệt trước khi sang milestone sau." : "Milestone mở hết từ đầu, hết task là tự hoàn thành."}</p>
+    </div>
+  );
+}
+
 /** Loại dự án of a list row as one of the three filter values; the fixed worklog project counts as Nội bộ. */
 function projectTypeCodeOf(project: Project) {
   const kind = projectKindOf(project.projectType) ?? "delivery";
@@ -540,6 +557,7 @@ interface ProjectEditValues {
   ownerUserId: string;
   memberUserIds: string[];
   isTestProject: boolean;
+  milestoneApprovalRequired: boolean;
   plannedStartAt: string;
   plannedEndAt: string;
 }
@@ -580,8 +598,9 @@ function ProjectEditModal({
   const initialMemberIds = project.memberUserIds ?? project.members.map((member) => member.id).filter((id): id is string => Boolean(id));
   const [ownerUserId, setOwnerUserId] = useState(project.ownerUserId ?? initialMemberIds[0] ?? "none");
   const [memberUserIds, setMemberUserIds] = useState<string[]>(initialMemberIds);
-  // PL-02: "Dự án thử nghiệm" — after creation only an Admin account changes it (the API enforces the same).
+  // PL-02: "Dự án thử nghiệm" and the milestone approval mode — after creation only an Admin account changes them (the API enforces the same).
   const [isTestProject, setIsTestProject] = useState(project.isTestProject === true);
+  const [milestoneApprovalRequired, setMilestoneApprovalRequired] = useState(project.milestoneApprovalRequired !== false);
   const canEditTestFlag = isAdminView(useAuth().user);
   const [plannedStartAt, setPlannedStartAt] = useState(project.startDate);
   const [plannedEndAt, setPlannedEndAt] = useState(project.dueDate);
@@ -599,6 +618,7 @@ function ProjectEditModal({
       ownerUserId,
       memberUserIds,
       isTestProject,
+      milestoneApprovalRequired,
       plannedStartAt,
       plannedEndAt
     });
@@ -683,6 +703,8 @@ function ProjectEditModal({
                 onChange={setProjectType}
               />
             </div>
+
+            <MilestoneApprovalField value={milestoneApprovalRequired} onChange={setMilestoneApprovalRequired} disabled={!canEditTestFlag} />
 
             <div className="space-y-1.5 md:col-span-2">
               <label className="text-xs font-semibold text-muted-foreground">Khách hàng</label>
@@ -1212,6 +1234,7 @@ export default function ProjectsPage() {
   const [client, setClient] = useState("");
   const [priority, setPriority] = useState<Project["priority"]>("Medium");
   const [isTestProject, setIsTestProject] = useState(false);
+  const [milestoneApprovalRequired, setMilestoneApprovalRequired] = useState(true);
   const [projectValueText, setProjectValueText] = useState("");
   const createErrorRef = useRef<HTMLDivElement | null>(null);
   const [createProjectType, setCreateProjectType] = useState("");
@@ -1473,6 +1496,7 @@ export default function ProjectsPage() {
           memberUserIds: selectedMembers,
           projectType: createProjectType,
           isTestProject,
+          milestoneApprovalRequired,
           scopeSummary: description.trim() || undefined,
           plannedStartAt: uiProjectDateToIso(startDate),
           plannedEndAt: uiProjectDateToIso(dueDate),
@@ -1530,6 +1554,7 @@ export default function ProjectsPage() {
       setClient(accountOptions[0]?.value ?? "");
       setPriority("Medium");
       setIsTestProject(false);
+      setMilestoneApprovalRequired(true);
       setStartDate(defaultProjectStartDate());
       setDueDate(defaultProjectDueDate());
       setColor("#2563eb");
@@ -1584,6 +1609,7 @@ export default function ProjectsPage() {
           ownerUserId: ownerUserId === (project.ownerUserId ?? null) ? undefined : ownerUserId,
           memberUserIds,
           isTestProject: values.isTestProject,
+          milestoneApprovalRequired: values.milestoneApprovalRequired,
           plannedStartAt: values.plannedStartAt === project.startDate ? undefined : uiProjectDateToIso(values.plannedStartAt),
           plannedEndAt: values.plannedEndAt === project.dueDate ? undefined : uiProjectDateToIso(values.plannedEndAt)
         })
@@ -2045,6 +2071,8 @@ export default function ProjectsPage() {
                         Không tính vào số tổng P&amp;L
                       </label>
                     </div>
+
+                    <MilestoneApprovalField value={milestoneApprovalRequired} onChange={setMilestoneApprovalRequired} />
 
                     {/* Priority */}
                     <div className="space-y-1.5">

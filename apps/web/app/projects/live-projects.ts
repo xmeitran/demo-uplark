@@ -376,6 +376,8 @@ export function mapProjectSummaryToUiProject(project: ProjectSummary): Project {
     plannedHours: minutesToHours(project.plannedMinutes),
     loggedHours: minutesToHours(project.loggedMinutes),
     isTestProject: project.isTestProject,
+    // Always a boolean: mergeProjectUpdate keeps the previous value for an undefined field.
+    milestoneApprovalRequired: project.milestoneApprovalRequired !== false,
     client: project.accountName || "Unassigned Account",
     color,
     tags: project.tags?.length ? project.tags : [project.code, status].filter(Boolean),

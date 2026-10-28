@@ -245,7 +245,9 @@ export function ProjectGatesPanel({ projectId, members, onChanged, onDocumentTyp
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h3 className="text-sm font-bold text-foreground">Điểm chốt chuyển tiếp G1–G8</h3>
-          <p className="mt-0.5 text-xs text-muted-foreground">Stage hoặc milestone kế tiếp chỉ mở khi hồ sơ đủ tài liệu bắt buộc và được duyệt. G1, G2, G4, G7 chờ khách xác nhận sau khi PM duyệt nội bộ.</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{list.milestoneApprovalRequired === false
+            ? "Dự án không duyệt milestone: mọi stage đều mở, điểm chốt tự qua theo thứ tự khi stage hết task, không cần nộp hay duyệt hồ sơ."
+            : "Stage hoặc milestone kế tiếp chỉ mở khi hồ sơ đủ tài liệu bắt buộc và được duyệt. G1, G2, G4, G7 chờ khách xác nhận sau khi PM duyệt nội bộ."}</p>
         </div>
         <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-bold text-muted-foreground">{gatesPassedCount(list.data)}/{list.data.length} điểm chốt đã mở</span>
       </div>
