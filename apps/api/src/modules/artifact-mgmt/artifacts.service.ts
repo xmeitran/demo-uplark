@@ -349,7 +349,9 @@ export class ArtifactsService {
     if (!['http:', 'https:'].includes(externalUrl.protocol)) {
       throw new BadRequestException("externalUrl must use http or https");
     }
-    const fileName = this.validateFileName(input.fileName || externalUrl.hostname);
+    // A link's name is only a label (an external file is never downloaded, see downloadFile), so the executable-extension
+    // check does not apply: a link named after its host, "upbasevn.sg.larksuite.com", ends in ".com".
+    const fileName = this.validateFileName(input.fileName || externalUrl.hostname, false);
     const checksum = createHash("sha256").update(externalUrl.toString()).digest("hex");
     const storageKey = `external/${principal.workspaceId}/${accountId}/${checksum}-${randomBytes(6).toString("hex")}`;
     const file = await this.prisma.fileObject.create({
@@ -382,14 +384,14 @@ export class ArtifactsService {
     return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_MAX_UPLOAD_BYTES;
   }
 
-  private validateFileName(value: unknown) {
+  private validateFileName(value: unknown, blockExecutables = true) {
     const fileName = nonEmptyString(value, "fileName");
     if (fileName.includes("/") || fileName.includes("\\") || fileName.includes("\0")) {
       throw new BadRequestException("fileName must not contain path separators");
     }
     const lowerName = fileName.toLowerCase();
     const extension = lowerName.includes(".") ? lowerName.slice(lowerName.lastIndexOf(".")) : "";
-    if (BLOCKED_FILE_EXTENSIONS.has(extension)) {
+    if (blockExecutables && BLOCKED_FILE_EXTENSIONS.has(extension)) {
       throw new BadRequestException("File type is not allowed");
     }
     return fileName;

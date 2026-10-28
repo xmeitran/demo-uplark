@@ -101,6 +101,22 @@ describe("ArtifactsService file lifecycle", () => {
     });
   });
 
+  it("names an unnamed link after its host, even a .com host, and still refuses non-http links", async () => {
+    const create = vi.fn().mockImplementation(async ({ data }) => ({ id: "file-link", ...data, createdAt: new Date("2026-10-28T00:00:00.000Z") }));
+    const service = new ArtifactsService({
+      account: { findFirst: vi.fn().mockResolvedValue({ id: "acc-1", workspaceId: "twk-1" }) },
+      fileObject: { create }
+    } as any);
+    const link = { accountId: "acc-1", storageProvider: "external" as const, fileName: "", contentType: "", base64Data: "" };
+
+    await expect(service.createFile({ ...link, externalUrl: "https://upbasevn.sg.larksuite.com/wiki/War1wnvMCi6Q8fkjl3ZlRnqYgyd" }, principal)).resolves.toMatchObject({
+      fileName: "upbasevn.sg.larksuite.com",
+      externalUrl: "https://upbasevn.sg.larksuite.com/wiki/War1wnvMCi6Q8fkjl3ZlRnqYgyd"
+    });
+    await expect(service.createFile({ ...link, externalUrl: "javascript:alert(1)" }, principal)).rejects.toThrow(BadRequestException);
+    await expect(service.createFile({ ...link, fileName: "a/b", externalUrl: "https://example.com" }, principal)).rejects.toThrow(BadRequestException);
+  });
+
   it("blocks unsupported file types before storage write", async () => {
     const service = new ArtifactsService({
       account: { findFirst: vi.fn().mockResolvedValue({ id: "acc-1", workspaceId: "twk-1" }) }
