@@ -7,6 +7,7 @@ import { PrismaService } from "../../shared/prisma/prisma.service";
 import { seesAllProjects, visibleProjectWhere } from "../delivery-handoff/project-visibility";
 import { buildPaginationMeta, nonEmptyString, normalizePagination, optionalBoolean, optionalInteger, optionalString } from "../../shared/http/request-context";
 import { optionalStringArray, toIso } from "../../shared/http/api-mappers";
+import { parseExternalUrl, validateFileName } from "./file-names";
 
 /**
  * Files and artifacts follow the project they belong to (7.7): an account sees the files of the projects it may see,
@@ -39,26 +40,6 @@ const DEFAULT_ALLOWED_CONTENT_TYPES = [
   "text/markdown",
   "text/plain"
 ];
-const BLOCKED_FILE_EXTENSIONS = new Set([
-  ".app",
-  ".bat",
-  ".cmd",
-  ".com",
-  ".dll",
-  ".dmg",
-  ".exe",
-  ".html",
-  ".htm",
-  ".js",
-  ".jar",
-  ".msi",
-  ".ps1",
-  ".scr",
-  ".sh",
-  ".svg",
-  ".vbs",
-  ".xhtml"
-]);
 
 @Injectable()
 export class ArtifactsService {
@@ -151,7 +132,7 @@ export class ArtifactsService {
       throw new BadRequestException("Only local file storage is supported for direct uploads");
     }
 
-    const fileName = this.validateFileName(input.fileName);
+    const fileName = validateFileName(input.fileName);
     const contentType = this.validateContentType(input.contentType);
     const base64Data = this.normalizeBase64Payload(nonEmptyString(input.base64Data, "base64Data"));
     const maxBytes = this.maxUploadBytes();
@@ -339,19 +320,10 @@ export class ArtifactsService {
   }
 
   private async createExternalFile(input: UploadFileInput, principal: PrincipalContext, accountId: string) {
-    const rawUrl = String(input.externalUrl ?? "").trim();
-    let externalUrl: URL;
-    try {
-      externalUrl = new URL(rawUrl);
-    } catch {
-      throw new BadRequestException("externalUrl must be a valid URL");
-    }
-    if (!['http:', 'https:'].includes(externalUrl.protocol)) {
-      throw new BadRequestException("externalUrl must use http or https");
-    }
+    const externalUrl = parseExternalUrl(input.externalUrl);
     // A link's name is only a label (an external file is never downloaded, see downloadFile), so the executable-extension
     // check does not apply: a link named after its host, "upbasevn.sg.larksuite.com", ends in ".com".
-    const fileName = this.validateFileName(input.fileName || externalUrl.hostname, false);
+    const fileName = validateFileName(input.fileName || externalUrl.hostname, false);
     const checksum = createHash("sha256").update(externalUrl.toString()).digest("hex");
     const storageKey = `external/${principal.workspaceId}/${accountId}/${checksum}-${randomBytes(6).toString("hex")}`;
     const file = await this.prisma.fileObject.create({
@@ -382,19 +354,6 @@ export class ArtifactsService {
   private maxUploadBytes() {
     const parsed = Number(process.env.CRM_MAX_UPLOAD_BYTES ?? DEFAULT_MAX_UPLOAD_BYTES);
     return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_MAX_UPLOAD_BYTES;
-  }
-
-  private validateFileName(value: unknown, blockExecutables = true) {
-    const fileName = nonEmptyString(value, "fileName");
-    if (fileName.includes("/") || fileName.includes("\\") || fileName.includes("\0")) {
-      throw new BadRequestException("fileName must not contain path separators");
-    }
-    const lowerName = fileName.toLowerCase();
-    const extension = lowerName.includes(".") ? lowerName.slice(lowerName.lastIndexOf(".")) : "";
-    if (blockExecutables && BLOCKED_FILE_EXTENSIONS.has(extension)) {
-      throw new BadRequestException("File type is not allowed");
-    }
-    return fileName;
   }
 
   private validateContentType(value: unknown) {

@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Headers, Inject, Param, Post, Query, Res, StreamableFile } from "@nestjs/common";
 import { PrincipalService } from "../identity-access/principal.service";
 import { ArtifactsService } from "./artifacts.service";
+import { contentDisposition } from "./file-names";
 
 type HeaderResponse = {
   set(headers: Record<string, string>): void;
@@ -59,7 +60,7 @@ export class ArtifactsController {
     const canRenderInline = /^(application\/pdf|text\/plain|image\/(?:avif|gif|jpeg|png|webp))$/i.test(download.file.contentType);
     response.set({
       "cache-control": "private, no-store",
-      "content-disposition": `${inline === "1" && canRenderInline ? "inline" : "attachment"}; filename="${download.file.fileName.replace(/["\\\r\n]/g, "_")}"`,
+      "content-disposition": contentDisposition(inline === "1" && canRenderInline ? "inline" : "attachment", download.file.fileName),
       "content-length": String(download.bytes.byteLength),
       "content-type": download.file.contentType
     });

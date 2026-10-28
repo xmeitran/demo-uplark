@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PrincipalContext } from "@b2b-crm/contracts";
 import { ArtifactsService } from "./artifacts.service";
+import { contentDisposition } from "./file-names";
+import { validateHeaderValue } from "node:http";
 
 const principal: PrincipalContext = {
   subjectType: "internal_user",
@@ -99,6 +101,14 @@ describe("ArtifactsService file lifecycle", () => {
       where: { id: "grant-1" },
       data: { usedAt: expect.any(Date) }
     });
+  });
+
+  it("sends Vietnamese file names in a header Node accepts, keeping the real name for the browser", () => {
+    const header = contentDisposition("attachment", "THIẾT BỊ ĐIỆN 1 - thêm ĐIỆN LẠNH (v2).xlsx");
+    expect(() => validateHeaderValue("content-disposition", header)).not.toThrow();
+    expect(header).toBe("attachment; filename=\"THIET BI DIEN 1 - them DIEN LANH (v2).xlsx\"; filename*=UTF-8''THI%E1%BA%BET%20B%E1%BB%8A%20%C4%90I%E1%BB%86N%201%20-%20th%C3%AAm%20%C4%90I%E1%BB%86N%20L%E1%BA%A0NH%20%28v2%29.xlsx");
+    expect(decodeURIComponent(header.split("UTF-8''")[1])).toBe("THIẾT BỊ ĐIỆN 1 - thêm ĐIỆN LẠNH (v2).xlsx");
+    expect(contentDisposition("inline", "a\"b\r\n.pdf")).toBe("inline; filename=\"a_b  .pdf\"; filename*=UTF-8''a%22b%20%20.pdf");
   });
 
   it("names an unnamed link after its host, even a .com host, and still refuses non-http links", async () => {
