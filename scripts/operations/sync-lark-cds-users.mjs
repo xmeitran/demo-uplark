@@ -61,7 +61,9 @@ export async function run(argv = process.argv.slice(2), env = process.env, depen
     workspaceKey: env.FOUNDATION_WORKSPACE_KEY ?? "default",
     workspaceName: env.FOUNDATION_WORKSPACE_NAME ?? "Default Workspace",
     departmentId: env.LARK_CDS_DEPARTMENT_ID ?? "CDS",
-    departmentIdType: env.LARK_CDS_DEPARTMENT_ID_TYPE ?? "department_id"
+    departmentIdType: env.LARK_CDS_DEPARTMENT_ID_TYPE ?? "department_id",
+    // Comma-separated, same id type: departments synced like CDS itself (e.g. "DX Internal").
+    extraDepartmentIds: (env.LARK_DIRECTORY_EXTRA_DEPARTMENT_IDS ?? "").split(",").map((id) => id.trim()).filter(Boolean)
   };
   const trigger = valueArg(argv, "--trigger") ?? "manual";
   const runId = valueArg(argv, "--run-id") ?? `lark-directory-sync:${new Date().toISOString()}:${randomUUID()}`;

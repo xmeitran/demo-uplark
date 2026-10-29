@@ -190,25 +190,33 @@ function primaryMembership(memberships) {
   })[0];
 }
 
-export async function fetchCdsDirectory(client, { departmentId, departmentIdType }) {
+/**
+ * `extraDepartmentIds` (LARK_DIRECTORY_EXTRA_DEPARTMENT_IDS): further roots whose members join exactly like CDS root
+ * members (team CHUYEN DOI SO, DELIVERY_LEAD) and whose sub-departments become teams, e.g. "DX Internal".
+ */
+export async function fetchCdsDirectory(client, { departmentId, departmentIdType, extraDepartmentIds = [] }) {
   const token = await client.tenantAccessToken();
-  const descendants = await client.paged(`/contact/v3/departments/${encodeURIComponent(departmentId)}/children`, {
-    token,
-    params: {
-      department_id_type: departmentIdType,
-      user_id_type: "user_id",
-      fetch_child: true
-    }
-  });
-  const departments = [
-    {
-      name: "CDS",
-      department_id: departmentIdType === "department_id" ? departmentId : undefined,
-      open_department_id: departmentIdType === "open_department_id" ? departmentId : undefined,
-      isRoot: true
-    },
-    ...descendants.map((department) => ({ ...department, isRoot: false }))
-  ];
+  const roots = [departmentId, ...extraDepartmentIds.filter((id) => id && id !== departmentId)];
+  const departments = [];
+  for (const rootId of roots) {
+    const descendants = await client.paged(`/contact/v3/departments/${encodeURIComponent(rootId)}/children`, {
+      token,
+      params: {
+        department_id_type: departmentIdType,
+        user_id_type: "user_id",
+        fetch_child: true
+      }
+    });
+    departments.push(
+      {
+        name: "CDS",
+        department_id: departmentIdType === "department_id" ? rootId : undefined,
+        open_department_id: departmentIdType === "open_department_id" ? rootId : undefined,
+        isRoot: true
+      },
+      ...descendants.map((department) => ({ ...department, isRoot: false }))
+    );
+  }
   const warnings = [];
   const detailCache = new Map();
   const rows = [];
@@ -466,6 +474,7 @@ export async function syncCdsUsers(prisma, directory, config) {
     trigger: config.trigger,
     additiveOnly: true,
     sourceDepartment: config.departmentId,
+    extraDepartments: config.extraDepartmentIds ?? [],
     fetchedDepartments: directory.teams.length,
     fetchedUsers: directory.users.length,
     warningCount: directory.warnings.length,
@@ -592,6 +601,7 @@ export function sanitizeRunSummary(summary) {
     apply: summary.apply,
     additiveOnly: true,
     sourceDepartment: summary.sourceDepartment,
+    extraDepartments: summary.extraDepartments ?? [],
     fetchedDepartments: summary.fetchedDepartments,
     fetchedUsers: summary.fetchedUsers,
     warningCount: summary.warningCount,

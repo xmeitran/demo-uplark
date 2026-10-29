@@ -55,7 +55,7 @@ Native Auth không mở đăng ký công khai. Founder tạo lời mời, ngư�
 
 ## Đồng bộ danh bạ
 
-`LARK_DIRECTORY_SYNC_ENABLED=false` theo mặc định. Root đồng bộ do `LARK_CDS_DEPARTMENT_ID` và `LARK_CDS_DEPARTMENT_ID_TYPE` quyết định; không mặc định root của tổ chức khác.
+`LARK_DIRECTORY_SYNC_ENABLED=false` theo mặc định. Root đồng bộ do `LARK_CDS_DEPARTMENT_ID` và `LARK_CDS_DEPARTMENT_ID_TYPE` quyết định; không mặc định root của tổ chức khác. `LARK_DIRECTORY_EXTRA_DEPARTMENT_IDS` (danh sách ID cách nhau bằng dấu phẩy, cùng loại ID) thêm các phòng ban được đồng bộ như chính CDS: thành viên vào team CHUYEN DOI SO với vai trò DELIVERY_LEAD, phòng con thành team riêng (ví dụ phòng DX Internal).
 
 - Chạy `pnpm db:sync:lark-cds-users` là bước preview theo script hiện tại, nhưng vẫn có thể đọc Lark/database thật nếu bạn cấu hình credentials thật.
 - Chỉ dùng `--apply` khi đã xem preview và được phép ghi vào workspace mục tiêu.

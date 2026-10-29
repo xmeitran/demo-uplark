@@ -54,6 +54,35 @@ test("includes CDS root users, traverses descendants, and dedupes canonically by
   assert.equal(shared.roleCode, "DELIVERY_LEAD");
 });
 
+test("syncs extra root departments (DX Internal) like CDS root members, without duplicating shared people", async () => {
+  const usersByDepartment = {
+    CDS: [{ user_id: "u-cds", open_id: "ou-cds", name: "CDS Member" }, { user_id: "u-both", open_id: "ou-both", name: "In Both" }],
+    dx_internal: [{ user_id: "u-dx", open_id: "ou-dx", name: "DX Member" }, { user_id: "u-both", open_id: "ou-both", name: "In Both" }],
+    dx_sub: [{ user_id: "u-dx-sub", open_id: "ou-dx-sub", name: "DX Sub Member" }]
+  };
+  const childrenAsked = [];
+  const client = {
+    tenantAccessToken: async () => "token",
+    paged: async (path, { params }) => {
+      if (path.includes("/children")) {
+        childrenAsked.push(decodeURIComponent(path.split("/").at(-2)));
+        return path.includes("dx_internal") ? [{ department_id: "dx_sub", name: "Delivery Pod", member_count: 1 }] : [];
+      }
+      return usersByDepartment[params.department_id];
+    },
+    json: async (path) => ({ user: Object.values(usersByDepartment).flat().find((item) => item.user_id === path.split("/").at(-1)) })
+  };
+
+  const directory = await fetchCdsDirectory(client, { departmentId: "CDS", departmentIdType: "department_id", extraDepartmentIds: ["dx_internal", "CDS"] });
+
+  assert.deepEqual(childrenAsked, ["CDS", "dx_internal"]);
+  assert.deepEqual(directory.users.map((row) => row.user.user_id).sort(), ["u-both", "u-cds", "u-dx", "u-dx-sub"]);
+  const dx = directory.users.find((row) => row.user.user_id === "u-dx");
+  assert.deepEqual({ teamCode: dx.teamCode, teamName: dx.teamName, roleCode: dx.roleCode }, { teamCode: "CDS", teamName: "CHUYEN DOI SO", roleCode: "DELIVERY_LEAD" });
+  assert.deepEqual(directory.users.find((row) => row.user.user_id === "u-both").teams, ["CDS"]);
+  assert.equal(directory.users.find((row) => row.user.user_id === "u-dx-sub").teamCode, "CDS_DELIVERY_POD");
+});
+
 test("uses descendant IDs matching departmentIdType", async () => {
   const requested = [];
   const client = {
