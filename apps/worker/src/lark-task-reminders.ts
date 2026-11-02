@@ -189,18 +189,12 @@ function plannedTasks(fact: ReminderUserFacts) {
   return [...tasks.values()];
 }
 
-/** Đầu ngày, to everyone: plan today's Tasks; says what is already planned and which planned Task lacks a field. */
+/** Đầu ngày, to everyone: plan today's Tasks; lists a planned Task that lacks a field. */
 function planCard(config: TaskReminderConfig, fact: ReminderUserFacts, issue: PlanReminderIssue | undefined, localDate: string) {
-  const tasks = plannedTasks(fact);
-  const fieldIssues = tasks.length ? issue?.taskFieldIssues ?? [] : [];
+  const fieldIssues = fact.planningBlocks.length ? issue?.taskFieldIssues ?? [] : [];
   const lines = [
     `${mention(config, fact.larkOpenId)}Chào **${fact.displayName}**,`,
     `Hôm nay, ${dayLabel(localDate)}, vui lòng lập kế hoạch các Task sẽ làm trong ngày và ghi giờ kế hoạch cho từng Task.`,
-    "",
-    `• Dự án đang tham gia: ${projectsLabel(fact.activeProjects)}`,
-    tasks.length
-      ? `• Kế hoạch hiện có: ${tasks.length} Task · ${minutesLabel(tasks.reduce((total, task) => total + task.minutes, 0))}`
-      : "• Kế hoạch hiện có: chưa có Task nào.",
     ...(fieldIssues.length ? ["", "Task cần bổ sung thông tin:", ...fieldIssues.slice(0, 5).map((task) => `• **${task.taskTitle}**${task.projectName ? ` · ${task.projectName}` : ""} — còn thiếu: ${task.missingFields.join(", ")}`)] : []),
     ...(fieldIssues.length > 5 ? [`• Và ${fieldIssues.length - 5} Task khác.`] : [])
   ];

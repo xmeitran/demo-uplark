@@ -130,9 +130,7 @@ describe("runTaskReminderSlot (sáng/chiều: mọi người · 14:00: PM)", () 
     // A private message does not tag its own recipient.
     expect(messages[0].text.startsWith("Chào **An**,")).toBe(true);
     expect(messages[0].text).toContain("Hôm nay, Thứ Hai, 02/11/2026, vui lòng lập kế hoạch các Task");
-    expect(messages[0].text).toContain("• Dự án đang tham gia: Dự án A");
-    expect(messages[0].text).toContain("• Kế hoạch hiện có: 1 Task · 4 giờ");
-    expect(messages[1].text).toContain("• Kế hoạch hiện có: chưa có Task nào.");
+    expect(messages.map((message) => message.text).join("\n")).not.toMatch(/Dự án đang tham gia|Kế hoạch hiện có/);
   });
 
   it("14:00 lists only the people with no plan, to the PMs, with the Gửi nhắc link", async () => {
