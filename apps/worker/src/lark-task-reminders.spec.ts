@@ -160,5 +160,6 @@ describe("runTaskReminderSlot (sáng/chiều: mọi người · 14:00: PM)", () 
     expect(messages[0].text).toContain("• Còn 1/1 Task chưa hoàn thành");
     expect(messages[1].text).toContain("bạn chưa có kế hoạch Task nào trong ngày");
     expect(messages[1].text).toContain("1. Lập kế hoạch các Task đã làm hôm nay");
+    expect(messages[1].text).not.toMatch(/Dự án đang tham gia|Giờ thực tế đã ghi/);
   });
 });

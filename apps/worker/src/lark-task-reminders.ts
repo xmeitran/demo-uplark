@@ -224,10 +224,7 @@ function finishPlanCard(config: TaskReminderConfig, fact: ReminderUserFacts, tar
       "",
       "Vui lòng:",
       "1. Lập kế hoạch các Task đã làm hôm nay (Task, dự án và giờ kế hoạch).",
-      "2. Bấm “Hoàn thành kế hoạch” cho từng Task để ghi giờ thực tế.",
-      "",
-      `• Dự án đang tham gia: ${projectsLabel(fact.activeProjects)}`,
-      hours
+      "2. Bấm “Hoàn thành kế hoạch” cho từng Task để ghi giờ thực tế."
     ], note, { ...button, text: "Lập và hoàn thành kế hoạch" });
   }
   const open = tasks.filter((task) => !task.done);
