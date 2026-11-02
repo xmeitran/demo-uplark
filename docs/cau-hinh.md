@@ -77,6 +77,7 @@ Worker hỗ trợ ba mốc theo `Asia/Ho_Chi_Minh`: buổi sáng nhắc mọi ng
 - Người nhận mốc 14:00 chọn trong Admin › Nhắc Lark › “Nhắc lại cho PM” › Người nhận. Khi chưa chọn ai: `LARK_TASK_REMINDER_PM_OPEN_IDS` là allowlist Lark open_id cho PM nhận card tổng hợp ở mốc 14:00; cấu hình giờ và trạng thái chính thức nằm trong tab Admin. Để trống: mỗi PIC dự án (người phụ trách stage đầu tiên) nhận danh sách người thuộc dự án của mình.
 - `LARK_TASK_REMINDER_TARGET_MINUTES=480` khớp contract Actual hiện tại. Actual chỉ tính log có trạng thái `submitted`, `approved` hoặc `done`; không tự chuyển Plan thành Actual.
 - `LARK_TASK_REMINDER_EXCLUDED_DATES` là danh sách `YYYY-MM-DD` phân cách bằng dấu phẩy.
+- `LARK_REMINDER_LINK_URL` (api và worker) là link của mọi nút trên card nhắc, trừ “Gửi nhắc lần 2”; để trống là `PUBLIC_APP_URL/projects`.
 - `PUBLIC_APP_URL` tạo liên kết về đúng Task hoặc Calendar cần cập nhật.
 
 Redis giữ khóa idempotency theo workspace/ngày/mốc/người trong tám ngày. Nếu webhook trả lỗi giữa batch, lần thử lại bỏ qua các message đã được Lark xác nhận; như mọi webhook không có provider idempotency key, vẫn tồn tại cửa sổ rất nhỏ có thể gửi trùng nếu tiến trình chết ngay sau khi Lark nhận message nhưng trước khi Redis ghi nhận.

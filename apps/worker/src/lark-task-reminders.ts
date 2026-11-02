@@ -29,6 +29,8 @@ export type TaskReminderConfig = {
   webhookUrl: string;
   webhookSecret?: string;
   publicAppUrl: string;
+  /** Where every card button except "Gửi nhắc lần 2" goes: LARK_REMINDER_LINK_URL, else the app's /projects. */
+  linkUrl: string;
   targetMinutes: number;
   catchUpMinutes: number;
   pollIntervalMs: number;
@@ -81,6 +83,7 @@ export function taskReminderConfigFromEnv(env: NodeJS.ProcessEnv): TaskReminderC
       workspaceId: "",
       webhookUrl: "",
       publicAppUrl: "",
+      linkUrl: "",
       targetMinutes: 480,
       catchUpMinutes: 60,
       pollIntervalMs: 30_000,
@@ -106,6 +109,7 @@ export function taskReminderConfigFromEnv(env: NodeJS.ProcessEnv): TaskReminderC
     webhookUrl: webhookUrl ? validateWebhookUrl(webhookUrl) : "",
     webhookSecret: env.LARK_TASK_REMINDER_WEBHOOK_SECRET?.trim() || undefined,
     publicAppUrl: validatePublicAppUrl(publicAppUrl),
+    linkUrl: validatePublicAppUrl(env.LARK_REMINDER_LINK_URL?.trim() || `${validatePublicAppUrl(publicAppUrl)}/projects`),
     targetMinutes: positiveInteger(env.LARK_TASK_REMINDER_TARGET_MINUTES, 480, "LARK_TASK_REMINDER_TARGET_MINUTES"),
     catchUpMinutes: positiveInteger(env.LARK_TASK_REMINDER_CATCH_UP_MINUTES, 60, "LARK_TASK_REMINDER_CATCH_UP_MINUTES"),
     pollIntervalMs: positiveInteger(env.LARK_TASK_REMINDER_POLL_INTERVAL_MS, 30_000, "LARK_TASK_REMINDER_POLL_INTERVAL_MS"),
@@ -129,10 +133,6 @@ function mention(config: TaskReminderConfig, ...openIds: Array<string | undefine
 function minutesLabel(minutes: number) {
   const hours = minutes / 60;
   return `${Number.isInteger(hours) ? hours.toFixed(0) : hours.toFixed(1)} giờ`;
-}
-
-function calendarUrl(config: TaskReminderConfig, localDate: string) {
-  return `${config.publicAppUrl}/calendar?date=${encodeURIComponent(localDate)}`;
 }
 
 /** "Gửi nhắc" on the PM card: the Admin page sends a private reminder to everyone still without a plan that day. */
@@ -195,7 +195,7 @@ function planCard(config: TaskReminderConfig, fact: ReminderUserFacts, issue: Pl
     ...(fieldIssues.length ? ["", "Task cần bổ sung thông tin:", ...fieldIssues.slice(0, 5).map((task) => `• **${task.taskTitle}**${task.projectName ? ` · ${task.projectName}` : ""} — còn thiếu: ${task.missingFields.join(", ")}`)] : []),
     ...(fieldIssues.length > 5 ? [`• Và ${fieldIssues.length - 5} Task khác.`] : [])
   ];
-  return card("blue", "Lập kế hoạch Task hôm nay", lines, "Nhắc đầu ngày · gửi mọi người; ngày nghỉ và người nghỉ phép cả ngày được bỏ qua.", { text: "Lập kế hoạch hôm nay", url: calendarUrl(config, localDate) });
+  return card("blue", "Lập kế hoạch Task hôm nay", lines, "Nhắc đầu ngày · gửi mọi người; ngày nghỉ và người nghỉ phép cả ngày được bỏ qua.", { text: "Lập kế hoạch hôm nay", url: config.linkUrl });
 }
 
 /**
@@ -207,7 +207,7 @@ function finishPlanCard(config: TaskReminderConfig, fact: ReminderUserFacts, tar
   const actualMinutes = fact.timeEntries.reduce((total, entry) => total + entry.minutes, 0);
   const hours = `• Giờ thực tế đã ghi: ${minutesLabel(actualMinutes)} / ${minutesLabel(targetMinutes)}`;
   const note = "Nhắc cuối ngày · gửi mọi người; ngày nghỉ và người nghỉ phép cả ngày được bỏ qua.";
-  const button = { text: "Mở Calendar hôm nay", url: calendarUrl(config, localDate) };
+  const button = { text: "Hoàn thành kế hoạch hôm nay", url: config.linkUrl };
   if (!tasks.length) {
     return card("red", "Yêu cầu lập kế hoạch và hoàn thành Task hôm nay", [
       `${mention(config, fact.larkOpenId)}Chào **${fact.displayName}**,`,
@@ -226,7 +226,7 @@ function finishPlanCard(config: TaskReminderConfig, fact: ReminderUserFacts, tar
       : `Bạn đã hoàn thành toàn bộ kế hoạch ngày ${dayLabel(localDate)}. Cảm ơn bạn!`,
     "",
     "Task đã lập kế hoạch hôm nay:",
-    ...tasks.slice(0, 8).map((task, index) => `${index + 1}. **${task.title}**${task.projectName ? ` · ${task.projectName}` : ""} — ${minutesLabel(task.minutes)} · ${task.done ? "Đã hoàn thành" : "**Chưa hoàn thành**"}`),
+    ...tasks.slice(0, 8).map((task, index) => `${index + 1}. **${task.title}**\n    Dự án: ${task.projectName ?? "Không thuộc dự án"} · Kế hoạch: ${minutesLabel(task.minutes)} · ${task.done ? "Đã hoàn thành" : "**Chưa hoàn thành**"}`),
     ...(tasks.length > 8 ? [`Và ${tasks.length - 8} Task khác.`] : []),
     "",
     `• Còn ${open.length}/${tasks.length} Task chưa hoàn thành`,

@@ -124,6 +124,11 @@ function appPublicOrigin() {
   return (process.env.PUBLIC_APP_URL ?? process.env.CRM_AUTH_PUBLIC_ORIGIN ?? "http://localhost:3000").replace(/\/$/, "");
 }
 
+/** Every reminder card button except "Gửi nhắc lần 2" opens this (LARK_REMINDER_LINK_URL, else the app's /projects). */
+function reminderLinkUrl() {
+  return process.env.LARK_REMINDER_LINK_URL?.trim() || `${appPublicOrigin()}/projects`;
+}
+
 function reminderMinutesLabel(minutes: number) {
   const hours = minutes / 60;
   return `${Number.isInteger(hours) ? hours.toFixed(0) : hours.toFixed(1)} giờ`;
@@ -605,11 +610,7 @@ export class WorkspaceAdminService {
       ];
     };
     const origin = appPublicOrigin();
-    const manualButton = input.slot === "morning_plan"
-      ? { text: "Cập nhật kế hoạch Task", url: origin + "/calendar?date=" + encodeURIComponent(localDate) }
-      : input.slot === "pm_follow_up"
-        ? { text: "Xem Timesheet", url: origin + "/timesheet?view=daily&date=" + encodeURIComponent(localDate) }
-        : { text: "Mở Timesheet hôm nay", url: origin + "/timesheet?view=daily&date=" + encodeURIComponent(localDate) };
+    const manualButton = { text: input.slot === "evening_actual" ? "Hoàn thành kế hoạch hôm nay" : "Cập nhật kế hoạch Task", url: reminderLinkUrl() };
     // "Gửi nhắc lần 2" from the PM card: one private card per person who still has no plan.
     const secondReminderPayload = ({ user }: typeof userFacts[number]) => {
       const [year, month, day] = localDate.split("-");
@@ -629,7 +630,7 @@ export class WorkspaceAdminService {
             ].join("\n") } },
             { tag: "hr" },
             { tag: "note", elements: [{ tag: "plain_text", content: `Gửi theo yêu cầu của PM ${principal.displayName}.` }] },
-            { tag: "action", actions: [{ tag: "button", type: "primary", text: { tag: "plain_text", content: "Lập kế hoạch hôm nay" }, url: origin + "/calendar?date=" + encodeURIComponent(localDate) }] }
+            { tag: "action", actions: [{ tag: "button", type: "primary", text: { tag: "plain_text", content: "Lập kế hoạch hôm nay" }, url: reminderLinkUrl() }] }
           ]
         }
       };
@@ -640,7 +641,7 @@ export class WorkspaceAdminService {
       const pmActions = input.slot === "pm_follow_up"
         ? facts.flatMap(({ user }) => [{ tag: "action", actions: [
           { tag: "button", type: "primary", text: { tag: "plain_text", content: "Gửi nhắc" }, url: origin + "/admin?tab=reminders&scope=user&userId=" + encodeURIComponent(user.id) + "&date=" + encodeURIComponent(localDate) },
-          { tag: "button", type: "default", text: { tag: "plain_text", content: "Xem Timesheet" }, url: origin + "/timesheet?view=daily&date=" + encodeURIComponent(localDate) + "&userId=" + encodeURIComponent(user.id) }
+          { tag: "button", type: "default", text: { tag: "plain_text", content: "Mở dự án" }, url: reminderLinkUrl() }
         ] }])
         : [];
       return {

@@ -22,6 +22,12 @@ describe("taskReminderConfigFromEnv", () => {
     })).toThrow("official Lark/Feishu");
   });
 
+  it("sends card buttons to LARK_REMINDER_LINK_URL, else the app's /projects", () => {
+    const base = { LARK_TASK_REMINDER_ENABLED: "true", LARK_TASK_REMINDER_WORKSPACE_ID: "twk-1", PUBLIC_APP_URL: "https://crm.example.com/", LARK_MESSAGING_ENABLED: "true", LARK_APP_ID: "a", LARK_APP_SECRET: "s" };
+    expect(taskReminderConfigFromEnv(base).linkUrl).toBe("https://crm.example.com/projects");
+    expect(taskReminderConfigFromEnv({ ...base, LARK_REMINDER_LINK_URL: "https://lark-upbase.mindtheoperation.com/projects" }).linkUrl).toBe("https://lark-upbase.mindtheoperation.com/projects");
+  });
+
   it("parses pilot users, PM mentions, excluded dates and the daily target", () => {
     const config = taskReminderConfigFromEnv({
       LARK_TASK_REMINDER_ENABLED: "true",
@@ -127,6 +133,8 @@ describe("runTaskReminderSlot (sáng/chiều: mọi người · 14:00: PM)", () 
     const messages = await run("morning_plan");
     expect(messages.map((message) => message.to)).toEqual(["ou_1", "ou_2"]);
     expect(messages.map((message) => message.title)).toEqual(["Lập kế hoạch Task hôm nay", "Lập kế hoạch Task hôm nay"]);
+    // Every button except "Gửi nhắc lần 2" opens the projects page.
+    expect(messages[0].url).toBe("https://crm.example.com/projects");
     // A private message does not tag its own recipient.
     expect(messages[0].text.startsWith("Chào **An**,")).toBe(true);
     expect(messages[0].text).toContain("Hôm nay, Thứ Hai, 02/11/2026, vui lòng lập kế hoạch các Task");
@@ -155,10 +163,11 @@ describe("runTaskReminderSlot (sáng/chiều: mọi người · 14:00: PM)", () 
     expect(messages.map((message) => message.to)).toEqual(["ou_1", "ou_2"]);
     expect(messages.map((message) => message.title)).toEqual(["Hoàn thành Task hôm nay", "Yêu cầu lập kế hoạch và hoàn thành Task hôm nay"]);
     // Two blocks of one Task add up, and it is done only when both are completed.
-    expect(messages[0].text).toContain("1. **Thiết kế** · Dự án A — 4 giờ · **Chưa hoàn thành**");
+    expect(messages[0].text).toContain("1. **Thiết kế**\n    Dự án: Dự án A · Kế hoạch: 4 giờ · **Chưa hoàn thành**");
     expect(messages[0].text).toContain("• Còn 1/1 Task chưa hoàn thành");
     expect(messages[1].text).toContain("bạn chưa có kế hoạch Task nào trong ngày");
     expect(messages[1].text).toContain("1. Lập kế hoạch các Task đã làm hôm nay");
+    expect(messages.map((message) => message.url)).toEqual(["https://crm.example.com/projects", "https://crm.example.com/projects"]);
     expect(messages[1].text).not.toMatch(/Dự án đang tham gia|Giờ thực tế đã ghi/);
   });
 });

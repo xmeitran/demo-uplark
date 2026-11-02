@@ -20,6 +20,7 @@ function setup(nudgedToday: string[] = []) {
   const cards: any[] = [];
   vi.stubEnv("LARK_APP_ID", "cli_test");
   vi.stubEnv("LARK_APP_SECRET", "s");
+  vi.stubEnv("LARK_REMINDER_LINK_URL", "https://lark-upbase.mindtheoperation.com/projects");
   vi.stubGlobal("fetch", vi.fn(async (url: string, init: any) => {
     const body = JSON.parse(init.body);
     if (url.includes("tenant_access_token")) return { ok: true, status: 200, json: async () => ({ code: 0, tenant_access_token: "t" }) };
@@ -42,6 +43,7 @@ describe("WorkspaceAdminService.sendReminder unplannedOnly (Gửi nhắc on the 
     expect(cards[0].elements[0].text.content).toContain("Chào **Bình**,");
     expect(cards[0].elements[0].text.content).toContain("Thứ Hai, 02/11/2026, bạn vẫn chưa lập kế hoạch Task cho hôm nay. Đây là lần nhắc thứ 2.");
     expect(cards[0].elements[2].elements[0].content).toBe("Gửi theo yêu cầu của PM Sao Mai.");
+    expect(cards[0].elements[3].actions[0].url).toBe("https://lark-upbase.mindtheoperation.com/projects");
     expect(cards[0].elements[0].text.content).not.toContain("Dự án đang tham gia");
     expect(result.data.recipientNames).toEqual(["Bình", "Chi"]);
     expect(createMany.mock.calls[0][0].data.map((row: any) => [row.userId, row.missingType])).toEqual([["u2", "manual_unplanned"], ["u3", "manual_unplanned"]]);
