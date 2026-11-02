@@ -4611,7 +4611,7 @@ function MilestoneSectionTasks({ milestone, group, projectColor, onAddStage, onA
         {/* Text */}
         <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex-1 text-left min-w-[140px]">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-bold text-foreground truncate max-w-[240px]" title={milestone.name}>{milestone.name}</span>
+            <span className="min-w-0 break-words text-sm font-bold text-foreground">{milestone.name}</span>
 
             <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg" style={{ backgroundColor:cfg.bg, color:cfg.color }}>{cfg.label}</span>
 
