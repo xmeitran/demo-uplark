@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceAdminService } from "./workspace-admin.service";
 
 const admin = { subjectId: "pm", subjectType: "internal_user", workspaceId: "w1", tenantKey: "t", roleCodes: ["WORKSPACE_ADMIN"] } as any;
-const person = (id: string, name: string) => ({ id, displayName: name, email: `${id}@example.com`, identities: [{ id: `i-${id}`, provider: "lark", providerUserId: `ou_${id}` }], projectMembers: [{ project: { name: "Dự án A" } }] });
+const person = (id: string, name: string) => ({ id, displayName: name, email: `${id}@example.com`, identities: [{ id: `i-${id}`, provider: "lark", providerUserId: `ou_${id}` }] });
 
 function setup(nudgedToday: string[] = []) {
   const createMany = vi.fn().mockResolvedValue({ count: 0 });
@@ -42,7 +42,7 @@ describe("WorkspaceAdminService.sendReminder unplannedOnly (Gửi nhắc on the 
     expect(cards[0].elements[0].text.content).toContain("Chào **Bình**,");
     expect(cards[0].elements[0].text.content).toContain("Thứ Hai, 02/11/2026, bạn vẫn chưa lập kế hoạch Task cho hôm nay. Đây là lần nhắc thứ 2.");
     expect(cards[0].elements[2].elements[0].content).toBe("Gửi theo yêu cầu của PM Sao Mai.");
-    expect(cards[0].elements[0].text.content).toContain("• Dự án đang tham gia: Dự án A");
+    expect(cards[0].elements[0].text.content).not.toContain("Dự án đang tham gia");
     expect(result.data.recipientNames).toEqual(["Bình", "Chi"]);
     expect(createMany.mock.calls[0][0].data.map((row: any) => [row.userId, row.missingType])).toEqual([["u2", "manual_unplanned"], ["u3", "manual_unplanned"]]);
   });

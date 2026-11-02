@@ -501,8 +501,7 @@ export class WorkspaceAdminService {
         id: true,
         displayName: true,
         email: true,
-        identities: { where: { provider: { in: ["lark", "lark_user_id"] }, tenantKey: workspace.tenantKey }, select: { id: true, provider: true, providerUserId: true }, take: 10 },
-        projectMembers: { where: { workspaceId: principal.workspaceId, project: { status: { notIn: REMINDER_INACTIVE_PROJECT_STATUSES } } }, select: { project: { select: { name: true } } } }
+        identities: { where: { provider: { in: ["lark", "lark_user_id"] }, tenantKey: workspace.tenantKey }, select: { id: true, provider: true, providerUserId: true }, take: 10 }
       },
       orderBy: [{ displayName: "asc" }, { id: "asc" }]
     });
@@ -616,7 +615,6 @@ export class WorkspaceAdminService {
       const [year, month, day] = localDate.split("-");
       const date = `${["Chủ Nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"][new Date(`${localDate}T00:00:00Z`).getUTCDay()]}, ${day}/${month}/${year}`;
       const time = new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" });
-      const projects = [...new Set((user.projectMembers ?? []).map((member) => member.project.name))];
       return {
         msg_type: "interactive",
         card: {
@@ -626,8 +624,6 @@ export class WorkspaceAdminService {
             { tag: "div", text: { tag: "lark_md", content: [
               `Chào **${user.displayName}**,`,
               `Đến ${time}, ${date}, bạn vẫn chưa lập kế hoạch Task cho hôm nay. Đây là lần nhắc thứ 2.`,
-              "",
-              `• Dự án đang tham gia: ${projects.length ? `${projects.slice(0, 3).join(", ")}${projects.length > 3 ? ` và ${projects.length - 3} dự án khác` : ""}` : "chưa có dự án đang active"}`,
               "",
               "Vui lòng lập kế hoạch các Task trong ngày và ghi giờ kế hoạch cho từng Task ngay."
             ].join("\n") } },
