@@ -54,6 +54,9 @@ services:
       LARK_DIRECTORY_EXTRA_DEPARTMENT_IDS: ${LARK_DIRECTORY_EXTRA_DEPARTMENT_IDS:-}
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-https://lark-upbase.mindtheoperation.com}
       LARK_TASK_REMINDER_ENABLED: ${LARK_TASK_REMINDER_ENABLED:-false}
+      # The worker's only Lark messages are the reminders: their private bot messages follow the reminder switch, so
+      # the API's other Lark notifications stay off until LARK_MESSAGING_ENABLED is set in .env.
+      LARK_MESSAGING_ENABLED: ${LARK_TASK_REMINDER_ENABLED:-false}
       LARK_TASK_REMINDER_WORKSPACE_ID: ${LARK_TASK_REMINDER_WORKSPACE_ID:-twk-foundation}
       LARK_TASK_REMINDER_WEBHOOK_URL: ${LARK_TASK_REMINDER_WEBHOOK_URL:-}
       LARK_TASK_REMINDER_WEBHOOK_SECRET: ${LARK_TASK_REMINDER_WEBHOOK_SECRET:-}
