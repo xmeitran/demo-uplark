@@ -432,6 +432,7 @@ export class WorkspaceAdminService {
     const localDate = validateLocalDate(input.localDate);
     if (!(input.slot in REMINDER_SLOT_TITLES)) throw new BadRequestException("Mốc nhắc Lark không hợp lệ.");
     if (input.userId && input.teamId) throw new BadRequestException("Chọn một người hoặc một team, không chọn đồng thời cả hai.");
+    if (input.unplannedOnly && (input.slot !== "morning_plan" || input.userId || input.teamId)) throw new BadRequestException("Nhắc người chưa lập kế hoạch chỉ dùng mốc “Kế hoạch đầu ngày” cho mọi người.");
 
     const workspace = await this.prisma.tenantWorkspace.findUnique({ where: { id: principal.workspaceId }, select: { tenantKey: true } });
     if (!workspace) throw new ForbiddenException("Workspace is not available");
@@ -539,12 +540,22 @@ export class WorkspaceAdminService {
       const missingActualTasks = plannedTasks.filter((task) => !actualTaskIds.has(task.id));
       return { user, operationalTasks, userPlan, actualMinutes, planIssues, missingActualTasks };
     });
+    // "Gửi nhắc" on the PM card reaches each person once a day, so a second PM clicking it does not message them again.
+    const alreadyNudged = input.unplannedOnly
+      ? new Set((await this.prisma.reminderDeliveryLog.findMany({ where: { workspaceId: principal.workspaceId, localDate: dateOnly(localDate), moment: input.slot, missingType: "manual_unplanned" }, select: { userId: true } })).map((row) => row.userId))
+      : new Set<string>();
     // Only people whose data is actually missing are reminded (the card's note says finished data is left out).
-    const userFacts = allFacts.filter((fact) => input.slot === "evening_actual"
-      ? fact.actualMinutes < dayMinutes || fact.missingActualTasks.length > 0
-      : !fact.userPlan.length || fact.planIssues.length > 0);
-    if (!userFacts.length) throw new BadRequestException(`Mọi người nhận đã đủ dữ liệu ngày ${localDate}, không cần nhắc.`);
-    const directDeliveryRequested = Boolean(input.userId || input.teamId);
+    const userFacts = allFacts.filter((fact) => input.unplannedOnly
+      ? !fact.userPlan.length && !alreadyNudged.has(fact.user.id)
+      : input.slot === "evening_actual"
+        ? fact.actualMinutes < dayMinutes || fact.missingActualTasks.length > 0
+        : !fact.userPlan.length || fact.planIssues.length > 0);
+    if (!userFacts.length) {
+      throw new BadRequestException(input.unplannedOnly
+        ? `Không còn ai cần nhắc: mọi người đã lập kế hoạch ngày ${localDate} hoặc đã được nhắc qua nút này hôm nay.`
+        : `Mọi người nhận đã đủ dữ liệu ngày ${localDate}, không cần nhắc.`);
+    }
+    const directDeliveryRequested = Boolean(input.userId || input.teamId || input.unplannedOnly);
     // "Nhắc lọc cho PM" is the PM's follow-up list: it is never sent privately to the staff member it lists.
     if (directDeliveryRequested && input.slot === "pm_follow_up") throw new BadRequestException("“Nhắc lọc cho PM” gửi danh sách cho PM qua nhóm. Để nhắc riêng một người hoặc một team, chọn “Kế hoạch đầu ngày” hoặc “Giờ thực tế cuối ngày”.");
     const renderUserLines = ({ user, operationalTasks, userPlan, actualMinutes, planIssues, missingActualTasks }: typeof userFacts[number]) => {
@@ -584,7 +595,7 @@ export class WorkspaceAdminService {
         `Ngày ${localDate}, kế hoạch Task của các Project ${projects} hôm nay của bạn chưa đầy đủ.`,
         "Nội dung cần bổ sung:",
         ...(userPlan.length ? (planIssues.length ? planIssues.slice(0, 5).map(({ task, missingFields }) => `• **${task.title}**${task.project?.name ? ` · ${task.project.name}` : ""} — còn thiếu: ${missingFields.join(", ")}.`) : ["• Kế hoạch đã đủ trường bắt buộc."]) : ["• Bạn chưa lập Task cho ngày hôm nay."]),
-        "Vui lòng hoàn tất kế hoạch Task trước 09:00 hôm nay để bảo đảm dữ liệu kế hoạch được ghi nhận đầy đủ."
+        "Vui lòng hoàn tất kế hoạch Task hôm nay để bảo đảm dữ liệu kế hoạch được ghi nhận đầy đủ."
       ];
     };
     const origin = appPublicOrigin();
@@ -679,15 +690,17 @@ export class WorkspaceAdminService {
         localDate: dateOnly(localDate),
         moment: input.slot,
         userId: user.id,
-        missingType: "manual",
+        missingType: input.unplannedOnly ? "manual_unplanned" : "manual",
         conditionKey,
         channel: "lark",
         deliveryStatus: "SENT",
         attemptCount: 1,
-        payload: { slot: input.slot, scope: input.userId ? "user" : input.teamId ? "team" : "all" },
+        payload: { slot: input.slot, scope: input.unplannedOnly ? "unplanned" : input.userId ? "user" : input.teamId ? "team" : "all" },
         lastAttemptAt: new Date(),
         sentAt: new Date()
-      }))
+      })),
+      // One row per person, day, slot and kind: a repeat manual send is already logged, not an error after sending.
+      skipDuplicates: true
     });
     return { data: { sent: true, localDate, slot: input.slot, recipientCount: sentUsers.length, recipientNames: sentUsers.map((user) => user.displayName), ...(failures.length ? { failedRecipients: failures } : {}) } };
   }

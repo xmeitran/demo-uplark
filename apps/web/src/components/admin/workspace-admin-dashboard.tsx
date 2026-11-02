@@ -199,6 +199,18 @@ export function WorkspaceAdminDashboard() {
     }
   };
 
+  // "Gửi nhắc" on the 14:00 PM card in Lark opens /admin?nudge=unplanned&date=…: send once, and drop the query so a
+  // reload does not send again.
+  useEffect(() => {
+    if (!isAdmin) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("nudge") !== "unplanned") return;
+    window.history.replaceState(window.history.state, "", "/admin#reminders");
+    setSection("reminders");
+    void sendManualReminder({ localDate: params.get("date") ?? "", slot: "morning_plan", unplannedOnly: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
+
   const updateSlot = (code: WorkspaceReminderSlotCode, patch: Partial<WorkspaceReminderSlot>) => {
     setPolicy((current) => current ? { ...current, slots: current.slots.map((slot) => slot.slot === code ? { ...slot, ...patch } : slot) } : current);
   };

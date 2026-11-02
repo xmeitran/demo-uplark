@@ -32,6 +32,8 @@ export type ReminderTask = {
 export type ReminderPlanningBlock = {
   taskId: string;
   plannedMinutes: number;
+  /** planned | in_progress | completed ("Hoàn thành kế hoạch" in Calendar). */
+  status?: string;
 };
 
 export type ReminderTimeEntry = {

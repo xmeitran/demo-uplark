@@ -3710,6 +3710,8 @@ export interface SendWorkspaceReminderInput {
   slot: WorkspaceReminderSlotCode;
   userId?: string;
   teamId?: string;
+  /** "Gửi nhắc" on the 14:00 PM card: a private morning reminder to everyone with no plan that day, once a day each. */
+  unplannedOnly?: boolean;
 }
 
 export interface SendWorkspaceReminderResponse {

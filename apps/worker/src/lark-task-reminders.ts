@@ -4,13 +4,11 @@ import {
   CLOSED_TASK_STATUSES,
   REMINDER_INACTIVE_PROJECT_STATUSES,
   dueReminderSlots,
-  findActualIssues,
   findPlanIssues,
   getVietnamWorkdayWindow,
   isWorkingDay,
   normalizeReminderSchedule,
   TASK_REMINDER_SCHEDULE,
-  type ActualReminderIssue,
   type PlanReminderIssue,
   type ReminderUserFacts,
   type TaskReminderSlot,
@@ -127,19 +125,17 @@ function minutesLabel(minutes: number) {
   return `${Number.isInteger(hours) ? hours.toFixed(0) : hours.toFixed(1)} giờ`;
 }
 
-function taskUrl(config: TaskReminderConfig, taskId?: string) {
-  return taskId ? `${config.publicAppUrl}/tasks/${encodeURIComponent(taskId)}` : `${config.publicAppUrl}/calendar`;
+function calendarUrl(config: TaskReminderConfig, localDate: string) {
+  return `${config.publicAppUrl}/calendar?date=${encodeURIComponent(localDate)}`;
 }
 
-function timesheetUrl(config: TaskReminderConfig, localDate: string, userId?: string) {
-  const params = new URLSearchParams({ view: "daily", date: localDate });
-  if (userId) params.set("userId", userId);
-  return `${config.publicAppUrl}/timesheet?${params.toString()}`;
+/** "Gửi nhắc" on the PM card: the Admin page sends a private reminder to everyone still without a plan that day. */
+function nudgeUnplannedUrl(config: TaskReminderConfig, localDate: string) {
+  return `${config.publicAppUrl}/admin?${new URLSearchParams({ nudge: "unplanned", date: localDate }).toString()}`;
 }
 
-function manualReminderUrl(config: TaskReminderConfig, localDate: string, userId: string) {
-  const params = new URLSearchParams({ tab: "reminders", scope: "user", userId, date: localDate });
-  return `${config.publicAppUrl}/admin?${params.toString()}`;
+function clock(localMinute: number) {
+  return `${String(Math.floor(localMinute / 60)).padStart(2, "0")}:${String(localMinute % 60).padStart(2, "0")}`;
 }
 
 function divider() {
@@ -150,123 +146,73 @@ function note(content: string) {
   return { tag: "note", elements: [{ tag: "plain_text", content }] };
 }
 
-function planCard(config: TaskReminderConfig, issue: PlanReminderIssue, localDate: string, options?: { title?: string }) {
-  const activeProjects = issue.activeProjects?.length ? issue.activeProjects.join(", ") : "các Project đang active";
-  const missingDetails = issue.hasPlan
-    ? issue.taskFieldIssues.slice(0, 5).map((task) => `• **${task.taskTitle}**${task.projectName ? ` · ${task.projectName}` : ""} — còn thiếu: ${task.missingFields.join(", ")}.`)
-    : ["• Bạn chưa lập Task cho ngày hôm nay."];
-  const lines = [
-    `${at(issue.larkOpenId)}Chào **${issue.displayName}**,`,
-    `Đến 08:30 ngày ${localDate}, kế hoạch Task của các Project ${activeProjects} hôm nay của bạn chưa đầy đủ.`,
-    "Nội dung cần bổ sung:",
-    ...missingDetails,
-    issue.taskFieldIssues.length > 5 ? `• Và ${issue.taskFieldIssues.length - 5} Task khác chưa đủ trường.` : "",
-    "",
-    "Vui lòng hoàn tất kế hoạch Task trước 09:00 hôm nay để bảo đảm dữ liệu kế hoạch được ghi nhận đầy đủ."
-  ].filter(Boolean);
-  const firstTaskId = issue.taskFieldIssues[0]?.taskId;
+function card(template: string, title: string, lines: string[], footer: string, button: { text: string; url: string }) {
   return {
     msg_type: "interactive",
     card: {
       config: { wide_screen_mode: true },
-      header: {
-        template: "blue",
-        title: { tag: "plain_text", content: options?.title ?? "Nhắc nhở hoàn tất kế hoạch Task trước 09:00" }
-      },
+      header: { template, title: { tag: "plain_text", content: title } },
       elements: [
         { tag: "div", text: { tag: "lark_md", content: lines.join("\n") } },
         divider(),
-        note("Mốc 08:30 · Không gửi lại khi dữ liệu đã đầy đủ hoặc ngày đã được khóa nghỉ."),
-        { tag: "action", actions: [{
-          tag: "button",
-          type: "primary",
-          text: { tag: "plain_text", content: "Cập nhật kế hoạch Task" },
-          url: taskUrl(config, firstTaskId)
-        }] }
+        note(footer),
+        { tag: "action", actions: [{ tag: "button", type: "primary", text: { tag: "plain_text", content: button.text }, url: button.url }] }
       ]
     }
   };
 }
 
-function actualCard(config: TaskReminderConfig, issue: ActualReminderIssue, localDate: string) {
-  const missingMinutes = Math.max(0, issue.targetMinutes - issue.totalMinutes);
+const EVERYONE_NOTE = "Gửi mỗi ngày làm việc cho mọi người; ngày nghỉ và người nghỉ phép cả ngày được bỏ qua.";
+
+/** Morning, to everyone: plan today's hours; says what is already planned and which planned Task lacks a field. */
+function planCard(config: TaskReminderConfig, fact: ReminderUserFacts, issue: PlanReminderIssue | undefined, localDate: string) {
+  const plannedMinutes = fact.planningBlocks.reduce((total, block) => total + block.plannedMinutes, 0);
+  const fieldIssues = fact.planningBlocks.length ? issue?.taskFieldIssues ?? [] : [];
   const lines = [
-    `${at(issue.larkOpenId)}Chào **${issue.displayName}**,`,
-    `Đến 17:00 ngày ${localDate}, dữ liệu Actual Hour của bạn chưa đầy đủ.`,
-    "Tổng giờ trong ngày:",
-    `• Đã ghi nhận: ${minutesLabel(issue.totalMinutes)}${missingMinutes ? ` · còn thiếu ${minutesLabel(missingMinutes)}` : ""}`,
-    `• Giờ tiêu chuẩn: ${minutesLabel(issue.targetMinutes)}`,
-    `• Còn thiếu: ${minutesLabel(missingMinutes)}`,
-    "",
-    "Task chưa có Actual Hour:",
-    ...(issue.taskWithoutActual.length
-      ? issue.taskWithoutActual.slice(0, 5).map((task, index) => `${index + 1}. **${task.taskTitle}**${task.projectName ? ` · ${task.projectName}` : ""}\n— Estimate Hour: ${minutesLabel(task.estimateMinutes ?? 0)}`)
-      : ["• Không có Task nào thiếu Actual Hour; vui lòng bổ sung đủ giờ trong ngày."]),
-    issue.taskWithoutActual.length > 5 ? `Và ${issue.taskWithoutActual.length - 5} Task khác chưa có Actual Hour.` : "",
-    "",
-    "Vui lòng ghi Actual Hour thực tế đã làm trong ngày. Không tự động sử dụng Estimate Hour thay cho Actual Hour; chuyển Task sang Hoàn tất cũng không thay thế việc ghi giờ. Trường hợp có OT, số giờ vượt 8 giờ chỉ được ghi nhận theo quy tắc đã được phê duyệt."
+    `${at(fact.larkOpenId)}Chào **${fact.displayName}**,`,
+    `Vui lòng ghi giờ kế hoạch các Task hôm nay (${localDate}).`,
+    fact.planningBlocks.length ? `• Đã lập: ${minutesLabel(plannedMinutes)} kế hoạch.` : "• Bạn chưa lập kế hoạch Task cho hôm nay.",
+    ...fieldIssues.slice(0, 5).map((task) => `• **${task.taskTitle}**${task.projectName ? ` · ${task.projectName}` : ""} — còn thiếu: ${task.missingFields.join(", ")}.`),
+    ...(fieldIssues.length > 5 ? [`• Và ${fieldIssues.length - 5} Task khác chưa đủ trường.`] : [])
   ];
-  return {
-    msg_type: "interactive",
-    card: {
-      config: { wide_screen_mode: true },
-      header: { template: "red", title: { tag: "plain_text", content: "Cập nhật Actual Hour hôm nay" } },
-      elements: [
-        { tag: "div", text: { tag: "lark_md", content: lines.join("\n") } },
-        divider(),
-        note("Mốc 17:00 · Chỉ ghi nhận số giờ thực tế; ngày off/ngày lễ được bỏ qua."),
-        { tag: "action", actions: [{
-          tag: "button",
-          type: "primary",
-          text: { tag: "plain_text", content: "Mở Timesheet hôm nay" },
-          url: timesheetUrl(config, localDate, issue.userId)
-        }] }
-      ]
-    }
-  };
+  return card("blue", "Ghi giờ kế hoạch hôm nay", lines, EVERYONE_NOTE, { text: "Lập kế hoạch hôm nay", url: calendarUrl(config, localDate) });
 }
 
-function pmFollowUpCard(config: TaskReminderConfig, issues: PlanReminderIssue[], localDate: string, mentionOpenIds: string[]) {
+/** Evening, to everyone: finish today's plan ("Hoàn thành kế hoạch" logs its hours); lists the plans still open. */
+function finishPlanCard(config: TaskReminderConfig, fact: ReminderUserFacts, targetMinutes: number, localDate: string) {
+  const plannedMinutes = fact.planningBlocks.reduce((total, block) => total + block.plannedMinutes, 0);
+  const actualMinutes = fact.timeEntries.reduce((total, entry) => total + entry.minutes, 0);
+  const open = fact.planningBlocks.filter((block) => block.status !== "completed");
+  const tasks = new Map(fact.tasks.map((task) => [task.id, task]));
+  const lines = [
+    `${at(fact.larkOpenId)}Chào **${fact.displayName}**,`,
+    `Vui lòng hoàn tất kế hoạch hôm nay (${localDate}): bấm “Hoàn thành kế hoạch” trên Calendar để ghi giờ thực tế.`,
+    `• Kế hoạch: ${minutesLabel(plannedMinutes)} · Giờ thực tế đã ghi: ${minutesLabel(actualMinutes)} / ${minutesLabel(targetMinutes)}`,
+    ...(!fact.planningBlocks.length
+      ? ["• Hôm nay bạn chưa có kế hoạch; vui lòng ghi giờ thực tế đã làm."]
+      : open.length
+        ? ["Kế hoạch chưa hoàn tất:", ...open.slice(0, 5).map((block, index) => {
+          const task = tasks.get(block.taskId);
+          return `${index + 1}. **${task?.title ?? "Task đã đóng"}**${task?.projectName ? ` · ${task.projectName}` : ""} — ${minutesLabel(block.plannedMinutes)}`;
+        }), ...(open.length > 5 ? [`Và ${open.length - 5} kế hoạch khác.`] : [])]
+        : ["• Bạn đã hoàn tất mọi kế hoạch hôm nay."])
+  ];
+  return card("red", "Hoàn tất kế hoạch hôm nay", lines, EVERYONE_NOTE, { text: "Mở Calendar hôm nay", url: calendarUrl(config, localDate) });
+}
+
+/** 14:00, to the PMs: who still has no plan today, and one button that reminds them. */
+function pmFollowUpCard(config: TaskReminderConfig, issues: PlanReminderIssue[], localDate: string, time: string, mentionOpenIds: string[]) {
   const lines = [
     `${mentionOpenIds.map((openId) => at(openId)).join("")}Chào PM,`,
-    `Đến 14:00 ngày ${localDate}, có ${issues.length} nhân sự thuộc phạm vi phụ trách của bạn chưa hoàn tất kế hoạch Task.`,
+    `Đến ${time} ngày ${localDate}, ${issues.length} người chưa lập kế hoạch ngày:`,
+    ...issues.map((issue, index) => {
+      const projects = issue.activeProjects ?? [];
+      return `${index + 1}. **${issue.displayName}**${projects.length ? ` · ${projects.slice(0, 3).join(", ")}${projects.length > 3 ? "…" : ""}` : ""}`;
+    }),
     "",
-    "Danh sách cần theo dõi:"
+    "Bấm “Gửi nhắc” để nhắc riêng những người vẫn chưa lập kế hoạch tại thời điểm bấm."
   ];
-  const employeeBlocks = issues.slice(0, 8).flatMap((issue, index) => {
-    const taskNames = issue.taskFieldIssues.length
-      ? issue.taskFieldIssues.slice(0, 3).map((task) => task.taskTitle).join(", ")
-      : "Chưa có Task";
-    const missingFields = issue.taskFieldIssues.length
-      ? [...new Set(issue.taskFieldIssues.flatMap((task) => task.missingFields))].join(", ")
-      : "Chưa lập kế hoạch Task";
-    return [
-      `${index + 1}. **${issue.displayName}**`,
-      `• Trạng thái: ${issue.hasPlan ? "Kế hoạch chưa đủ dữ liệu" : "Chưa có kế hoạch"}`,
-      `• Task liên quan: ${taskNames}`,
-      `• Nội dung còn thiếu: ${missingFields}`,
-      "• Lần nhắc tự động: 08:30"
-    ];
-  });
-  lines.push(...employeeBlocks);
-  if (issues.length > 8) lines.push(`• Và ${issues.length - 8} nhân sự khác.`);
-  lines.push("", "Vui lòng kiểm tra và nhắc nhân sự hoàn tất dữ liệu trong ngày.");
-  return {
-    msg_type: "interactive",
-    card: {
-      config: { wide_screen_mode: true },
-      header: { template: "orange", title: { tag: "plain_text", content: "PM cần gửi nhắc · 14:00" } },
-      elements: [
-        { tag: "div", text: { tag: "lark_md", content: lines.join("\n") } },
-        ...issues.slice(0, 8).flatMap((issue) => [{ tag: "action", actions: [
-          { tag: "button", type: "primary", text: { tag: "plain_text", content: "Gửi nhắc" }, url: manualReminderUrl(config, localDate, issue.userId) },
-          { tag: "button", type: "default", text: { tag: "plain_text", content: "Xem Timesheet" }, url: timesheetUrl(config, localDate, issue.userId) }
-        ] }]),
-        divider(),
-        note("Mốc 14:00 · Kiểm tra danh sách, gửi nhắc đúng người; hệ thống loại trừ ngày nghỉ và dữ liệu đã hoàn tất.")
-      ]
-    }
-  };
+  return card("orange", "Người chưa lập kế hoạch hôm nay", lines, "Mỗi người chỉ được nhắc qua nút này một lần mỗi ngày.", { text: "Gửi nhắc", url: nudgeUnplannedUrl(config, localDate) });
 }
 
 function signPayload(payload: Record<string, unknown>, secret?: string) {
@@ -386,7 +332,7 @@ async function loadReminderFacts(prisma: PrismaClient, config: TaskReminderConfi
         startAt: { lt: window.endAt },
         endAt: { gt: window.startAt }
       },
-      select: { userId: true, taskId: true, plannedMinutes: true }
+      select: { userId: true, taskId: true, plannedMinutes: true, status: true }
     }),
     prisma.taskTimeEntry.findMany({
       where: {
@@ -424,7 +370,7 @@ async function loadReminderFacts(prisma: PrismaClient, config: TaskReminderConfi
         estimateMinutes: task.estimateMinutes
       }] : [];
     }),
-    planningBlocks: planningBlocks.filter((block) => block.userId === user.id).map((block) => ({ taskId: block.taskId, plannedMinutes: block.plannedMinutes })),
+    planningBlocks: planningBlocks.filter((block) => block.userId === user.id).map((block) => ({ taskId: block.taskId, plannedMinutes: block.plannedMinutes, status: block.status })),
     timeEntries: timeEntries.filter((entry) => entry.userId === user.id).map((entry) => ({ taskId: entry.taskId, minutes: entry.minutes }))
   }));
 }
@@ -514,34 +460,30 @@ export async function runTaskReminderSlot(input: {
   const facts = (await loadReminderFacts(options.prisma, options.config, window)).filter((user) => (leave.get(user.userId) ?? 0) < options.config.targetMinutes);
   let sent = 0;
 
+  const unaddressable = facts.filter((fact) => !fact.larkOpenId).length;
+
   if (options.slot === "pm_follow_up") {
-    const issues = findPlanIssues(facts, window);
+    // Only the people with no plan at all today are listed for the PMs.
+    const issues = findPlanIssues(facts, window).filter((issue) => !issue.hasPlan);
     for (const delivery of issues.length ? pmDeliveries(options.config, facts, issues) : []) {
-      if (await sendOnce(options.redis, `${prefix}:pm:${delivery.openId}`, () => send(options, pmFollowUpCard(options.config, delivery.issues, window.localDate, delivery.mentionOpenIds), delivery.openId))) sent += 1;
+      if (await sendOnce(options.redis, `${prefix}:pm:${delivery.openId}`, () => send(options, pmFollowUpCard(options.config, delivery.issues, window.localDate, clock(window.localMinute), delivery.mentionOpenIds), delivery.openId))) sent += 1;
     }
     await options.redis.set(`${prefix}:complete`, "1", "EX", 8 * 24 * 60 * 60);
     return { issues: issues.length, sent };
   }
 
-  if (options.slot === "evening_actual") {
-    const issues = findActualIssues(facts, options.config.targetMinutes)
-      .map((issue) => ({ ...issue, targetMinutes: issue.targetMinutes - (leave.get(issue.userId) ?? 0) }))
-      .filter((issue) => issue.totalMinutes < issue.targetMinutes || issue.taskWithoutActual.length > 0);
-    for (const issue of issues) {
-      if (!issue.larkOpenId) continue;
-      if (await sendOnce(options.redis, `${prefix}:user:${issue.userId}`, () => send(options, actualCard(options.config, issue, window.localDate), issue.larkOpenId))) sent += 1;
-    }
-    await options.redis.set(`${prefix}:complete`, "1", "EX", 8 * 24 * 60 * 60);
-    return { issues: issues.length, unaddressable: issues.filter((issue) => !issue.larkOpenId).length, sent };
-  }
-
-  const issues = findPlanIssues(facts, window);
-  for (const issue of issues) {
-    if (!issue.larkOpenId) continue;
-    if (await sendOnce(options.redis, `${prefix}:user:${issue.userId}`, () => send(options, planCard(options.config, issue, window.localDate), issue.larkOpenId))) sent += 1;
+  // Morning and evening go to everyone: plan today's hours, then finish today's plan.
+  const planIssues = new Map(findPlanIssues(facts, window).map((issue) => [issue.userId, issue]));
+  for (const fact of facts) {
+    if (!fact.larkOpenId) continue;
+    const payload = options.slot === "evening_actual"
+      // Half a day of approved leave halves the day's target.
+      ? finishPlanCard(options.config, fact, options.config.targetMinutes - (leave.get(fact.userId) ?? 0), window.localDate)
+      : planCard(options.config, fact, planIssues.get(fact.userId), window.localDate);
+    if (await sendOnce(options.redis, `${prefix}:user:${fact.userId}`, () => send(options, payload, fact.larkOpenId))) sent += 1;
   }
   await options.redis.set(`${prefix}:complete`, "1", "EX", 8 * 24 * 60 * 60);
-  return { issues: issues.length, unaddressable: issues.filter((issue) => !issue.larkOpenId).length, sent };
+  return { recipients: facts.length, unaddressable, sent };
 }
 
 async function isWorkspaceWorkday(prisma: PrismaClient, config: TaskReminderConfig, window: ReturnType<typeof getVietnamWorkdayWindow>, weekdaysOnly = true) {

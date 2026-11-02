@@ -67,7 +67,7 @@ Lần xuất bản này chỉ tham khảo CLI `lark-cli --version`; không đăn
 
 ## Nhắc Task và Actual qua Lark bot (EV-060)
 
-Worker hỗ trợ ba mốc theo `Asia/Ho_Chi_Minh`: 08:30 kiểm tra kế hoạch, 14:00 nhắc lại cho PM và 17:00 kiểm tra Actual Hour. Admin có thể bật/tắt từng mốc, đổi giờ và chọn chỉ chạy ngày làm việc trong tab `/admin`; cấu hình được lưu theo workspace trong `WorkspaceReminderPolicy`. Lịch mặc định chạy thứ Hai–thứ Sáu, bỏ qua ngày nghỉ workspace đã khóa và các ngày trong `LARK_TASK_REMINDER_EXCLUDED_DATES`.
+Worker hỗ trợ ba mốc theo `Asia/Ho_Chi_Minh`: buổi sáng nhắc mọi người ghi giờ kế hoạch trong ngày; 14:00 gửi PM danh sách người chưa lập kế hoạch ngày, kèm nút “Gửi nhắc” (mở `/admin?nudge=unplanned&date=…`, nhắc riêng những người vẫn chưa lập kế hoạch, mỗi người một lần mỗi ngày, cần quyền Founder/GM hoặc Workspace Admin); buổi chiều nhắc mọi người hoàn tất kế hoạch trong ngày. Admin có thể bật/tắt từng mốc, đổi giờ và chọn chỉ chạy ngày làm việc trong tab `/admin`; cấu hình được lưu theo workspace trong `WorkspaceReminderPolicy`. Lịch mặc định chạy thứ Hai–thứ Sáu, bỏ qua ngày nghỉ workspace đã khóa và các ngày trong `LARK_TASK_REMINDER_EXCLUDED_DATES`.
 
 - `LARK_TASK_REMINDER_ENABLED=false` là mặc định. Chỉ đặt `true` sau khi đã thử webhook trong chat thử nghiệm.
 - `LARK_TASK_REMINDER_WORKSPACE_ID` là workspace duy nhất được phép đọc; worker không trộn dữ liệu nhiều tenant.
