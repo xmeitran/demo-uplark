@@ -52,7 +52,8 @@ services:
       LARK_CDS_DEPARTMENT_ID: ${LARK_CDS_DEPARTMENT_ID:-CDS}
       LARK_CDS_DEPARTMENT_ID_TYPE: ${LARK_CDS_DEPARTMENT_ID_TYPE:-department_id}
       LARK_DIRECTORY_EXTRA_DEPARTMENT_IDS: ${LARK_DIRECTORY_EXTRA_DEPARTMENT_IDS:-}
-      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-https://lark-upbase.mindtheoperation.com}
+      # Only the reminder links use it here; the API keeps PUBLIC_APP_URL (its login and CORS origins).
+      PUBLIC_APP_URL: ${LARK_REMINDER_APP_URL:-https://lark-upbase.mindtheoperation.com}
       LARK_TASK_REMINDER_ENABLED: ${LARK_TASK_REMINDER_ENABLED:-false}
       # The worker's only Lark messages are the reminders: their private bot messages follow the reminder switch, so
       # the API's other Lark notifications stay off until LARK_MESSAGING_ENABLED is set in .env.
