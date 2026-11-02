@@ -205,7 +205,8 @@ export function WorkspaceAdminDashboard() {
     if (!isAdmin) return;
     const params = new URLSearchParams(window.location.search);
     if (params.get("nudge") !== "unplanned") return;
-    window.history.replaceState(window.history.state, "", "/admin#reminders");
+    // null, not window.history.state: Next.js only syncs its router (and so keeps the new URL) for non-internal state.
+    window.history.replaceState(null, "", "/admin#reminders");
     setSection("reminders");
     void sendManualReminder({ localDate: params.get("date") ?? "", slot: "morning_plan", unplannedOnly: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
