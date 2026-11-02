@@ -1021,6 +1021,7 @@ export * from "./baseline";
 export * from "./access-control";
 export * from "./pnl";
 export * from "./project-type";
+export * from "./lark-reminder-cards";
 import type { AccountType, AccountViewMode, BusinessRoleCode } from "./access-control";
 import type { IssueLogAllowedAction, IssueLogDueState, IssueLogEscalationLevel, IssueLogExtension, IssueLogHistoryEntry, IssueLogImpactArea, IssueLogSeverity, IssueLogStatus, IssueLogType } from "./issue-log";
 
@@ -3596,6 +3597,8 @@ export interface WorkspaceReminderPolicy {
   timezone: string;
   weekdaysOnly: boolean;
   slots: WorkspaceReminderSlot[];
+  /** "Danh sách người nhận": people switched off from the reminders (scheduled ones and manual sends to all or a team). */
+  excludedUserIds: string[];
   updatedAt?: string;
 }
 
@@ -3675,6 +3678,8 @@ export interface UpdateWorkspaceReminderPolicyInput {
   enabled?: boolean;
   weekdaysOnly?: boolean;
   slots: Array<{ slot: WorkspaceReminderSlotCode; time: string; enabled: boolean; recipientUserIds?: string[] }>;
+  /** Omitted: the list stays as it is. */
+  excludedUserIds?: string[];
 }
 
 export interface WorkspaceReminderRecipientOption {
@@ -3686,6 +3691,8 @@ export interface WorkspaceReminderRecipientOption {
   resourceDisplayRole?: string;
   roleCodes?: string[];
   teamIds: string[];
+  /** On an active project, so in the reminder audience. */
+  onActiveProject?: boolean;
 }
 
 export interface WorkspaceReminderTeamOption {

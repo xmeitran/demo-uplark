@@ -2865,6 +2865,8 @@ model WorkspaceReminderPolicy {
   timezone        String          @default("Asia/Ho_Chi_Minh")
   slots           Json
   weekdaysOnly    Boolean         @default(true)
+  /// Admin › Nhắc Lark › Danh sách người nhận: people switched off from the reminders.
+  excludedUserIds String[]        @default([])
   updatedByUserId String?
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt

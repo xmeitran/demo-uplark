@@ -13,6 +13,7 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@b2b-crm/contracts": "workspace:*",
     "@prisma/client": "6.19.3",
     "ioredis": "^5.4.2"
   },

@@ -24,7 +24,8 @@ import {
   SlidersHorizontal,
   TimerReset,
   TriangleAlert,
-  Users
+  Users,
+  X
 } from "lucide-react";
 import type {
   AdminAlertDetailRow,
@@ -48,6 +49,8 @@ import { CrmMultiSelect, CrmSelect, type CrmSelectOption } from "@/components/cr
 import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
 import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilter, SearchFilter, dayOf, isWithinRange, matchesAny, toCsvParam, type DateRange, type FilterPerson } from "@/components/filters";
 import { PageHeader } from "@/components/page-header";
+import { ModalLayer } from "@/components/modal-layer";
+import { larkFinishPlanCard, larkPlanCard, larkPmListCard, type LarkReminderCard } from "@b2b-crm/contracts";
 import { useAuth } from "@/lib/auth";
 import { isAdminView } from "@/lib/auth-role";
 import { WorkspaceTabBar } from "@/components/workspace-tab-bar";
@@ -217,15 +220,16 @@ export function WorkspaceAdminDashboard() {
     setPolicy((current) => current ? { ...current, slots: current.slots.map((slot) => slot.slot === code ? { ...slot, ...patch } : slot) } : current);
   };
 
-  const savePolicy = async () => {
-    if (!policy) return;
+  const savePolicy = async (next: WorkspaceReminderPolicy | null = policy) => {
+    if (!next) return;
     setSaving(true);
     setError(null);
     setNotice(null);
     const payload: UpdateWorkspaceReminderPolicyInput = {
-      enabled: policy.enabled,
-      weekdaysOnly: policy.weekdaysOnly,
-      slots: policy.slots.map(({ slot, time, enabled, recipientUserIds }) => ({ slot, time, enabled, ...(recipientUserIds ? { recipientUserIds } : {}) }))
+      enabled: next.enabled,
+      weekdaysOnly: next.weekdaysOnly,
+      slots: next.slots.map(({ slot, time, enabled, recipientUserIds }) => ({ slot, time, enabled, ...(recipientUserIds ? { recipientUserIds } : {}) })),
+      excludedUserIds: next.excludedUserIds ?? []
     };
     try {
       const response = await fetch("/api/admin/reminders", {
@@ -304,7 +308,7 @@ export function WorkspaceAdminDashboard() {
             {section === "alerts" ? <WarningRecordsPanel legacy={<AlertsPanel rows={alertDetails} loading={loading} onRefresh={() => void load()} />} /> : null}
             {section === "parameters" ? <SystemParametersPanel /> : null}
             {section === "day-offs" ? <section aria-label="Quản lý ngày nghỉ"><WorkspaceDayOffSettings /><PersonalLeavePanel /></section> : null}
-            {section === "reminders" ? <ReminderPolicyPanel policy={policy} saving={saving} sending={sending} recipients={reminderRecipients} onSave={() => void savePolicy()} onSendManual={(input) => void sendManualReminder(input)} onUpdateSlot={updateSlot} onSetPolicy={setPolicy} /> : null}
+            {section === "reminders" ? <ReminderPolicyPanel policy={policy} saving={saving} sending={sending} recipients={reminderRecipients} onSave={() => void savePolicy()} onSaveExcluded={(excludedUserIds) => policy ? savePolicy({ ...policy, excludedUserIds }) : Promise.resolve()} onSendManual={(input) => void sendManualReminder(input)} onUpdateSlot={updateSlot} onSetPolicy={setPolicy} /> : null}
             {section === "approval" ? <ApprovalPanel approvalHistory={approvalHistoryEntries} historyLoading={loading} onRefreshHistory={() => void load()} onApproved={() => void load()} /> : null}
             {section === "pnl-config" ? <PnlSetupPage embedded /> : null}
             {section === "history" ? <AdminHistoryLog people={reminderRecipients.users.map((person) => ({ id: person.id, name: person.displayName, email: person.email, avatarUrl: person.avatarUrl }))} /> : null}
@@ -623,8 +627,30 @@ function PmRecipientsField({ users, values, onChange }: { users: WorkspaceRemind
   return <div className="mt-3"><span className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-slate-500"><Users className="h-4 w-4" /> Người nhận</span><CrmMultiSelect ariaLabel="Người nhận nhắc PM" values={values} options={options} onChange={onChange} placeholder="Chưa chọn: gửi PIC từng dự án" searchPlaceholder="Tìm theo tên hoặc email..." selectedCountLabel={() => names} menuPortal /></div>;
 }
 
-function LegacyReminderPolicyPanel({ policy, saving, users, onSave, onUpdateSlot, onSetPolicy }: { policy: WorkspaceReminderPolicy | null; saving: boolean; users: WorkspaceReminderRecipientsResponse["data"]["users"]; onSave: () => void; onUpdateSlot: (code: WorkspaceReminderSlotCode, patch: Partial<WorkspaceReminderSlot>) => void; onSetPolicy: React.Dispatch<React.SetStateAction<WorkspaceReminderPolicy | null>> }) {
-  return <section aria-labelledby="reminder-policy-title" className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm"><div className="border-b border-border bg-gradient-to-r from-violet-50 via-white to-sky-50 px-5 py-5 sm:px-7"><div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div className="flex items-start gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-100 text-violet-700"><BellRing className="h-5 w-5" /></div><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-700">LARK NOTIFICATIONS</p><h2 id="reminder-policy-title" className="mt-1 text-xl font-bold text-slate-950">Lịch nhắc vận hành</h2><p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Sáng và chiều nhắc mọi người; mốc PM gửi danh sách người chưa lập kế hoạch ngày. Ngày off và người nghỉ phép cả ngày được bỏ qua tự động.</p></div></div>{policy ? <button disabled={saving} type="button" onClick={onSave} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-primary-foreground shadow-sm hover:opacity-90 disabled:opacity-60"><Save className="h-4 w-4" />{saving ? "Đang lưu…" : "Lưu thay đổi"}</button> : null}</div></div>{policy ? <div className="p-5 sm:p-7"><div className="flex flex-col gap-3 rounded-2xl border border-border bg-slate-50/80 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><div className={`mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl ${policy.enabled ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`}><BellRing className="h-4 w-4" /></div><div><p className="text-sm font-bold text-slate-900">Kích hoạt nhắc Lark</p><p className="mt-0.5 text-xs text-slate-500">{formatUpdatedAt(policy.updatedAt)} · múi giờ {policy.timezone}</p></div></div><Toggle checked={policy.enabled} onChange={(checked) => onSetPolicy((current) => current ? { ...current, enabled: checked } : current)} label={policy.enabled ? "Đang bật" : "Đang tắt"} /></div><div className="mt-4 grid gap-3 md:grid-cols-3">{policy.slots.map((slot) => <div key={slot.slot} className={`rounded-2xl border p-4 transition ${slot.enabled && policy.enabled ? "border-violet-200 bg-violet-50/40" : "border-border bg-white"}`}><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-bold text-slate-900">{slotLabel(slot)}</p><p className="mt-1 text-xs leading-relaxed text-slate-500">{SLOT_DESCRIPTIONS[slot.slot]}</p></div><Toggle checked={slot.enabled} onChange={(checked) => onUpdateSlot(slot.slot, { enabled: checked })} label={slot.enabled ? "Bật" : "Tắt"} compact /></div><label className="mt-4 flex items-center gap-2 text-xs font-semibold text-slate-500"><Clock3 className="h-4 w-4" /> Giờ gửi<input type="time" value={slot.time} onChange={(event) => onUpdateSlot(slot.slot, { time: event.target.value })} className="ml-auto h-9 rounded-lg border border-border bg-white px-2 text-sm font-bold text-slate-900" /></label>{slot.slot === "pm_follow_up" ? <PmRecipientsField users={users} values={slot.recipientUserIds ?? []} onChange={(recipientUserIds) => onUpdateSlot(slot.slot, { recipientUserIds })} /> : null}</div>)}</div><label className="mt-4 flex items-center gap-2 text-xs font-semibold text-slate-600"><input type="checkbox" checked={policy.weekdaysOnly} onChange={(event) => onSetPolicy((current) => current ? { ...current, weekdaysOnly: event.target.checked } : current)} className="h-4 w-4 rounded border-border text-primary" /> Chỉ gửi vào ngày làm việc (Thứ 2–Thứ 6, bỏ qua ngày off)</label><div className="mt-4 flex items-start gap-2 rounded-xl border border-sky-100 bg-sky-50/70 px-3 py-2.5 text-xs leading-relaxed text-sky-800"><Info className="mt-0.5 h-4 w-4 shrink-0" /> Bot Lark gửi tin riêng cho từng người. Mốc mặc định: 08:30, 14:00 và 17:00.</div></div> : <div className="p-7 text-sm text-muted-foreground">Đang tải cấu hình lịch nhắc…</div>}</section>;
+/** "Danh sách người nhận": everyone on an active project, each with a switch; off = no reminder (scheduled, or manual to all/a team). */
+function ReminderRecipientsDialog({ users, excludedUserIds, saving, onClose, onSave }: { users: WorkspaceReminderRecipientsResponse["data"]["users"]; excludedUserIds: string[]; saving: boolean; onClose: () => void; onSave: (excludedUserIds: string[]) => Promise<void> }) {
+  const audience = reminderRecipientOptions(users.filter((user) => user.onActiveProject));
+  const [off, setOff] = useState(() => new Set(excludedUserIds));
+  const [search, setSearch] = useState("");
+  const shown = audience.filter((option) => matchesSearch(search, option.label, option.subtext));
+  const onCount = audience.filter((option) => !off.has(option.value)).length;
+  const toggle = (id: string, on: boolean) => setOff((current) => { const next = new Set(current); if (on) next.delete(id); else next.add(id); return next; });
+  const save = async () => { await onSave([...off]); onClose(); };
+  return <ModalLayer initialFocusSelector="input[type=search]" onClose={onClose}><div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-labelledby="reminder-recipients-title" className="flex max-h-[85dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl" onClick={(event) => event.stopPropagation()}>
+      <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4"><div><h2 id="reminder-recipients-title" className="!text-base font-bold text-slate-950">Danh sách người nhận nhắc Lark</h2><p className="mt-1 text-xs text-slate-500">Đang nhận {onCount}/{audience.length} người. Tắt để người đó không nhận nhắc tự động và không nằm trong danh sách gửi PM.</p></div><button type="button" aria-label="Đóng" onClick={onClose} className="min-h-10 min-w-10 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"><X className="mx-auto h-4 w-4" /></button></div>
+      <div className="flex items-center gap-2 border-b border-border px-5 py-3"><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm theo tên hoặc email..." className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-white px-3 text-sm" /><button type="button" onClick={() => setOff(new Set())} className="h-9 shrink-0 rounded-lg border border-border px-3 text-xs font-semibold text-slate-600 hover:bg-slate-50">Bật tất cả</button></div>
+      <ul className="min-h-0 flex-1 divide-y divide-border overflow-y-auto">{shown.map((option) => <li key={option.value} className="flex items-center gap-3 px-5 py-2.5"><UserAvatar id={option.value} name={option.label} avatarUrl={option.avatarUrl} initials={option.initials} /><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-slate-900">{option.label}</p><p className="truncate text-xs text-slate-500">{option.subtext}</p></div><Toggle checked={!off.has(option.value)} onChange={(on) => toggle(option.value, on)} label={off.has(option.value) ? "Tắt" : "Bật"} compact /></li>)}{shown.length ? null : <li className="px-5 py-6 text-center text-sm text-slate-500">Không có người phù hợp.</li>}</ul>
+      <div className="flex justify-end gap-2 border-t border-border px-5 py-3"><button type="button" onClick={onClose} className="h-10 rounded-xl border border-border px-4 text-sm font-semibold text-slate-600 hover:bg-slate-50">Hủy</button><button type="button" disabled={saving} onClick={() => void save()} className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-primary-foreground disabled:opacity-60"><Save className="h-4 w-4" />{saving ? "Đang lưu…" : "Lưu danh sách"}</button></div>
+    </div>
+  </div></ModalLayer>;
+}
+
+function LegacyReminderPolicyPanel({ policy, saving, users, onSave, onSaveExcluded, onUpdateSlot, onSetPolicy }: { policy: WorkspaceReminderPolicy | null; saving: boolean; users: WorkspaceReminderRecipientsResponse["data"]["users"]; onSave: () => void; onSaveExcluded: (excludedUserIds: string[]) => Promise<void>; onUpdateSlot: (code: WorkspaceReminderSlotCode, patch: Partial<WorkspaceReminderSlot>) => void; onSetPolicy: React.Dispatch<React.SetStateAction<WorkspaceReminderPolicy | null>> }) {
+  const [recipientsOpen, setRecipientsOpen] = useState(false);
+  const audience = users.filter((user) => user.onActiveProject);
+  const excluded = new Set(policy?.excludedUserIds ?? []);
+  return <>{recipientsOpen && policy ? <ReminderRecipientsDialog users={users} excludedUserIds={policy.excludedUserIds ?? []} saving={saving} onClose={() => setRecipientsOpen(false)} onSave={onSaveExcluded} /> : null} <section aria-labelledby="reminder-policy-title" className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm"><div className="border-b border-border bg-gradient-to-r from-violet-50 via-white to-sky-50 px-5 py-5 sm:px-7"><div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div className="flex items-start gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-100 text-violet-700"><BellRing className="h-5 w-5" /></div><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-700">LARK NOTIFICATIONS</p><h2 id="reminder-policy-title" className="mt-1 text-xl font-bold text-slate-950">Lịch nhắc vận hành</h2><p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Sáng và chiều nhắc mọi người; mốc PM gửi danh sách người chưa lập kế hoạch ngày. Ngày off và người nghỉ phép cả ngày được bỏ qua tự động.</p></div></div>{policy ? <div className="flex flex-col items-stretch gap-2 sm:items-end"><button disabled={saving} type="button" onClick={onSave} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-primary-foreground shadow-sm hover:opacity-90 disabled:opacity-60"><Save className="h-4 w-4" />{saving ? "Đang lưu…" : "Lưu thay đổi"}</button><button type="button" onClick={() => setRecipientsOpen(true)} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-border bg-white px-4 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50"><Users className="h-4 w-4" />Danh sách người nhận<span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{audience.filter((user) => !excluded.has(user.id)).length}/{audience.length}</span></button></div> : null}</div></div>{policy ? <div className="p-5 sm:p-7"><div className="flex flex-col gap-3 rounded-2xl border border-border bg-slate-50/80 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><div className={`mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl ${policy.enabled ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`}><BellRing className="h-4 w-4" /></div><div><p className="text-sm font-bold text-slate-900">Kích hoạt nhắc Lark</p><p className="mt-0.5 text-xs text-slate-500">{formatUpdatedAt(policy.updatedAt)} · múi giờ {policy.timezone}</p></div></div><Toggle checked={policy.enabled} onChange={(checked) => onSetPolicy((current) => current ? { ...current, enabled: checked } : current)} label={policy.enabled ? "Đang bật" : "Đang tắt"} /></div><div className="mt-4 grid gap-3 md:grid-cols-3">{policy.slots.map((slot) => <div key={slot.slot} className={`rounded-2xl border p-4 transition ${slot.enabled && policy.enabled ? "border-violet-200 bg-violet-50/40" : "border-border bg-white"}`}><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-bold text-slate-900">{slotLabel(slot)}</p><p className="mt-1 text-xs leading-relaxed text-slate-500">{SLOT_DESCRIPTIONS[slot.slot]}</p></div><Toggle checked={slot.enabled} onChange={(checked) => onUpdateSlot(slot.slot, { enabled: checked })} label={slot.enabled ? "Bật" : "Tắt"} compact /></div><label className="mt-4 flex items-center gap-2 text-xs font-semibold text-slate-500"><Clock3 className="h-4 w-4" /> Giờ gửi<input type="time" value={slot.time} onChange={(event) => onUpdateSlot(slot.slot, { time: event.target.value })} className="ml-auto h-9 rounded-lg border border-border bg-white px-2 text-sm font-bold text-slate-900" /></label>{slot.slot === "pm_follow_up" ? <PmRecipientsField users={users} values={slot.recipientUserIds ?? []} onChange={(recipientUserIds) => onUpdateSlot(slot.slot, { recipientUserIds })} /> : null}</div>)}</div><label className="mt-4 flex items-center gap-2 text-xs font-semibold text-slate-600"><input type="checkbox" checked={policy.weekdaysOnly} onChange={(event) => onSetPolicy((current) => current ? { ...current, weekdaysOnly: event.target.checked } : current)} className="h-4 w-4 rounded border-border text-primary" /> Chỉ gửi vào ngày làm việc (Thứ 2–Thứ 6, bỏ qua ngày off)</label><div className="mt-4 flex items-start gap-2 rounded-xl border border-sky-100 bg-sky-50/70 px-3 py-2.5 text-xs leading-relaxed text-sky-800"><Info className="mt-0.5 h-4 w-4 shrink-0" /> Bot Lark gửi tin riêng cho từng người. Mốc mặc định: 08:30, 14:00 và 17:00.</div></div> : <div className="p-7 text-sm text-muted-foreground">Đang tải cấu hình lịch nhắc…</div>}</section></>;
 }
 
 function ReminderPolicyPanel({
@@ -633,6 +659,7 @@ function ReminderPolicyPanel({
   sending,
   recipients,
   onSave,
+  onSaveExcluded,
   onSendManual,
   onUpdateSlot,
   onSetPolicy
@@ -642,6 +669,7 @@ function ReminderPolicyPanel({
   sending: boolean;
   recipients: WorkspaceReminderRecipientsResponse["data"];
   onSave: () => void;
+  onSaveExcluded: (excludedUserIds: string[]) => Promise<void>;
   onSendManual: (input: SendWorkspaceReminderInput) => void;
   onUpdateSlot: (code: WorkspaceReminderSlotCode, patch: Partial<WorkspaceReminderSlot>) => void;
   onSetPolicy: React.Dispatch<React.SetStateAction<WorkspaceReminderPolicy | null>>;
@@ -653,56 +681,71 @@ function ReminderPolicyPanel({
   const [slot, setSlot] = useState<WorkspaceReminderSlotCode>("morning_plan");
   const selectedSlot = policy?.slots.find((candidate) => candidate.slot === slot);
   const recipientOptions = reminderRecipientOptions(recipients.users);
+  // "Tất cả": everyone on an active project who is not switched off in "Danh sách người nhận".
+  const excluded = new Set(policy?.excludedUserIds ?? []);
+  const allCount = recipients.users.filter((user) => user.onActiveProject && !excluded.has(user.id)).length;
+  const pmNames = (policy?.slots.find((candidate) => candidate.slot === "pm_follow_up")?.recipientUserIds ?? []).map((id) => recipients.users.find((user) => user.id === id)?.displayName ?? id);
+  const scopeLabel = scope === "all" ? `${allCount} người nhận` : scope === "user" ? (recipients.users.find((user) => user.id === userId)?.displayName || "Chưa chọn người") : (recipients.teams.find((team) => team.id === teamId)?.name || "Chưa chọn team");
+  const deliveryLabel = slot === "pm_follow_up" ? `danh sách người chưa lập kế hoạch (${scopeLabel}) gửi ${pmNames.length ? pmNames.join(", ") : "PM chưa chọn"}` : scopeLabel;
 
   const submitManual = () => {
     onSendManual({ localDate, slot, ...(scope === "user" && userId ? { userId } : {}), ...(scope === "team" && teamId ? { teamId } : {}) });
   };
 
   return <>
-    <LegacyReminderPolicyPanel policy={policy} saving={saving} users={recipients.users} onSave={onSave} onUpdateSlot={onUpdateSlot} onSetPolicy={onSetPolicy} />
+    <LegacyReminderPolicyPanel policy={policy} saving={saving} users={recipients.users} onSave={onSave} onSaveExcluded={onSaveExcluded} onUpdateSlot={onUpdateSlot} onSetPolicy={onSetPolicy} />
     <section aria-labelledby="manual-reminder-title" className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
       <div className="border-b border-border bg-gradient-to-r from-slate-50 via-white to-violet-50 px-5 py-5 sm:px-7">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">MANUAL DELIVERY</p><h2 id="manual-reminder-title" className="mt-1 text-xl font-bold text-slate-950">Gửi nhắc Lark thủ công</h2><p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Chọn người nhận, team, ngày và mốc giờ. Secret webhook chỉ được gọi từ server.</p></div>
+          <div><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">MANUAL DELIVERY</p><h2 id="manual-reminder-title" className="mt-1 text-xl font-bold text-slate-950">Gửi nhắc Lark thủ công</h2><p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Gửi ngay card của mốc đã chọn, cùng nội dung với nhắc tự động. Bot gửi tin riêng cho từng người; người đang tắt trong Danh sách người nhận được bỏ qua.</p></div>
           <span className="inline-flex items-center gap-2 rounded-xl border border-violet-100 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700"><Send className="h-4 w-4" /> Admin only</span>
         </div>
       </div>
       <div className="p-5 sm:p-7">
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-          <CrmSelect label={<span className="mb-1.5 block text-xs font-semibold text-slate-600">Phạm vi người nhận</span>} options={[{ value: "all", label: "Tất cả người đang active" }, { value: "user", label: "Một người" }, { value: "team", label: "Một team" }]} value={scope} onChange={(value) => { const next = value as typeof scope; setScope(next); setUserId(""); setTeamId(""); }} />
+          <CrmSelect label={<span className="mb-1.5 block text-xs font-semibold text-slate-600">Phạm vi người nhận</span>} options={[{ value: "all", label: "Tất cả người nhận" }, { value: "user", label: "Một người" }, { value: "team", label: "Một team" }]} value={scope} onChange={(value) => { const next = value as typeof scope; setScope(next); setUserId(""); setTeamId(""); }} />
           {scope === "user" ? <div><span className="mb-1.5 block text-xs font-semibold text-slate-600">Người nhận</span><CustomDropdown label={null} value={userId} onChange={setUserId} options={[{ value: "", label: "Chọn người nhận…" }, ...recipientOptions]} /></div> : null}
           {scope === "team" ? <div><span className="mb-1.5 block text-xs font-semibold text-slate-600">Team nhận</span><CrmSelect options={[{ value: "", label: "Chọn team…" }, ...recipients.teams.map((team) => ({ value: team.id, label: `${team.name} (${team.memberCount})` }))]} value={teamId} onChange={setTeamId} /></div> : null}
           <label><span className="mb-1.5 block text-xs font-semibold text-slate-600">Ngày gửi</span><input type="date" value={localDate} onChange={(event) => setLocalDate(event.target.value)} className="h-10 w-full rounded-xl border border-border bg-white px-3 text-sm font-semibold text-slate-700" /></label>
           <div><span className="mb-1.5 block text-xs font-semibold text-slate-600">Mốc giờ</span><CrmSelect options={(policy?.slots ?? []).map((candidate) => ({ value: candidate.slot, label: `${slotLabel(candidate)} · ${candidate.time}` }))} value={slot} onChange={(value) => setSlot(value as WorkspaceReminderSlotCode)} /></div>
         </div>
         <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(340px,430px)] xl:items-start">
-          <div className="flex flex-col gap-3 rounded-2xl border border-violet-100 bg-violet-50/50 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="text-xs leading-relaxed text-violet-900"><strong>{selectedSlot?.label ?? "Mốc nhắc"}</strong><span className="mx-1.5">·</span>{localDate || "Chưa chọn ngày"}<span className="mx-1.5">·</span>{scope === "all" ? `${recipients.users.length} người active` : scope === "user" ? (recipients.users.find((user) => user.id === userId)?.displayName || "Chưa chọn người") : (recipients.teams.find((team) => team.id === teamId)?.name || "Chưa chọn team")}</div><button type="button" disabled={sending || !localDate || (scope === "user" && !userId) || (scope === "team" && !teamId)} onClick={submitManual} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"><Send className="h-4 w-4" />{sending ? "Đang gửi…" : "Gửi ngay"}</button></div>
-          <LarkReminderCardPreview slot={slot} localDate={localDate} time={selectedSlot?.time ?? "08:30"} recipientLabel={scope === "all" ? `${recipients.users.length} người active` : scope === "user" ? (recipients.users.find((user) => user.id === userId)?.displayName || "người nhận đã chọn") : (recipients.teams.find((team) => team.id === teamId)?.name || "team đã chọn")} />
+          <div className="flex flex-col gap-3 rounded-2xl border border-violet-100 bg-violet-50/50 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="text-xs leading-relaxed text-violet-900"><strong>{selectedSlot?.label ?? "Mốc nhắc"}</strong><span className="mx-1.5">·</span>{localDate || "Chưa chọn ngày"}<span className="mx-1.5">·</span>{deliveryLabel}</div><button type="button" disabled={sending || !localDate || (scope === "user" && !userId) || (scope === "team" && !teamId)} onClick={submitManual} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"><Send className="h-4 w-4" />{sending ? "Đang gửi…" : "Gửi ngay"}</button></div>
+          <LarkReminderCardPreview slot={slot} localDate={localDate} time={selectedSlot?.time ?? "08:30"} recipientLabel={deliveryLabel} />
         </div>
       </div>
     </section>
   </>;
 }
 
-function LarkReminderCardPreview({ slot, localDate, time, recipientLabel }: { slot: WorkspaceReminderSlotCode; localDate: string; time: string; recipientLabel: string }) {
-  const content = slot === "morning_plan"
-    ? { tone: "border-sky-400", wash: "bg-sky-50", title: "Nhắc nhở hoàn tất kế hoạch Task trước 09:00", action: "Cập nhật kế hoạch Task" }
-    : slot === "pm_follow_up"
-      ? { tone: "border-amber-400", wash: "bg-amber-50", title: "Danh sách nhân sự chưa hoàn tất kế hoạch Task", action: "Xem Timesheet" }
-      : { tone: "border-rose-400", wash: "bg-rose-50", title: "Cập nhật giờ thực tế hôm nay", action: "Mở Timesheet hôm nay" };
+const LARK_HEADER_COLORS: Record<string, string> = { blue: "bg-blue-600", orange: "bg-orange-600", red: "bg-red-600", green: "bg-emerald-600" };
 
+/** Lark's card as the person sees it: header, lark_md text (bold and line breaks), note and button. */
+function LarkCardView({ card }: { card: LarkReminderCard["card"] }) {
+  const markdown = (text: string) => text.split("\n").map((line, index) => <span key={index} className="block min-h-[1em] whitespace-pre-wrap">{line.split(/\*\*(.+?)\*\*/g).map((part, partIndex) => partIndex % 2 ? <strong key={partIndex}>{part}</strong> : part)}</span>);
+  return <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <p className={`px-4 py-2.5 text-sm font-bold text-white ${LARK_HEADER_COLORS[card.header.template] ?? "bg-slate-600"}`}>{card.header.title.content}</p>
+    <div className="space-y-3 px-4 py-3 text-xs leading-relaxed text-slate-700">{card.elements.map((element, index) => {
+      if (element.tag === "div") return <div key={index}>{markdown((element as { text: { content: string } }).text.content)}</div>;
+      if (element.tag === "hr") return <hr key={index} className="border-slate-200" />;
+      if (element.tag === "note") return <p key={index} className="text-[10px] text-slate-400">{(element as { elements: Array<{ content: string }> }).elements.map((item) => item.content).join(" ")}</p>;
+      if (element.tag === "action") return <div key={index}>{(element as { actions: Array<{ text: { content: string } }> }).actions.map((action, actionIndex) => <button key={actionIndex} type="button" disabled className="inline-flex min-h-9 w-full items-center justify-center rounded-lg bg-blue-600 px-3 text-xs font-bold text-white">{action.text.content}</button>)}</div>;
+      return null;
+    })}</div>
+  </div>;
+}
+
+function LarkReminderCardPreview({ slot, localDate, time, recipientLabel }: { slot: WorkspaceReminderSlotCode; localDate: string; time: string; recipientLabel: string }) {
+  const date = localDate || new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
+  const sample = slot === "morning_plan"
+    ? larkPlanCard({ displayName: "Nguyễn Văn A", localDate: date, linkUrl: "#" })
+    : slot === "pm_follow_up"
+      ? larkPmListCard({ people: [{ displayName: "Nguyễn Văn A", role: "DX enabler" }, { displayName: "Trần Thị B", role: "Project Manager" }], localDate: date, time, nudgeUrl: "#" })
+      : larkFinishPlanCard({ displayName: "Nguyễn Văn A", localDate: date, tasks: [{ title: "Task mẫu đã lập kế hoạch", projectName: "Dự án A", minutes: 240, done: true }, { title: "Task mẫu còn mở", projectName: "Dự án B", minutes: 180, done: false }], actualMinutes: 240, targetMinutes: 480, linkUrl: "#" });
   return <aside aria-label="Bản xem trước card Lark" className="rounded-2xl border border-border bg-slate-50/70 p-3">
-    <div className="flex items-center justify-between gap-3 px-1 pb-2"><div><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-violet-700">LARK CARD PREVIEW</p><p className="mt-1 text-xs text-slate-500">Nội dung theo EV-060, thay dữ liệu thật khi gửi</p></div><span className="rounded-full border border-border bg-white px-2 py-1 text-[10px] font-bold text-slate-500">{time}</span></div>
-    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-      <div className={`border-l-4 ${content.tone} ${content.wash} px-4 py-3`}><p className="text-sm font-bold text-slate-950">{content.title}</p><p className="mt-1 text-[11px] text-slate-500">Ngày {localDate || "chưa chọn"} · gửi tới {recipientLabel}</p></div>
-      <div className="space-y-3 px-4 py-4 text-xs leading-relaxed text-slate-700">
-        {slot === "morning_plan" ? <><p>Chào <strong>{"{{employee_name}}"}</strong>,</p><p>Đến 08:30 ngày <strong>{"{{work_date}}"}</strong>, kế hoạch Task của các Project <strong>{"{{active_projects}}"}</strong> hôm nay của bạn chưa đầy đủ.</p><p>Nội dung cần bổ sung:</p><div className="rounded-lg bg-slate-50 px-3 py-2 text-slate-600">• Nếu chưa có Task: “Bạn chưa lập Task cho ngày hôm nay.”<br />• Nếu Task thiếu dữ liệu: “{"{{task_name}}"} — còn thiếu: {"{{missing_fields}}"}.”</div><p>Vui lòng hoàn tất kế hoạch Task trước 09:00 hôm nay để bảo đảm dữ liệu kế hoạch được ghi nhận đầy đủ.</p></> : null}
-        {slot === "pm_follow_up" ? <><p>Chào <strong>{"{{pm_name}}"}</strong>,</p><p>Đến 14:00 ngày <strong>{"{{work_date}}"}</strong>, có <strong>{"{{incomplete_employee_count}}"}</strong> nhân sự thuộc phạm vi phụ trách của bạn chưa hoàn tất kế hoạch Task.</p><p>Danh sách cần theo dõi:</p><div className="space-y-2 rounded-lg bg-slate-50 px-3 py-2"><div><strong>1. {"{{employee_name}}"}</strong><br /><span className="text-[11px] text-slate-500">• Trạng thái: {"{{missing_status}}"}<br />• Task liên quan: {"{{task_name_or_no_tasks}}"}<br />• Nội dung còn thiếu: {"{{missing_fields}}"}<br />• Lần nhắc tự động: 08:30</span></div><span className="flex gap-1"><button type="button" disabled className="rounded-md border border-violet-200 px-2 py-1 text-[10px] font-bold text-violet-700">Gửi nhắc</button><button type="button" disabled className="rounded-md border border-border px-2 py-1 text-[10px] font-bold text-slate-600">Xem Timesheet</button></span></div><p>Vui lòng kiểm tra và nhắc nhân sự hoàn tất dữ liệu trong ngày.</p></> : null}
-        {slot === "evening_actual" ? <><p>Chào <strong>{"{{employee_name}}"}</strong>,</p><p>Đến 17:00 ngày <strong>{"{{work_date}}"}</strong>, dữ liệu giờ thực tế của bạn chưa đầy đủ.</p><p>Tổng giờ trong ngày:</p><div className="rounded-lg bg-slate-50 px-3 py-2 text-slate-600">• Đã ghi nhận: <strong>{"{{actual_hour_total}}"} giờ</strong><br />• Giờ tiêu chuẩn: <strong>8 giờ</strong><br />• Còn thiếu: <strong>{"{{remaining_hour}}"} giờ</strong></div><p>Task chưa có giờ thực tế:</p><div className="rounded-lg bg-slate-50 px-3 py-2 text-slate-600">1. {"{{task_name_1}}"}<br />— Giờ kế hoạch: {"{{estimate_hour_1}}"} giờ<br />2. {"{{task_name_2}}"}<br />— Giờ kế hoạch: {"{{estimate_hour_2}}"} giờ<br />{"{{repeat_for_each_missing_task}}"}</div><p>Vui lòng ghi giờ thực tế đã làm trong ngày. Không tự động dùng giờ kế hoạch thay cho giờ thực tế; chuyển Task sang Hoàn tất cũng không thay thế việc ghi giờ. Trường hợp có OT, số giờ vượt 8 giờ chỉ được ghi nhận theo quy tắc đã được phê duyệt.</p></> : null}
-        {slot !== "pm_follow_up" ? <button type="button" disabled className="inline-flex min-h-9 w-full items-center justify-center gap-2 rounded-lg bg-violet-600 px-3 text-xs font-bold text-white opacity-90"><Send className="h-3.5 w-3.5" />{content.action}</button> : null}
-        <p className="flex items-start gap-1.5 text-[10px] text-slate-400"><Info className="mt-0.5 h-3 w-3 shrink-0" />Bản xem trước không gửi tin nhắn. Worker sẽ loại trừ Day-off/ngày lễ và ghi nhật ký gửi.</p>
-      </div>
-    </div>
+    <div className="flex items-center justify-between gap-3 px-1 pb-2"><div><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-violet-700">LARK CARD PREVIEW</p><p className="mt-1 text-xs text-slate-500">Gửi tới {recipientLabel}; tên và Task thay bằng dữ liệu thật của từng người.</p></div><span className="rounded-full border border-border bg-white px-2 py-1 text-[10px] font-bold text-slate-500">{time}</span></div>
+    <LarkCardView card={sample.card} />
+    <p className="mt-2 flex items-start gap-1.5 px-1 text-[10px] text-slate-400"><Info className="mt-0.5 h-3 w-3 shrink-0" />Bản xem trước không gửi tin nhắn. Ngày nghỉ, người nghỉ phép cả ngày và người đang tắt nhắc được bỏ qua khi gửi.</p>
   </aside>;
 }
 

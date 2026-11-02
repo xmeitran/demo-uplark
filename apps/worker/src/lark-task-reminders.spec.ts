@@ -115,7 +115,7 @@ describe("runTaskReminderSlot (sáng/chiều: mọi người · 14:00: PM)", () 
     const store = new Map<string, string>();
     return { get: async (key: string) => store.get(key) ?? null, set: async (key: string, value: string) => { store.set(key, value); return "OK"; }, eval: async () => 0 };
   };
-  const run = async (slot: "morning_plan" | "pm_follow_up" | "evening_actual", pmUserIds?: string[]) => {
+  const run = async (slot: "morning_plan" | "pm_follow_up" | "evening_actual", pmUserIds?: string[], excludedUserIds?: string[]) => {
     const messages: Array<{ to: string; title: string; text: string; url: string }> = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: any) => {
       if (url.includes("tenant_access_token")) return { ok: true, status: 200, json: async () => ({ code: 0, tenant_access_token: "t", expire: 7200 }) };
@@ -125,7 +125,7 @@ describe("runTaskReminderSlot (sáng/chiều: mọi người · 14:00: PM)", () 
       return { ok: true, status: 200, json: async () => ({ code: 0 }) };
     }));
     // Monday 2026-11-02, 14:00 in Vietnam.
-    await runTaskReminderSlot({ prisma, redis: redis(), config, slot, pmUserIds, now: new Date("2026-11-02T07:00:00Z") });
+    await runTaskReminderSlot({ prisma, redis: redis(), config, slot, pmUserIds, excludedUserIds, now: new Date("2026-11-02T07:00:00Z") });
     return messages;
   };
 
@@ -150,6 +150,11 @@ describe("runTaskReminderSlot (sáng/chiều: mọi người · 14:00: PM)", () 
     expect(messages[0].text).not.toContain("Dự án A");
     expect(messages[0].text).not.toContain("**An**");
     expect(messages[0].url).toBe("https://crm.example.com/admin?nudge=unplanned&date=2026-11-02");
+  });
+
+  it("leaves out the people switched off in Admin › Danh sách người nhận", async () => {
+    expect((await run("morning_plan", undefined, ["u2"])).map((message) => message.to)).toEqual(["ou_1"]);
+    expect(await run("pm_follow_up", undefined, ["u2"])).toEqual([]);
   });
 
   it("14:00 goes to the PMs picked in Admin instead of the server list", async () => {

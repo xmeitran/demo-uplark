@@ -4,7 +4,8 @@ RUN corepack enable
 COPY package.json pnpm-workspace.yaml tsconfig.base.json ./
 COPY pnpm-lock.yaml ./
 COPY apps/worker/package.json apps/worker/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
 RUN pnpm install --frozen-lockfile
 COPY . .
-RUN pnpm db:generate && pnpm --filter @b2b-crm/worker build
+RUN pnpm db:generate && pnpm --filter @b2b-crm/contracts build && pnpm --filter @b2b-crm/worker build
 CMD ["pnpm", "--filter", "@b2b-crm/worker", "start"]

@@ -13,30 +13,6 @@ export const CLOSED_TASK_STATUSES = ["completed", "done", "cancelled", "canceled
  */
 export const REMINDER_INACTIVE_PROJECT_STATUSES = ["on_hold", "paused", "pause", "completed", "done", "hoàn_thành", "đã_hoàn_thành", "tạm_dừng", "closed", "cancelled", "canceled", "archived", "đã_đóng"];
 
-/**
- * The role the People page shows for a person (profile role, else department, else the first non-system role code).
- * Mirrors BUSINESS_ROLE_OPTIONS / normalizeBusinessRole in packages/contracts; the worker does not depend on contracts.
- */
-const BUSINESS_ROLES = ["Customer success", "Project Manager", "DX enabler", "Business development", "Marketing B2B"];
-const BUSINESS_ROLE_ALIASES: Record<string, string> = {
-  CUSTOMER_SUCCESS: "Customer success", "CUSTOMER SUCCESS": "Customer success", "CUSTOMER-SUCCESS": "Customer success",
-  PROJECT_MANAGEMENT: "Project Manager", "PROJECT MANAGEMENT": "Project Manager", PROJECT_MANAGER: "Project Manager",
-  "PROJECT MANAGER": "Project Manager", PM: "Project Manager", DELIVERY_LEAD: "Project Manager", "DELIVERY LEAD": "Project Manager",
-  "IMPLEMENTATION CONSULTANT": "Project Manager", "DELIVERY RESOURCE": "Project Manager", "TECHNICAL IMPLEMENTER": "Project Manager",
-  "LARK CONSULTANT": "Project Manager",
-  DX_ENABLER: "DX enabler", "DX ENABLER": "DX enabler", CDS_DX_ENABLER: "DX enabler",
-  BUSINESS_DEVELOPMENT: "Business development", "BUSINESS DEVELOPMENT": "Business development", CDS_BUSINESS_DEVELOPMENT: "Business development",
-  SALES_OWNER: "Business development", "SALES OWNER": "Business development", SALES_LEAD: "Business development", "SALES LEAD": "Business development",
-  MARKETING_B2B: "Marketing B2B", "MARKETING B2B": "Marketing B2B", CDS_MARKETING_B2B: "Marketing B2B"
-};
-const SYSTEM_ROLE_CODES = new Set(["FOUNDER_GM", "WORKSPACE_ADMIN", "WORKSPACE_USER"]);
-
-export function businessRole(member: { displayRole?: string | null; departmentCode?: string | null; roleCodes?: readonly string[] }) {
-  const raw = (member.displayRole ?? member.departmentCode ?? member.roleCodes?.find((code) => !SYSTEM_ROLE_CODES.has(code)))?.trim();
-  if (!raw) return undefined;
-  return BUSINESS_ROLES.find((role) => role.toLocaleLowerCase("vi") === raw.toLocaleLowerCase("vi")) ?? BUSINESS_ROLE_ALIASES[raw.toUpperCase()];
-}
-
 const HCM_OFFSET_MINUTES = 7 * 60;
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;

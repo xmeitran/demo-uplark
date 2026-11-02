@@ -16,6 +16,7 @@ import type {
   WorkspaceReminderSlot,
   WorkspaceReminderSlotCode
 } from "@b2b-crm/contracts";
+import { larkFinishPlanCard, larkPlanCard, larkPmListCard, larkReminderPlannedTasks, larkReminderRole, larkSecondReminderCard } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { buildPaginationMeta } from "../../shared/http/request-context";
 import { csvIn, csvList, vietnamDayRange } from "../../shared/http/list-filters";
@@ -129,9 +130,9 @@ function reminderLinkUrl() {
   return process.env.LARK_REMINDER_LINK_URL?.trim() || `${appPublicOrigin()}/projects`;
 }
 
-function reminderMinutesLabel(minutes: number) {
-  const hours = minutes / 60;
-  return `${Number.isInteger(hours) ? hours.toFixed(0) : hours.toFixed(1)} giờ`;
+/** The address "Gửi nhắc lần 2" opens, as in the worker (LARK_REMINDER_APP_URL, else PUBLIC_APP_URL). */
+function reminderAppUrl() {
+  return (process.env.LARK_REMINDER_APP_URL?.trim() || appPublicOrigin()).replace(/\/$/, "");
 }
 
 function taskMissingFields(task: { assigneeUserId: string | null; plannedStartAt: Date | null; dueAt: Date | null; estimateMinutes: number }) {
@@ -287,7 +288,7 @@ function parseSlots(input: UpdateWorkspaceReminderPolicyInput["slots"]): Workspa
   });
 }
 
-function mapPolicy(record: { enabled: boolean; timezone: string; weekdaysOnly: boolean; slots: unknown; updatedAt?: Date | null }): WorkspaceReminderPolicy {
+function mapPolicy(record: { enabled: boolean; timezone: string; weekdaysOnly: boolean; slots: unknown; excludedUserIds?: string[] | null; updatedAt?: Date | null }): WorkspaceReminderPolicy {
   const slots = Array.isArray(record.slots) ? record.slots : DEFAULT_SLOTS;
   return {
     enabled: record.enabled,
@@ -304,12 +305,13 @@ function mapPolicy(record: { enabled: boolean; timezone: string; weekdaysOnly: b
         ...(code === "pm_follow_up" && Array.isArray(item.recipientUserIds) ? { recipientUserIds: item.recipientUserIds.filter((id): id is string => typeof id === "string") } : {})
       };
     }),
+    excludedUserIds: record.excludedUserIds ?? [],
     updatedAt: record.updatedAt?.toISOString()
   };
 }
 
 function defaultPolicy(): WorkspaceReminderPolicy {
-  return { enabled: true, timezone: "Asia/Ho_Chi_Minh", weekdaysOnly: true, slots: DEFAULT_SLOTS };
+  return { enabled: true, timezone: "Asia/Ho_Chi_Minh", weekdaysOnly: true, slots: DEFAULT_SLOTS, excludedUserIds: [] };
 }
 
 @Injectable()
@@ -349,6 +351,27 @@ export class WorkspaceAdminService {
     };
   }
 
+  /** Manual "Nhắc lại cho PM": the PMs picked in the schedule, else LARK_TASK_REMINDER_PM_OPEN_IDS (the worker's fallback). */
+  private async pmRecipients(principal: PrincipalContext, tenantKey: string) {
+    const record = await this.policyRecord(principal);
+    const picked = record ? mapPolicy(record).slots.find((slot) => slot.slot === "pm_follow_up")?.recipientUserIds ?? [] : [];
+    const openIds = picked.length ? [] : (process.env.LARK_TASK_REMINDER_PM_OPEN_IDS ?? "").split(",").map((id) => id.trim()).filter(Boolean);
+    if (!picked.length && !openIds.length) return [];
+    return this.prisma.user.findMany({
+      where: {
+        status: "ACTIVE",
+        ...(picked.length ? { id: { in: picked } } : { identities: { some: { provider: "lark", providerUserId: { in: openIds } } } })
+      },
+      select: {
+        id: true,
+        displayName: true,
+        email: true,
+        identities: { where: { provider: { in: ["lark", "lark_user_id"] }, tenantKey }, select: { id: true, provider: true, providerUserId: true }, take: 10 }
+      },
+      orderBy: [{ displayName: "asc" }, { id: "asc" }]
+    });
+  }
+
   async getReminderPolicy(principal: PrincipalContext) {
     assertAdmin(principal);
     const record = await this.policyRecord(principal);
@@ -386,7 +409,8 @@ export class WorkspaceAdminService {
             where: { workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, ...activeMembershipWhere() },
             select: { role: { select: { code: true } } }
           },
-          workspaceTeamMemberships: { where: { workspaceId: principal.workspaceId, effectiveTo: null }, select: { teamId: true } }
+          workspaceTeamMemberships: { where: { workspaceId: principal.workspaceId, effectiveTo: null }, select: { teamId: true } },
+          projectMembers: { where: { workspaceId: principal.workspaceId, project: { status: { notIn: REMINDER_INACTIVE_PROJECT_STATUSES } } }, select: { id: true }, take: 1 }
         },
         orderBy: [{ displayName: "asc" }, { id: "asc" }]
       })
@@ -401,7 +425,8 @@ export class WorkspaceAdminService {
           departmentCode: user.departmentCode ?? undefined,
           resourceDisplayRole: user.resourceProfile?.displayRole ?? undefined,
           roleCodes: user.roleBindings.map((binding) => binding.role.code),
-          teamIds: user.workspaceTeamMemberships.map((membership) => membership.teamId)
+          teamIds: user.workspaceTeamMemberships.map((membership) => membership.teamId),
+          onActiveProject: user.projectMembers.length > 0
         })),
         teams: teams.map((team) => ({ id: team.id, code: team.code, name: team.name, memberCount: team._count.members }))
       }
@@ -506,13 +531,22 @@ export class WorkspaceAdminService {
         id: true,
         displayName: true,
         email: true,
+        departmentCode: true,
+        resourceProfile: { select: { displayRole: true } },
+        roleBindings: { where: { workspaceId: principal.workspaceId, tenantKey: principal.tenantKey, ...activeMembershipWhere() }, select: { role: { select: { code: true } } } },
         identities: { where: { provider: { in: ["lark", "lark_user_id"] }, tenantKey: workspace.tenantKey }, select: { id: true, provider: true, providerUserId: true }, take: 10 }
       },
       orderBy: [{ displayName: "asc" }, { id: "asc" }]
     });
+    // People switched off in "Danh sách người nhận" are left out, unless an Admin picks that one person.
+    const switchedOff = new Set(input.userId ? [] : (await this.policyRecord(principal))?.excludedUserIds ?? []);
     const onLeave = await userIdsOnFullDayLeave(this.prisma, principal.workspaceId, localDate, dayMinutes);
-    const users = candidates.filter((user) => !onLeave.has(user.id));
-    if (!users.length) throw new BadRequestException(candidates.length ? "Mọi người nhận đều nghỉ phép cả ngày hôm đó." : "Không có nhân sự phù hợp bộ lọc hoặc chưa tham gia project active.");
+    const users = candidates.filter((user) => !onLeave.has(user.id) && !switchedOff.has(user.id));
+    if (!users.length) {
+      throw new BadRequestException(!candidates.length
+        ? "Không có nhân sự phù hợp bộ lọc hoặc chưa tham gia project active."
+        : candidates.every((user) => switchedOff.has(user.id)) ? "Mọi người nhận đều đang tắt nhắc trong Danh sách người nhận." : "Mọi người nhận đều nghỉ phép cả ngày hôm đó.");
+    }
 
     const { startAt, endAt } = dayWindow(localDate);
     const userIds = users.map((user) => user.id);
@@ -528,193 +562,104 @@ export class WorkspaceAdminService {
         select: { id: true, title: true, assigneeUserId: true, ownerUserId: true, plannedStartAt: true, dueAt: true, estimateMinutes: true, project: { select: { name: true } } },
         orderBy: [{ dueAt: "asc" }, { updatedAt: "desc" }]
       }),
-      this.prisma.taskPlanningBlock.findMany({ where: { workspaceId: principal.workspaceId, userId: { in: userIds }, status: { not: "cancelled" }, startAt: { lt: endAt }, endAt: { gt: startAt } }, select: { userId: true, taskId: true, plannedMinutes: true } }),
+      this.prisma.taskPlanningBlock.findMany({ where: { workspaceId: principal.workspaceId, userId: { in: userIds }, status: { not: "cancelled" }, startAt: { lt: endAt }, endAt: { gt: startAt } }, select: { userId: true, taskId: true, plannedMinutes: true, status: true, task: { select: { title: true, project: { select: { name: true } } } } } }),
       this.prisma.taskTimeEntry.findMany({ where: { workspaceId: principal.workspaceId, userId: { in: userIds }, approvalStatus: { in: ["submitted", "approved", "done"] }, OR: [{ startAt: { gte: startAt, lt: endAt } }, { startAt: null, workDate: { gte: startAt, lt: endAt } }] }, select: { userId: true, taskId: true, minutes: true } })
     ]);
 
-    const at = (openId?: string) => openId ? `<at id=${openId}></at> ` : "";
-    const allFacts = users.map((user) => {
-      const operationalTasks = tasks.filter((task) => (task.assigneeUserId ?? task.ownerUserId) === user.id);
-      const userPlan = planningBlocks.filter((block) => block.userId === user.id);
-      const userActual = timeEntries.filter((entry) => entry.userId === user.id);
-      const actualMinutes = userActual.reduce((sum, entry) => sum + entry.minutes, 0);
-      const taskById = new Map(operationalTasks.map((task) => [task.id, task]));
-      const plannedTasks = userPlan.flatMap((block) => {
-        const task = taskById.get(block.taskId);
-        return task ? [task] : [];
+    // The same cards as the scheduled reminders (packages/contracts/src/lark-reminder-cards.ts), sent as private messages.
+    const facts = users.map((user) => {
+      const taskById = new Map(tasks.filter((task) => (task.assigneeUserId ?? task.ownerUserId) === user.id).map((task) => [task.id, task]));
+      const blocks = planningBlocks.filter((block) => block.userId === user.id);
+      const fieldIssues = [...new Set(blocks.map((block) => block.taskId))].flatMap((taskId) => {
+        const task = taskById.get(taskId);
+        const missingFields = task ? taskMissingFields(task) : [];
+        return task && missingFields.length ? [{ taskTitle: task.title, projectName: task.project?.name, missingFields }] : [];
       });
-      const planIssues = plannedTasks.flatMap((task) => {
-        const missingFields = taskMissingFields(task);
-        return missingFields.length ? [{ task, missingFields }] : [];
-      });
-      const actualTaskIds = new Set(userActual.map((entry) => entry.taskId));
-      const missingActualTasks = plannedTasks.filter((task) => !actualTaskIds.has(task.id));
-      return { user, operationalTasks, userPlan, actualMinutes, planIssues, missingActualTasks };
+      return {
+        user,
+        hasPlan: blocks.length > 0,
+        plannedTasks: larkReminderPlannedTasks(blocks.map((block) => ({ ...block, taskTitle: block.task.title, projectName: block.task.project?.name }))),
+        fieldIssues,
+        actualMinutes: timeEntries.filter((entry) => entry.userId === user.id).reduce((sum, entry) => sum + entry.minutes, 0)
+      };
     });
-    // "Gửi nhắc" on the PM card reaches each person once a day, so a second PM clicking it does not message them again.
-    const alreadyNudged = input.unplannedOnly
-      ? new Set((await this.prisma.reminderDeliveryLog.findMany({ where: { workspaceId: principal.workspaceId, localDate: dateOnly(localDate), moment: input.slot, missingType: "manual_unplanned" }, select: { userId: true } })).map((row) => row.userId))
-      : new Set<string>();
-    // Only people whose data is actually missing are reminded (the card's note says finished data is left out).
-    const userFacts = allFacts.filter((fact) => input.unplannedOnly
-      ? !fact.userPlan.length && !alreadyNudged.has(fact.user.id)
-      : input.slot === "evening_actual"
-        ? fact.actualMinutes < dayMinutes || fact.missingActualTasks.length > 0
-        : !fact.userPlan.length || fact.planIssues.length > 0);
-    if (!userFacts.length) {
-      throw new BadRequestException(input.unplannedOnly
-        ? `Không còn ai cần nhắc: mọi người đã lập kế hoạch ngày ${localDate} hoặc đã được nhắc qua nút này hôm nay.`
-        : `Mọi người nhận đã đủ dữ liệu ngày ${localDate}, không cần nhắc.`);
+    const linkUrl = reminderLinkUrl();
+    const time = new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" });
+    type Recipient = (typeof users)[number] | NonNullable<Awaited<ReturnType<WorkspaceAdminService["pmRecipients"]>>>[number];
+    let deliveries: Array<{ recipient: Recipient; payload: Record<string, unknown> }>;
+    if (input.unplannedOnly) {
+      // "Gửi nhắc lần 2" reaches each person once a day, so a second PM clicking it does not message them again.
+      const alreadyNudged = new Set((await this.prisma.reminderDeliveryLog.findMany({ where: { workspaceId: principal.workspaceId, localDate: dateOnly(localDate), moment: input.slot, missingType: "manual_unplanned" }, select: { userId: true } })).map((row) => row.userId));
+      deliveries = facts.filter((fact) => !fact.hasPlan && !alreadyNudged.has(fact.user.id))
+        .map((fact) => ({ recipient: fact.user, payload: larkSecondReminderCard({ displayName: fact.user.displayName, localDate, time, pmName: principal.displayName, linkUrl }) }));
+      if (!deliveries.length) throw new BadRequestException(`Không còn ai cần nhắc: mọi người đã lập kế hoạch ngày ${localDate} hoặc đã được nhắc qua nút này hôm nay.`);
+    } else if (input.slot === "pm_follow_up") {
+      const unplanned = facts.filter((fact) => !fact.hasPlan);
+      if (!unplanned.length) throw new BadRequestException(`Mọi người nhận đã lập kế hoạch ngày ${localDate}, không có danh sách gửi PM.`);
+      const pms = await this.pmRecipients(principal, workspace.tenantKey);
+      if (!pms.length) throw new BadRequestException("Chưa chọn người nhận cho “Nhắc lại cho PM” trong Lịch nhắc vận hành.");
+      const payload = larkPmListCard({
+        people: unplanned.map(({ user }) => ({ displayName: user.displayName, role: larkReminderRole({ displayRole: user.resourceProfile?.displayRole, departmentCode: user.departmentCode, roleCodes: user.roleBindings.map((binding) => binding.role.code) }) })),
+        localDate,
+        time,
+        nudgeUrl: `${reminderAppUrl()}/admin?${new URLSearchParams({ nudge: "unplanned", date: localDate }).toString()}`
+      });
+      deliveries = pms.map((pm) => ({ recipient: pm, payload }));
+    } else {
+      deliveries = facts.map((fact) => ({
+        recipient: fact.user,
+        payload: input.slot === "evening_actual"
+          ? larkFinishPlanCard({ displayName: fact.user.displayName, localDate, tasks: fact.plannedTasks, actualMinutes: fact.actualMinutes, targetMinutes: dayMinutes, linkUrl })
+          : larkPlanCard({ displayName: fact.user.displayName, localDate, fieldIssues: fact.fieldIssues, linkUrl })
+      }));
     }
-    const directDeliveryRequested = Boolean(input.userId || input.teamId || input.unplannedOnly);
-    // "Nhắc lọc cho PM" is the PM's follow-up list: it is never sent privately to the staff member it lists.
-    if (directDeliveryRequested && input.slot === "pm_follow_up") throw new BadRequestException("“Nhắc lọc cho PM” gửi danh sách cho PM qua nhóm. Để nhắc riêng một người hoặc một team, chọn “Kế hoạch đầu ngày” hoặc “Giờ thực tế cuối ngày”.");
-    const renderUserLines = ({ user, operationalTasks, userPlan, actualMinutes, planIssues, missingActualTasks }: typeof userFacts[number]) => {
-      const projects = [...new Set(operationalTasks.map((task) => task.project?.name).filter((name): name is string => Boolean(name)))].join(", ") || "các Project đang active";
-      // Legacy open_ids are scoped to the previous Lark app. Do not embed them
-      // in a card sent by the custom app; an unresolved recipient falls back to
-      // email delivery below and the card should remain valid without a stale
-      // cross-app mention.
-      const mention = directDeliveryRequested ? "" : at(user.identities[0]?.providerUserId);
-      if (input.slot === "pm_follow_up") {
-        const taskNames = planIssues.length ? planIssues.slice(0, 3).map(({ task }) => task.title).join(", ") : "Chưa có Task";
-        const missingFields = planIssues.length ? [...new Set(planIssues.flatMap(({ missingFields }) => missingFields))].join(", ") : "Chưa lập kế hoạch Task";
-        return [
-          `1. **${user.displayName}**`,
-          `• Trạng thái: ${userPlan.length ? "Kế hoạch chưa đủ dữ liệu" : "Chưa có kế hoạch"}`,
-          `• Task liên quan: ${taskNames}`,
-          `• Nội dung còn thiếu: ${missingFields}`,
-        ];
-      }
-      if (input.slot === "evening_actual") {
-        const missingMinutes = Math.max(0, dayMinutes - actualMinutes);
-        return [
-          `${mention}Chào **${user.displayName}**,`,
-          `Ngày ${localDate}, dữ liệu giờ thực tế của bạn chưa đầy đủ.`,
-          "Tổng giờ trong ngày:",
-          `• Đã ghi nhận: ${reminderMinutesLabel(actualMinutes)}`,
-          `• Giờ tiêu chuẩn: ${reminderMinutesLabel(dayMinutes)}`,
-          `• Còn thiếu: ${reminderMinutesLabel(missingMinutes)}`,
-          "",
-          "Task chưa có giờ thực tế:",
-          ...(missingActualTasks.length ? missingActualTasks.slice(0, 5).map((task, index) => `${index + 1}. **${task.title}**${task.project?.name ? ` · ${task.project.name}` : ""}\n— Giờ kế hoạch: ${reminderMinutesLabel(task.estimateMinutes)}`) : ["• Không có Task nào thiếu giờ thực tế; vui lòng bổ sung đủ giờ trong ngày."]),
-          `Vui lòng ghi giờ thực tế đã làm trong ngày. Không tự động dùng giờ kế hoạch thay cho giờ thực tế; chuyển Task sang Hoàn tất cũng không thay thế việc ghi giờ. Trường hợp có OT, số giờ vượt 8 giờ chỉ được ghi nhận theo quy tắc đã được phê duyệt.`
-        ];
-      }
-      return [
-        `${mention}Chào **${user.displayName}**,`,
-        `Ngày ${localDate}, kế hoạch Task của các Project ${projects} hôm nay của bạn chưa đầy đủ.`,
-        "Nội dung cần bổ sung:",
-        ...(userPlan.length ? (planIssues.length ? planIssues.slice(0, 5).map(({ task, missingFields }) => `• **${task.title}**${task.project?.name ? ` · ${task.project.name}` : ""} — còn thiếu: ${missingFields.join(", ")}.`) : ["• Kế hoạch đã đủ trường bắt buộc."]) : ["• Bạn chưa lập Task cho ngày hôm nay."]),
-        "Vui lòng hoàn tất kế hoạch Task hôm nay để bảo đảm dữ liệu kế hoạch được ghi nhận đầy đủ."
-      ];
-    };
-    const origin = appPublicOrigin();
-    const manualButton = { text: input.slot === "evening_actual" ? "Hoàn thành kế hoạch hôm nay" : "Cập nhật kế hoạch Task", url: reminderLinkUrl() };
-    // "Gửi nhắc lần 2" from the PM card: one private card per person who still has no plan.
-    const secondReminderPayload = ({ user }: typeof userFacts[number]) => {
-      const [year, month, day] = localDate.split("-");
-      const date = `${["Chủ Nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"][new Date(`${localDate}T00:00:00Z`).getUTCDay()]}, ${day}/${month}/${year}`;
-      const time = new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" });
-      return {
-        msg_type: "interactive",
-        card: {
-          config: { wide_screen_mode: true },
-          header: { template: "orange", title: { tag: "plain_text", content: "Nhắc lần 2: lập kế hoạch Task hôm nay" } },
-          elements: [
-            { tag: "div", text: { tag: "lark_md", content: [
-              `Chào **${user.displayName}**,`,
-              `Đến ${time}, ${date}, bạn vẫn chưa lập kế hoạch Task cho hôm nay. Đây là lần nhắc thứ 2.`,
-              "",
-              "Vui lòng lập kế hoạch các Task trong ngày và ghi giờ kế hoạch cho từng Task ngay."
-            ].join("\n") } },
-            { tag: "hr" },
-            { tag: "note", elements: [{ tag: "plain_text", content: `Gửi theo yêu cầu của PM ${principal.displayName}.` }] },
-            { tag: "action", actions: [{ tag: "button", type: "primary", text: { tag: "plain_text", content: "Lập kế hoạch hôm nay" }, url: reminderLinkUrl() }] }
-          ]
-        }
-      };
-    };
-    const buildPayload = (facts: typeof userFacts) => {
-      if (input.unplannedOnly) return secondReminderPayload(facts[0]);
-      const lines = facts.flatMap(renderUserLines);
-      const pmActions = input.slot === "pm_follow_up"
-        ? facts.flatMap(({ user }) => [{ tag: "action", actions: [
-          { tag: "button", type: "primary", text: { tag: "plain_text", content: "Gửi nhắc" }, url: origin + "/admin?tab=reminders&scope=user&userId=" + encodeURIComponent(user.id) + "&date=" + encodeURIComponent(localDate) },
-          { tag: "button", type: "default", text: { tag: "plain_text", content: "Mở dự án" }, url: reminderLinkUrl() }
-        ] }])
-        : [];
-      return {
-        msg_type: "interactive",
-        card: {
-          config: { wide_screen_mode: true },
-          header: { template: input.slot === "evening_actual" ? "red" : input.slot === "pm_follow_up" ? "orange" : "blue", title: { tag: "plain_text", content: REMINDER_SLOT_TITLES[input.slot] } },
-          elements: [
-            { tag: "div", text: { tag: "lark_md", content: [`**Ngày:** ${localDate}`, `**Người nhận:** ${facts.length}`, "", ...lines].join("\n") } },
-            ...pmActions,
-            { tag: "hr" },
-            { tag: "note", elements: [{ tag: "plain_text", content: "Thông báo được gửi thủ công từ Admin workspace; ngày off/ngày lễ và dữ liệu đã hoàn tất vẫn được loại trừ theo nghiệp vụ." }] },
-            ...(input.slot === "pm_follow_up" ? [] : [{ tag: "action", actions: [{ tag: "button", type: "primary", text: { tag: "plain_text", content: manualButton.text }, url: manualButton.url }] }])
-          ]
-        }
-      };
-    };
-    const payload = buildPayload(userFacts);
+
+    const config = directMessageConfig();
+    if (!config) throw new BadRequestException("Chưa cấu hình LARK_APP_ID/LARK_APP_SECRET để gửi tin nhắn riêng.");
+    const tenantAccessToken = await fetchTenantAccessToken(config);
     const sentUserIds = new Set<string>();
     const failures: Array<{ name: string; reason: string }> = [];
-    if (directDeliveryRequested) {
-      const config = directMessageConfig();
-      if (!config) throw new BadRequestException("Chưa cấu hình LARK_APP_ID/LARK_APP_SECRET để gửi tin nhắn riêng. Không dùng webhook group cho lựa chọn Một người/Team.");
-      const missingIdentity = users.find((user) => !user.email && !user.identities[0]?.providerUserId);
-      if (missingIdentity) throw new BadRequestException(`Người nhận ${missingIdentity.displayName} chưa có email workspace hoặc Lark open_id, không thể gửi tin nhắn riêng.`);
-      const tenantAccessToken = await fetchTenantAccessToken(config);
-      // One recipient failing does not stop the others, and only those actually sent are logged — a retry targets the
-      // failed people instead of messaging the first ones again.
-      for (const fact of userFacts) {
-        try {
-          let resolvedOpenId = fact.user.email
-            ? await resolveLarkOpenIdByEmail(config, tenantAccessToken, fact.user.email)
-            : null;
-          // The CRM may still hold a tenant User ID (for example HCM273) while
-          // the directory email has changed. Resolve that tenant ID to the
-          // custom app's current Open ID before sending the direct message.
-          if (!resolvedOpenId) {
-            const legacyUserId = fact.user.identities.find((identity) => identity.provider === "lark_user_id")?.providerUserId;
-            if (legacyUserId) resolvedOpenId = await resolveLarkOpenIdByUserId(config, tenantAccessToken, legacyUserId);
-          }
-          if (resolvedOpenId && !fact.user.identities.some((identity) => identity.provider === "lark" && identity.providerUserId === resolvedOpenId)) {
-            const larkIdentity = fact.user.identities.find((identity) => identity.provider === "lark");
-            if (larkIdentity) {
-              await this.prisma.portalIdentity.update({ where: { id: larkIdentity.id }, data: { providerUserId: resolvedOpenId } });
-            } else {
-              await this.prisma.portalIdentity.create({ data: { userId: fact.user.id, provider: "lark", providerUserId: resolvedOpenId, tenantKey: workspace.tenantKey } });
-            }
-          }
-          // Never send an email fallback when the custom app cannot resolve the
-          // recipient. Lark's message API may accept `email` in some tenants,
-          // but in this workspace it returns `invalid receive_id`; using an old
-          // app-scoped open_id is also invalid for the current custom app.
-          if (fact.user.email && !resolvedOpenId) {
-            throw new BadRequestException(
-              `Người nhận ${fact.user.displayName} chưa được liên kết với custom app Lark hiện tại (${fact.user.email}). ` +
-              "Không thể dùng Open ID cũ của app trước; hãy xác minh email Lark workspace hoặc liên kết lại tài khoản."
-            );
-          }
-          const receiveId = resolvedOpenId;
-          const receiveIdType = "open_id" as const;
-          if (!receiveId) throw new BadRequestException(`Người nhận ${fact.user.displayName} chưa có email workspace hoặc Lark open_id, không thể gửi tin nhắn riêng.`);
-          await postReminderDirectMessage(config, tenantAccessToken, receiveId, receiveIdType, buildPayload([fact]));
-          sentUserIds.add(fact.user.id);
-        } catch (error) {
-          failures.push({ name: fact.user.displayName, reason: error instanceof Error ? error.message : "Không gửi được" });
+    // One recipient failing does not stop the others, and only those actually sent are logged — a retry targets the
+    // failed people instead of messaging the first ones again.
+    for (const { recipient, payload } of deliveries) {
+      try {
+        let resolvedOpenId = recipient.email
+          ? await resolveLarkOpenIdByEmail(config, tenantAccessToken, recipient.email)
+          : null;
+        // The CRM may still hold a tenant User ID (for example HCM273) while
+        // the directory email has changed. Resolve that tenant ID to the
+        // custom app's current Open ID before sending the direct message.
+        if (!resolvedOpenId) {
+          const legacyUserId = recipient.identities.find((identity) => identity.provider === "lark_user_id")?.providerUserId;
+          if (legacyUserId) resolvedOpenId = await resolveLarkOpenIdByUserId(config, tenantAccessToken, legacyUserId);
         }
+        if (resolvedOpenId && !recipient.identities.some((identity) => identity.provider === "lark" && identity.providerUserId === resolvedOpenId)) {
+          const larkIdentity = recipient.identities.find((identity) => identity.provider === "lark");
+          if (larkIdentity) {
+            await this.prisma.portalIdentity.update({ where: { id: larkIdentity.id }, data: { providerUserId: resolvedOpenId } });
+          } else {
+            await this.prisma.portalIdentity.create({ data: { userId: recipient.id, provider: "lark", providerUserId: resolvedOpenId, tenantKey: workspace.tenantKey } });
+          }
+        }
+        // Never send an email fallback when the custom app cannot resolve the
+        // recipient. Lark's message API may accept `email` in some tenants,
+        // but in this workspace it returns `invalid receive_id`; using an old
+        // app-scoped open_id is also invalid for the current custom app.
+        if (recipient.email && !resolvedOpenId) {
+          throw new BadRequestException(
+            `Người nhận ${recipient.displayName} chưa được liên kết với custom app Lark hiện tại (${recipient.email}). ` +
+            "Không thể dùng Open ID cũ của app trước; hãy xác minh email Lark workspace hoặc liên kết lại tài khoản."
+          );
+        }
+        if (!resolvedOpenId) throw new BadRequestException(`Người nhận ${recipient.displayName} chưa có email workspace hoặc Lark open_id, không thể gửi tin nhắn riêng.`);
+        await postReminderDirectMessage(config, tenantAccessToken, resolvedOpenId, "open_id", payload);
+        sentUserIds.add(recipient.id);
+      } catch (error) {
+        failures.push({ name: recipient.displayName, reason: error instanceof Error ? error.message : "Không gửi được" });
       }
-      if (!sentUserIds.size) throw new BadRequestException(failures.map((failure) => failure.reason).join(" "));
-    } else {
-      await postReminderWebhook(payload);
-      for (const user of users) sentUserIds.add(user.id);
     }
-    const sentUsers = users.filter((user) => sentUserIds.has(user.id));
+    if (!sentUserIds.size) throw new BadRequestException(failures.map((failure) => failure.reason).join(" "));
+    const sentUsers = [...new Map(deliveries.map(({ recipient }) => [recipient.id, recipient])).values()].filter((recipient) => sentUserIds.has(recipient.id));
     const conditionKey = `manual:${randomUUID()}`;
     await this.prisma.reminderDeliveryLog.createMany({
       data: sentUsers.map((user) => ({
@@ -956,6 +901,10 @@ export class WorkspaceAdminService {
       const found = await this.prisma.user.count({ where: { id: { in: recipientUserIds }, status: "ACTIVE", subjectType: "INTERNAL_USER" } });
       if (found !== recipientUserIds.length) throw new BadRequestException("Người nhận nhắc PM không tồn tại hoặc đã bị khóa.");
     }
+    if (input.excludedUserIds !== undefined && (!Array.isArray(input.excludedUserIds) || input.excludedUserIds.length > 1000 || input.excludedUserIds.some((id) => typeof id !== "string" || !id))) {
+      throw new BadRequestException("Danh sách người tắt nhắc không hợp lệ.");
+    }
+    const excludedUserIds = input.excludedUserIds ? [...new Set(input.excludedUserIds)] : undefined;
     const enabled = input.enabled ?? true;
     const weekdaysOnly = input.weekdaysOnly ?? true;
     const updated = await this.prisma.workspaceReminderPolicy.upsert({
@@ -967,12 +916,14 @@ export class WorkspaceAdminService {
         weekdaysOnly,
         timezone: "Asia/Ho_Chi_Minh",
         slots: slots as unknown as Prisma.InputJsonValue,
+        excludedUserIds: excludedUserIds ?? [],
         updatedByUserId: principal.subjectId
       },
       update: {
         enabled,
         weekdaysOnly,
         slots: slots as unknown as Prisma.InputJsonValue,
+        ...(excludedUserIds ? { excludedUserIds } : {}),
         updatedByUserId: principal.subjectId
       }
     });
@@ -984,7 +935,7 @@ export class WorkspaceAdminService {
         resource: "workspace_reminder_policy",
         resourceId: updated.id,
         before: Prisma.JsonNull,
-        after: { enabled, weekdaysOnly, slots: slots as unknown as Prisma.InputJsonValue },
+        after: { enabled, weekdaysOnly, slots: slots as unknown as Prisma.InputJsonValue, ...(excludedUserIds ? { excludedUserIds } : {}) },
         requestId: randomUUID()
       }
     });

@@ -11,11 +11,11 @@ import {
   TASK_REMINDER_SCHEDULE,
   type PlanReminderIssue,
   type ReminderUserFacts,
-  businessRole,
   type TaskReminderSlot,
   type VietnamWorkdayWindow
 } from "./task-reminder-rules.js";
 import { deliverReminder, directMessageConfigFromEnv, loadLeaveMinutes, type DirectMessageConfig } from "./lark-direct-message.js";
+import { larkFinishPlanCard, larkPlanCard, larkPmListCard, larkReminderPlannedTasks, larkReminderRole } from "@b2b-crm/contracts";
 
 type RedisLike = {
   get: (key: string) => Promise<string | null>;
@@ -121,21 +121,12 @@ export function taskReminderConfigFromEnv(env: NodeJS.ProcessEnv): TaskReminderC
   };
 }
 
-function at(openId?: string) {
-  return openId ? `<at id=${openId}></at> ` : "";
-}
-
 /** Tags only in the group webhook; a private message is already addressed to the person. */
-function mention(config: TaskReminderConfig, ...openIds: Array<string | undefined>) {
-  return config.directMessage ? "" : openIds.map((openId) => at(openId)).join("");
+function mention(config: TaskReminderConfig, openId?: string) {
+  return config.directMessage ? undefined : openId;
 }
 
-function minutesLabel(minutes: number) {
-  const hours = minutes / 60;
-  return `${Number.isInteger(hours) ? hours.toFixed(0) : hours.toFixed(1)} giờ`;
-}
-
-/** "Gửi nhắc" on the PM card: the Admin page sends a private reminder to everyone still without a plan that day. */
+/** "Gửi nhắc lần 2" on the PM card: the Admin page sends a private reminder to everyone still without a plan that day. */
 function nudgeUnplannedUrl(config: TaskReminderConfig, localDate: string) {
   return `${config.publicAppUrl}/admin?${new URLSearchParams({ nudge: "unplanned", date: localDate }).toString()}`;
 }
@@ -144,107 +135,30 @@ function clock(localMinute: number) {
   return `${String(Math.floor(localMinute / 60)).padStart(2, "0")}:${String(localMinute % 60).padStart(2, "0")}`;
 }
 
-function divider() {
-  return { tag: "hr" };
-}
-
-function note(content: string) {
-  return { tag: "note", elements: [{ tag: "plain_text", content }] };
-}
-
-function card(template: string, title: string, lines: string[], footer: string, button: { text: string; url: string }) {
-  return {
-    msg_type: "interactive",
-    card: {
-      config: { wide_screen_mode: true },
-      header: { template, title: { tag: "plain_text", content: title } },
-      elements: [
-        { tag: "div", text: { tag: "lark_md", content: lines.join("\n") } },
-        divider(),
-        note(footer),
-        { tag: "action", actions: [{ tag: "button", type: "primary", text: { tag: "plain_text", content: button.text }, url: button.url }] }
-      ]
-    }
-  };
-}
-
-const WEEKDAYS = ["Chủ Nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"];
-
-/** "Thứ Hai, 02/11/2026" */
-function dayLabel(localDate: string) {
-  const [year, month, day] = localDate.split("-");
-  return `${WEEKDAYS[new Date(`${localDate}T00:00:00Z`).getUTCDay()]}, ${day}/${month}/${year}`;
-}
-
-/** Today's planned Tasks, one line per Task (several blocks of one Task add up; done when every block is completed). */
-function plannedTasks(fact: ReminderUserFacts) {
-  const tasks = new Map<string, { title: string; projectName?: string; minutes: number; done: boolean }>();
-  for (const block of fact.planningBlocks) {
-    const task = tasks.get(block.taskId) ?? { title: block.taskTitle ?? "Task", projectName: block.projectName, minutes: 0, done: true };
-    tasks.set(block.taskId, { ...task, minutes: task.minutes + block.plannedMinutes, done: task.done && block.status === "completed" });
-  }
-  return [...tasks.values()];
-}
-
-/** Đầu ngày, to everyone: plan today's Tasks; lists a planned Task that lacks a field. */
 function planCard(config: TaskReminderConfig, fact: ReminderUserFacts, issue: PlanReminderIssue | undefined, localDate: string) {
-  const fieldIssues = fact.planningBlocks.length ? issue?.taskFieldIssues ?? [] : [];
-  const lines = [
-    `${mention(config, fact.larkOpenId)}Chào **${fact.displayName}**,`,
-    `Hôm nay, ${dayLabel(localDate)}, vui lòng lập kế hoạch các Task sẽ làm trong ngày và ghi giờ kế hoạch cho từng Task.`,
-    ...(fieldIssues.length ? ["", "Task cần bổ sung thông tin:", ...fieldIssues.slice(0, 5).map((task) => `• **${task.taskTitle}**${task.projectName ? ` · ${task.projectName}` : ""} — còn thiếu: ${task.missingFields.join(", ")}`)] : []),
-    ...(fieldIssues.length > 5 ? [`• Và ${fieldIssues.length - 5} Task khác.`] : [])
-  ];
-  return card("blue", "Lập kế hoạch Task hôm nay", lines, "Nhắc đầu ngày · gửi mọi người; ngày nghỉ và người nghỉ phép cả ngày được bỏ qua.", { text: "Lập kế hoạch hôm nay", url: config.linkUrl });
+  return larkPlanCard({ displayName: fact.displayName, mentionOpenId: mention(config, fact.larkOpenId), localDate, fieldIssues: fact.planningBlocks.length ? issue?.taskFieldIssues : [], linkUrl: config.linkUrl });
 }
 
-/**
- * Cuối ngày, to everyone. With a plan: finish the Tasks planned today (each with its project and status). Without one:
- * plan today's Tasks and finish them, so the day still gets its hours.
- */
 function finishPlanCard(config: TaskReminderConfig, fact: ReminderUserFacts, targetMinutes: number, localDate: string) {
-  const tasks = plannedTasks(fact);
-  const actualMinutes = fact.timeEntries.reduce((total, entry) => total + entry.minutes, 0);
-  const hours = `• Giờ thực tế đã ghi: ${minutesLabel(actualMinutes)} / ${minutesLabel(targetMinutes)}`;
-  const note = "Nhắc cuối ngày · gửi mọi người; ngày nghỉ và người nghỉ phép cả ngày được bỏ qua.";
-  const button = { text: "Hoàn thành kế hoạch hôm nay", url: config.linkUrl };
-  if (!tasks.length) {
-    return card("red", "Yêu cầu lập kế hoạch và hoàn thành Task hôm nay", [
-      `${mention(config, fact.larkOpenId)}Chào **${fact.displayName}**,`,
-      `Đến cuối ngày ${dayLabel(localDate)}, bạn chưa có kế hoạch Task nào trong ngày.`,
-      "",
-      "Vui lòng:",
-      "1. Lập kế hoạch các Task đã làm hôm nay (Task, dự án và giờ kế hoạch).",
-      "2. Bấm “Hoàn thành kế hoạch” cho từng Task để ghi giờ thực tế."
-    ], note, { ...button, text: "Lập và hoàn thành kế hoạch" });
-  }
-  const open = tasks.filter((task) => !task.done);
-  return card(open.length ? "orange" : "green", open.length ? "Hoàn thành Task hôm nay" : "Kế hoạch hôm nay đã hoàn thành", [
-    `${mention(config, fact.larkOpenId)}Chào **${fact.displayName}**,`,
-    open.length
-      ? `Cuối ngày ${dayLabel(localDate)}, vui lòng hoàn thành các Task đã lập kế hoạch hôm nay và bấm “Hoàn thành kế hoạch” trên Calendar để ghi giờ thực tế.`
-      : `Bạn đã hoàn thành toàn bộ kế hoạch ngày ${dayLabel(localDate)}. Cảm ơn bạn!`,
-    "",
-    "Task đã lập kế hoạch hôm nay:",
-    ...tasks.slice(0, 8).map((task, index) => `${index + 1}. **${task.title}**\n    Dự án: ${task.projectName ?? "Không thuộc dự án"} · Kế hoạch: ${minutesLabel(task.minutes)} · ${task.done ? "Đã hoàn thành" : "**Chưa hoàn thành**"}`),
-    ...(tasks.length > 8 ? [`Và ${tasks.length - 8} Task khác.`] : []),
-    "",
-    `• Còn ${open.length}/${tasks.length} Task chưa hoàn thành`,
-    hours
-  ], note, button);
+  return larkFinishPlanCard({
+    displayName: fact.displayName,
+    mentionOpenId: mention(config, fact.larkOpenId),
+    localDate,
+    tasks: larkReminderPlannedTasks(fact.planningBlocks),
+    actualMinutes: fact.timeEntries.reduce((total, entry) => total + entry.minutes, 0),
+    targetMinutes,
+    linkUrl: config.linkUrl
+  });
 }
 
-/** Buổi trưa, to the PMs: who still has no plan today, and one button that reminds them a second time. */
 function pmFollowUpCard(config: TaskReminderConfig, issues: PlanReminderIssue[], localDate: string, time: string, mentionOpenIds: string[]) {
-  const lines = [
-    `${mention(config, ...mentionOpenIds)}Chào PM,`,
-    `Đến ${time}, ${dayLabel(localDate)}, có **${issues.length} nhân sự** chưa lập kế hoạch Task trong ngày:`,
-    "",
-    ...issues.map((issue, index) => `${index + 1}. **${issue.displayName}** · ${issue.role ?? "Chưa gán vai trò"}`),
-    "",
-    "Bấm “Gửi nhắc lần 2” để nhắc riêng những người vẫn chưa lập kế hoạch tại thời điểm bấm."
-  ];
-  return card("orange", "Nhân sự chưa lập kế hoạch Task hôm nay", lines, "Danh sách được kiểm tra lại khi bấm; mỗi người nhận nhắc lần 2 tối đa một lần mỗi ngày.", { text: "Gửi nhắc lần 2", url: nudgeUnplannedUrl(config, localDate) });
+  return larkPmListCard({
+    people: issues.map((issue) => ({ displayName: issue.displayName, role: issue.role })),
+    localDate,
+    time,
+    mentionOpenIds: config.directMessage ? [] : mentionOpenIds,
+    nudgeUrl: nudgeUnplannedUrl(config, localDate)
+  });
 }
 
 function signPayload(payload: Record<string, unknown>, secret?: string) {
@@ -388,7 +302,7 @@ async function loadReminderFacts(prisma: PrismaClient, config: TaskReminderConfi
     displayName: user.displayName,
     // Lark custom webhooks only resolve an explicit person mention by open_id.
     larkOpenId: user.identities[0]?.providerUserId,
-    role: businessRole({ displayRole: user.resourceProfile?.displayRole, departmentCode: user.departmentCode, roleCodes: user.roleBindings.map((binding) => binding.role.code) }),
+    role: larkReminderRole({ displayRole: user.resourceProfile?.displayRole, departmentCode: user.departmentCode, roleCodes: user.roleBindings.map((binding) => binding.role.code) }),
     activeProjects: [...new Set(user.projectMembers.map((member) => member.project.name))],
     projectPms: [...new Map(user.projectMembers.flatMap((member) => {
       const pic = pics.get(member.project.id);
@@ -495,6 +409,8 @@ export async function runTaskReminderSlot(input: {
   weekdaysOnly?: boolean;
   /** "Người nhận" of "Nhắc lại cho PM" in Admin › Nhắc Lark; they replace LARK_TASK_REMINDER_PM_OPEN_IDS. */
   pmUserIds?: string[];
+  /** People switched off in Admin › Nhắc Lark › Danh sách người nhận: not reminded and not listed to the PMs. */
+  excludedUserIds?: string[];
   now?: Date;
 }) {
   const options = { ...input, config: { ...input.config, targetMinutes: await workspaceTargetMinutes(input.prisma, input.config) } };
@@ -505,7 +421,9 @@ export async function runTaskReminderSlot(input: {
   if (await options.redis.get(`${prefix}:complete`)) return { skipped: "already_complete", sent: 0 };
   // D-09 / V-06: a person on approved leave for the whole day is not reminded; half a day off halves the day's target.
   const leave = await loadLeaveMinutes(options.prisma, options.config.workspaceId, window.localDate, options.config.targetMinutes);
-  const facts = (await loadReminderFacts(options.prisma, options.config, window)).filter((user) => (leave.get(user.userId) ?? 0) < options.config.targetMinutes);
+  const excluded = new Set(options.excludedUserIds ?? []);
+  const facts = (await loadReminderFacts(options.prisma, options.config, window))
+    .filter((user) => !excluded.has(user.userId) && (leave.get(user.userId) ?? 0) < options.config.targetMinutes);
   let sent = 0;
 
   const unaddressable = facts.filter((fact) => !fact.larkOpenId).length;
@@ -561,13 +479,14 @@ async function isWorkspaceWorkday(prisma: PrismaClient, config: TaskReminderConf
 async function resolveReminderPolicy(prisma: PrismaClient, workspaceId: string) {
   const model = (prisma as unknown as {
     workspaceReminderPolicy?: {
-      findUnique: (input: { where: { workspaceId: string }; select: { enabled: true; weekdaysOnly: true; slots: true } }) => Promise<{ enabled: boolean; weekdaysOnly: boolean; slots: unknown } | null>;
+      findUnique: (input: { where: { workspaceId: string }; select: { enabled: true; weekdaysOnly: true; slots: true; excludedUserIds: true } }) => Promise<{ enabled: boolean; weekdaysOnly: boolean; slots: unknown; excludedUserIds?: string[] | null } | null>;
     };
   }).workspaceReminderPolicy;
-  if (!model) return { enabled: true, weekdaysOnly: true, schedule: TASK_REMINDER_SCHEDULE, pmUserIds: [] };
-  const policy = await model.findUnique({ where: { workspaceId }, select: { enabled: true, weekdaysOnly: true, slots: true } });
-  if (!policy) return { enabled: true, weekdaysOnly: true, schedule: TASK_REMINDER_SCHEDULE, pmUserIds: [] };
-  return { enabled: policy.enabled, weekdaysOnly: policy.weekdaysOnly, schedule: normalizeReminderSchedule(policy.slots), pmUserIds: reminderPmUserIds(policy.slots) };
+  const none = { enabled: true, weekdaysOnly: true, schedule: TASK_REMINDER_SCHEDULE, pmUserIds: [] as string[], excludedUserIds: [] as string[] };
+  if (!model) return none;
+  const policy = await model.findUnique({ where: { workspaceId }, select: { enabled: true, weekdaysOnly: true, slots: true, excludedUserIds: true } });
+  if (!policy) return none;
+  return { enabled: policy.enabled, weekdaysOnly: policy.weekdaysOnly, schedule: normalizeReminderSchedule(policy.slots), pmUserIds: reminderPmUserIds(policy.slots), excludedUserIds: policy.excludedUserIds ?? [] };
 }
 
 export function reminderPmUserIds(slots: unknown): string[] {
@@ -609,7 +528,7 @@ export function createTaskReminderScheduler(options: {
       const slots = dueReminderSlots(window, options.config.catchUpMinutes, policy.schedule);
       const results = [];
       for (const slot of slots) {
-        results.push({ slot, result: await runTaskReminderSlot({ ...options, prisma, slot, weekdaysOnly: policy.weekdaysOnly, pmUserIds: policy.pmUserIds, now: at }) });
+        results.push({ slot, result: await runTaskReminderSlot({ ...options, prisma, slot, weekdaysOnly: policy.weekdaysOnly, pmUserIds: policy.pmUserIds, excludedUserIds: policy.excludedUserIds, now: at }) });
       }
       return results;
     })();

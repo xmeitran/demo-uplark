@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { larkReminderRole as businessRole } from "@b2b-crm/contracts";
 import {
-  businessRole,
   CLOSED_TASK_STATUSES,
   REMINDER_INACTIVE_PROJECT_STATUSES,
   dueReminderSlots,
