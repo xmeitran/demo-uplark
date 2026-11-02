@@ -4291,6 +4291,66 @@ function TaskRow({ task, projectColor, onEdit, onDelete, onViewDetails, onAddSub
   );
 }
 
+// ─── Timeline Tasks Modal ─────────────────────────────────────────────────────
+
+interface TimelineTasksTarget { kind: "milestone" | "stage"; title: string; stages: StageItem[] }
+
+function TimelineTaskList({ tasks, onOpenTask, members }: { tasks: TaskItem[]; onOpenTask: (task: TaskItem) => void; members: ProjectTeamMember[] }) {
+  return (
+    <div className="divide-y divide-border/60">
+      {tasks.map(task => {
+        const overdue = isTaskOverdue(task);
+        const ts = TASK_STATUS[task.status];
+        return (
+          <div key={task.id}>
+            <button type="button" onClick={() => onOpenTask(task)} className="flex w-full items-center gap-3 py-2.5 text-left transition-colors hover:bg-muted/30">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-foreground hover:underline" title={task.title}>{task.title}</p>
+                <ProjectDateRange startDate={task.startDate} dueDate={task.due} className="mt-1 max-w-full text-[10px] text-muted-foreground" />
+              </div>
+              <span className="shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-md" style={{ backgroundColor: overdue ? "#fee2e2" : ts.bg, color: overdue ? C.danger : ts.color }}>{overdue ? "Quá hạn" : ts.label}</span>
+              <PicAvatars members={members} ids={task.assigneeUserIds} userId={task.assigneeUserId} initials={task.assignee}
+                name={findTeamMember(members, task.assignee, undefined, task.assigneeUserId)?.name ?? task.assignee}
+                color={task.aColor} avatarUrl={task.assigneeAvatarUrl} size="sm" />
+            </button>
+            {task.subtasks?.length ? <div className="ml-4 border-l border-border/60 pl-3"><TimelineTaskList tasks={task.subtasks} onOpenTask={onOpenTask} members={members} /></div> : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TimelineTasksModal({ target, color, onClose, onOpenTask, members = EMPTY_TEAM_MEMBERS }: {
+  target: TimelineTasksTarget; color: string;
+  onClose: () => void; onOpenTask: (task: TaskItem) => void;
+  members?: ProjectTeamMember[];
+}) {
+  const total = target.stages.reduce((sum, stage) => sum + stage.tasks.length, 0);
+  return (
+    <AnimatePresence>
+      <ModalShell title={target.title} icon={ListChecks} iconColor={color} onClose={onClose}
+        footer={
+          <>
+            <span className="text-xs font-semibold text-muted-foreground">{total} task</span>
+            <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted transition-colors">Đóng</button>
+          </>
+        }>
+        {total === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">{target.kind === "milestone" ? "Milestone này chưa có task." : "Stage này chưa có task."}</p>
+        ) : target.kind === "stage" ? (
+          <TimelineTaskList tasks={target.stages[0]?.tasks ?? []} onOpenTask={onOpenTask} members={members} />
+        ) : target.stages.map(stage => (
+          <section key={stage.id}>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">{stage.name} · {stage.tasks.length} task</p>
+            {stage.tasks.length ? <TimelineTaskList tasks={stage.tasks} onOpenTask={onOpenTask} members={members} /> : <p className="py-2 text-xs text-muted-foreground">Chưa có task.</p>}
+          </section>
+        ))}
+      </ModalShell>
+    </AnimatePresence>
+  );
+}
+
 // ─── Stage Section ────────────────────────────────────────────────────────────
 
 function StageSection({ stage, projectColor, onAddTask, onAddSubtask, onEditTask, onDeleteTask, onEditStage, onDeleteStage, onViewTaskDetails, onReorderTasks, sortHandle, hierarchyBusy = false, locked = false, members = EMPTY_TEAM_MEMBERS }: {
@@ -4342,7 +4402,7 @@ function StageSection({ stage, projectColor, onAddTask, onAddSubtask, onEditTask
           <Flag className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <span className="max-w-[200px] truncate text-sm font-semibold text-foreground" title={stage.name}>{stage.name}</span>
+              <span className="min-w-0 break-words text-sm font-semibold text-foreground">{stage.name}</span>
 
               <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
                 {done}/{total} xong
@@ -4951,6 +5011,7 @@ export default function ProjectDetailPage() {
   const [weeklyWorkloadType, setWeeklyWorkloadType]     = useState<"tasks" | "hours">("tasks");
 
   const [timelineScale, setTimelineScale] = useState<"week" | "month">("month");
+  const [timelineTasksFor, setTimelineTasksFor] = useState<TimelineTasksTarget | null>(null);
   const [timelineStartIdx, setTimelineStartIdx] = useState(0);
 
   useEffect(() => {
@@ -6358,6 +6419,15 @@ export default function ProjectDetailPage() {
           error={mutationError}
         />
       )}
+      {timelineTasksFor && (
+        <TimelineTasksModal
+          target={timelineTasksFor}
+          color={project.color}
+          onClose={() => setTimelineTasksFor(null)}
+          onOpenTask={openTaskDetail}
+          members={teamMembers}
+        />
+      )}
       {editStageFor && (
         <EditStageModal
           stage={editStageFor.stage}
@@ -7597,6 +7667,7 @@ export default function ProjectDetailPage() {
                               mWidth = ((clipEnd.getTime() - clipStart.getTime()) / totalMs) * 100;
                             }
 
+                            const openMilestoneTasks = () => setTimelineTasksFor({ kind: "milestone", title: milestone.name, stages: timelineStages });
                             const mStatus = milestone.status;
                             let mBarBg = `${project.color}15`;
                             let mBarBorder = `${project.color}40`;
@@ -7632,7 +7703,7 @@ export default function ProjectDetailPage() {
                                       size="sm"
                                     />
                                     <div className="min-w-0 flex-1">
-                                      <p className="truncate text-xs font-bold text-foreground" title={milestone.name}>{milestone.name}</p>
+                                      <button type="button" onClick={openMilestoneTasks} className="block max-w-full truncate text-left text-xs font-bold text-foreground hover:underline" title={milestone.name}>{milestone.name}</button>
                                       <span className="block truncate text-[10px] text-muted-foreground" title={formatProjectDateRange(milestone.startDate, milestone.dueDate, "TBD")}>
                                         {formatProjectDateRange(milestone.startDate, milestone.dueDate, "TBD")}
                                       </span>
@@ -7657,7 +7728,7 @@ export default function ProjectDetailPage() {
 
                                     {/* Milestone Gantt Bar */}
                                     {mVisible && (
-                                      <div className="absolute h-6 rounded-lg flex items-center px-3 border text-[10px] font-semibold shadow-sm truncate transition-all duration-300 hover:scale-[1.01] hover:shadow-md select-none"
+                                      <button type="button" onClick={openMilestoneTasks} className="absolute h-6 rounded-lg flex items-center px-3 border text-[10px] font-semibold shadow-sm truncate transition-all duration-300 hover:scale-[1.01] hover:shadow-md select-none cursor-pointer"
                                         title={milestone.name}
                                         style={{
                                           left: `${mLeft}%`,
@@ -7667,7 +7738,7 @@ export default function ProjectDetailPage() {
                                           color: mBarText
                                         }}>
                                         {milestone.name}
-                                      </div>
+                                      </button>
                                     )}
                                   </div>
                                 </div>
@@ -7676,6 +7747,7 @@ export default function ProjectDetailPage() {
                                 {timelineStages.map(stage => {
                                   const { start: stageStart, due: stageDue, estimated: stageDatesEstimated } = getStageDateRange(stage, milestone.startDate, milestone.dueDate);
                                   const sVisible = stageStart <= viewEndDate && stageDue >= viewStartDate;
+                                  const openStageTasks = () => setTimelineTasksFor({ kind: "stage", title: stage.name, stages: [stage] });
 
                                   let sLeft = 0;
                                   let sWidth = 0;
@@ -7734,7 +7806,7 @@ export default function ProjectDetailPage() {
                                         )}
 
                                         <div className="min-w-0 flex-1">
-                                          <p className="truncate text-xs font-medium text-foreground" title={stage.name}>{stage.name}</p>
+                                          <button type="button" onClick={openStageTasks} className="block max-w-full truncate text-left text-xs font-medium text-foreground hover:underline" title={stage.name}>{stage.name}</button>
                                           <div className="flex items-center gap-1.5 mt-0.5">
                                             <span
                                               className="truncate text-[9px] text-muted-foreground"
@@ -7771,7 +7843,7 @@ export default function ProjectDetailPage() {
 
                                         {/* Stage Gantt Bar */}
                                         {sVisible && (
-                                          <div className="absolute h-4 rounded-md flex items-center px-2 text-[9px] font-semibold border shadow-xs truncate transition-all duration-300 hover:scale-[1.01] hover:shadow-md select-none"
+                                          <button type="button" onClick={openStageTasks} className="absolute h-4 rounded-md flex items-center px-2 text-[9px] font-semibold border shadow-xs truncate transition-all duration-300 hover:scale-[1.01] hover:shadow-md select-none cursor-pointer"
                                             title={stage.name}
                                             style={{
                                               left: `${sLeft}%`,
@@ -7781,7 +7853,7 @@ export default function ProjectDetailPage() {
                                               color: barText
                                             }}>
                                             {stage.name}
-                                          </div>
+                                          </button>
                                         )}
                                       </div>
                                     </div>

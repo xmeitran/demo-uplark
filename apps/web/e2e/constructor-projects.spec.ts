@@ -2317,6 +2317,30 @@ test("project hierarchy consistently displays start and due dates", async ({ pag
   await expect(page.getByTitle(liveStage.activity).first()).toBeVisible();
 });
 
+test("timeline milestone and stage bars open their tasks, and a task opens its detail", async ({ page }) => {
+  await page.goto(`/projects/${liveProject.id}?tab=Timeline`);
+  await expect(page.getByText("Project Timeline")).toBeVisible();
+  const dialog = page.getByRole("dialog");
+
+  // The bar is the last button with the name; the first is the left-column label.
+  await page.getByRole("button", { name: liveStage.milestoneName, exact: true }).last().click();
+  await expect(dialog).toHaveAccessibleName(liveStage.milestoneName);
+  await expect(dialog.getByText(`${liveStage.activity} · 1 task`)).toBeVisible();
+  await expect(dialog.getByText(`${liveBuildStage.activity} · 0 task`)).toBeVisible();
+  await expect(dialog.getByText("Chưa có task.")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: new RegExp(liveTask.title) })).toContainText("Đang thực hiện");
+  await dialog.getByRole("button", { name: "Đóng" }).click();
+  await expect(dialog).toHaveCount(0);
+
+  await page.getByRole("button", { name: liveBuildStage.activity, exact: true }).last().click();
+  await expect(dialog.getByText("Stage này chưa có task.")).toBeVisible();
+  await dialog.getByRole("button", { name: "Đóng" }).click();
+
+  await page.getByRole("button", { name: liveStage.activity, exact: true }).first().click();
+  await dialog.getByRole("button", { name: new RegExp(liveTask.title) }).click();
+  await expect(page).toHaveURL(new RegExp(`/tasks/${liveTask.id}\\?returnTo=.*tab%3DTimeline`));
+});
+
 test("Task Board filters survive a reload and leaving the page, and Đặt lại forgets them", async ({ page }) => {
   await page.goto(`/projects/${liveProject.id}?tab=Tasks`);
   await expect(page.getByText("Task Board")).toBeVisible();
