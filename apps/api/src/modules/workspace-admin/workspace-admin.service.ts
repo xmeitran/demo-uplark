@@ -501,7 +501,8 @@ export class WorkspaceAdminService {
         id: true,
         displayName: true,
         email: true,
-        identities: { where: { provider: { in: ["lark", "lark_user_id"] }, tenantKey: workspace.tenantKey }, select: { id: true, provider: true, providerUserId: true }, take: 10 }
+        identities: { where: { provider: { in: ["lark", "lark_user_id"] }, tenantKey: workspace.tenantKey }, select: { id: true, provider: true, providerUserId: true }, take: 10 },
+        projectMembers: { where: { workspaceId: principal.workspaceId, project: { status: { notIn: REMINDER_INACTIVE_PROJECT_STATUSES } } }, select: { project: { select: { name: true } } } }
       },
       orderBy: [{ displayName: "asc" }, { id: "asc" }]
     });
@@ -610,7 +611,35 @@ export class WorkspaceAdminService {
       : input.slot === "pm_follow_up"
         ? { text: "Xem Timesheet", url: origin + "/timesheet?view=daily&date=" + encodeURIComponent(localDate) }
         : { text: "Mở Timesheet hôm nay", url: origin + "/timesheet?view=daily&date=" + encodeURIComponent(localDate) };
+    // "Gửi nhắc lần 2" from the PM card: one private card per person who still has no plan.
+    const secondReminderPayload = ({ user }: typeof userFacts[number]) => {
+      const [year, month, day] = localDate.split("-");
+      const date = `${["Chủ Nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"][new Date(`${localDate}T00:00:00Z`).getUTCDay()]}, ${day}/${month}/${year}`;
+      const time = new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" });
+      const projects = [...new Set((user.projectMembers ?? []).map((member) => member.project.name))];
+      return {
+        msg_type: "interactive",
+        card: {
+          config: { wide_screen_mode: true },
+          header: { template: "orange", title: { tag: "plain_text", content: "Nhắc lần 2: lập kế hoạch Task hôm nay" } },
+          elements: [
+            { tag: "div", text: { tag: "lark_md", content: [
+              `Chào **${user.displayName}**,`,
+              `Đến ${time}, ${date}, bạn vẫn chưa lập kế hoạch Task cho hôm nay. Đây là lần nhắc thứ 2.`,
+              "",
+              `• Dự án đang tham gia: ${projects.length ? `${projects.slice(0, 3).join(", ")}${projects.length > 3 ? ` và ${projects.length - 3} dự án khác` : ""}` : "chưa có dự án đang active"}`,
+              "",
+              "Vui lòng lập kế hoạch các Task trong ngày và ghi giờ kế hoạch cho từng Task ngay."
+            ].join("\n") } },
+            { tag: "hr" },
+            { tag: "note", elements: [{ tag: "plain_text", content: `Gửi theo yêu cầu của PM ${principal.displayName}.` }] },
+            { tag: "action", actions: [{ tag: "button", type: "primary", text: { tag: "plain_text", content: "Lập kế hoạch hôm nay" }, url: origin + "/calendar?date=" + encodeURIComponent(localDate) }] }
+          ]
+        }
+      };
+    };
     const buildPayload = (facts: typeof userFacts) => {
+      if (input.unplannedOnly) return secondReminderPayload(facts[0]);
       const lines = facts.flatMap(renderUserLines);
       const pmActions = input.slot === "pm_follow_up"
         ? facts.flatMap(({ user }) => [{ tag: "action", actions: [

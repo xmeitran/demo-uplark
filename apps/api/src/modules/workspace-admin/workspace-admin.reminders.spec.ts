@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceAdminService } from "./workspace-admin.service";
 
 const admin = { subjectId: "pm", subjectType: "internal_user", workspaceId: "w1", tenantKey: "t", roleCodes: ["WORKSPACE_ADMIN"] } as any;
-const person = (id: string, name: string) => ({ id, displayName: name, email: `${id}@example.com`, identities: [{ id: `i-${id}`, provider: "lark", providerUserId: `ou_${id}` }] });
+const person = (id: string, name: string) => ({ id, displayName: name, email: `${id}@example.com`, identities: [{ id: `i-${id}`, provider: "lark", providerUserId: `ou_${id}` }], projectMembers: [{ project: { name: "Dự án A" } }] });
 
 function setup(nudgedToday: string[] = []) {
   const createMany = vi.fn().mockResolvedValue({ count: 0 });
@@ -17,6 +17,7 @@ function setup(nudgedToday: string[] = []) {
     reminderDeliveryLog: { findMany: vi.fn().mockResolvedValue(nudgedToday.map((userId) => ({ userId }))), createMany }
   };
   const sentTo: string[] = [];
+  const cards: any[] = [];
   vi.stubEnv("LARK_APP_ID", "cli_test");
   vi.stubEnv("LARK_APP_SECRET", "s");
   vi.stubGlobal("fetch", vi.fn(async (url: string, init: any) => {
@@ -24,18 +25,24 @@ function setup(nudgedToday: string[] = []) {
     if (url.includes("tenant_access_token")) return { ok: true, status: 200, json: async () => ({ code: 0, tenant_access_token: "t" }) };
     if (url.includes("batch_get_id")) return { ok: true, status: 200, json: async () => ({ code: 0, data: { user_list: [{ email: body.emails[0], user_id: `ou_${body.emails[0].split("@")[0]}` }] } }) };
     sentTo.push(body.receive_id);
+    cards.push(JSON.parse(body.content));
     return { ok: true, status: 200, json: async () => ({ code: 0 }) };
   }));
-  return { service: new (WorkspaceAdminService as any)(prisma) as WorkspaceAdminService, createMany, sentTo };
+  return { service: new (WorkspaceAdminService as any)(prisma) as WorkspaceAdminService, createMany, sentTo, cards };
 }
 
 describe("WorkspaceAdminService.sendReminder unplannedOnly (Gửi nhắc on the 14:00 PM card)", () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
   it("privately reminds only the people with no plan that day, and logs them as manual_unplanned", async () => {
-    const { service, createMany, sentTo } = setup();
-    const result = await service.sendReminder({ localDate: "2026-11-02", slot: "morning_plan", unplannedOnly: true }, admin);
+    const { service, createMany, sentTo, cards } = setup();
+    const result = await service.sendReminder({ localDate: "2026-11-02", slot: "morning_plan", unplannedOnly: true }, { ...admin, displayName: "Sao Mai" });
     expect(sentTo).toEqual(["ou_u2", "ou_u3"]);
+    expect(cards[0].header.title.content).toBe("Nhắc lần 2: lập kế hoạch Task hôm nay");
+    expect(cards[0].elements[0].text.content).toContain("Chào **Bình**,");
+    expect(cards[0].elements[0].text.content).toContain("Thứ Hai, 02/11/2026, bạn vẫn chưa lập kế hoạch Task cho hôm nay. Đây là lần nhắc thứ 2.");
+    expect(cards[0].elements[2].elements[0].content).toBe("Gửi theo yêu cầu của PM Sao Mai.");
+    expect(cards[0].elements[0].text.content).toContain("• Dự án đang tham gia: Dự án A");
     expect(result.data.recipientNames).toEqual(["Bình", "Chi"]);
     expect(createMany.mock.calls[0][0].data.map((row: any) => [row.userId, row.missingType])).toEqual([["u2", "manual_unplanned"], ["u3", "manual_unplanned"]]);
   });

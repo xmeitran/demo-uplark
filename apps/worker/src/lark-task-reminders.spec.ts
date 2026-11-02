@@ -99,7 +99,10 @@ describe("runTaskReminderSlot (sáng/chiều: mọi người · 14:00: PM)", () 
     user: { findMany: async (input: any) => people.filter((person) => input.where.projectMembers || input.where.id?.in?.includes(person.id)) },
     projectStage: { findMany: async () => [] },
     projectTask: { findMany: async () => [{ id: "t1", title: "Thiết kế", assigneeUserId: "u1", ownerUserId: null, plannedStartAt: null, dueAt: null, estimateMinutes: 240, project: { name: "Dự án A" } }] },
-    taskPlanningBlock: { findMany: async () => [{ userId: "u1", taskId: "t1", plannedMinutes: 240, status: "planned" }] },
+    taskPlanningBlock: { findMany: async () => [
+      { userId: "u1", taskId: "t1", plannedMinutes: 120, status: "completed", task: { title: "Thiết kế", project: { name: "Dự án A" } } },
+      { userId: "u1", taskId: "t1", plannedMinutes: 120, status: "planned", task: { title: "Thiết kế", project: { name: "Dự án A" } } }
+    ] },
     taskTimeEntry: { findMany: async () => [] }
   } as any;
   const redis = () => {
@@ -107,12 +110,12 @@ describe("runTaskReminderSlot (sáng/chiều: mọi người · 14:00: PM)", () 
     return { get: async (key: string) => store.get(key) ?? null, set: async (key: string, value: string) => { store.set(key, value); return "OK"; }, eval: async () => 0 };
   };
   const run = async (slot: "morning_plan" | "pm_follow_up" | "evening_actual", pmUserIds?: string[]) => {
-    const messages: Array<{ to: string; text: string; url: string }> = [];
+    const messages: Array<{ to: string; title: string; text: string; url: string }> = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: any) => {
       if (url.includes("tenant_access_token")) return { ok: true, status: 200, json: async () => ({ code: 0, tenant_access_token: "t", expire: 7200 }) };
       const body = JSON.parse(init.body);
       const card = JSON.parse(body.content);
-      messages.push({ to: body.receive_id, text: card.elements[0].text.content, url: card.elements.at(-1).actions[0].url });
+      messages.push({ to: body.receive_id, title: card.header.title.content, text: card.elements[0].text.content, url: card.elements.at(-1).actions[0].url });
       return { ok: true, status: 200, json: async () => ({ code: 0 }) };
     }));
     // Monday 2026-11-02, 14:00 in Vietnam.
@@ -123,16 +126,21 @@ describe("runTaskReminderSlot (sáng/chiều: mọi người · 14:00: PM)", () 
   it("morning asks everyone to plan today's hours, with what each already planned", async () => {
     const messages = await run("morning_plan");
     expect(messages.map((message) => message.to)).toEqual(["ou_1", "ou_2"]);
-    expect(messages[0].text).toContain("Đã lập: 4 giờ kế hoạch");
-    expect(messages[1].text).toContain("Bạn chưa lập kế hoạch Task cho hôm nay");
+    expect(messages.map((message) => message.title)).toEqual(["Lập kế hoạch Task hôm nay", "Lập kế hoạch Task hôm nay"]);
+    // A private message does not tag its own recipient.
+    expect(messages[0].text.startsWith("Chào **An**,")).toBe(true);
+    expect(messages[0].text).toContain("Hôm nay, Thứ Hai, 02/11/2026, vui lòng lập kế hoạch các Task");
+    expect(messages[0].text).toContain("• Dự án đang tham gia: Dự án A");
+    expect(messages[0].text).toContain("• Kế hoạch hiện có: 1 Task · 4 giờ");
+    expect(messages[1].text).toContain("• Kế hoạch hiện có: chưa có Task nào.");
   });
 
   it("14:00 lists only the people with no plan, to the PMs, with the Gửi nhắc link", async () => {
     const messages = await run("pm_follow_up");
     expect(messages).toHaveLength(1);
     expect(messages[0].to).toBe("ou_pm");
-    expect(messages[0].text).toContain("Đến 14:00 ngày 2026-11-02, 1 người chưa lập kế hoạch ngày");
-    expect(messages[0].text).toContain("**Bình**");
+    expect(messages[0].text).toContain("Đến 14:00, Thứ Hai, 02/11/2026, có **1 nhân sự** chưa lập kế hoạch Task trong ngày:");
+    expect(messages[0].text).toContain("1. **Bình** · Dự án A");
     expect(messages[0].text).not.toContain("**An**");
     expect(messages[0].url).toBe("https://crm.example.com/admin?nudge=unplanned&date=2026-11-02");
   });
@@ -146,8 +154,11 @@ describe("runTaskReminderSlot (sáng/chiều: mọi người · 14:00: PM)", () 
   it("evening asks everyone to finish today's plan and lists the plans still open", async () => {
     const messages = await run("evening_actual");
     expect(messages.map((message) => message.to)).toEqual(["ou_1", "ou_2"]);
-    expect(messages[0].text).toContain("Kế hoạch chưa hoàn tất:");
-    expect(messages[0].text).toContain("**Thiết kế** · Dự án A — 4 giờ");
-    expect(messages[1].text).toContain("Hôm nay bạn chưa có kế hoạch");
+    expect(messages.map((message) => message.title)).toEqual(["Hoàn thành Task hôm nay", "Yêu cầu lập kế hoạch và hoàn thành Task hôm nay"]);
+    // Two blocks of one Task add up, and it is done only when both are completed.
+    expect(messages[0].text).toContain("1. **Thiết kế** · Dự án A — 4 giờ · **Chưa hoàn thành**");
+    expect(messages[0].text).toContain("• Còn 1/1 Task chưa hoàn thành");
+    expect(messages[1].text).toContain("bạn chưa có kế hoạch Task nào trong ngày");
+    expect(messages[1].text).toContain("1. Lập kế hoạch các Task đã làm hôm nay");
   });
 });

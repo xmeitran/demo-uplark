@@ -605,7 +605,7 @@ function AlertsPanel({ rows, loading, onRefresh }: { rows: AdminAlertDetailRow[]
 
 const SLOT_DESCRIPTIONS: Record<WorkspaceReminderSlotCode, string> = {
   morning_plan: "Nhắc mọi người ghi giờ kế hoạch trong ngày.",
-  pm_follow_up: "Gửi PM danh sách người chưa lập kế hoạch ngày, kèm nút “Gửi nhắc”.",
+  pm_follow_up: "Gửi PM danh sách người chưa lập kế hoạch ngày, kèm nút “Gửi nhắc lần 2”.",
   evening_actual: "Nhắc mọi người hoàn tất kế hoạch trong ngày."
 };
 

@@ -120,6 +120,11 @@ function at(openId?: string) {
   return openId ? `<at id=${openId}></at> ` : "";
 }
 
+/** Tags only in the group webhook; a private message is already addressed to the person. */
+function mention(config: TaskReminderConfig, ...openIds: Array<string | undefined>) {
+  return config.directMessage ? "" : openIds.map((openId) => at(openId)).join("");
+}
+
 function minutesLabel(minutes: number) {
   const hours = minutes / 60;
   return `${Number.isInteger(hours) ? hours.toFixed(0) : hours.toFixed(1)} giờ`;
@@ -162,57 +167,96 @@ function card(template: string, title: string, lines: string[], footer: string, 
   };
 }
 
-const EVERYONE_NOTE = "Gửi mỗi ngày làm việc cho mọi người; ngày nghỉ và người nghỉ phép cả ngày được bỏ qua.";
+const WEEKDAYS = ["Chủ Nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"];
 
-/** Morning, to everyone: plan today's hours; says what is already planned and which planned Task lacks a field. */
+/** "Thứ Hai, 02/11/2026" */
+function dayLabel(localDate: string) {
+  const [year, month, day] = localDate.split("-");
+  return `${WEEKDAYS[new Date(`${localDate}T00:00:00Z`).getUTCDay()]}, ${day}/${month}/${year}`;
+}
+
+function projectsLabel(projects: string[] = []) {
+  return projects.length ? `${projects.slice(0, 3).join(", ")}${projects.length > 3 ? ` và ${projects.length - 3} dự án khác` : ""}` : "chưa có dự án đang active";
+}
+
+/** Today's planned Tasks, one line per Task (several blocks of one Task add up; done when every block is completed). */
+function plannedTasks(fact: ReminderUserFacts) {
+  const tasks = new Map<string, { title: string; projectName?: string; minutes: number; done: boolean }>();
+  for (const block of fact.planningBlocks) {
+    const task = tasks.get(block.taskId) ?? { title: block.taskTitle ?? "Task", projectName: block.projectName, minutes: 0, done: true };
+    tasks.set(block.taskId, { ...task, minutes: task.minutes + block.plannedMinutes, done: task.done && block.status === "completed" });
+  }
+  return [...tasks.values()];
+}
+
+/** Đầu ngày, to everyone: plan today's Tasks; says what is already planned and which planned Task lacks a field. */
 function planCard(config: TaskReminderConfig, fact: ReminderUserFacts, issue: PlanReminderIssue | undefined, localDate: string) {
-  const plannedMinutes = fact.planningBlocks.reduce((total, block) => total + block.plannedMinutes, 0);
-  const fieldIssues = fact.planningBlocks.length ? issue?.taskFieldIssues ?? [] : [];
+  const tasks = plannedTasks(fact);
+  const fieldIssues = tasks.length ? issue?.taskFieldIssues ?? [] : [];
   const lines = [
-    `${at(fact.larkOpenId)}Chào **${fact.displayName}**,`,
-    `Vui lòng ghi giờ kế hoạch các Task hôm nay (${localDate}).`,
-    fact.planningBlocks.length ? `• Đã lập: ${minutesLabel(plannedMinutes)} kế hoạch.` : "• Bạn chưa lập kế hoạch Task cho hôm nay.",
-    ...fieldIssues.slice(0, 5).map((task) => `• **${task.taskTitle}**${task.projectName ? ` · ${task.projectName}` : ""} — còn thiếu: ${task.missingFields.join(", ")}.`),
-    ...(fieldIssues.length > 5 ? [`• Và ${fieldIssues.length - 5} Task khác chưa đủ trường.`] : [])
+    `${mention(config, fact.larkOpenId)}Chào **${fact.displayName}**,`,
+    `Hôm nay, ${dayLabel(localDate)}, vui lòng lập kế hoạch các Task sẽ làm trong ngày và ghi giờ kế hoạch cho từng Task.`,
+    "",
+    `• Dự án đang tham gia: ${projectsLabel(fact.activeProjects)}`,
+    tasks.length
+      ? `• Kế hoạch hiện có: ${tasks.length} Task · ${minutesLabel(tasks.reduce((total, task) => total + task.minutes, 0))}`
+      : "• Kế hoạch hiện có: chưa có Task nào.",
+    ...(fieldIssues.length ? ["", "Task cần bổ sung thông tin:", ...fieldIssues.slice(0, 5).map((task) => `• **${task.taskTitle}**${task.projectName ? ` · ${task.projectName}` : ""} — còn thiếu: ${task.missingFields.join(", ")}`)] : []),
+    ...(fieldIssues.length > 5 ? [`• Và ${fieldIssues.length - 5} Task khác.`] : [])
   ];
-  return card("blue", "Ghi giờ kế hoạch hôm nay", lines, EVERYONE_NOTE, { text: "Lập kế hoạch hôm nay", url: calendarUrl(config, localDate) });
+  return card("blue", "Lập kế hoạch Task hôm nay", lines, "Nhắc đầu ngày · gửi mọi người; ngày nghỉ và người nghỉ phép cả ngày được bỏ qua.", { text: "Lập kế hoạch hôm nay", url: calendarUrl(config, localDate) });
 }
 
-/** Evening, to everyone: finish today's plan ("Hoàn thành kế hoạch" logs its hours); lists the plans still open. */
+/**
+ * Cuối ngày, to everyone. With a plan: finish the Tasks planned today (each with its project and status). Without one:
+ * plan today's Tasks and finish them, so the day still gets its hours.
+ */
 function finishPlanCard(config: TaskReminderConfig, fact: ReminderUserFacts, targetMinutes: number, localDate: string) {
-  const plannedMinutes = fact.planningBlocks.reduce((total, block) => total + block.plannedMinutes, 0);
+  const tasks = plannedTasks(fact);
   const actualMinutes = fact.timeEntries.reduce((total, entry) => total + entry.minutes, 0);
-  const open = fact.planningBlocks.filter((block) => block.status !== "completed");
-  const tasks = new Map(fact.tasks.map((task) => [task.id, task]));
-  const lines = [
-    `${at(fact.larkOpenId)}Chào **${fact.displayName}**,`,
-    `Vui lòng hoàn tất kế hoạch hôm nay (${localDate}): bấm “Hoàn thành kế hoạch” trên Calendar để ghi giờ thực tế.`,
-    `• Kế hoạch: ${minutesLabel(plannedMinutes)} · Giờ thực tế đã ghi: ${minutesLabel(actualMinutes)} / ${minutesLabel(targetMinutes)}`,
-    ...(!fact.planningBlocks.length
-      ? ["• Hôm nay bạn chưa có kế hoạch; vui lòng ghi giờ thực tế đã làm."]
-      : open.length
-        ? ["Kế hoạch chưa hoàn tất:", ...open.slice(0, 5).map((block, index) => {
-          const task = tasks.get(block.taskId);
-          return `${index + 1}. **${task?.title ?? "Task đã đóng"}**${task?.projectName ? ` · ${task.projectName}` : ""} — ${minutesLabel(block.plannedMinutes)}`;
-        }), ...(open.length > 5 ? [`Và ${open.length - 5} kế hoạch khác.`] : [])]
-        : ["• Bạn đã hoàn tất mọi kế hoạch hôm nay."])
-  ];
-  return card("red", "Hoàn tất kế hoạch hôm nay", lines, EVERYONE_NOTE, { text: "Mở Calendar hôm nay", url: calendarUrl(config, localDate) });
+  const hours = `• Giờ thực tế đã ghi: ${minutesLabel(actualMinutes)} / ${minutesLabel(targetMinutes)}`;
+  const note = "Nhắc cuối ngày · gửi mọi người; ngày nghỉ và người nghỉ phép cả ngày được bỏ qua.";
+  const button = { text: "Mở Calendar hôm nay", url: calendarUrl(config, localDate) };
+  if (!tasks.length) {
+    return card("red", "Yêu cầu lập kế hoạch và hoàn thành Task hôm nay", [
+      `${mention(config, fact.larkOpenId)}Chào **${fact.displayName}**,`,
+      `Đến cuối ngày ${dayLabel(localDate)}, bạn chưa có kế hoạch Task nào trong ngày.`,
+      "",
+      "Vui lòng:",
+      "1. Lập kế hoạch các Task đã làm hôm nay (Task, dự án và giờ kế hoạch).",
+      "2. Bấm “Hoàn thành kế hoạch” cho từng Task để ghi giờ thực tế.",
+      "",
+      `• Dự án đang tham gia: ${projectsLabel(fact.activeProjects)}`,
+      hours
+    ], note, { ...button, text: "Lập và hoàn thành kế hoạch" });
+  }
+  const open = tasks.filter((task) => !task.done);
+  return card(open.length ? "orange" : "green", open.length ? "Hoàn thành Task hôm nay" : "Kế hoạch hôm nay đã hoàn thành", [
+    `${mention(config, fact.larkOpenId)}Chào **${fact.displayName}**,`,
+    open.length
+      ? `Cuối ngày ${dayLabel(localDate)}, vui lòng hoàn thành các Task đã lập kế hoạch hôm nay và bấm “Hoàn thành kế hoạch” trên Calendar để ghi giờ thực tế.`
+      : `Bạn đã hoàn thành toàn bộ kế hoạch ngày ${dayLabel(localDate)}. Cảm ơn bạn!`,
+    "",
+    "Task đã lập kế hoạch hôm nay:",
+    ...tasks.slice(0, 8).map((task, index) => `${index + 1}. **${task.title}**${task.projectName ? ` · ${task.projectName}` : ""} — ${minutesLabel(task.minutes)} · ${task.done ? "Đã hoàn thành" : "**Chưa hoàn thành**"}`),
+    ...(tasks.length > 8 ? [`Và ${tasks.length - 8} Task khác.`] : []),
+    "",
+    `• Còn ${open.length}/${tasks.length} Task chưa hoàn thành`,
+    hours
+  ], note, button);
 }
 
-/** 14:00, to the PMs: who still has no plan today, and one button that reminds them. */
+/** Buổi trưa, to the PMs: who still has no plan today, and one button that reminds them a second time. */
 function pmFollowUpCard(config: TaskReminderConfig, issues: PlanReminderIssue[], localDate: string, time: string, mentionOpenIds: string[]) {
   const lines = [
-    `${mentionOpenIds.map((openId) => at(openId)).join("")}Chào PM,`,
-    `Đến ${time} ngày ${localDate}, ${issues.length} người chưa lập kế hoạch ngày:`,
-    ...issues.map((issue, index) => {
-      const projects = issue.activeProjects ?? [];
-      return `${index + 1}. **${issue.displayName}**${projects.length ? ` · ${projects.slice(0, 3).join(", ")}${projects.length > 3 ? "…" : ""}` : ""}`;
-    }),
+    `${mention(config, ...mentionOpenIds)}Chào PM,`,
+    `Đến ${time}, ${dayLabel(localDate)}, có **${issues.length} nhân sự** chưa lập kế hoạch Task trong ngày:`,
     "",
-    "Bấm “Gửi nhắc” để nhắc riêng những người vẫn chưa lập kế hoạch tại thời điểm bấm."
+    ...issues.map((issue, index) => `${index + 1}. **${issue.displayName}** · ${projectsLabel(issue.activeProjects)}`),
+    "",
+    "Bấm “Gửi nhắc lần 2” để nhắc riêng những người vẫn chưa lập kế hoạch tại thời điểm bấm."
   ];
-  return card("orange", "Người chưa lập kế hoạch hôm nay", lines, "Mỗi người chỉ được nhắc qua nút này một lần mỗi ngày.", { text: "Gửi nhắc", url: nudgeUnplannedUrl(config, localDate) });
+  return card("orange", "Nhân sự chưa lập kế hoạch Task hôm nay", lines, "Danh sách được kiểm tra lại khi bấm; mỗi người nhận nhắc lần 2 tối đa một lần mỗi ngày.", { text: "Gửi nhắc lần 2", url: nudgeUnplannedUrl(config, localDate) });
 }
 
 function signPayload(payload: Record<string, unknown>, secret?: string) {
@@ -332,7 +376,7 @@ async function loadReminderFacts(prisma: PrismaClient, config: TaskReminderConfi
         startAt: { lt: window.endAt },
         endAt: { gt: window.startAt }
       },
-      select: { userId: true, taskId: true, plannedMinutes: true, status: true }
+      select: { userId: true, taskId: true, plannedMinutes: true, status: true, task: { select: { title: true, project: { select: { name: true } } } } }
     }),
     prisma.taskTimeEntry.findMany({
       where: {
@@ -370,7 +414,13 @@ async function loadReminderFacts(prisma: PrismaClient, config: TaskReminderConfi
         estimateMinutes: task.estimateMinutes
       }] : [];
     }),
-    planningBlocks: planningBlocks.filter((block) => block.userId === user.id).map((block) => ({ taskId: block.taskId, plannedMinutes: block.plannedMinutes, status: block.status })),
+    planningBlocks: planningBlocks.filter((block) => block.userId === user.id).map((block) => ({
+      taskId: block.taskId,
+      plannedMinutes: block.plannedMinutes,
+      status: block.status,
+      taskTitle: block.task.title,
+      projectName: block.task.project?.name
+    })),
     timeEntries: timeEntries.filter((entry) => entry.userId === user.id).map((entry) => ({ taskId: entry.taskId, minutes: entry.minutes }))
   }));
 }
