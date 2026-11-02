@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { taskReminderConfigFromEnv } from "./lark-task-reminders.js";
-import { TASK_REMINDER_SCHEDULE, normalizeReminderSchedule } from "./task-reminder-rules.js";
+import { pmDeliveries, taskReminderConfigFromEnv } from "./lark-task-reminders.js";
+import { TASK_REMINDER_SCHEDULE, normalizeReminderSchedule, type PlanReminderIssue, type ReminderUserFacts } from "./task-reminder-rules.js";
 
 describe("taskReminderConfigFromEnv", () => {
   it("stays inert without production secrets when disabled", () => {
@@ -14,6 +14,8 @@ describe("taskReminderConfigFromEnv", () => {
       PUBLIC_APP_URL: "https://crm.example.com"
     };
     expect(() => taskReminderConfigFromEnv(base)).toThrow("LARK_TASK_REMINDER_WEBHOOK_URL is required");
+    // Private messages need no group webhook.
+    expect(taskReminderConfigFromEnv({ ...base, LARK_MESSAGING_ENABLED: "true", LARK_APP_ID: "cli_test", LARK_APP_SECRET: "s" })).toMatchObject({ enabled: true, webhookUrl: "", directMessage: { appId: "cli_test" } });
     expect(() => taskReminderConfigFromEnv({
       ...base,
       LARK_TASK_REMINDER_WEBHOOK_URL: "https://example.com/hook/secret"
@@ -50,5 +52,33 @@ describe("normalizeReminderSchedule (review 19/10: D1)", () => {
     expect(normalizeReminderSchedule([{ slot: "evening_actual", time: "17:30", enabled: true }, ...off.slice(0, 2)])).toEqual([{ slot: "evening_actual", minute: 17 * 60 + 30 }]);
     expect(normalizeReminderSchedule(undefined)).toBe(TASK_REMINDER_SCHEDULE);
     expect(normalizeReminderSchedule([{ slot: "bogus" }])).toBe(TASK_REMINDER_SCHEDULE);
+  });
+});
+
+describe("pmDeliveries (Nhắc lại cho PM)", () => {
+  const fact = (userId: string, projectPms: ReminderUserFacts["projectPms"]): ReminderUserFacts => ({ userId, displayName: userId, projectPms, tasks: [], planningBlocks: [], timeEntries: [] });
+  const issue = (userId: string): PlanReminderIssue => ({ kind: "plan", userId, displayName: userId, hasPlan: false, taskFieldIssues: [] });
+  const facts = [
+    fact("dev-1", [{ userId: "pm-a", larkOpenId: "ou_a" }]),
+    fact("dev-2", [{ userId: "pm-a", larkOpenId: "ou_a" }, { userId: "pm-b", larkOpenId: "ou_b" }]),
+    fact("pm-a", [{ userId: "pm-a", larkOpenId: "ou_a" }]),
+    fact("dev-3", [{ userId: "pm-c" }])
+  ];
+  const issues = ["dev-1", "dev-2", "pm-a", "dev-3"].map(issue);
+
+  it("sends each project's PIC only the people of their projects, never themselves", () => {
+    const deliveries = pmDeliveries({ pmOpenIds: [], directMessage: { appId: "a", appSecret: "s", baseUrl: "https://lark.test" } }, facts, issues);
+    expect(deliveries.map((d) => [d.openId, d.mentionOpenIds, d.issues.map((i) => i.userId)])).toEqual([
+      ["ou_a", ["ou_a"], ["dev-1", "dev-2"]],
+      ["ou_b", ["ou_b"], ["dev-2"]]
+    ]);
+  });
+
+  it("keeps the PMs set on the server: all issues, once per PM or once to the group", () => {
+    const direct = pmDeliveries({ pmOpenIds: ["ou_x", "ou_y"], directMessage: { appId: "a", appSecret: "s", baseUrl: "https://lark.test" } }, facts, issues);
+    expect(direct.map((d) => [d.openId, d.issues.length])).toEqual([["ou_x", 4], ["ou_y", 4]]);
+    const group = pmDeliveries({ pmOpenIds: ["ou_x", "ou_y"] }, facts, issues);
+    expect(group).toHaveLength(1);
+    expect(group[0].mentionOpenIds).toEqual(["ou_x", "ou_y"]);
   });
 });

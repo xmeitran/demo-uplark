@@ -47,10 +47,11 @@ export async function deliverReminder(options: {
   directMessage?: DirectMessageConfig;
   openId?: string;
   payload: { card?: unknown };
-  postWebhook: () => Promise<void>;
+  /** The group webhook; absent when reminders go only as private messages. */
+  postWebhook?: () => Promise<void>;
   fetchImpl?: typeof fetch;
   log?: DeliveryLog;
-}): Promise<"direct" | "webhook"> {
+}): Promise<"direct" | "webhook" | "failed"> {
   const log = async (...args: Parameters<DeliveryLog>) => { await options.log?.(...args).catch(() => undefined); };
   if (options.directMessage && options.openId) {
     try {
@@ -58,8 +59,13 @@ export async function deliverReminder(options: {
       await log({ target: options.openId, status: "sent", detail: "đã gửi tin riêng" });
       return "direct";
     } catch (error) {
-      await log({ target: options.openId, status: "failed", detail: `${error instanceof Error ? error.message : String(error)}; chuyển sang webhook nhóm` });
+      await log({ target: options.openId, status: "failed", detail: `${error instanceof Error ? error.message : String(error)}${options.postWebhook ? "; chuyển sang webhook nhóm" : ""}` });
+      if (!options.postWebhook) return "failed";
     }
+  }
+  if (!options.postWebhook) {
+    await log({ target: options.openId ?? "", status: "failed", detail: "không có tin riêng (thiếu Lark open_id) và không có webhook nhóm" });
+    return "failed";
   }
   await options.postWebhook();
   return "webhook";

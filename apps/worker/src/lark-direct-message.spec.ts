@@ -40,6 +40,15 @@ describe("daily reminder delivery (7.5: tin riêng, else the group webhook)", ()
     expect(postWebhook).toHaveBeenCalledTimes(1);
     expect(log.mock.calls[0][0]).toMatchObject({ target: "ou_2", status: "failed" });
   });
+
+  it("without a group webhook a failed or impossible private message is logged, not thrown", async () => {
+    const log = vi.fn(async () => undefined);
+    const fetchImpl = vi.fn(async (url: string) => json(url.includes("tenant_access_token") ? { code: 0, tenant_access_token: "t-3" } : { code: 230013, msg: "Bot has NO availability to this user" })) as unknown as typeof fetch;
+    const directMessage = { appId: "app-no-hook", appSecret: "s", baseUrl: "https://lark.test" };
+    expect(await deliverReminder({ directMessage, openId: "ou_3", payload: card, fetchImpl, log })).toBe("failed");
+    expect(await deliverReminder({ directMessage, payload: card, fetchImpl, log })).toBe("failed");
+    expect(log.mock.calls.map(([entry]: any) => entry.status)).toEqual(["failed", "failed"]);
+  });
 });
 
 describe("approved leave in the reminder (D-09, V-06)", () => {

@@ -95,14 +95,16 @@ export function taskReminderConfigFromEnv(env: NodeJS.ProcessEnv): TaskReminderC
   const workspaceId = env.LARK_TASK_REMINDER_WORKSPACE_ID?.trim();
   const webhookUrl = env.LARK_TASK_REMINDER_WEBHOOK_URL?.trim();
   const publicAppUrl = (env.PUBLIC_APP_URL ?? env.PUBLIC_WEB_URL)?.trim();
+  const directMessage = directMessageConfigFromEnv(env);
   if (!workspaceId) throw new Error("LARK_TASK_REMINDER_WORKSPACE_ID is required when task reminders are enabled.");
-  if (!webhookUrl) throw new Error("LARK_TASK_REMINDER_WEBHOOK_URL is required when task reminders are enabled.");
+  // Private messages (LARK_MESSAGING_ENABLED) need no group: the webhook is then only the fallback, and optional.
+  if (!webhookUrl && !directMessage) throw new Error("LARK_TASK_REMINDER_WEBHOOK_URL is required when task reminders are enabled without LARK_MESSAGING_ENABLED.");
   if (!publicAppUrl) throw new Error("PUBLIC_APP_URL or PUBLIC_WEB_URL is required when task reminders are enabled.");
 
   return {
     enabled,
     workspaceId,
-    webhookUrl: validateWebhookUrl(webhookUrl),
+    webhookUrl: webhookUrl ? validateWebhookUrl(webhookUrl) : "",
     webhookSecret: env.LARK_TASK_REMINDER_WEBHOOK_SECRET?.trim() || undefined,
     publicAppUrl: validatePublicAppUrl(publicAppUrl),
     targetMinutes: positiveInteger(env.LARK_TASK_REMINDER_TARGET_MINUTES, 480, "LARK_TASK_REMINDER_TARGET_MINUTES"),
@@ -112,7 +114,7 @@ export function taskReminderConfigFromEnv(env: NodeJS.ProcessEnv): TaskReminderC
     excludedDates: new Set(csv(env.LARK_TASK_REMINDER_EXCLUDED_DATES)),
     includedUserIds: new Set(csv(env.LARK_TASK_REMINDER_USER_IDS)),
     pmOpenIds: csv(env.LARK_TASK_REMINDER_PM_OPEN_IDS),
-    directMessage: directMessageConfigFromEnv(env)
+    directMessage
   };
 }
 
@@ -224,9 +226,9 @@ function actualCard(config: TaskReminderConfig, issue: ActualReminderIssue, loca
   };
 }
 
-function pmFollowUpCard(config: TaskReminderConfig, issues: PlanReminderIssue[], localDate: string) {
+function pmFollowUpCard(config: TaskReminderConfig, issues: PlanReminderIssue[], localDate: string, mentionOpenIds: string[]) {
   const lines = [
-    `${config.pmOpenIds.map((openId) => at(openId)).join("")}Chào PM,`,
+    `${mentionOpenIds.map((openId) => at(openId)).join("")}Chào PM,`,
     `Đến 14:00 ngày ${localDate}, có ${issues.length} nhân sự thuộc phạm vi phụ trách của bạn chưa hoàn tất kế hoạch Task.`,
     "",
     "Danh sách cần theo dõi:"
@@ -306,7 +308,8 @@ async function postWebhook(config: TaskReminderConfig, payload: Record<string, u
 async function send(options: { prisma: PrismaClient; config: TaskReminderConfig }, payload: Record<string, unknown>, openId?: string) {
   const logModel = (options.prisma as unknown as { larkDeliveryLog?: { create: (input: unknown) => Promise<unknown> } }).larkDeliveryLog;
   await deliverReminder({
-    directMessage: options.config.directMessage, openId, payload, postWebhook: () => postWebhook(options.config, payload),
+    directMessage: options.config.directMessage, openId, payload,
+    postWebhook: options.config.webhookUrl ? () => postWebhook(options.config, payload) : undefined,
     log: async (entry) => logModel?.create({ data: { workspaceId: options.config.workspaceId, bot: "Nhắc việc hằng ngày", action: "send_message", ...entry } })
   });
 }
@@ -341,13 +344,14 @@ async function loadReminderFacts(prisma: PrismaClient, config: TaskReminderConfi
       },
       projectMembers: {
         where: { workspaceId: config.workspaceId, project: { status: { notIn: REMINDER_INACTIVE_PROJECT_STATUSES } } },
-        select: { project: { select: { name: true } } }
+        select: { project: { select: { id: true, name: true } } }
       }
     },
     orderBy: [{ displayName: "asc" }, { id: "asc" }]
   });
   const userIds = users.map((user) => user.id);
   if (!userIds.length) return [];
+  const pics = await projectPics(prisma, config.workspaceId, workspace.tenantKey, [...new Set(users.flatMap((user) => user.projectMembers.map((member) => member.project.id)))]);
 
   const [tasks, planningBlocks, timeEntries] = await Promise.all([
     prisma.projectTask.findMany({
@@ -404,6 +408,10 @@ async function loadReminderFacts(prisma: PrismaClient, config: TaskReminderConfi
     // Lark custom webhooks only resolve an explicit person mention by open_id.
     larkOpenId: user.identities[0]?.providerUserId,
     activeProjects: [...new Set(user.projectMembers.map((member) => member.project.name))],
+    projectPms: [...new Map(user.projectMembers.flatMap((member) => {
+      const pic = pics.get(member.project.id);
+      return pic ? [[pic.userId, pic] as const] : [];
+    })).values()],
     tasks: tasks.flatMap((task) => {
       const operationalUserId = task.assigneeUserId ?? task.ownerUserId;
       return operationalUserId === user.id ? [{
@@ -419,6 +427,49 @@ async function loadReminderFacts(prisma: PrismaClient, config: TaskReminderConfi
     planningBlocks: planningBlocks.filter((block) => block.userId === user.id).map((block) => ({ taskId: block.taskId, plannedMinutes: block.plannedMinutes })),
     timeEntries: timeEntries.filter((entry) => entry.userId === user.id).map((entry) => ({ taskId: entry.taskId, minutes: entry.minutes }))
   }));
+}
+
+/** Each project's PIC, read as the API reads it (owner of the first stage), with their Lark open_id. */
+async function projectPics(prisma: PrismaClient, workspaceId: string, tenantKey: string, projectIds: string[]) {
+  const pics = new Map<string, { userId: string; larkOpenId?: string }>();
+  if (!projectIds.length) return pics;
+  const stages = await prisma.projectStage.findMany({
+    where: { workspaceId, projectId: { in: projectIds } },
+    orderBy: [{ milestone: { sortOrder: "asc" } }, { sortOrder: "asc" }, { createdAt: "asc" }],
+    select: { projectId: true, ownerUserId: true }
+  });
+  const firstOwner = new Map<string, string | null>();
+  for (const stage of stages) if (!firstOwner.has(stage.projectId)) firstOwner.set(stage.projectId, stage.ownerUserId);
+  const picIds = [...new Set([...firstOwner.values()].filter((id): id is string => Boolean(id)))];
+  const picUsers = picIds.length ? await prisma.user.findMany({
+    where: { id: { in: picIds }, status: "ACTIVE" },
+    select: { id: true, identities: { where: { provider: "lark", tenantKey }, select: { providerUserId: true }, take: 1 } }
+  }) : [];
+  const openIds = new Map(picUsers.map((user) => [user.id, user.identities[0]?.providerUserId]));
+  for (const [projectId, userId] of firstOwner) if (userId && openIds.has(userId)) pics.set(projectId, { userId, larkOpenId: openIds.get(userId) });
+  return pics;
+}
+
+/**
+ * Who gets "Nhắc lại cho PM": the PMs set on the server (LARK_TASK_REMINDER_PM_OPEN_IDS) receive every issue; without
+ * them each project's PIC receives the people of their own projects ("phạm vi phụ trách của bạn"), never themselves.
+ */
+export function pmDeliveries(config: Pick<TaskReminderConfig, "pmOpenIds" | "directMessage">, facts: ReminderUserFacts[], issues: PlanReminderIssue[]) {
+  if (config.pmOpenIds.length) {
+    // Without private messages every send lands in the same group webhook (the card already tags every PM): send it once.
+    const openIds = config.directMessage ? config.pmOpenIds : config.pmOpenIds.slice(0, 1);
+    return openIds.map((openId) => ({ openId, mentionOpenIds: config.pmOpenIds, issues }));
+  }
+  const pmsByUser = new Map(facts.map((fact) => [fact.userId, fact.projectPms ?? []]));
+  const byPm = new Map<string, PlanReminderIssue[]>();
+  for (const issue of issues) {
+    for (const pm of pmsByUser.get(issue.userId) ?? []) {
+      if (!pm.larkOpenId || pm.userId === issue.userId) continue;
+      const list = byPm.get(pm.larkOpenId) ?? [];
+      if (!list.includes(issue)) byPm.set(pm.larkOpenId, [...list, issue]);
+    }
+  }
+  return [...byPm].map(([openId, pmIssues]) => ({ openId, mentionOpenIds: [openId], issues: pmIssues }));
 }
 
 async function sendOnce(redis: RedisLike, key: string, send: () => Promise<void>) {
@@ -465,11 +516,8 @@ export async function runTaskReminderSlot(input: {
 
   if (options.slot === "pm_follow_up") {
     const issues = findPlanIssues(facts, window);
-    if (issues.length === 0 || options.config.pmOpenIds.length === 0) return { issues: issues.length, sent: 0 };
-    // Without private messages every send lands in the same group webhook (the card already tags every PM): send it once.
-    const recipients = options.config.directMessage ? options.config.pmOpenIds : options.config.pmOpenIds.slice(0, 1);
-    for (const openId of recipients) {
-      if (await sendOnce(options.redis, `${prefix}:pm:${openId}`, () => send(options, pmFollowUpCard(options.config, issues, window.localDate), openId))) sent += 1;
+    for (const delivery of issues.length ? pmDeliveries(options.config, facts, issues) : []) {
+      if (await sendOnce(options.redis, `${prefix}:pm:${delivery.openId}`, () => send(options, pmFollowUpCard(options.config, delivery.issues, window.localDate, delivery.mentionOpenIds), delivery.openId))) sent += 1;
     }
     await options.redis.set(`${prefix}:complete`, "1", "EX", 8 * 24 * 60 * 60);
     return { issues: issues.length, sent };

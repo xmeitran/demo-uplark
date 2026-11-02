@@ -71,10 +71,10 @@ Worker hỗ trợ ba mốc theo `Asia/Ho_Chi_Minh`: 08:30 kiểm tra kế hoạc
 
 - `LARK_TASK_REMINDER_ENABLED=false` là mặc định. Chỉ đặt `true` sau khi đã thử webhook trong chat thử nghiệm.
 - `LARK_TASK_REMINDER_WORKSPACE_ID` là workspace duy nhất được phép đọc; worker không trộn dữ liệu nhiều tenant.
-- `LARK_TASK_REMINDER_WEBHOOK_URL` nhận duy nhất URL HTTPS chính thức của custom bot Lark/Feishu. Đây là secret, không commit hoặc log.
+- `LARK_TASK_REMINDER_WEBHOOK_URL` nhận duy nhất URL HTTPS chính thức của custom bot Lark/Feishu. Đây là secret, không commit hoặc log. Khi bật `LARK_MESSAGING_ENABLED=true` (bot gửi tin riêng), webhook là tùy chọn và chỉ dùng làm đường dự phòng.
 - `LARK_TASK_REMINDER_WEBHOOK_SECRET` là signing secret tùy chọn của custom bot.
 - `LARK_TASK_REMINDER_USER_IDS` là allowlist CRM user ID cho pilot. Để trống nghĩa là mọi internal user active đang là thành viên project active.
-- `LARK_TASK_REMINDER_PM_OPEN_IDS` là allowlist Lark open_id cho PM nhận card tổng hợp ở mốc 14:00; cấu hình giờ và trạng thái chính thức nằm trong tab Admin.
+- `LARK_TASK_REMINDER_PM_OPEN_IDS` là allowlist Lark open_id cho PM nhận card tổng hợp ở mốc 14:00; cấu hình giờ và trạng thái chính thức nằm trong tab Admin. Để trống: mỗi PIC dự án (người phụ trách stage đầu tiên) nhận danh sách người thuộc dự án của mình.
 - `LARK_TASK_REMINDER_TARGET_MINUTES=480` khớp contract Actual hiện tại. Actual chỉ tính log có trạng thái `submitted`, `approved` hoặc `done`; không tự chuyển Plan thành Actual.
 - `LARK_TASK_REMINDER_EXCLUDED_DATES` là danh sách `YYYY-MM-DD` phân cách bằng dấu phẩy.
 - `PUBLIC_APP_URL` tạo liên kết về đúng Task hoặc Calendar cần cập nhật.

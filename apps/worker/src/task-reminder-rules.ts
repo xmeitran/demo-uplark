@@ -44,6 +44,8 @@ export type ReminderUserFacts = {
   displayName: string;
   larkOpenId?: string;
   activeProjects?: string[];
+  /** The PIC of each of the person's active projects (owner of its first stage), for "Nhắc lại cho PM". */
+  projectPms?: Array<{ userId: string; larkOpenId?: string }>;
   tasks: ReminderTask[];
   planningBlocks: ReminderPlanningBlock[];
   timeEntries: ReminderTimeEntry[];
