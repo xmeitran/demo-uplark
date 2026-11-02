@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  businessRole,
   CLOSED_TASK_STATUSES,
   REMINDER_INACTIVE_PROJECT_STATUSES,
   dueReminderSlots,
@@ -105,5 +106,14 @@ describe("reminder status lists", () => {
   it("skips tasks of On Hold and completed projects, under every stored alias", () => {
     for (const status of ["on_hold", "paused", "pause", "completed", "done", "closed"]) expect(REMINDER_INACTIVE_PROJECT_STATUSES).toContain(status);
     for (const status of ["planning", "in_progress", "active", "in_review", "at_risk"]) expect(REMINDER_INACTIVE_PROJECT_STATUSES).not.toContain(status);
+  });
+});
+
+describe("businessRole (as on the People page)", () => {
+  it("reads the profile role, else the department, else the first non-system role code", () => {
+    expect(businessRole({ displayRole: "Project Manager", departmentCode: "CDS_DX_ENABLER" })).toBe("Project Manager");
+    expect(businessRole({ departmentCode: "CDS_BUSINESS_DEVELOPMENT", roleCodes: ["DELIVERY_LEAD"] })).toBe("Business development");
+    expect(businessRole({ roleCodes: ["FOUNDER_GM", "DELIVERY_LEAD"] })).toBe("Project Manager");
+    expect(businessRole({ roleCodes: ["FOUNDER_GM"] })).toBeUndefined();
   });
 });

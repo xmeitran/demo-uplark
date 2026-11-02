@@ -91,8 +91,8 @@ describe("runTaskReminderSlot (sáng/chiều: mọi người · 14:00: PM)", () 
   });
   const member = { projectMembers: [{ project: { id: "p1", name: "Dự án A" } }] };
   const people = [
-    { id: "u1", displayName: "An", identities: [{ providerUserId: "ou_1" }], ...member },
-    { id: "u2", displayName: "Bình", identities: [{ providerUserId: "ou_2" }], ...member }
+    { id: "u1", displayName: "An", identities: [{ providerUserId: "ou_1" }], departmentCode: null, roleBindings: [], ...member },
+    { id: "u2", displayName: "Bình", identities: [{ providerUserId: "ou_2" }], departmentCode: "CDS_DX_ENABLER", roleBindings: [], ...member }
   ];
   const prisma = {
     tenantWorkspace: { findUnique: async () => ({ id: "twk-1", tenantKey: "t", status: "active" }) },
@@ -138,7 +138,8 @@ describe("runTaskReminderSlot (sáng/chiều: mọi người · 14:00: PM)", () 
     expect(messages).toHaveLength(1);
     expect(messages[0].to).toBe("ou_pm");
     expect(messages[0].text).toContain("Đến 14:00, Thứ Hai, 02/11/2026, có **1 nhân sự** chưa lập kế hoạch Task trong ngày:");
-    expect(messages[0].text).toContain("1. **Bình** · Dự án A");
+    expect(messages[0].text).toContain("1. **Bình** · DX enabler");
+    expect(messages[0].text).not.toContain("Dự án A");
     expect(messages[0].text).not.toContain("**An**");
     expect(messages[0].url).toBe("https://crm.example.com/admin?nudge=unplanned&date=2026-11-02");
   });

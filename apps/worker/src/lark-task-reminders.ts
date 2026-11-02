@@ -11,6 +11,7 @@ import {
   TASK_REMINDER_SCHEDULE,
   type PlanReminderIssue,
   type ReminderUserFacts,
+  businessRole,
   type TaskReminderSlot,
   type VietnamWorkdayWindow
 } from "./task-reminder-rules.js";
@@ -175,10 +176,6 @@ function dayLabel(localDate: string) {
   return `${WEEKDAYS[new Date(`${localDate}T00:00:00Z`).getUTCDay()]}, ${day}/${month}/${year}`;
 }
 
-function projectsLabel(projects: string[] = []) {
-  return projects.length ? `${projects.slice(0, 3).join(", ")}${projects.length > 3 ? ` và ${projects.length - 3} dự án khác` : ""}` : "chưa có dự án đang active";
-}
-
 /** Today's planned Tasks, one line per Task (several blocks of one Task add up; done when every block is completed). */
 function plannedTasks(fact: ReminderUserFacts) {
   const tasks = new Map<string, { title: string; projectName?: string; minutes: number; done: boolean }>();
@@ -243,7 +240,7 @@ function pmFollowUpCard(config: TaskReminderConfig, issues: PlanReminderIssue[],
     `${mention(config, ...mentionOpenIds)}Chào PM,`,
     `Đến ${time}, ${dayLabel(localDate)}, có **${issues.length} nhân sự** chưa lập kế hoạch Task trong ngày:`,
     "",
-    ...issues.map((issue, index) => `${index + 1}. **${issue.displayName}** · ${projectsLabel(issue.activeProjects)}`),
+    ...issues.map((issue, index) => `${index + 1}. **${issue.displayName}** · ${issue.role ?? "Chưa gán vai trò"}`),
     "",
     "Bấm “Gửi nhắc lần 2” để nhắc riêng những người vẫn chưa lập kế hoạch tại thời điểm bấm."
   ];
@@ -318,6 +315,9 @@ async function loadReminderFacts(prisma: PrismaClient, config: TaskReminderConfi
     select: {
       id: true,
       displayName: true,
+      departmentCode: true,
+      resourceProfile: { select: { displayRole: true } },
+      roleBindings: { where: { workspaceId: config.workspaceId }, select: { role: { select: { code: true } } } },
       identities: {
         where: { provider: "lark", tenantKey: workspace.tenantKey },
         select: { providerUserId: true },
@@ -388,6 +388,7 @@ async function loadReminderFacts(prisma: PrismaClient, config: TaskReminderConfi
     displayName: user.displayName,
     // Lark custom webhooks only resolve an explicit person mention by open_id.
     larkOpenId: user.identities[0]?.providerUserId,
+    role: businessRole({ displayRole: user.resourceProfile?.displayRole, departmentCode: user.departmentCode, roleCodes: user.roleBindings.map((binding) => binding.role.code) }),
     activeProjects: [...new Set(user.projectMembers.map((member) => member.project.name))],
     projectPms: [...new Map(user.projectMembers.flatMap((member) => {
       const pic = pics.get(member.project.id);
