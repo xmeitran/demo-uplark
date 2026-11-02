@@ -54,3 +54,29 @@ describe("WorkspaceAdminService.sendReminder unplannedOnly (Gửi nhắc on the 
     await expect(service.sendReminder({ localDate: "2026-11-02", slot: "evening_actual", unplannedOnly: true }, admin)).rejects.toThrow("Kế hoạch đầu ngày");
   });
 });
+
+describe("WorkspaceAdminService.updateReminderPolicy PM recipients (Nhắc lại cho PM › Người nhận)", () => {
+  const slots = (recipientUserIds?: string[]) => [
+    { slot: "morning_plan" as const, time: "09:05", enabled: true },
+    { slot: "pm_follow_up" as const, time: "14:00", enabled: true, ...(recipientUserIds ? { recipientUserIds } : {}) },
+    { slot: "evening_actual" as const, time: "17:00", enabled: true }
+  ];
+  function policySetup(activeUsers: number) {
+    const upsert = vi.fn(async (input: any) => ({ ...input.update, timezone: "Asia/Ho_Chi_Minh", id: "wrp_1" }));
+    const prisma = { user: { count: vi.fn().mockResolvedValue(activeUsers) }, workspaceReminderPolicy: { upsert }, auditEvent: { create: vi.fn() } };
+    return { service: new (WorkspaceAdminService as any)(prisma) as WorkspaceAdminService, upsert };
+  }
+
+  it("stores and returns the picked PMs on the PM slot only", async () => {
+    const { service, upsert } = policySetup(2);
+    const result = await service.updateReminderPolicy({ slots: slots(["pm-1", "pm-2", "pm-1"]) }, admin);
+    expect(upsert.mock.calls[0][0].update.slots[1].recipientUserIds).toEqual(["pm-1", "pm-2"]);
+    expect(result.data.slots.map((slot) => slot.recipientUserIds)).toEqual([undefined, ["pm-1", "pm-2"], undefined]);
+  });
+
+  it("refuses unknown or locked people and recipients on another slot", async () => {
+    await expect(policySetup(1).service.updateReminderPolicy({ slots: slots(["pm-1", "gone"]) }, admin)).rejects.toThrow("không tồn tại hoặc đã bị khóa");
+    const morningWithRecipients = slots().map((slot) => slot.slot === "morning_plan" ? { ...slot, recipientUserIds: ["pm-1"] } : slot);
+    await expect(policySetup(1).service.updateReminderPolicy({ slots: morningWithRecipients }, admin)).rejects.toThrow("Nhắc lại cho PM");
+  });
+});

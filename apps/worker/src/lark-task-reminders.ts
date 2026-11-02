@@ -386,14 +386,18 @@ async function projectPics(prisma: PrismaClient, workspaceId: string, tenantKey:
   });
   const firstOwner = new Map<string, string | null>();
   for (const stage of stages) if (!firstOwner.has(stage.projectId)) firstOwner.set(stage.projectId, stage.ownerUserId);
-  const picIds = [...new Set([...firstOwner.values()].filter((id): id is string => Boolean(id)))];
-  const picUsers = picIds.length ? await prisma.user.findMany({
-    where: { id: { in: picIds }, status: "ACTIVE" },
-    select: { id: true, identities: { where: { provider: "lark", tenantKey }, select: { providerUserId: true }, take: 1 } }
-  }) : [];
-  const openIds = new Map(picUsers.map((user) => [user.id, user.identities[0]?.providerUserId]));
+  const openIds = await larkOpenIds(prisma, tenantKey, [...new Set([...firstOwner.values()].filter((id): id is string => Boolean(id)))]);
   for (const [projectId, userId] of firstOwner) if (userId && openIds.has(userId)) pics.set(projectId, { userId, larkOpenId: openIds.get(userId) });
   return pics;
+}
+
+/** Active users' Lark open_id (undefined when they have none), keyed by user id. */
+async function larkOpenIds(prisma: PrismaClient, tenantKey: string, userIds: string[]) {
+  const users = userIds.length ? await prisma.user.findMany({
+    where: { id: { in: userIds }, status: "ACTIVE" },
+    select: { id: true, identities: { where: { provider: "lark", tenantKey }, select: { providerUserId: true }, take: 1 } }
+  }) : [];
+  return new Map(users.map((user) => [user.id, user.identities[0]?.providerUserId]));
 }
 
 /**
@@ -447,6 +451,8 @@ export async function runTaskReminderSlot(input: {
   config: TaskReminderConfig;
   slot: TaskReminderSlot;
   weekdaysOnly?: boolean;
+  /** "Người nhận" of "Nhắc lại cho PM" in Admin › Nhắc Lark; they replace LARK_TASK_REMINDER_PM_OPEN_IDS. */
+  pmUserIds?: string[];
   now?: Date;
 }) {
   const options = { ...input, config: { ...input.config, targetMinutes: await workspaceTargetMinutes(input.prisma, input.config) } };
@@ -465,7 +471,15 @@ export async function runTaskReminderSlot(input: {
   if (options.slot === "pm_follow_up") {
     // Only the people with no plan at all today are listed for the PMs.
     const issues = findPlanIssues(facts, window).filter((issue) => !issue.hasPlan);
-    for (const delivery of issues.length ? pmDeliveries(options.config, facts, issues) : []) {
+    let pmConfig = options.config;
+    if (options.pmUserIds?.length) {
+      const workspace = await options.prisma.tenantWorkspace.findUnique({ where: { id: options.config.workspaceId }, select: { tenantKey: true } });
+      const openIds = await larkOpenIds(options.prisma, workspace?.tenantKey ?? "", options.pmUserIds);
+      // The PMs picked in Admin who have a Lark account; none of them reachable means nobody, not every project's PIC.
+      pmConfig = { ...options.config, pmOpenIds: options.pmUserIds.flatMap((id) => openIds.get(id) ?? []) };
+      if (!pmConfig.pmOpenIds.length) return { issues: issues.length, sent: 0, skipped: "pm_recipients_without_lark" };
+    }
+    for (const delivery of issues.length ? pmDeliveries(pmConfig, facts, issues) : []) {
       if (await sendOnce(options.redis, `${prefix}:pm:${delivery.openId}`, () => send(options, pmFollowUpCard(options.config, delivery.issues, window.localDate, clock(window.localMinute), delivery.mentionOpenIds), delivery.openId))) sent += 1;
     }
     await options.redis.set(`${prefix}:complete`, "1", "EX", 8 * 24 * 60 * 60);
@@ -508,10 +522,15 @@ async function resolveReminderPolicy(prisma: PrismaClient, workspaceId: string) 
       findUnique: (input: { where: { workspaceId: string }; select: { enabled: true; weekdaysOnly: true; slots: true } }) => Promise<{ enabled: boolean; weekdaysOnly: boolean; slots: unknown } | null>;
     };
   }).workspaceReminderPolicy;
-  if (!model) return { enabled: true, weekdaysOnly: true, schedule: TASK_REMINDER_SCHEDULE };
+  if (!model) return { enabled: true, weekdaysOnly: true, schedule: TASK_REMINDER_SCHEDULE, pmUserIds: [] };
   const policy = await model.findUnique({ where: { workspaceId }, select: { enabled: true, weekdaysOnly: true, slots: true } });
-  if (!policy) return { enabled: true, weekdaysOnly: true, schedule: TASK_REMINDER_SCHEDULE };
-  return { enabled: policy.enabled, weekdaysOnly: policy.weekdaysOnly, schedule: normalizeReminderSchedule(policy.slots) };
+  if (!policy) return { enabled: true, weekdaysOnly: true, schedule: TASK_REMINDER_SCHEDULE, pmUserIds: [] };
+  return { enabled: policy.enabled, weekdaysOnly: policy.weekdaysOnly, schedule: normalizeReminderSchedule(policy.slots), pmUserIds: reminderPmUserIds(policy.slots) };
+}
+
+export function reminderPmUserIds(slots: unknown): string[] {
+  const pmSlot = Array.isArray(slots) ? slots.find((slot) => (slot as { slot?: unknown })?.slot === "pm_follow_up") as { recipientUserIds?: unknown } | undefined : undefined;
+  return Array.isArray(pmSlot?.recipientUserIds) ? pmSlot.recipientUserIds.filter((id): id is string => typeof id === "string" && id.length > 0) : [];
 }
 
 export function createTaskReminderScheduler(options: {
@@ -548,7 +567,7 @@ export function createTaskReminderScheduler(options: {
       const slots = dueReminderSlots(window, options.config.catchUpMinutes, policy.schedule);
       const results = [];
       for (const slot of slots) {
-        results.push({ slot, result: await runTaskReminderSlot({ ...options, prisma, slot, weekdaysOnly: policy.weekdaysOnly, now: at }) });
+        results.push({ slot, result: await runTaskReminderSlot({ ...options, prisma, slot, weekdaysOnly: policy.weekdaysOnly, pmUserIds: policy.pmUserIds, now: at }) });
       }
       return results;
     })();

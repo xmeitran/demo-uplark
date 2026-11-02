@@ -273,7 +273,12 @@ function parseSlots(input: UpdateWorkspaceReminderPolicyInput["slots"]): Workspa
     seen.add(item.slot);
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(item.time)) throw new BadRequestException("Reminder time must use HH:mm");
     if (typeof item.enabled !== "boolean") throw new BadRequestException("Reminder enabled must be boolean");
-    return { slot: item.slot, time: item.time, label: SLOT_LABELS[item.slot], enabled: item.enabled };
+    if (item.recipientUserIds !== undefined && (item.slot !== "pm_follow_up" || !Array.isArray(item.recipientUserIds) || item.recipientUserIds.some((id) => typeof id !== "string" || !id))) {
+      throw new BadRequestException("Người nhận chỉ chọn cho mốc “Nhắc lại cho PM”, dưới dạng danh sách người dùng.");
+    }
+    const recipientUserIds = item.recipientUserIds ? [...new Set(item.recipientUserIds)] : undefined;
+    if (recipientUserIds && recipientUserIds.length > 20) throw new BadRequestException("Chọn tối đa 20 người nhận cho mốc “Nhắc lại cho PM”.");
+    return { slot: item.slot, time: item.time, label: SLOT_LABELS[item.slot], enabled: item.enabled, ...(recipientUserIds ? { recipientUserIds } : {}) };
   });
 }
 
@@ -284,13 +289,14 @@ function mapPolicy(record: { enabled: boolean; timezone: string; weekdaysOnly: b
     timezone: record.timezone,
     weekdaysOnly: record.weekdaysOnly,
     slots: slots.map((slot) => {
-      const item = slot as { slot?: string; time?: string; enabled?: boolean };
+      const item = slot as { slot?: string; time?: string; enabled?: boolean; recipientUserIds?: unknown };
       const code = item.slot && item.slot in SLOT_LABELS ? item.slot as WorkspaceReminderSlot["slot"] : "morning_plan";
       return {
         slot: code,
         time: typeof item.time === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(item.time) ? item.time : DEFAULT_SLOTS.find((candidate) => candidate.slot === code)!.time,
         label: SLOT_LABELS[code],
-        enabled: item.enabled !== false
+        enabled: item.enabled !== false,
+        ...(code === "pm_follow_up" && Array.isArray(item.recipientUserIds) ? { recipientUserIds: item.recipientUserIds.filter((id): id is string => typeof id === "string") } : {})
       };
     }),
     updatedAt: record.updatedAt?.toISOString()
@@ -919,6 +925,11 @@ export class WorkspaceAdminService {
   async updateReminderPolicy(input: UpdateWorkspaceReminderPolicyInput, principal: PrincipalContext) {
     assertAdmin(principal);
     const slots = parseSlots(input.slots);
+    const recipientUserIds = slots.flatMap((slot) => slot.recipientUserIds ?? []);
+    if (recipientUserIds.length) {
+      const found = await this.prisma.user.count({ where: { id: { in: recipientUserIds }, status: "ACTIVE", subjectType: "INTERNAL_USER" } });
+      if (found !== recipientUserIds.length) throw new BadRequestException("Người nhận nhắc PM không tồn tại hoặc đã bị khóa.");
+    }
     const enabled = input.enabled ?? true;
     const weekdaysOnly = input.weekdaysOnly ?? true;
     const updated = await this.prisma.workspaceReminderPolicy.upsert({

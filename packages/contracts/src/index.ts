@@ -3587,6 +3587,8 @@ export interface WorkspaceReminderSlot {
   time: string;
   label: string;
   enabled: boolean;
+  /** pm_follow_up only: who gets the list of people with no plan. Empty: LARK_TASK_REMINDER_PM_OPEN_IDS, else each project's PIC. */
+  recipientUserIds?: string[];
 }
 
 export interface WorkspaceReminderPolicy {
@@ -3672,7 +3674,7 @@ export interface AdminAlertsResponse {
 export interface UpdateWorkspaceReminderPolicyInput {
   enabled?: boolean;
   weekdaysOnly?: boolean;
-  slots: Array<{ slot: WorkspaceReminderSlotCode; time: string; enabled: boolean }>;
+  slots: Array<{ slot: WorkspaceReminderSlotCode; time: string; enabled: boolean; recipientUserIds?: string[] }>;
 }
 
 export interface WorkspaceReminderRecipientOption {

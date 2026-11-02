@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { pmDeliveries, runTaskReminderSlot, taskReminderConfigFromEnv } from "./lark-task-reminders.js";
+import { pmDeliveries, reminderPmUserIds, runTaskReminderSlot, taskReminderConfigFromEnv } from "./lark-task-reminders.js";
 import { TASK_REMINDER_SCHEDULE, normalizeReminderSchedule, type PlanReminderIssue, type ReminderUserFacts } from "./task-reminder-rules.js";
 
 describe("taskReminderConfigFromEnv", () => {
@@ -90,12 +90,13 @@ describe("runTaskReminderSlot (sáng/chiều: mọi người · 14:00: PM)", () 
     LARK_MESSAGING_ENABLED: "true", LARK_APP_ID: "app-slots", LARK_APP_SECRET: "s", LARK_TASK_REMINDER_PM_OPEN_IDS: "ou_pm"
   });
   const member = { projectMembers: [{ project: { id: "p1", name: "Dự án A" } }] };
+  const people = [
+    { id: "u1", displayName: "An", identities: [{ providerUserId: "ou_1" }], ...member },
+    { id: "u2", displayName: "Bình", identities: [{ providerUserId: "ou_2" }], ...member }
+  ];
   const prisma = {
     tenantWorkspace: { findUnique: async () => ({ id: "twk-1", tenantKey: "t", status: "active" }) },
-    user: { findMany: async (input: any) => input.where.projectMembers ? [
-      { id: "u1", displayName: "An", identities: [{ providerUserId: "ou_1" }], ...member },
-      { id: "u2", displayName: "Bình", identities: [{ providerUserId: "ou_2" }], ...member }
-    ] : [] },
+    user: { findMany: async (input: any) => people.filter((person) => input.where.projectMembers || input.where.id?.in?.includes(person.id)) },
     projectStage: { findMany: async () => [] },
     projectTask: { findMany: async () => [{ id: "t1", title: "Thiết kế", assigneeUserId: "u1", ownerUserId: null, plannedStartAt: null, dueAt: null, estimateMinutes: 240, project: { name: "Dự án A" } }] },
     taskPlanningBlock: { findMany: async () => [{ userId: "u1", taskId: "t1", plannedMinutes: 240, status: "planned" }] },
@@ -105,7 +106,7 @@ describe("runTaskReminderSlot (sáng/chiều: mọi người · 14:00: PM)", () 
     const store = new Map<string, string>();
     return { get: async (key: string) => store.get(key) ?? null, set: async (key: string, value: string) => { store.set(key, value); return "OK"; }, eval: async () => 0 };
   };
-  const run = async (slot: "morning_plan" | "pm_follow_up" | "evening_actual") => {
+  const run = async (slot: "morning_plan" | "pm_follow_up" | "evening_actual", pmUserIds?: string[]) => {
     const messages: Array<{ to: string; text: string; url: string }> = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: any) => {
       if (url.includes("tenant_access_token")) return { ok: true, status: 200, json: async () => ({ code: 0, tenant_access_token: "t", expire: 7200 }) };
@@ -115,7 +116,7 @@ describe("runTaskReminderSlot (sáng/chiều: mọi người · 14:00: PM)", () 
       return { ok: true, status: 200, json: async () => ({ code: 0 }) };
     }));
     // Monday 2026-11-02, 14:00 in Vietnam.
-    await runTaskReminderSlot({ prisma, redis: redis(), config, slot, now: new Date("2026-11-02T07:00:00Z") });
+    await runTaskReminderSlot({ prisma, redis: redis(), config, slot, pmUserIds, now: new Date("2026-11-02T07:00:00Z") });
     return messages;
   };
 
@@ -134,6 +135,12 @@ describe("runTaskReminderSlot (sáng/chiều: mọi người · 14:00: PM)", () 
     expect(messages[0].text).toContain("**Bình**");
     expect(messages[0].text).not.toContain("**An**");
     expect(messages[0].url).toBe("https://crm.example.com/admin?nudge=unplanned&date=2026-11-02");
+  });
+
+  it("14:00 goes to the PMs picked in Admin instead of the server list", async () => {
+    expect(reminderPmUserIds([{ slot: "morning_plan" }, { slot: "pm_follow_up", recipientUserIds: ["u1", 7, ""] }])).toEqual(["u1"]);
+    expect((await run("pm_follow_up", ["u1"])).map((message) => message.to)).toEqual(["ou_1"]);
+    expect(await run("pm_follow_up", ["u-no-lark"])).toEqual([]);
   });
 
   it("evening asks everyone to finish today's plan and lists the plans still open", async () => {

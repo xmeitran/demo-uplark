@@ -23,7 +23,8 @@ import {
   Settings2,
   SlidersHorizontal,
   TimerReset,
-  TriangleAlert
+  TriangleAlert,
+  Users
 } from "lucide-react";
 import type {
   AdminAlertDetailRow,
@@ -43,7 +44,7 @@ import { AppShell } from "@/components/constructor-x/app-shell";
 import { WorkspaceDayOffSettings } from "@/components/settings/workspace-day-off-settings";
 import { PersonalLeavePanel } from "@/components/settings/personal-leave-panel";
 import { CustomDropdown, type TaskSelectOption } from "@/components/crm-workspace/tasks-workbench";
-import { CrmSelect } from "@/components/crm-workspace/crm-select";
+import { CrmMultiSelect, CrmSelect, type CrmSelectOption } from "@/components/crm-workspace/crm-select";
 import { matchesSearch } from "@/components/crm-workspace/crm-select-search";
 import { DateRangeFilter, FilterBar, FilterField, MultiSelectFilter, PersonFilter, SearchFilter, dayOf, isWithinRange, matchesAny, toCsvParam, type DateRange, type FilterPerson } from "@/components/filters";
 import { PageHeader } from "@/components/page-header";
@@ -224,7 +225,7 @@ export function WorkspaceAdminDashboard() {
     const payload: UpdateWorkspaceReminderPolicyInput = {
       enabled: policy.enabled,
       weekdaysOnly: policy.weekdaysOnly,
-      slots: policy.slots.map(({ slot, time, enabled }) => ({ slot, time, enabled }))
+      slots: policy.slots.map(({ slot, time, enabled, recipientUserIds }) => ({ slot, time, enabled, ...(recipientUserIds ? { recipientUserIds } : {}) }))
     };
     try {
       const response = await fetch("/api/admin/reminders", {
@@ -602,8 +603,28 @@ function AlertsPanel({ rows, loading, onRefresh }: { rows: AdminAlertDetailRow[]
   </section>;
 }
 
-function LegacyReminderPolicyPanel({ policy, saving, onSave, onUpdateSlot, onSetPolicy }: { policy: WorkspaceReminderPolicy | null; saving: boolean; onSave: () => void; onUpdateSlot: (code: WorkspaceReminderSlotCode, patch: Partial<WorkspaceReminderSlot>) => void; onSetPolicy: React.Dispatch<React.SetStateAction<WorkspaceReminderPolicy | null>> }) {
-  return <section aria-labelledby="reminder-policy-title" className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm"><div className="border-b border-border bg-gradient-to-r from-violet-50 via-white to-sky-50 px-5 py-5 sm:px-7"><div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div className="flex items-start gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-100 text-violet-700"><BellRing className="h-5 w-5" /></div><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-700">LARK NOTIFICATIONS</p><h2 id="reminder-policy-title" className="mt-1 text-xl font-bold text-slate-950">Lịch nhắc vận hành</h2><p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Chỉ gửi khi phát hiện thiếu kế hoạch hoặc giờ thực tế. Ngày off được bỏ qua tự động.</p></div></div>{policy ? <button disabled={saving} type="button" onClick={onSave} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-primary-foreground shadow-sm hover:opacity-90 disabled:opacity-60"><Save className="h-4 w-4" />{saving ? "Đang lưu…" : "Lưu thay đổi"}</button> : null}</div></div>{policy ? <div className="p-5 sm:p-7"><div className="flex flex-col gap-3 rounded-2xl border border-border bg-slate-50/80 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><div className={`mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl ${policy.enabled ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`}><BellRing className="h-4 w-4" /></div><div><p className="text-sm font-bold text-slate-900">Kích hoạt nhắc Lark</p><p className="mt-0.5 text-xs text-slate-500">{formatUpdatedAt(policy.updatedAt)} · múi giờ {policy.timezone}</p></div></div><Toggle checked={policy.enabled} onChange={(checked) => onSetPolicy((current) => current ? { ...current, enabled: checked } : current)} label={policy.enabled ? "Đang bật" : "Đang tắt"} /></div><div className="mt-4 grid gap-3 md:grid-cols-3">{policy.slots.map((slot) => <div key={slot.slot} className={`rounded-2xl border p-4 transition ${slot.enabled && policy.enabled ? "border-violet-200 bg-violet-50/40" : "border-border bg-white"}`}><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-bold text-slate-900">{slotLabel(slot)}</p><p className="mt-1 text-xs leading-relaxed text-slate-500">{slot.slot === "morning_plan" ? "Kiểm tra kế hoạch và trường dữ liệu task." : slot.slot === "pm_follow_up" ? "Nhắc lại các việc chưa được cập nhật." : "Đối soát giờ thực tế cuối ngày."}</p></div><Toggle checked={slot.enabled} onChange={(checked) => onUpdateSlot(slot.slot, { enabled: checked })} label={slot.enabled ? "Bật" : "Tắt"} compact /></div><label className="mt-4 flex items-center gap-2 text-xs font-semibold text-slate-500"><Clock3 className="h-4 w-4" /> Giờ gửi<input type="time" value={slot.time} onChange={(event) => onUpdateSlot(slot.slot, { time: event.target.value })} className="ml-auto h-9 rounded-lg border border-border bg-white px-2 text-sm font-bold text-slate-900" /></label></div>)}</div><label className="mt-4 flex items-center gap-2 text-xs font-semibold text-slate-600"><input type="checkbox" checked={policy.weekdaysOnly} onChange={(event) => onSetPolicy((current) => current ? { ...current, weekdaysOnly: event.target.checked } : current)} className="h-4 w-4 rounded border-border text-primary" /> Chỉ gửi vào ngày làm việc (Thứ 2–Thứ 6, bỏ qua ngày off)</label><div className="mt-4 flex items-start gap-2 rounded-xl border border-sky-100 bg-sky-50/70 px-3 py-2.5 text-xs leading-relaxed text-sky-800"><Info className="mt-0.5 h-4 w-4 shrink-0" /> Secret webhook chỉ nằm ở worker/server. Mốc mặc định: 08:30, 14:00 và 17:00.</div></div> : <div className="p-7 text-sm text-muted-foreground">Đang tải cấu hình lịch nhắc…</div>}</section>;
+const SLOT_DESCRIPTIONS: Record<WorkspaceReminderSlotCode, string> = {
+  morning_plan: "Nhắc mọi người ghi giờ kế hoạch trong ngày.",
+  pm_follow_up: "Gửi PM danh sách người chưa lập kế hoạch ngày, kèm nút “Gửi nhắc”.",
+  evening_actual: "Nhắc mọi người hoàn tất kế hoạch trong ngày."
+};
+
+/** "Nhắc lại cho PM": the people who receive the list of everyone with no plan that day. */
+function PmRecipientsField({ users, values, onChange }: { users: WorkspaceReminderRecipientsResponse["data"]["users"]; values: string[]; onChange: (values: string[]) => void }) {
+  const options = users.map((user): CrmSelectOption => ({
+    value: user.id,
+    label: user.displayName,
+    meta: user.email,
+    keywords: user.email,
+    avatarUrl: user.avatarUrl,
+    initials: user.displayName.trim().split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]?.toUpperCase()).join("") || "U"
+  }));
+  const names = values.map((id) => users.find((user) => user.id === id)?.displayName ?? id).join(", ");
+  return <div className="mt-3"><span className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-slate-500"><Users className="h-4 w-4" /> Người nhận</span><CrmMultiSelect ariaLabel="Người nhận nhắc PM" values={values} options={options} onChange={onChange} placeholder="Chưa chọn: gửi PIC từng dự án" searchPlaceholder="Tìm theo tên hoặc email..." selectedCountLabel={() => names} menuPortal /></div>;
+}
+
+function LegacyReminderPolicyPanel({ policy, saving, users, onSave, onUpdateSlot, onSetPolicy }: { policy: WorkspaceReminderPolicy | null; saving: boolean; users: WorkspaceReminderRecipientsResponse["data"]["users"]; onSave: () => void; onUpdateSlot: (code: WorkspaceReminderSlotCode, patch: Partial<WorkspaceReminderSlot>) => void; onSetPolicy: React.Dispatch<React.SetStateAction<WorkspaceReminderPolicy | null>> }) {
+  return <section aria-labelledby="reminder-policy-title" className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm"><div className="border-b border-border bg-gradient-to-r from-violet-50 via-white to-sky-50 px-5 py-5 sm:px-7"><div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div className="flex items-start gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-100 text-violet-700"><BellRing className="h-5 w-5" /></div><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-700">LARK NOTIFICATIONS</p><h2 id="reminder-policy-title" className="mt-1 text-xl font-bold text-slate-950">Lịch nhắc vận hành</h2><p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Sáng và chiều nhắc mọi người; mốc PM gửi danh sách người chưa lập kế hoạch ngày. Ngày off và người nghỉ phép cả ngày được bỏ qua tự động.</p></div></div>{policy ? <button disabled={saving} type="button" onClick={onSave} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-primary-foreground shadow-sm hover:opacity-90 disabled:opacity-60"><Save className="h-4 w-4" />{saving ? "Đang lưu…" : "Lưu thay đổi"}</button> : null}</div></div>{policy ? <div className="p-5 sm:p-7"><div className="flex flex-col gap-3 rounded-2xl border border-border bg-slate-50/80 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><div className={`mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl ${policy.enabled ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`}><BellRing className="h-4 w-4" /></div><div><p className="text-sm font-bold text-slate-900">Kích hoạt nhắc Lark</p><p className="mt-0.5 text-xs text-slate-500">{formatUpdatedAt(policy.updatedAt)} · múi giờ {policy.timezone}</p></div></div><Toggle checked={policy.enabled} onChange={(checked) => onSetPolicy((current) => current ? { ...current, enabled: checked } : current)} label={policy.enabled ? "Đang bật" : "Đang tắt"} /></div><div className="mt-4 grid gap-3 md:grid-cols-3">{policy.slots.map((slot) => <div key={slot.slot} className={`rounded-2xl border p-4 transition ${slot.enabled && policy.enabled ? "border-violet-200 bg-violet-50/40" : "border-border bg-white"}`}><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-bold text-slate-900">{slotLabel(slot)}</p><p className="mt-1 text-xs leading-relaxed text-slate-500">{SLOT_DESCRIPTIONS[slot.slot]}</p></div><Toggle checked={slot.enabled} onChange={(checked) => onUpdateSlot(slot.slot, { enabled: checked })} label={slot.enabled ? "Bật" : "Tắt"} compact /></div><label className="mt-4 flex items-center gap-2 text-xs font-semibold text-slate-500"><Clock3 className="h-4 w-4" /> Giờ gửi<input type="time" value={slot.time} onChange={(event) => onUpdateSlot(slot.slot, { time: event.target.value })} className="ml-auto h-9 rounded-lg border border-border bg-white px-2 text-sm font-bold text-slate-900" /></label>{slot.slot === "pm_follow_up" ? <PmRecipientsField users={users} values={slot.recipientUserIds ?? []} onChange={(recipientUserIds) => onUpdateSlot(slot.slot, { recipientUserIds })} /> : null}</div>)}</div><label className="mt-4 flex items-center gap-2 text-xs font-semibold text-slate-600"><input type="checkbox" checked={policy.weekdaysOnly} onChange={(event) => onSetPolicy((current) => current ? { ...current, weekdaysOnly: event.target.checked } : current)} className="h-4 w-4 rounded border-border text-primary" /> Chỉ gửi vào ngày làm việc (Thứ 2–Thứ 6, bỏ qua ngày off)</label><div className="mt-4 flex items-start gap-2 rounded-xl border border-sky-100 bg-sky-50/70 px-3 py-2.5 text-xs leading-relaxed text-sky-800"><Info className="mt-0.5 h-4 w-4 shrink-0" /> Bot Lark gửi tin riêng cho từng người. Mốc mặc định: 08:30, 14:00 và 17:00.</div></div> : <div className="p-7 text-sm text-muted-foreground">Đang tải cấu hình lịch nhắc…</div>}</section>;
 }
 
 function ReminderPolicyPanel({
@@ -638,7 +659,7 @@ function ReminderPolicyPanel({
   };
 
   return <>
-    <LegacyReminderPolicyPanel policy={policy} saving={saving} onSave={onSave} onUpdateSlot={onUpdateSlot} onSetPolicy={onSetPolicy} />
+    <LegacyReminderPolicyPanel policy={policy} saving={saving} users={recipients.users} onSave={onSave} onUpdateSlot={onUpdateSlot} onSetPolicy={onSetPolicy} />
     <section aria-labelledby="manual-reminder-title" className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
       <div className="border-b border-border bg-gradient-to-r from-slate-50 via-white to-violet-50 px-5 py-5 sm:px-7">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
