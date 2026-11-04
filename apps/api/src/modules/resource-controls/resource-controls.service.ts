@@ -46,9 +46,12 @@ export class ResourceControlsService {
         resourceProfile: true,
         capacityPeriods: {
           where: {
+            OR: [{ workspaceId: principal.workspaceId }, { workspaceId: null }],
             periodStart: { lte: periodStart },
             periodEnd: { gte: periodEnd }
-          }
+          },
+          // This workspace's own period wins over a legacy one with no workspace.
+          orderBy: { workspaceId: { sort: "asc", nulls: "last" } }
         },
         resourceAllocations: {
           where: {

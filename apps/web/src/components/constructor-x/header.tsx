@@ -2,11 +2,12 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Bell, Check, ChevronDown, ExternalLink, Loader2, Moon, Search, Settings, Sun } from "lucide-react";
+import { Bell, Building2, Check, ChevronDown, ExternalLink, Loader2, Moon, Search, Settings, Sun } from "lucide-react";
 import type { AppNotificationSummary, AppNotificationsResponse } from "@b2b-crm/contracts";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
+import { authRequest } from "@/lib/native-auth-client";
 import { getShellRoutes, matchProductRoute } from "@/lib/production-route-readiness";
 import { useTheme } from "@/lib/theme";
 
@@ -28,6 +29,45 @@ function notificationApiError(body: unknown, fallback: string) {
     return (message as { message: string }).message;
   }
   return fallback;
+}
+
+type OrganizationOption = { id: string; name: string; current: boolean };
+// Kept across client-side page changes; switching reloads the page, which clears it.
+let organizationsCache: OrganizationOption[] | undefined;
+
+/** Only for someone in two or more organizations: each one's data is separate, so this is how they move between them. */
+function OrganizationSwitcher() {
+  const [organizations, setOrganizations] = useState(organizationsCache ?? []);
+  const [switchingTo, setSwitchingTo] = useState("");
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (organizationsCache) return;
+    authRequest<{ data: OrganizationOption[] }>("workspaces").then((body) => { organizationsCache = body.data; setOrganizations(body.data); }).catch(() => undefined);
+  }, []);
+  if (organizations.length < 2) return null;
+  const switchTo = async (organization: OrganizationOption) => {
+    setSwitchingTo(organization.id);
+    setError("");
+    try {
+      await authRequest("workspaces/switch", { workspaceId: organization.id });
+      window.location.assign("/");
+    } catch {
+      setSwitchingTo("");
+      setError(`Chưa chuyển được sang ${organization.name}. Thử lại.`);
+    }
+  };
+  return (
+    <div role="group" aria-label="Tổ chức" title={error || "Chuyển tổ chức"} className={`hidden md:flex min-w-0 items-center gap-1 rounded-xl border bg-background p-1 ${error ? "border-rose-300" : "border-border"}`}>
+      <Building2 aria-hidden="true" className="mx-1.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      {organizations.map((organization) => (
+        <button key={organization.id} type="button" aria-pressed={organization.current} disabled={organization.current || Boolean(switchingTo)} onClick={() => void switchTo(organization)}
+          className={`inline-flex max-w-[160px] items-center gap-1.5 truncate rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${organization.current ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-60"}`}>
+          {switchingTo === organization.id ? <Loader2 aria-hidden="true" className="h-3 w-3 animate-spin" /> : null}
+          <span className="truncate">{organization.name}</span>
+        </button>
+      ))}
+    </div>
+  );
 }
 
 export function Header({ title }: HeaderProps) {
@@ -218,6 +258,7 @@ export function Header({ title }: HeaderProps) {
             <Link aria-current={pathname === item.href ? "page" : undefined} key={item.href} href={item.href} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${pathname === item.href ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted/60"}`}>{item.label}</Link>
           ))}
         </nav>
+        <OrganizationSwitcher />
       </div>
 
       <div className="flex shrink-0 items-center gap-2 xl:gap-3">

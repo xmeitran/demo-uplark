@@ -499,9 +499,24 @@ model TenantWorkspace {
   reminderPolicy             WorkspaceReminderPolicy?
   projectTaskAssignees       ProjectTaskAssignee[]
   appNotifications           AppNotification[]
+  businessRoles              WorkspaceBusinessRole[]
 
   @@unique([tenantKey, workspaceKey])
   @@index([status])
+}
+
+/// Admin › Setting: an organization's business roles (Vai trò nghiệp vụ). A built-in code here is only renamed or hidden;
+/// any other code is the organization's own role (its Role row has baseRoleCode).
+model WorkspaceBusinessRole {
+  workspaceId String
+  code        String
+  label       String
+  hidden      Boolean         @default(false)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  workspace   TenantWorkspace @relation(fields: [workspaceId], references: [id])
+
+  @@id([workspaceId, code])
 }
 
 model PortalIdentity {
@@ -549,6 +564,8 @@ model Role {
   name           String
   type           RoleType
   description    String?
+  /// An organization's own business role (Admin › Setting) carries the permissions of this built-in business role.
+  baseRoleCode   String?
   createdAt      DateTime        @default(now())
   permissionSets PermissionSet[]
   bindings       RoleBinding[]

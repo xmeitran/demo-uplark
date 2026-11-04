@@ -6,6 +6,7 @@
  * "Giờ chuẩn một ngày" (assumption — see docs/lark-integration.md).
  */
 import { STANDARD_DAY_MINUTES } from "../delivery-handoff/daily-actual-log";
+import { activeMembershipWhere } from "../identity-access/active-membership";
 import { getApprovalInstance, listApprovalInstanceCodes, type LarkTransportLike } from "./lark-client";
 
 const HCM_OFFSET_MS = 7 * 3_600_000;
@@ -157,7 +158,7 @@ export async function syncPersonalLeave(prisma: any, lark: LarkTransportLike, wo
       continue;
     }
     const identity = await prisma.portalIdentity.findFirst({
-      where: { tenantKey: workspace?.tenantKey, OR: [...(leave.openId ? [{ provider: "lark", providerUserId: leave.openId }] : []), ...(leave.larkUserId ? [{ provider: "lark_user_id", providerUserId: leave.larkUserId }] : [])] },
+      where: { tenantKey: workspace?.tenantKey, user: { roleBindings: { some: { workspaceId, ...activeMembershipWhere(now) } } }, OR: [...(leave.openId ? [{ provider: "lark", providerUserId: leave.openId }] : []), ...(leave.larkUserId ? [{ provider: "lark_user_id", providerUserId: leave.larkUserId }] : [])] },
       select: { userId: true }
     });
     if (!identity) {

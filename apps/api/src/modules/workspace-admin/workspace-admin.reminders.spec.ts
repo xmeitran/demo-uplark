@@ -92,6 +92,9 @@ describe("WorkspaceAdminService.sendReminder (Gửi nhắc Lark thủ công: sam
     expect(result.data.recipientNames).toEqual(["Sao Mai"]);
     expect(cards[0].elements[0].text.content).toContain("1. **Bình** · DX enabler\n2. **Chi** · Chưa gán vai trò");
     expect(cards[0].elements[3].actions[0].text.content).toBe("Gửi nhắc lần 2");
+    // The list names this organization's people, so only its own members receive it.
+    const pmQuery = (service as any).prisma.user.findMany.mock.calls.map((call: any) => call[0]).find((query: any) => query.where.id?.in);
+    expect(pmQuery.where.roleBindings.some).toMatchObject({ workspaceId: admin.workspaceId });
   });
 
   it("Nhắc lại cho PM without picked PMs says so", async () => {

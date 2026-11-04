@@ -20,8 +20,9 @@ import { downloadCsv } from "@/lib/csv-export";
 import { useAuth } from "@/lib/auth";
 import { isAdminView } from "@/lib/auth-role";
 import type { EmploymentStatus, WorkspaceSystemRole } from "@b2b-crm/contracts";
-import { BUSINESS_ROLE_OPTIONS, businessRoleFromMember, systemRoleFromCodes, SYSTEM_ROLE_LABELS, SYSTEM_ROLE_OPTIONS } from "@/lib/people-roles";
+import { businessRoleFromMember, systemRoleFromCodes, SYSTEM_ROLE_LABELS, SYSTEM_ROLE_OPTIONS } from "@/lib/people-roles";
 import { usePersistedFilter } from "@/lib/persisted-filters";
+import { useWorkspaceRoles } from "@/lib/business-roles";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -37,6 +38,7 @@ interface User {
   larkOpenId?: string;
   roleCodes: string[];
   role: string;
+  businessRoleCode?: string;
   systemRole: WorkspaceSystemRole;
   roleColor: string;
   status: UserStatus;
@@ -55,6 +57,7 @@ interface ApiUser {
   larkOpenId?: string;
   roleCodes: string[];
   systemRole?: WorkspaceSystemRole;
+  businessRoleCode?: string;
   resourceDisplayRole?: string;
   projectIds: string[];
   status: "active" | "suspended";
@@ -125,6 +128,7 @@ function mapApiUser(user: ApiUser, index: number): User {
     larkOpenId: user.larkOpenId,
     roleCodes: user.roleCodes,
     role: primaryRole,
+    businessRoleCode: user.businessRoleCode,
     systemRole,
     roleColor: ROLE_COLORS[primaryRole] ?? "#64748b",
     status: statusFromApi(user),
@@ -247,8 +251,12 @@ export default function UsersPage() {
     }
   };
 
+  // Role = the business role picked in Workspace access, named as in Admin › Setting; the old title only when none is picked.
+  const { businessRoleLabel } = useWorkspaceRoles();
+  const shownUsers = useMemo(() => users.map((user) => ({ ...user, role: businessRoleLabel(user.businessRoleCode) ?? user.role })), [users, businessRoleLabel]);
+
   const filtered = useMemo(() => {
-    let list = users.filter(u => matchesSearch(query, u.name, u.email, u.role, SYSTEM_ROLE_LABELS[u.systemRole], u.larkOpenId)
+    let list = shownUsers.filter(u => matchesSearch(query, u.name, u.email, u.role, SYSTEM_ROLE_LABELS[u.systemRole], u.larkOpenId)
       && matchesAny(statusFilter, u.status)
       && matchesAny(roleFilter, u.role)
       && matchesAny(systemRoleFilter, u.systemRole)
@@ -265,10 +273,10 @@ export default function UsersPage() {
     });
 
     return list;
-  }, [query, sortKey, sortDir, statusFilter, roleFilter, systemRoleFilter, departmentFilter, users]);
+  }, [query, sortKey, sortDir, statusFilter, roleFilter, systemRoleFilter, departmentFilter, shownUsers]);
 
   const statusOptions = useMemo(() => Object.entries(STATUS_CONFIG).map(([value, config]) => ({ value, label: config.label })), []);
-  const roleOptions = useMemo(() => BUSINESS_ROLE_OPTIONS.map((role) => ({ value: role, label: role })), []);
+  const roleOptions = useMemo(() => [...new Set(shownUsers.map((user) => user.role))].sort((a, b) => a.localeCompare(b, "vi")).map((role) => ({ value: role, label: role })), [shownUsers]);
   const systemRoleFilterOptions = useMemo(() => SYSTEM_ROLE_OPTIONS.map((option) => ({ value: option.value, label: option.label })), []);
   const departmentOptions = useMemo(() => [...new Set(users.map((user) => user.departmentCode).filter((code): code is string => Boolean(code)))].sort().map((code) => ({ value: code, label: code })), [users]);
   const periodChanged = period.from !== THIS_MONTH.from || period.to !== THIS_MONTH.to;

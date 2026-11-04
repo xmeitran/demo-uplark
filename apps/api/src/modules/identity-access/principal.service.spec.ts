@@ -136,6 +136,13 @@ describe("PrincipalService active session boundaries", () => {
     const { service } = fixture({ roleBindings: [] });
     await expect(service.resolveSessionToken("token")).rejects.toThrow("membership");
   });
+  it("adds the tenant-wide System Founder role on top of a membership, but never counts it as one", async () => {
+    const systemFounder = { id: "rb-sf", workspaceId: null, tenantKey: "tenant", role: { code: "SYSTEM_FOUNDER" } };
+    const member = fixture({ roleBindings: [{ id: "rb-1", workspaceId: "ws-1", tenantKey: "tenant", role: { code: "WORKSPACE_USER" } }, systemFounder] });
+    await expect(member.service.resolveSessionToken("token")).resolves.toMatchObject({ roleCodes: ["WORKSPACE_USER", "SYSTEM_FOUNDER"] });
+    await expect(fixture({ roleBindings: [systemFounder] }).service.resolveSessionToken("token")).rejects.toThrow("membership");
+    await expect(fixture({ roleBindings: [systemFounder] }).service.createSessionForUser("usr-1")).rejects.toThrow("membership");
+  });
   it("does not issue sessions before account MFA is verified", async () => {
     const { service, prisma } = fixture({ mfaEnabledAt: new Date() });
     await expect(service.createSessionForUser("usr-1")).rejects.toThrow("Multi-factor");

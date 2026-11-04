@@ -1,11 +1,12 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, UnauthorizedException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import { ADMIN_ROLE_CODES } from "@b2b-crm/contracts";
+import { ADMIN_ROLE_CODES, SYSTEM_FOUNDER_ROLE_CODE } from "@b2b-crm/contracts";
 import type { Prisma, User } from "@prisma/client";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { PrincipalService } from "./principal.service";
 import { TenantWorkspaceService } from "../tenant-workspace/tenant-workspace.service";
 import { lockWorkspaceAuth } from "./auth-lifecycle-lock";
+import { assertCanAddMembers } from "./role-change";
 import { AuthMailService } from "./auth-mail.service";
 import { AuthSecurityService, hashAuthToken, hashPassword, matchingTotpStep, newTotpSecret, randomAuthToken, verifyPassword } from "./auth-security.service";
 
@@ -72,16 +73,17 @@ export class NativeAuthService {
       await this.audit(this.prisma, "auth.login.rejected", user?.id);
       throw new UnauthorizedException(INVALID);
     }
-    let workspaceId = body.workspaceId ? stringInput(body.workspaceId, "workspaceId") : undefined;
-    if (!workspaceId) {
-      const membership = await this.prisma.roleBinding.findFirst({ where: { userId: user.id, workspace: { status: "active" }, startsAt: { lte: new Date() }, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] }, orderBy: { createdAt: "asc" } });
-      if (membership?.workspaceId) workspaceId = membership.workspaceId;
-      else {
-        const grant = await this.prisma.customerAccessGrant.findFirst({ where: { userId: user.id, workspace: { status: "active" }, startsAt: { lte: new Date() }, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] }, orderBy: { createdAt: "asc" } });
-        workspaceId = grant?.workspaceId;
-      }
-    }
+    const workspaceId = body.workspaceId ? stringInput(body.workspaceId, "workspaceId") : await this.memberWorkspaceId(user.id);
     return this.completeIdentityLogin(user.id, { workspaceId }, { ...metadata, authMethod: "password", expectedPasswordHash: user.passwordHash });
+  }
+  /** The organization a sign-in lands in: `preferredWorkspaceId` when the user is a member there, else their oldest active membership. */
+  async memberWorkspaceId(userId: string, preferredWorkspaceId?: string): Promise<string | undefined> {
+    const active = { workspace: { status: "active" }, startsAt: { lte: new Date() }, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] };
+    const where = { userId, ...active, ...(preferredWorkspaceId ? { workspaceId: preferredWorkspaceId } : {}) };
+    const membership = await this.prisma.roleBinding.findFirst({ where, orderBy: { createdAt: "asc" } })
+      ?? await this.prisma.customerAccessGrant.findFirst({ where, orderBy: { createdAt: "asc" } });
+    if (membership?.workspaceId) return membership.workspaceId;
+    return preferredWorkspaceId ? this.memberWorkspaceId(userId) : undefined;
   }
   async completeIdentityLogin(userId: string, workspaceInput?: WorkspaceInput, metadata: LoginMetadata = {}) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
@@ -289,6 +291,7 @@ export class NativeAuthService {
   }
   async createInvitation(authorization: string | undefined, body: any) {
     const { user: actor, principal } = await this.requireAdmin(authorization);
+    assertCanAddMembers(principal);
     await this.security.limit("invite", actor.id, 30);
     const email = emailInput(body?.email), roleCode = stringInput(body?.roleCode, "roleCode");
     const allowed = ["FOUNDER_GM", "WORKSPACE_ADMIN", "WORKSPACE_USER"];
@@ -318,7 +321,12 @@ export class NativeAuthService {
       where: { userId: invitation.invitedByUserId, workspaceId: invitation.workspaceId, user: { status: "ACTIVE" }, startsAt: { lte: new Date() }, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] },
       select: { role: { select: { code: true } } }
     })).map((binding) => binding.role.code);
-    if (!inviterRoles.some((code) => (ADMIN_ROLE_CODES as readonly string[]).includes(code)) || (invitation.roleCode === "FOUNDER_GM" && !inviterRoles.includes("FOUNDER_GM"))) {
+    // System Founder is held tenant-wide (no workspace), so it is looked up on its own.
+    const inviterIsSystemFounder = Boolean(await tx.roleBinding.findFirst({
+      where: { userId: invitation.invitedByUserId, workspaceId: null, role: { code: SYSTEM_FOUNDER_ROLE_CODE }, user: { status: "ACTIVE" }, startsAt: { lte: new Date() }, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] },
+      select: { id: true }
+    }));
+    if (!inviterIsSystemFounder || !inviterRoles.some((code) => (ADMIN_ROLE_CODES as readonly string[]).includes(code)) || (invitation.roleCode === "FOUNDER_GM" && !inviterRoles.includes("FOUNDER_GM"))) {
       throw new ForbiddenException("Lời mời không còn hiệu lực vì người mời không còn quyền mời. Hãy xin một lời mời mới.");
     }
   }

@@ -1,14 +1,36 @@
-import { Body, Controller, Get, Headers, Inject, Patch, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Headers, Inject, Param, Patch, Post, Query } from "@nestjs/common";
 import type { CreateWorkspaceTeamInput, SendWorkspaceReminderInput, UpdateWorkspaceReminderPolicyInput } from "@b2b-crm/contracts";
 import { PrincipalService } from "../identity-access/principal.service";
 import { WorkspaceAdminService } from "./workspace-admin.service";
+import { BusinessRolesService } from "./business-roles.service";
 
 @Controller("admin")
 export class WorkspaceAdminController {
   constructor(
     @Inject(WorkspaceAdminService) private readonly admin: WorkspaceAdminService,
-    @Inject(PrincipalService) private readonly principals: PrincipalService
+    @Inject(PrincipalService) private readonly principals: PrincipalService,
+    @Inject(BusinessRolesService) private readonly businessRoles: BusinessRolesService
   ) {}
+
+  @Get("business-roles")
+  async listBusinessRoles(@Headers("authorization") authorization?: string, @Query("principal") principalFallback?: string) {
+    return this.businessRoles.list(await this.principals.resolveFromAuthorization(authorization, principalFallback));
+  }
+
+  @Post("business-roles")
+  async createBusinessRole(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Body() body: any) {
+    return this.businessRoles.create(await this.principals.resolveFromAuthorization(authorization, principalFallback), body);
+  }
+
+  @Patch("business-roles/:code")
+  async updateBusinessRole(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("code") code: string, @Body() body: any) {
+    return this.businessRoles.update(await this.principals.resolveFromAuthorization(authorization, principalFallback), code, body);
+  }
+
+  @Delete("business-roles/:code")
+  async deleteBusinessRole(@Headers("authorization") authorization: string | undefined, @Query("principal") principalFallback: string | undefined, @Param("code") code: string) {
+    return this.businessRoles.remove(await this.principals.resolveFromAuthorization(authorization, principalFallback), code);
+  }
 
   @Get("overview")
   async overview(@Headers("authorization") authorization?: string, @Query("principal") principalFallback?: string) {

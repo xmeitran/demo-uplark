@@ -2,7 +2,7 @@ import { activeMembershipWhere } from "./active-membership";
 import { Inject, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import { lockUserAuth } from "./auth-lifecycle-lock";
 import { createHash, randomBytes } from "node:crypto";
-import { accountTypeOf, expandRoleCodes, type PrincipalContext } from "@b2b-crm/contracts";
+import { SYSTEM_FOUNDER_ROLE_CODE, accountTypeOf, expandRoleCodes, type PrincipalContext } from "@b2b-crm/contracts";
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { bearerToken } from "../../shared/http/request-context";
 import { TenantWorkspaceService, type WorkspaceContext } from "../tenant-workspace/tenant-workspace.service";
@@ -18,6 +18,8 @@ export interface SessionMetadata {
 }
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12;
+// System Founder is the one role held tenant-wide (no workspace); it rides along with a membership, never replaces one.
+const isTenantWideBinding = (binding: { workspaceId: string | null; role: { code: string } }) => binding.workspaceId === null && binding.role.code === SYSTEM_FOUNDER_ROLE_CODE;
 
 export function canUsePrincipalFallback({
   crmAllowPrincipalFallback = process.env.CRM_ALLOW_PRINCIPAL_FALLBACK,
@@ -99,6 +101,7 @@ export class PrincipalService {
     if (!scopedUser.roleBindings.length && !scopedUser.customerGrants.length) {
       throw new UnauthorizedException("Active workspace membership is required");
     }
+    scopedUser.roleBindings.push(...session.user.roleBindings.filter((binding) => binding.tenantKey === workspace.tenantKey && isTenantWideBinding(binding)));
     await this.prisma.portalSession.updateMany({
       where: { id: session.id, revokedAt: null }, data: { lastSeenAt: new Date() }
     });
@@ -118,12 +121,12 @@ export class PrincipalService {
     const user = await tx.user.findUnique({
       where: { id: userId },
       include: {
-        roleBindings: { where: { ...activeMembershipWhere(), tenantKey: workspace.tenantKey, workspaceId: workspace.workspaceId }, include: { role: true } },
+        roleBindings: { where: { ...activeMembershipWhere(), tenantKey: workspace.tenantKey, AND: { OR: [{ workspaceId: workspace.workspaceId }, { workspaceId: null, role: { code: SYSTEM_FOUNDER_ROLE_CODE } }] } }, include: { role: true } },
         customerGrants: { where: { workspaceId: workspace.workspaceId, startsAt: { lte: new Date() }, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] } }
       }
     });
     const currentWorkspace = await tx.tenantWorkspace.findUnique({ where: { id: workspace.workspaceId } });
-    if (!user || user.status !== "ACTIVE" || currentWorkspace?.status !== "active" || (!user.roleBindings.length && !user.customerGrants.length)) {
+    if (!user || user.status !== "ACTIVE" || currentWorkspace?.status !== "active" || (!user.roleBindings.some((binding) => !isTenantWideBinding(binding)) && !user.customerGrants.length)) {
       throw new UnauthorizedException("Active user and workspace membership are required");
     }
     if ((metadata.expectedPasswordHash !== undefined && user.passwordHash !== metadata.expectedPasswordHash)

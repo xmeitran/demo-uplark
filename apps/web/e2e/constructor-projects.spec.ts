@@ -692,6 +692,9 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     if (path === "/api/navigation") return json({ data: { availableFlaggedRoutes: ["/analytics"] } });
     if (path === "/api/notifications") return json({ data: [], meta: { unreadCount: 0 } });
     if (path === "/api/auth/native/capabilities") return json({ lark: false });
+    // Header organization switcher (shown only with 2+ organizations) and the Admin › Setting role names.
+    if (path === "/api/auth/native/workspaces") return json({ data: [] });
+    if (path === "/api/admin/business-roles") return json({ data: { systemRoles: [], businessRoles: [] } });
     // Reads added with the project warnings, the P&L tab and the staff profile: empty answers by default.
     if (path === "/api/project-warnings/counts") return json({ data: {} });
     if (path === "/api/project-participation") return json({ data: { userId: "", startDate: "", endDate: "", activeProjects: [], onHoldProjects: [] } });

@@ -41,6 +41,28 @@ describe("Lark authentication boundary", () => {
     expect(nativeAuth.completeIdentityLogin).toHaveBeenCalledWith("usr-1", expect.objectContaining({ workspaceId: "twk-foundation" }), { authMethod: "lark" });
   });
 
+  it("opens the member's own organization when they do not belong to the sign-in default", async () => {
+    const { service, nativeAuth } = makeService();
+    const { state } = await service.createAuthorizeUrl({ redirectUri });
+    mockProvider();
+    nativeAuth.memberWorkspaceId.mockResolvedValue("twk-other-org");
+    await service.completeCallback({ code: "code", state, redirectUri });
+    expect(nativeAuth.memberWorkspaceId).toHaveBeenCalledWith("usr-1", "twk-foundation");
+    expect(nativeAuth.completeIdentityLogin).toHaveBeenCalledWith("usr-1", { workspaceId: "twk-other-org" }, { authMethod: "lark" });
+  });
+
+  it("redeems an invitation in the organization that sent it, not the sign-in default", async () => {
+    const { createHash } = await import("node:crypto");
+    const { service, prisma, workspaces, nativeAuth } = makeService();
+    const invitationToken = "invite-from-org-b";
+    prisma.portalInvitation.findFirst.mockResolvedValue({ workspaceId: "twk-org-b" });
+    const { state } = await service.createAuthorizeUrl({ redirectUri, invitationTokenHash: createHash("sha256").update(invitationToken).digest("hex") });
+    mockProvider();
+    await service.completeCallback({ code: "code", state, redirectUri, invitationToken });
+    expect(workspaces.resolveWorkspace).toHaveBeenCalledWith({ workspaceId: "twk-org-b" });
+    expect(nativeAuth.acceptSsoInvitation).toHaveBeenCalled();
+  });
+
   it("rejects replayed state before provider calls", async () => {
     const { service, prisma } = makeService();
     const { state } = await service.createAuthorizeUrl({ redirectUri });
@@ -299,12 +321,17 @@ function makeService() {
     user: { findFirst: vi.fn().mockResolvedValue(user), findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([user]), update: vi.fn().mockResolvedValue(user) },
     roleBinding: { findFirst: vi.fn().mockResolvedValue({ id: "rb-1" }) },
     customerAccessGrant: { findFirst: vi.fn().mockResolvedValue(null) },
+    portalInvitation: { findFirst: vi.fn().mockResolvedValue({ workspaceId: "twk-foundation" }) },
     $transaction: vi.fn(async (callback: (transaction: typeof tx) => unknown) => callback(tx))
   };
   const workspaces = { resolveWorkspace: vi.fn().mockResolvedValue({ tenantKey: "prod", workspaceId: "twk-foundation", workspaceKey: "default" }) };
   const principals = { createSessionForUser: vi.fn() };
-  const nativeAuth = { acceptSsoInvitation: vi.fn().mockResolvedValue({ userId: "usr-1" }), completeIdentityLogin: vi.fn().mockResolvedValue({ token: "session-token", expiresAt: "future" }) };
-  return { service: new LarkAuthService(prisma as any, workspaces as any, principals as any, nativeAuth as any), prisma, principals, nativeAuth, tx };
+  const nativeAuth = {
+    acceptSsoInvitation: vi.fn().mockResolvedValue({ userId: "usr-1" }),
+    completeIdentityLogin: vi.fn().mockResolvedValue({ token: "session-token", expiresAt: "future" }),
+    memberWorkspaceId: vi.fn(async (_userId: string, preferred?: string) => preferred)
+  };
+  return { service: new LarkAuthService(prisma as any, workspaces as any, principals as any, nativeAuth as any), prisma, principals, nativeAuth, tx, workspaces };
 }
 function mockProvider() {
   vi.stubGlobal("fetch", vi.fn()

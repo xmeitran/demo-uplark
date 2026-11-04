@@ -18,6 +18,7 @@ import { HeaderLinkButton, PageHeader, pageMainClassName } from "@/components/pa
 import { fetchAllPages } from "@/lib/api-pages";
 import { PROJECT_STATUS_LABELS } from "@/lib/project-status";
 import { AppShell } from "@/components/constructor-x/app-shell";
+import { useWorkspaceRoles } from "@/lib/business-roles";
 import { businessRoleFromMember, systemRoleLabel } from "@/lib/people-roles";
 import { usePersistedFilter } from "@/lib/persisted-filters";
 import { StaffMonthlyCosts } from "@/components/pnl/staff-monthly-costs";
@@ -244,7 +245,10 @@ export default function UserProfilePage() {
     };
   }, [user?.id]);
 
+  const { businessRoleLabel } = useWorkspaceRoles();
   const primaryRole = businessRoleFromMember(user ?? {});
+  // Role = the business role picked in Workspace access below, named as in Admin › Setting; the old title only when none is picked.
+  const shownRole = businessRoleLabel(user?.businessRoleCode) ?? primaryRole;
   const workspaceRole: WorkspaceSystemRole = user?.systemRole ?? (user?.roleCodes.includes("FOUNDER_GM") ? "FOUNDER_GM" : user?.roleCodes.includes("WORKSPACE_ADMIN") ? "WORKSPACE_ADMIN" : "WORKSPACE_USER");
   const roleColor = ROLE_COLORS[primaryRole] ?? "#64748b";
   const status = user ? statusBadge(user) : null;
@@ -443,7 +447,7 @@ export default function UserProfilePage() {
                 <section className="rounded-2xl border border-border bg-card shadow-sm">
                   <h2 className="border-b border-border px-5 py-4 !text-sm font-bold text-foreground">Thuộc tính</h2>
                   <dl className="divide-y divide-border px-5">
-                    <InfoRow label="Role" value={primaryRole} />
+                    <InfoRow label="Role" value={shownRole} />
                     <InfoRow label="System role" value={systemRoleLabel(workspaceRole)} />
                     <InfoRow label="Lark User ID" value={user.larkOpenId ?? "Chưa liên kết"} mono />
                     <InfoRow label="Lark tenant" value={user.larkTenantKey ?? "Chưa liên kết"} mono />

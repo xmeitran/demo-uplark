@@ -437,6 +437,9 @@ function createMemoryPrisma({ lock = true } = {}) {
       findUnique: async ({ where }) => state.bindings.get(
         JSON.stringify(where.userId_roleId_tenantKey_workspaceId)
       ),
+      findFirst: async ({ where }) => [...state.bindings.values()].find((binding) =>
+        binding.userId === where.userId && binding.tenantKey === where.tenantKey && binding.workspaceId === where.workspaceId
+      ) ?? null,
       create: async ({ data }) => {
         state.businessWrites += 1;
         const key = JSON.stringify({
@@ -545,6 +548,31 @@ const applyConfig = {
   workspaceKey: "default",
   workspaceName: "Default Workspace"
 };
+
+test("a membership ended in the CRM stays ended on the next sync", async () => {
+  const prisma = createMemoryPrisma();
+  const directory = {
+    teams: [{ department_id: "CDS" }],
+    users: [{ user: { user_id: "u-1", open_id: "ou-1", name: "Member", email: "member@example.test", status: {} }, teamCode: "CDS", teamName: "CDS", teams: ["CDS"], roleCode: "SALES_OWNER" }],
+    warnings: []
+  };
+  const config = { apply: true, trigger: "manual", departmentId: "CDS", tenantKey: "prod", workspaceId: "twk-foundation", workspaceKey: "default", workspaceName: "Default Workspace" };
+
+  await syncCdsUsers(prisma, directory, config);
+  const [key] = prisma.state.bindings.keys();
+  const endsAt = new Date("2026-11-01T00:00:00Z");
+  prisma.state.bindings.set(key, { ...prisma.state.bindings.get(key), endsAt });
+  const second = await syncCdsUsers(prisma, directory, { ...config, trigger: "scheduled" });
+
+  assert.equal(second.rolesBound, 0);
+  assert.equal(prisma.state.bindings.get(key).endsAt, endsAt);
+
+  // Nor does a new sync role for the same person (their Lark department changed) bring them back.
+  const moved = { ...directory, users: [{ ...directory.users[0], roleCode: "DELIVERY_LEAD" }] };
+  const third = await syncCdsUsers(prisma, moved, { ...config, trigger: "scheduled" });
+  assert.equal(third.rolesBound, 0);
+  assert.equal(prisma.state.bindings.size, 1);
+});
 
 test("normalized email safely backfills canonical and open identities onto one User", async () => {
   const prisma = createMemoryPrisma();

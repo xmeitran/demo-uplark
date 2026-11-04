@@ -6,6 +6,7 @@ export const ADMIN_SECTIONS = [
   "reminders",
   "approval",
   "pnl-config",
+  "roles",
   "history"
 ] as const;
 

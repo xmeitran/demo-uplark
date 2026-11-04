@@ -351,7 +351,10 @@ export class WorkspaceAdminService {
     };
   }
 
-  /** Manual "Nhắc lại cho PM": the PMs picked in the schedule, else LARK_TASK_REMINDER_PM_OPEN_IDS (the worker's fallback). */
+  /**
+   * Manual "Nhắc lại cho PM": the PMs picked in the schedule, else LARK_TASK_REMINDER_PM_OPEN_IDS (the worker's fallback).
+   * Either way only members of this organization: the list names its people.
+   */
   private async pmRecipients(principal: PrincipalContext, tenantKey: string) {
     const record = await this.policyRecord(principal);
     const picked = record ? mapPolicy(record).slots.find((slot) => slot.slot === "pm_follow_up")?.recipientUserIds ?? [] : [];
@@ -360,6 +363,7 @@ export class WorkspaceAdminService {
     return this.prisma.user.findMany({
       where: {
         status: "ACTIVE",
+        roleBindings: { some: { workspaceId: principal.workspaceId, ...activeMembershipWhere() } },
         ...(picked.length ? { id: { in: picked } } : { identities: { some: { provider: "lark", providerUserId: { in: openIds } } } })
       },
       select: {
@@ -898,7 +902,7 @@ export class WorkspaceAdminService {
     const slots = parseSlots(input.slots);
     const recipientUserIds = slots.flatMap((slot) => slot.recipientUserIds ?? []);
     if (recipientUserIds.length) {
-      const found = await this.prisma.user.count({ where: { id: { in: recipientUserIds }, status: "ACTIVE", subjectType: "INTERNAL_USER" } });
+      const found = await this.prisma.user.count({ where: { id: { in: recipientUserIds }, status: "ACTIVE", subjectType: "INTERNAL_USER", roleBindings: { some: { workspaceId: principal.workspaceId, ...activeMembershipWhere() } } } });
       if (found !== recipientUserIds.length) throw new BadRequestException("Người nhận nhắc PM không tồn tại hoặc đã bị khóa.");
     }
     if (input.excludedUserIds !== undefined && (!Array.isArray(input.excludedUserIds) || input.excludedUserIds.length > 1000 || input.excludedUserIds.some((id) => typeof id !== "string" || !id))) {

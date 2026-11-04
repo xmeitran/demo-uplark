@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { TenantWorkspaceService } from "./tenant-workspace.service";
+import { ForbiddenException } from "@nestjs/common";
+import { TenantWorkspaceService, organizationKey } from "./tenant-workspace.service";
 
 describe("TenantWorkspaceService", () => {
   it("creates the configured default workspace when it is missing", async () => {
@@ -56,3 +57,34 @@ it("never reactivates an existing default workspace during resolution", async ()
   await expect(service.resolveWorkspace({ tenantKey: "prod", workspaceKey: "default" })).rejects.toThrow("inactive");
   expect(prisma.tenantWorkspace.upsert).not.toHaveBeenCalled();
 });
+
+describe("organizations", () => {
+  it("lets only System Founder manage organizations", async () => {
+    const prisma = { tenantWorkspace: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() } } as any;
+    const service = new TenantWorkspaceService(prisma);
+    const founderGm = { tenantKey: "prod", workspaceId: "twk-foundation", roleCodes: ["FOUNDER_GM", "WORKSPACE_ADMIN"] } as any;
+    await expect(service.listOrganizations(founderGm)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.createOrganization(founderGm, { name: "Org B" })).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.setOrganizationMember(founderGm, "twk-b", { user: "HN454", systemRole: "FOUNDER_GM" })).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.tenantWorkspace.create).not.toHaveBeenCalled();
+  });
+
+  it("keys an organization by its name without accents", () => {
+    expect(organizationKey("Công ty Đông Á  #2")).toBe("cong-ty-dong-a-2");
+    expect(organizationKey("!!!")).toBe("org");
+  });
+
+  it("never stops the Lark sign-in organization, and a founder cannot remove themselves from the one they work in", async () => {
+    const founder = { tenantKey: "prod", workspaceId: "twk-b", subjectId: "usr-founder", roleCodes: ["SYSTEM_FOUNDER"] } as any;
+    const prisma = {
+      tenantWorkspace: { findFirst: vi.fn(async ({ where }: any) => ({ id: where.id, tenantKey: "prod", workspaceKey: where.id === "twk-foundation" ? "default" : "org-b", name: "Org", status: "active" })), update: vi.fn() },
+      $transaction: vi.fn()
+    } as any;
+    const service = new TenantWorkspaceService(prisma);
+    await expect(service.updateOrganization(founder, "twk-foundation", { status: "inactive" })).rejects.toThrow("mặc định");
+    await expect(service.removeOrganizationMember(founder, "twk-b", "usr-founder")).rejects.toThrow("Không thể tự gỡ");
+    expect(prisma.tenantWorkspace.update).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+

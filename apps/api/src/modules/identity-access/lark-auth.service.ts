@@ -153,20 +153,22 @@ export class LarkAuthService {
       stage = "fetch Lark user profile";
       const profile = await this.fetchUserInfo(token.accessToken);
       stage = "resolve workspace";
-      const workspace = await this.workspaces.resolveWorkspace({
-        tenantKey: state.tenantKey,
-        workspaceKey: state.workspaceKey
-      });
+      // An invitation belongs to the organization that sent it; any other sign-in starts from the default workspace.
+      const invitation = invitationTokenHash
+        ? await this.prisma.portalInvitation.findFirst({ where: { tokenHash: invitationTokenHash, tenantKey: state.tenantKey }, select: { workspaceId: true } })
+        : null;
+      const workspace = await this.workspaces.resolveWorkspace(invitation
+        ? { workspaceId: invitation.workspaceId }
+        : { tenantKey: state.tenantKey, workspaceKey: state.workspaceKey });
       this.assertLarkTenantAllowed(profile.tenantKey);
       stage = "resolve CRM user";
       const userId = input.invitationToken
         ? (await this.nativeAuth.acceptSsoInvitation(input.invitationToken, profile, workspace)).userId
         : (await this.resolveUserFromProfile(profile, workspace)).id;
       stage = "create CRM session";
+      // A member of another organization only (not the sign-in default) lands in their own organization.
       const session = await this.nativeAuth.completeIdentityLogin(userId, {
-        tenantKey: workspace.tenantKey,
-        workspaceId: workspace.workspaceId,
-        workspaceKey: workspace.workspaceKey
+        workspaceId: await this.nativeAuth.memberWorkspaceId(userId, workspace.workspaceId) ?? workspace.workspaceId
       }, { authMethod: "lark" });
 
       return {
@@ -522,10 +524,11 @@ export class LarkAuthService {
     });
   }
 
+  /** A membership in any active organization of this tenant will do; the callback then picks which one to open. */
   private async requireActiveMembership(user: { id: string; status: string }, workspace: WorkspaceContext) {
     if (user.status !== "ACTIVE") throw new ForbiddenException("Account is inactive");
-    const membership = await this.prisma.roleBinding.findFirst({ where: { userId: user.id, workspaceId: workspace.workspaceId, tenantKey: workspace.tenantKey, ...activeMembershipWhere() } });
-    const grant = membership ? undefined : await this.prisma.customerAccessGrant.findFirst({ where: { userId: user.id, workspaceId: workspace.workspaceId, startsAt: { lte: new Date() }, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] } });
+    const membership = await this.prisma.roleBinding.findFirst({ where: { userId: user.id, tenantKey: workspace.tenantKey, workspace: { status: "active" }, ...activeMembershipWhere() } });
+    const grant = membership ? undefined : await this.prisma.customerAccessGrant.findFirst({ where: { userId: user.id, workspace: { status: "active", tenantKey: workspace.tenantKey }, startsAt: { lte: new Date() }, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] } });
     if (!membership && !grant) throw new ForbiddenException("Active workspace membership is required");
   }
 

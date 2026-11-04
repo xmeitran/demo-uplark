@@ -561,16 +561,13 @@ export async function syncCdsUsers(prisma, directory, config) {
 
       const role = roleCache.get(row.roleCode) ?? (await ensureRole(tx, row.roleCode));
       roleCache.set(row.roleCode, role);
-      const bindingWhere = {
-        userId_roleId_tenantKey_workspaceId: {
-          userId: user.id,
-          roleId: role.id,
-          tenantKey: config.tenantKey,
-          workspaceId: config.workspaceId
-        }
-      };
-      const binding = await tx.roleBinding.findUnique({ where: bindingWhere });
-      if (!binding) {
+      // Anyone with a membership row in the workspace, active or ended, is managed in the CRM (Admin › Users, Tổ chức):
+      // the sync only enrolls people who were never in it, so a removal or a role change made there is never undone.
+      const known = await tx.roleBinding.findFirst({
+        where: { userId: user.id, tenantKey: config.tenantKey, workspaceId: config.workspaceId },
+        select: { id: true }
+      });
+      if (!known) {
         await tx.roleBinding.create({
           data: {
             userId: user.id,
@@ -578,12 +575,6 @@ export async function syncCdsUsers(prisma, directory, config) {
             tenantKey: config.tenantKey,
             workspaceId: config.workspaceId
           }
-        });
-        summary.rolesBound += 1;
-      } else if (binding.endsAt) {
-        await tx.roleBinding.update({
-          where: bindingWhere,
-          data: { endsAt: null }
         });
         summary.rolesBound += 1;
       }

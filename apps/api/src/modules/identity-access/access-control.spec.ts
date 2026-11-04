@@ -128,7 +128,9 @@ describe("granting a business role (Users › Vai trò nghiệp vụ)", () => {
     const tx: any = {
       $executeRaw: vi.fn(),
       user: { findFirst: vi.fn().mockResolvedValue({ id: "usr-target", status: "ACTIVE", resourceProfile: null, roleBindings: bindings }), update: vi.fn().mockResolvedValue({ id: "usr-target", status: "ACTIVE" }), count: vi.fn().mockResolvedValue(1) },
-      role: { findUnique: vi.fn(async ({ where }: any) => ({ id: `role-${where.code}`, code: where.code })), findUniqueOrThrow: vi.fn(async ({ where }: any) => ({ id: `role-${where.code}`, code: where.code })) },
+      // BR_TEAM_LEAD is an organization's own role (Admin › Setting) carrying PM's permissions.
+      role: { findUnique: vi.fn(async ({ where }: any) => ({ id: `role-${where.code}`, code: where.code, baseRoleCode: where.code === "BR_TEAM_LEAD" ? "PM" : null })), findUniqueOrThrow: vi.fn(async ({ where }: any) => ({ id: `role-${where.code}`, code: where.code })) },
+      workspaceBusinessRole: { findUnique: vi.fn(async ({ where }: any) => (where.workspaceId_code.code === "BR_TEAM_LEAD" && where.workspaceId_code.workspaceId === "twk-1" ? { code: "BR_TEAM_LEAD", label: "Team lead" } : null)) },
       roleBinding: { findFirst: vi.fn(async ({ where }: any) => (where.role?.code?.in ? (where.role.code.in.some((code: string) => actor.roleCodes.includes(code)) ? { id: "rb-actor" } : null) : null)), updateMany: vi.fn(), upsert: vi.fn(), count: vi.fn().mockResolvedValue(0) },
       portalSession: { updateMany: vi.fn() },
       resourceProfile: { upsert: vi.fn().mockResolvedValue({ displayRole: null }) },
@@ -157,8 +159,23 @@ describe("granting a business role (Users › Vai trò nghiệp vụ)", () => {
     const { service, tx, bound } = setup({ roleCodes: ["FOUNDER_GM"] }, ["FOUNDER_GM", "DELIVERY_LEAD", "BD"]);
     await service.updateResourceProfile("Bearer a", "usr-target", { businessRoleCode: "DX" });
     expect(tx.roleBinding.updateMany).toHaveBeenCalledTimes(1);
-    expect(tx.roleBinding.updateMany.mock.calls[0][0].where.role).toEqual({ code: { in: BUSINESS_ROLE_CODES } });
+    expect(tx.roleBinding.updateMany.mock.calls[0][0].where.role).toEqual({ OR: [{ code: { in: BUSINESS_ROLE_CODES } }, { baseRoleCode: { not: null } }] });
     expect(bound()).toEqual(["role-DX"]);
+  });
+
+  it("an organization's own role is bound with the built-in role it carries, so permissions read the built-in code", async () => {
+    const { service, audits, bound } = setup({ roleCodes: ["WORKSPACE_ADMIN"] });
+    await service.updateResourceProfile("Bearer a", "usr-target", { businessRoleCode: "BR_TEAM_LEAD" });
+    expect(bound()).toEqual(["role-PM", "role-BR_TEAM_LEAD", "role-COST_VIEW", "role-COST_EDIT", "role-COST_APPROVE", "role-COST_EXPORT"]);
+    expect(audits().find((audit: any) => audit.action === "auth.member.business_role_changed")).toMatchObject({ after: { businessRoleCode: "BR_TEAM_LEAD", baseRoleCode: "PM", accountType: "ADMIN" } });
+    // Holding it already is a no-op.
+    const again = setup({ roleCodes: ["WORKSPACE_ADMIN"] }, ["PM", "BR_TEAM_LEAD"]);
+    again.tx.user.findFirst.mockResolvedValue({ id: "usr-target", status: "ACTIVE", resourceProfile: null, roleBindings: [
+      { id: "rb-pm", role: { code: "PM", baseRoleCode: null }, startsAt: new Date(0), endsAt: null },
+      { id: "rb-own", role: { code: "BR_TEAM_LEAD", baseRoleCode: "PM" }, startsAt: new Date(0), endsAt: null }
+    ] });
+    await again.service.updateResourceProfile("Bearer a", "usr-target", { businessRoleCode: "BR_TEAM_LEAD" });
+    expect(again.bound()).toEqual([]);
   });
 
   it("a business role held by an Admin (PM) is enough to grant; a User account (BD, Delivery Lead) cannot grant anything", async () => {
@@ -193,7 +210,9 @@ describe("granting a business role (Users › Vai trò nghiệp vụ)", () => {
     const admin = restore(["WORKSPACE_ADMIN"]);
     await expect(admin.service.updateResourceProfile("Bearer a", "usr-target", { employmentStatus: "ACTIVE" })).rejects.toBeInstanceOf(ForbiddenException);
     expect(admin.tx.roleBinding.upsert).not.toHaveBeenCalled();
-    await expect(restore(["FOUNDER_GM"]).service.updateResourceProfile("Bearer a", "usr-target", { employmentStatus: "ACTIVE" })).resolves.toBeTruthy();
+    // Restoring a membership adds the person back, which is System Founder's call (2026-11-04).
+    await expect(restore(["FOUNDER_GM"]).service.updateResourceProfile("Bearer a", "usr-target", { employmentStatus: "ACTIVE" })).rejects.toThrow("System Founder");
+    await expect(restore(["FOUNDER_GM", "SYSTEM_FOUNDER"]).service.updateResourceProfile("Bearer a", "usr-target", { employmentStatus: "ACTIVE" })).resolves.toBeTruthy();
   });
 
   it("no self-escalation: only a Founder/GM changes their own business role", async () => {

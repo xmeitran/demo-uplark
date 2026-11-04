@@ -348,9 +348,11 @@ async function projectPics(prisma: PrismaClient, workspaceId: string, tenantKey:
 }
 
 /** Active users' Lark open_id (undefined when they have none), keyed by user id. */
-async function larkOpenIds(prisma: PrismaClient, tenantKey: string, userIds: string[]) {
+async function larkOpenIds(prisma: PrismaClient, tenantKey: string, userIds: string[], memberOfWorkspaceId?: string) {
+  const now = new Date();
+  const membership = memberOfWorkspaceId ? { roleBindings: { some: { workspaceId: memberOfWorkspaceId, startsAt: { lte: now }, OR: [{ endsAt: null }, { endsAt: { gt: now } }] } } } : {};
   const users = userIds.length ? await prisma.user.findMany({
-    where: { id: { in: userIds }, status: "ACTIVE" },
+    where: { id: { in: userIds }, status: "ACTIVE", ...membership },
     select: { id: true, identities: { where: { provider: "lark", tenantKey }, select: { providerUserId: true }, take: 1 } }
   }) : [];
   return new Map(users.map((user) => [user.id, user.identities[0]?.providerUserId]));
@@ -434,7 +436,8 @@ export async function runTaskReminderSlot(input: {
     let pmConfig = options.config;
     if (options.pmUserIds?.length) {
       const workspace = await options.prisma.tenantWorkspace.findUnique({ where: { id: options.config.workspaceId }, select: { tenantKey: true } });
-      const openIds = await larkOpenIds(options.prisma, workspace?.tenantKey ?? "", options.pmUserIds);
+      // A PM picked earlier who has since left this organization gets nothing.
+      const openIds = await larkOpenIds(options.prisma, workspace?.tenantKey ?? "", options.pmUserIds, options.config.workspaceId);
       // The PMs picked in Admin who have a Lark account; none of them reachable means nobody, not every project's PIC.
       pmConfig = { ...options.config, pmOpenIds: options.pmUserIds.flatMap((id) => openIds.get(id) ?? []) };
       if (!pmConfig.pmOpenIds.length) return { issues: issues.length, sent: 0, skipped: "pm_recipients_without_lark" };

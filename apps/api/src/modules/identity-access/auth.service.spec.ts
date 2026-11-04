@@ -38,8 +38,14 @@ describe("AuthService admin user management", () => {
     expect(prisma.user.findMany).not.toHaveBeenCalled();
   });
 
+  it("only a System Founder adds people: a Founder/GM without it is refused before anything is written", async () => {
+    const { service, prisma } = makeService();
+    await expect(service.createInternalUser("Bearer founder-session", { email: "new.user@example.com", displayName: "New User", roleCode: "SALES_OWNER" } as any)).rejects.toThrow("System Founder");
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
   it("creates workspace-scoped customer grants for internal users", async () => {
-    const { service, prisma, workspaces } = makeService();
+    const { service, prisma, workspaces } = makeService({ principal: systemFounder });
 
     await expect(
       service.createInternalUser("Bearer founder-session", {
@@ -86,6 +92,7 @@ describe("AuthService admin user management", () => {
 
   it("keeps user, role-binding, and grant counts unchanged when the grant target is outside the workspace", async () => {
     const { service, prisma } = makeService({
+      principal: systemFounder,
       account: null
     });
     const before = await readMutationCounts(prisma);
@@ -110,6 +117,7 @@ describe("AuthService admin user management", () => {
 
   it("adds a workspace membership without overwriting an existing global identity owned by another workspace", async () => {
     const { service, prisma } = makeService({
+      principal: systemFounder,
       existingUser: {
         id: "usr-shared",
         email: "shared.user@example.com",
@@ -179,6 +187,8 @@ describe("AuthService admin user management", () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });
+
+const systemFounder = { subjectType: "internal_user", roleCodes: ["FOUNDER_GM", "SYSTEM_FOUNDER"] };
 
 function makeService({
   principal = { subjectType: "internal_user", roleCodes: ["FOUNDER_GM"] },
@@ -339,7 +349,7 @@ describe("AuthService membership lifecycle", () => {
     expect(prisma.user.update).not.toHaveBeenCalled();
   });
   it("does not implicitly reactivate a suspended identity through create-user", async () => {
-    const { service, prisma } = makeService({ existingUser: { id: "usr-old", status: "SUSPENDED", roleBindings: [] } });
+    const { service, prisma } = makeService({ principal: systemFounder, existingUser: { id: "usr-old", status: "SUSPENDED", roleBindings: [] } });
     await expect(service.createInternalUser("Bearer founder", { email: "old@example.com", displayName: "Old", roleCode: "SALES_OWNER" } as any)).rejects.toThrow("explicit reactivation");
     expect(prisma.user.update).not.toHaveBeenCalled();
   });

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "@/lib/auth";
-import { isAdminView } from "@/lib/auth-role";
+import { hasAnyAuthRole, isAdminView } from "@/lib/auth-role";
 import { authRequest } from "@/lib/native-auth-client";
 import { CustomDropdown } from "@/components/crm-workspace/tasks-workbench";
 import { UserPlus, X } from "lucide-react";
@@ -9,7 +9,8 @@ import { ModalLayer } from "@/components/modal-layer";
 import { CrmMultiSelect } from "@/components/crm-workspace/crm-select";
 import { MANUAL_WORKSPACE_ROLE_OPTIONS } from "@/lib/people-roles";
 import { AuthField, authButton, authInput } from "./account-form";
-import { BUSINESS_ROLE_CATALOGUE, accountTypeOf, type EmploymentStatus } from "@b2b-crm/contracts";
+import { BUSINESS_ROLE_CATALOGUE, SYSTEM_FOUNDER_ROLE_CODE, accountTypeOf, type EmploymentStatus } from "@b2b-crm/contracts";
+import { useWorkspaceRoles } from "@/lib/business-roles";
 const invitationRoles = MANUAL_WORKSPACE_ROLE_OPTIONS;
 const workspaceRoles = MANUAL_WORKSPACE_ROLE_OPTIONS;
 type Invitation = {id:string;email:string;displayName?:string;roleCode:string;status:string;expiresAt:string};
@@ -17,7 +18,7 @@ export function AdminInvitations() {
   const {user} = useAuth(); const [open,setOpen] = useState(false); const [rows,setRows] = useState<Invitation[]>([]);
   const [email,setEmail] = useState(""); const [displayName,setName] = useState(""); const [roleCode,setRole] = useState("WORKSPACE_USER");
   const [busy,setBusy] = useState(false); const [error,setError] = useState(""); const [message,setMessage] = useState("");
-  const allowed = user?.role === "FOUNDER_GM" && isAdminView(user);
+  const allowed = hasAnyAuthRole(user, [SYSTEM_FOUNDER_ROLE_CODE]) && isAdminView(user);
   async function load(){ const r = await authRequest<{data:Invitation[]}>("admin/invitations"); setRows(r.data); }
   useEffect(() => {if(open && allowed) void load().catch(e=>setError(e.message));},[open,allowed]);
   async function create(e:FormEvent){e.preventDefault();setBusy(true);setError("");setMessage("");try{await authRequest("admin/invitations",{email,displayName,roleCode});setEmail("");setName("");setMessage("Invitation created. Delivery is handled by your workspace email service.");await load();}catch(e){setError(e instanceof Error?e.message:"Unable to invite.");}finally{setBusy(false);}}
@@ -49,19 +50,25 @@ const employmentStatusOptions = [
 
 // Written the way the rules document writes it: "Loại tài khoản - vai trò" (Admin - PM, User - Dx…).
 const NO_BUSINESS_ROLE = "NONE";
-const businessRoleOptions = [{ value: NO_BUSINESS_ROLE, label: "Chưa gán" }, ...BUSINESS_ROLE_CATALOGUE.map((role) => ({ value: role.code, label: `${role.accountType === "ADMIN" ? "Admin" : "User"} - ${role.label}` }))];
+const BUILT_IN_BUSINESS_ROLES = BUSINESS_ROLE_CATALOGUE.map((role) => ({ code: role.code, label: role.label, baseRoleCode: role.code, accountType: role.accountType, hidden: false }));
 const costPermissionOptions = [{ value: "COST_VIEW", label: "Xem" }, { value: "COST_EDIT", label: "Sửa" }, { value: "COST_APPROVE", label: "Duyệt" }, { value: "COST_EXPORT", label: "Xuất" }];
 const ALL_COST_PERMISSIONS = ["COST_VIEW", "COST_EDIT", "COST_APPROVE", "COST_EXPORT"];
 const controlLabel = "block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
 
 export function AdminMemberControls({userId,status,currentRole,employmentStatus="ACTIVE",businessRoleCode,costPermissionCodes=[]}:{userId:string;status:string;currentRole:string;employmentStatus?:EmploymentStatus;businessRoleCode?:string;costPermissionCodes?:readonly string[]}) {
   const {user}=useAuth();
+  // Restoring a removed member adds them back: System Founder only (the API checks it too).
+  const canAddMembers=hasAnyAuthRole(user,[SYSTEM_FOUNDER_ROLE_CODE]);
   const [roleCode,setRole]=useState(currentRole);
   const [workStatus,setWorkStatus]=useState<EmploymentStatus>(employmentStatus);
   const savedBusinessRole=businessRoleCode??NO_BUSINESS_ROLE;
   const [businessRole,setBusinessRole]=useState(savedBusinessRole);
+  // The organization's list from Admin › Setting (renamed, hidden and own roles); hidden ones stay listed for whoever holds them.
+  const {roles}=useWorkspaceRoles();
+  const businessRoles=roles?.businessRoles??BUILT_IN_BUSINESS_ROLES;
+  const businessRoleOptions=[{ value: NO_BUSINESS_ROLE, label: "Chưa gán" }, ...businessRoles.filter((role)=>!role.hidden||role.code===savedBusinessRole).map((role)=>({ value: role.code, label: `${role.accountType === "ADMIN" ? "Admin" : "User"} - ${role.label}` }))];
   // Account type is derived from the roles, never picked: an Admin role on either select makes the account an Admin.
-  const accountType=accountTypeOf([roleCode,businessRole]);
+  const accountType=accountTypeOf([roleCode,businessRoles.find((role)=>role.code===businessRole)?.baseRoleCode??businessRole]);
   // Founder/GM always has full cost access; everyone else needs an explicit COST_* grant.
   const [costCodes,setCostCodes]=useState<string[]>(currentRole==="FOUNDER_GM"?ALL_COST_PERMISSIONS:[...costPermissionCodes]);
   const [costMessage,setCostMessage]=useState("");
@@ -125,7 +132,8 @@ export function AdminMemberControls({userId,status,currentRole,employmentStatus=
     </div>
     <div className="mt-4 grid gap-2 sm:grid-cols-2">
       <button className={authButton} disabled={busy||(roleCode===currentRole&&workStatus===employmentStatus&&businessRole===savedBusinessRole)} onClick={()=>setConfirm("profile")}>{busy?"Đang lưu…":"Lưu thay đổi"}</button>
-      <button disabled={busy} className="min-h-11 rounded-xl border border-border px-3 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted" onClick={()=>setConfirm(status==="active"?"deactivate":"reactivate")}>{status==="active"?"Tạm khóa truy cập":"Khôi phục truy cập"}</button>
+      {status==="active"||canAddMembers?<button disabled={busy} className="min-h-11 rounded-xl border border-border px-3 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted" onClick={()=>setConfirm(status==="active"?"deactivate":"reactivate")}>{status==="active"?"Tạm khóa truy cập":"Khôi phục truy cập"}</button>
+        :<p className="self-center text-xs text-muted-foreground">Khôi phục truy cập: nhờ System Founder (tab Tổ chức).</p>}
     </div>
     <button disabled={busy} className="mt-2 min-h-10 w-full rounded-xl px-3 text-xs font-semibold text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onClick={()=>setConfirm("revoke-sessions")}>Thu hồi tất cả session</button>
     <div className="mt-4 space-y-2 border-t border-border pt-4">

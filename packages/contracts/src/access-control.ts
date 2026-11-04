@@ -54,6 +54,26 @@ const PIC_CHANGE_ROLE_CODES = new Set(["PM", "DX_DIRECTOR", "FOUNDER_GM", "WORKS
 /** 7.7: "mặc định PM, BD Lead, Dx Director" hold the cost permission group. */
 export const DEFAULT_COST_PERMISSION_ROLE_CODES: readonly string[] = ["PM", "BD_LEAD", "DX_DIRECTOR"];
 
+/**
+ * Held tenant-wide (a RoleBinding with no workspace), on top of a normal membership: creates organizations — each one a
+ * workspace whose data no other organization sees — and decides who belongs to each.
+ */
+export const SYSTEM_FOUNDER_ROLE_CODE = "SYSTEM_FOUNDER";
+
+/** Admin › Setting: one business role (Vai trò nghiệp vụ) of an organization, built-in or its own. */
+export interface WorkspaceBusinessRoleOption {
+  code: string;
+  label: string;
+  /** Built-in role whose permissions it carries: itself for a built-in role. */
+  baseRoleCode: string;
+  builtIn: boolean;
+  hidden: boolean;
+  accountType: AccountType;
+  memberCount: number;
+}
+export interface WorkspaceSystemRoleOption { code: string; label: string; accountType: AccountType; memberCount: number }
+export interface WorkspaceRolesResponse { data: { systemRoles: WorkspaceSystemRoleOption[]; businessRoles: WorkspaceBusinessRoleOption[] } }
+
 export function roleCatalogueEntry(code: string) {
   return CATALOGUE_BY_CODE.get(code);
 }

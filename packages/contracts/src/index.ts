@@ -2853,8 +2853,8 @@ export interface AdminAccessMemberSummary {
   workspaceId?: string;
   roleCodes: string[];
   systemRole?: WorkspaceSystemRole;
-  /** The business role bound to the account (a real role binding, not the displayRole label). */
-  businessRoleCode?: BusinessRoleCode;
+  /** The business role bound to the account (a real role binding, not the displayRole label): built-in, or the organization's own (Admin › Setting). */
+  businessRoleCode?: string;
   accountType?: AccountType;
   costPermissionCodes?: CostPermissionCode[];
   employmentStatus?: EmploymentStatus;

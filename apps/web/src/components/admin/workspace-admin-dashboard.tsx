@@ -59,6 +59,7 @@ import { usePersistedFilter } from "@/lib/persisted-filters";
 import { SystemParametersPanel, WarningRecordsPanel } from "./alert-admin-panels";
 import { PnlSetupPage } from "@/components/pnl/pnl-setup-page";
 import { adminSectionFromHash, type AdminSection } from "./admin-sections";
+import { RoleSettingsPanel } from "./role-settings-panel";
 
 type HistoryEntries = AdminHistoryResponse["data"];
 
@@ -289,6 +290,7 @@ export function WorkspaceAdminDashboard() {
                   { id: "reminders" as AdminSection, label: "Nhắc Lark", description: "Lịch gửi & người nhận", icon: <BellRing className="h-4 w-4" /> },
                   { id: "approval" as AdminSection, label: "Phê duyệt", description: "Hồ sơ chờ duyệt", icon: <ShieldCheck className="h-4 w-4" /> },
                   { id: "pnl-config" as AdminSection, label: "Thiết lập P&L", description: "Khoản mục & tham số", icon: <Settings2 className="h-4 w-4" /> },
+                  { id: "roles" as AdminSection, label: "Setting", description: "Vai trò & quyền", icon: <Users className="h-4 w-4" /> },
                   { id: "history" as AdminSection, label: "Lịch sử", description: "Audit hoạt động admin", icon: <Clock3 className="h-4 w-4" /> }
                 ]}
                 value={section}
@@ -311,6 +313,7 @@ export function WorkspaceAdminDashboard() {
             {section === "reminders" ? <ReminderPolicyPanel policy={policy} saving={saving} sending={sending} recipients={reminderRecipients} onSave={() => void savePolicy()} onSaveExcluded={(excludedUserIds) => policy ? savePolicy({ ...policy, excludedUserIds }) : Promise.resolve()} onSendManual={(input) => void sendManualReminder(input)} onUpdateSlot={updateSlot} onSetPolicy={setPolicy} /> : null}
             {section === "approval" ? <ApprovalPanel approvalHistory={approvalHistoryEntries} historyLoading={loading} onRefreshHistory={() => void load()} onApproved={() => void load()} /> : null}
             {section === "pnl-config" ? <PnlSetupPage embedded /> : null}
+            {section === "roles" ? <RoleSettingsPanel /> : null}
             {section === "history" ? <AdminHistoryLog people={reminderRecipients.users.map((person) => ({ id: person.id, name: person.displayName, email: person.email, avatarUrl: person.avatarUrl }))} /> : null}
           </div>
         </div>

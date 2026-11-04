@@ -37,6 +37,8 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
   // keep it out of the generic production navigation list while allowing the
   // protected page/API to render for authorized workspace administrators.
   { id: "admin", href: "/admin", label: "Admin", classification: "detail", shells: ["constructor"], navGroup: "Settings" },
+  // Linked by the sidebar only for System Founder, like Admin.
+  { id: "organizations", href: "/organizations", label: "Tổ chức", classification: "detail", shells: ["constructor"], navGroup: "Settings" },
   { id: "analytics", href: "/analytics", label: "Analytics", classification: "visible", shells: ["constructor"], navGroup: "Quản trị", productionFlag: "WORKFORCE_ANALYTICS_GA_ENABLED" },
 
   // These modules are backed by live APIs and are part of the demo's primary

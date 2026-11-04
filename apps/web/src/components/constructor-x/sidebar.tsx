@@ -27,11 +27,13 @@ import {
   ShieldCheck,
   LogOut,
   ArrowLeftRight,
+  Network,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth";
-import { isAdminView } from "@/lib/auth-role";
+import { hasAnyAuthRole, isAdminView } from "@/lib/auth-role";
+import { SYSTEM_FOUNDER_ROLE_CODE } from "@b2b-crm/contracts";
 import { APP_NAME, AppBrandLogo } from "@/components/app-brand";
 import {
   FRONTEND_STORE_EVENT,
@@ -195,6 +197,7 @@ export function Sidebar({ activeRoute = "/", onCreateProjectClick, variant = "de
   // 7.7: an Admin account has an admin view and a user view; the user view hides the Admin screens.
   const isAdminAccount = user?.accountType === "ADMIN";
   const isWorkspaceAdmin = isAdminView(user);
+  const isSystemFounder = hasAnyAuthRole(user, [SYSTEM_FOUNDER_ROLE_CODE]);
   const [viewModeError, setViewModeError] = useState("");
   const switchViewMode = async () => {
     setViewModeError("");
@@ -607,6 +610,23 @@ export function Sidebar({ activeRoute = "/", onCreateProjectClick, variant = "de
               <div className={`flex items-center gap-3 ${collapsed ? "justify-center" : compactRowClass}`}>
                 <ShieldCheck className="w-4 h-4 shrink-0" />
                 {!collapsed && <span className={`text-[13.5px] ${expandedInlineClass}`}>Admin</span>}
+              </div>
+            </div>
+          </Link>
+        ) : null}
+
+        {isSystemFounder ? (
+          <Link href="/organizations">
+            <div
+              className={`flex items-center justify-between mx-2 px-3 py-2 rounded-xl cursor-pointer transition-all ${
+                activeRoute === "/organizations"
+                  ? "bg-primary/8 text-primary font-medium"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              } ${collapsed ? "justify-center" : compactRowClass} min-h-11`}
+            >
+              <div className={`flex items-center gap-3 ${collapsed ? "justify-center" : compactRowClass}`}>
+                <Network className="w-4 h-4 shrink-0" />
+                {!collapsed && <span className={`text-[13.5px] ${expandedInlineClass}`}>Tổ chức</span>}
               </div>
             </div>
           </Link>

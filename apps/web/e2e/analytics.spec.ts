@@ -341,6 +341,8 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     const json = (body: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
     if (path === "/api/navigation") return json({ data: { availableFlaggedRoutes: ["/analytics"] } });
     if (path === "/api/notifications") return json({ data: [], meta: { unreadCount: 0 } });
+    // Header organization switcher (shown only with 2+ organizations).
+    if (path === "/api/auth/native/workspaces") return json({ data: [] });
     return json({ message: `Unmocked API call in e2e: ${route.request().method()} ${path}` }, 404);
   });
   await page.route("**/api/auth/me", async (route) => {
