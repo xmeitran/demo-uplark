@@ -53,11 +53,12 @@ export class BusinessRolesService {
     } };
   }
 
-  async create(principal: PrincipalContext, input: { label?: unknown; baseRoleCode?: unknown }) {
+  async create(principal: PrincipalContext, input: { label?: unknown }) {
     assertAdmin(principal);
     const label = this.label(input?.label);
-    const baseRoleCode = typeof input?.baseRoleCode === "string" ? input.baseRoleCode : "";
-    if (!isBusinessRoleCode(baseRoleCode)) throw new BadRequestException("Chọn vai trò gốc để lấy quyền");
+    // Admin › Setting only asks for a name (user's call, 2026-11-05): an own role works like an ordinary User (DX);
+    // Admin rights come from the system role.
+    const baseRoleCode = "DX";
     await this.assertLabelFree(principal, label);
     const code = `BR_${randomBytes(5).toString("hex").toUpperCase()}`;
     await this.prisma.$transaction([

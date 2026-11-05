@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { Check, CircleAlert, Crown, Plus, ShieldAlert, Trash2, UserPlus } from "lucide-react";
+import { Check, CircleAlert, Crown, Plus, ShieldAlert, Trash2, UserPlus, X } from "lucide-react";
 import { BUSINESS_ROLE_CATALOGUE, SYSTEM_FOUNDER_ROLE_CODE } from "@b2b-crm/contracts";
 import { AppShell } from "@/components/constructor-x/app-shell";
 import { HeaderButton, PageHeader, pageMainClassName } from "@/components/page-header";
@@ -43,6 +43,12 @@ export default function OrganizationsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // Pinned over the table while scrolling, so a success note goes away by itself; an error stays until closed.
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(""), 5000);
+    return () => clearTimeout(timer);
+  }, [notice]);
   const selected = organizations.find((organization) => organization.id === selectedId);
   const businessCodes = businessRoles.map((role) => role.code);
   const businessOf = (member: Member) => member.roleCodes.find((code) => businessCodes.includes(code) && !BUILT_IN_BUSINESS_ROLES.some((role) => role.code === code))
@@ -123,8 +129,9 @@ export default function OrganizationsPage() {
           </section>
         ) : (
           <>
-            {error ? <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />{error}</div> : null}
-            {notice ? <div role="status" className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"><Check className="mt-0.5 h-4 w-4 shrink-0" />{notice}</div> : null}
+            {/* Sticky: a change made far down the members table must still show its result or error. */}
+            {error ? <div role="alert" className="sticky top-3 z-30 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 shadow-sm"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0" /><span className="flex-1">{error}</span><button type="button" aria-label="Đóng thông báo lỗi" onClick={() => setError("")} className="-m-1 rounded-md p-1 hover:bg-rose-100"><X className="h-4 w-4" /></button></div> : null}
+            {notice ? <div role="status" className="sticky top-3 z-30 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 shadow-sm"><Check className="mt-0.5 h-4 w-4 shrink-0" />{notice}</div> : null}
             <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
               <aside className="space-y-4">
                 <section className={`${cardClass} p-4`}>
@@ -189,7 +196,7 @@ export default function OrganizationsPage() {
 
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[760px] text-left text-sm">
-                      <thead className={`bg-slate-50 ${TABLE_HEAD_CLASS}`}><tr><th className="px-5 py-3">Thành viên</th><th className="px-4 py-3">Quyền hệ thống</th><th className="px-4 py-3">Vai trò nghiệp vụ</th><th className="px-4 py-3">Quyền khác</th><th className="px-4 py-3" /></tr></thead>
+                      <thead className={`bg-slate-50 ${TABLE_HEAD_CLASS}`}><tr><th className="px-5 py-3">Thành viên</th><th className="px-4 py-3">Quyền hệ thống</th><th className="px-4 py-3">Vai trò nghiệp vụ</th><th className="px-4 py-3">Quyền khác</th><th className="sticky right-0 bg-slate-50 px-4 py-3" /></tr></thead>
                       <tbody className="divide-y divide-border">
                         {members.map((member) => {
                           const other = member.roleCodes.filter((code) => !SYSTEM_CODES.includes(code) && !businessCodes.includes(code));
@@ -201,9 +208,10 @@ export default function OrganizationsPage() {
                               <td className="w-[170px] px-4 py-3"><CrmSelect menuPortal ariaLabel={`Vai trò nghiệp vụ của ${member.displayName}`} disabled={busy}
                                 value={businessOf(member)} options={businessOptions(businessOf(member))} onChange={(businessRole) => setRole(member, { businessRole })} /></td>
                               <td className="px-4 py-3 text-xs text-muted-foreground">{other.join(", ") || "—"}</td>
-                              <td className="px-4 py-3 text-right">
+                              {/* Pinned to the right edge: on a narrow window the table scrolls sideways and the button would go out of sight. */}
+                              <td className="sticky right-0 bg-card px-4 py-3 text-right">
                                 <button type="button" disabled={busy} onClick={() => removeMember(member)} aria-label={`Gỡ ${member.displayName} khỏi tổ chức`} title="Gỡ khỏi tổ chức"
-                                  className="inline-flex h-9 w-9 items-center justify-center rounded-[10px] text-muted-foreground hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"><Trash2 className="h-4 w-4" /></button>
+                                  className="inline-flex h-9 items-center gap-1.5 rounded-[10px] px-2.5 text-xs font-semibold text-muted-foreground hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"><Trash2 className="h-4 w-4" />Gỡ</button>
                               </td>
                             </tr>
                           );

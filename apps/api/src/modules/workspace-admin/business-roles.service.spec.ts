@@ -33,13 +33,14 @@ describe("BusinessRolesService (Admin › Setting)", () => {
     expect(data.systemRoles.find((role) => role.code === "FOUNDER_GM")?.memberCount).toBe(1);
   });
 
-  it("only an Admin changes the list; a new role needs a built-in base and a name not already used", async () => {
+  it("only an Admin changes the list; a new role takes only a name not already used and works like an ordinary User", async () => {
     const { service, prisma } = setup([{ code: "BD", label: "Business development" }]);
-    await expect(service.create(member, { label: "Team lead", baseRoleCode: "PM" })).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(service.create(admin, { label: "Team lead", baseRoleCode: "FOUNDER_GM" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(service.create(admin, { label: "business DEVELOPMENT", baseRoleCode: "BD" })).rejects.toBeInstanceOf(ConflictException);
-    await expect(service.create(admin, { label: "  Team   lead ", baseRoleCode: "PM" })).resolves.toMatchObject({ label: "Team lead", baseRoleCode: "PM" });
-    expect(prisma.role.create).toHaveBeenCalledWith({ data: expect.objectContaining({ name: "Team lead", baseRoleCode: "PM", code: expect.stringMatching(/^BR_/) }) });
+    await expect(service.create(member, { label: "Team lead" })).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.create(admin, { label: "business DEVELOPMENT" })).rejects.toBeInstanceOf(ConflictException);
+    await expect(service.create(admin, { label: "  " })).rejects.toBeInstanceOf(BadRequestException);
+    // A base role sent by an old client is ignored: an own role never carries Admin rights.
+    await expect(service.create(admin, { label: "  Team   lead ", baseRoleCode: "PM" } as any)).resolves.toMatchObject({ label: "Team lead", baseRoleCode: "DX" });
+    expect(prisma.role.create).toHaveBeenCalledWith({ data: expect.objectContaining({ name: "Team lead", baseRoleCode: "DX", code: expect.stringMatching(/^BR_/) }) });
   });
 
   it("built-in roles are hidden, never deleted; an own role is deleted only once nobody holds it", async () => {
