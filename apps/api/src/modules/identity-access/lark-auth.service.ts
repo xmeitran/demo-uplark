@@ -1,4 +1,5 @@
 import { activeMembershipWhere } from "./active-membership";
+import { findLarkUserIdIdentity } from "./lark-user-id";
 import {
   BadGatewayException,
   BadRequestException,
@@ -326,28 +327,13 @@ export class LarkAuthService {
     const enterpriseUser = profile.enterpriseEmail
       ? await this.prisma.user.findUnique({ where: { email: profile.enterpriseEmail } })
       : undefined;
-    if (enterpriseUser) {
-      await this.requireActiveMembership(enterpriseUser, workspace);
-      if (profile.userId) await this.linkStableIdentity(enterpriseUser.id, profile.userId, workspace.tenantKey);
-      await this.linkIdentity(enterpriseUser.id, profile.openId, workspace.tenantKey, true);
-      return this.updateUserProfile(enterpriseUser.id, profile, enterpriseUser.email);
-    }
-
     // `open_id` is scoped to the Lark app. If the app is recreated or the
     // workspace switches to another app, the same person receives a new
     // open_id. Prefer the stable directory/user_id identity before honoring
     // an open_id that may already be linked to a duplicate auto-provisioned
     // account from an earlier login.
-    const legacyLarkUser = await this.findUserByLarkUserId(profile.userId, workspace);
-    if (legacyLarkUser) {
-      await this.requireActiveMembership(legacyLarkUser, workspace);
-      // A previous app version may have attached this app-scoped open_id to a
-      // duplicate auto-provisioned account. The stable directory user_id is
-      // the trusted identity, so repair that stale link explicitly here.
-      await this.linkIdentity(legacyLarkUser.id, profile.openId, workspace.tenantKey, true);
-      return this.updateUserProfile(legacyLarkUser.id, profile, legacyLarkUser.email);
-    }
-
+    const stableIdentity = profile.userId ? await findLarkUserIdIdentity(this.prisma, profile.userId, workspace.tenantKey) : undefined;
+    const legacyLarkUser = stableIdentity?.user;
     const linkedIdentity = await this.prisma.portalIdentity.findUnique({
       where: {
         provider_providerUserId_tenantKey: {
@@ -358,13 +344,38 @@ export class LarkAuthService {
       },
       include: { user: true }
     });
-    if (linkedIdentity) {
+    const matchedUser = await this.findUserByEmail(profile);
+    // One person can hold two accounts (one added in Tổ chức by email, another by Lark user ID) of which only one is still
+    // a member: sign in to the first account in the order below that is. When none is, the first one says why.
+    const member = await this.firstActiveMember([enterpriseUser, legacyLarkUser, linkedIdentity?.user, matchedUser], workspace);
+    const take = <T extends { id: string }>(user: T | null | undefined): user is T => Boolean(user) && (!member || member.id === user!.id);
+
+    if (take(enterpriseUser)) {
+      await this.requireActiveMembership(enterpriseUser, workspace);
+      if (profile.userId) await this.linkStableIdentity(enterpriseUser.id, profile.userId, workspace.tenantKey);
+      await this.linkIdentity(enterpriseUser.id, profile.openId, workspace.tenantKey, true);
+      return this.updateUserProfile(enterpriseUser.id, profile, enterpriseUser.email);
+    }
+
+    if (take(legacyLarkUser)) {
+      await this.requireActiveMembership(legacyLarkUser, workspace);
+      // Tổ chức stores an ID Lark could not confirm as typed ("hn454"): keep Lark's spelling from now on.
+      if (stableIdentity && profile.userId && stableIdentity.providerUserId !== profile.userId) {
+        await this.prisma.portalIdentity.update({ where: { id: stableIdentity.id }, data: { providerUserId: profile.userId } });
+      }
+      // A previous app version may have attached this app-scoped open_id to a
+      // duplicate auto-provisioned account. The stable directory user_id is
+      // the trusted identity, so repair that stale link explicitly here.
+      await this.linkIdentity(legacyLarkUser.id, profile.openId, workspace.tenantKey, true);
+      return this.updateUserProfile(legacyLarkUser.id, profile, legacyLarkUser.email);
+    }
+
+    if (linkedIdentity && take(linkedIdentity.user)) {
       await this.requireActiveMembership(linkedIdentity.user, workspace);
       return this.updateUserProfile(linkedIdentity.user.id, profile, linkedIdentity.user.email);
     }
 
-    const matchedUser = await this.findUserByEmail(profile);
-    if (matchedUser) {
+    if (take(matchedUser)) {
       await this.requireActiveMembership(matchedUser, workspace);
       await this.linkIdentity(matchedUser.id, profile.openId, workspace.tenantKey);
       return this.updateUserProfile(matchedUser.id, profile, matchedUser.email);
@@ -484,21 +495,6 @@ export class LarkAuthService {
     return users.find((user) => user.email === profile.enterpriseEmail) ?? users[0];
   }
 
-  private async findUserByLarkUserId(userId: string | undefined, workspace: WorkspaceContext) {
-    if (!userId) return undefined;
-
-    const identity = await this.prisma.portalIdentity.findFirst({
-      where: {
-        provider: "lark_user_id",
-        // Case-insensitive like Tổ chức, where a System Founder may type "hn454" for Lark's HN454.
-        providerUserId: { equals: userId, mode: "insensitive" },
-        tenantKey: workspace.tenantKey
-      },
-      include: { user: true }
-    });
-    return identity?.user;
-  }
-
   private async findBootstrapAdmin(openId: string, workspace: WorkspaceContext) {
     if (!csv(process.env.FOUNDATION_ADMIN_LARK_OPEN_IDS ?? process.env.FOUNDATION_ADMIN_LARK_OPEN_ID).includes(openId)) {
       return undefined;
@@ -528,9 +524,18 @@ export class LarkAuthService {
   /** A membership in any active organization of this tenant will do; the callback then picks which one to open. */
   private async requireActiveMembership(user: { id: string; status: string }, workspace: WorkspaceContext) {
     if (user.status !== "ACTIVE") throw new ForbiddenException("Account is inactive");
+    if (!await this.isActiveMember(user, workspace)) throw new ForbiddenException("Active workspace membership is required");
+  }
+
+  private async isActiveMember(user: { id: string; status: string }, workspace: WorkspaceContext) {
+    if (user.status !== "ACTIVE") return false;
     const membership = await this.prisma.roleBinding.findFirst({ where: { userId: user.id, tenantKey: workspace.tenantKey, workspace: { status: "active" }, ...activeMembershipWhere() } });
-    const grant = membership ? undefined : await this.prisma.customerAccessGrant.findFirst({ where: { userId: user.id, workspace: { status: "active", tenantKey: workspace.tenantKey }, startsAt: { lte: new Date() }, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] } });
-    if (!membership && !grant) throw new ForbiddenException("Active workspace membership is required");
+    return Boolean(membership ?? await this.prisma.customerAccessGrant.findFirst({ where: { userId: user.id, workspace: { status: "active", tenantKey: workspace.tenantKey }, startsAt: { lte: new Date() }, OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] } }));
+  }
+
+  private async firstActiveMember<T extends { id: string; status: string }>(users: Array<T | null | undefined>, workspace: WorkspaceContext) {
+    for (const user of users) if (user && await this.isActiveMember(user, workspace)) return user;
+    return undefined;
   }
 
   private async providerFetch(url: string, init: RequestInit) {
@@ -551,11 +556,14 @@ export class LarkAuthService {
       currentEmail.toLowerCase() === personalEmail &&
       enterpriseEmail !== personalEmail
     );
+    // An account added in Tổ chức by Lark user ID alone holds `<id>@lark.local` until Lark gives a real address.
+    const placeholder = Boolean(currentEmail?.toLowerCase().endsWith("@lark.local"));
+    const nextEmail = placeholder ? enterpriseEmail ?? personalEmail : shouldSyncEnterpriseEmail ? enterpriseEmail : undefined;
     let syncedEmail: string | undefined;
-    if (shouldSyncEnterpriseEmail) {
-      const existingOwner = await this.prisma.user.findFirst({ where: { email: enterpriseEmail } });
+    if (nextEmail) {
+      const existingOwner = await this.prisma.user.findFirst({ where: { email: nextEmail } });
       if (!existingOwner || existingOwner.id === userId) {
-        syncedEmail = enterpriseEmail;
+        syncedEmail = nextEmail;
       } else {
         this.logger.warn("Skipped Lark enterprise email sync because the address belongs to another CRM user");
       }

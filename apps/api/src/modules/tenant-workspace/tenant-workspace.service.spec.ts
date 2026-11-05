@@ -84,7 +84,7 @@ describe("organizations", () => {
       const prisma = {
         tenantWorkspace: { findFirst: vi.fn(async () => ({ id: "twk-growth", tenantKey: "prod" })) },
         user: { findUnique: vi.fn(async () => null) },
-        portalIdentity: { findFirst: vi.fn(async () => null) },
+        portalIdentity: { findMany: vi.fn(async () => []), findUnique: vi.fn(async () => null) },
         $transaction: vi.fn(async (run: any) => run(tx))
       } as any;
       const service = new TenantWorkspaceService(prisma);
@@ -128,10 +128,23 @@ describe("organizations", () => {
 
     it("does not ask Lark for an ID the CRM already knows", async () => {
       const { service, prisma } = setup();
-      prisma.portalIdentity.findFirst.mockResolvedValue({ user: { id: "usr-dx", email: "dx@upbase.asia", status: "ACTIVE", subjectType: "INTERNAL_USER" } });
-      const result = await service.setOrganizationMember(founder, "twk-growth", { user: "HN454" });
+      prisma.portalIdentity.findMany.mockResolvedValue([{ providerUserId: "HN454", user: { id: "usr-dx", email: "dx@upbase.asia", status: "ACTIVE", subjectType: "INTERNAL_USER" } }]);
+      const result = await service.setOrganizationMember(founder, "twk-growth", { user: "hn454" });
+      // Exact spellings only, never an ILIKE where "_" would match another person's ID.
+      expect(prisma.portalIdentity.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { provider: "lark_user_id", tenantKey: "prod", providerUserId: { in: ["hn454", "HN454"] } } }));
       expect(service.larkDirectoryUser).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ id: "usr-dx" });
       expect(result).not.toHaveProperty("verifiedOnLark");
+    });
+
+    it("finds someone already in the CRM under another email through the open_id Lark gives, instead of a second account", async () => {
+      const { service, tx, prisma } = setup();
+      prisma.portalIdentity.findUnique.mockResolvedValue({ user: { id: "usr-old-dx", email: "growth@upbase.vn", status: "ACTIVE", subjectType: "INTERNAL_USER" } });
+      const result = await service.setOrganizationMember(founder, "twk-growth", { user: "HN900" });
+      expect(prisma.portalIdentity.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { provider_providerUserId_tenantKey: { provider: "lark", providerUserId: "ou_900", tenantKey: "prod" } } }));
+      expect(tx.user.create).not.toHaveBeenCalled();
+      expect(tx.portalIdentity.createMany.mock.calls[0][0].data[0]).toMatchObject({ userId: "usr-old-dx", provider: "lark_user_id", providerUserId: "HN900" });
+      expect(result).toMatchObject({ id: "usr-old-dx", created: false });
     });
   });
 

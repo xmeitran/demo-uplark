@@ -181,11 +181,15 @@ function directMessageConfig() {
   return { appId, appSecret, baseUrl };
 }
 
+/** Lark calls from an admin request give up after this, like the sign-in ones. */
+const LARK_TIMEOUT_MS = 10000;
+
 async function fetchTenantAccessToken(config: NonNullable<ReturnType<typeof directMessageConfig>>) {
   const response = await fetch(`${config.baseUrl}/open-apis/auth/v3/tenant_access_token/internal`, {
     method: "POST",
     headers: { "content-type": "application/json; charset=utf-8" },
-    body: JSON.stringify({ app_id: config.appId, app_secret: config.appSecret })
+    body: JSON.stringify({ app_id: config.appId, app_secret: config.appSecret }),
+    signal: AbortSignal.timeout(LARK_TIMEOUT_MS)
   });
   const body = await response.json().catch(() => ({})) as { code?: number; msg?: string; tenant_access_token?: string };
   if (!response.ok || body.code !== 0 || !body.tenant_access_token) {
@@ -244,19 +248,26 @@ async function resolveLarkOpenIdByEmail(
   return openId ?? null;
 }
 
+/** A person in the Lark directory by user ID (HN454), read with the app's token: only people inside its contact range. */
+async function fetchLarkContactUser(config: NonNullable<ReturnType<typeof directMessageConfig>>, tenantAccessToken: string, userId: string) {
+  const response = await fetch(`${config.baseUrl}/open-apis/contact/v3/users/${encodeURIComponent(userId)}?user_id_type=user_id`, {
+    headers: { authorization: `Bearer ${tenantAccessToken}` },
+    signal: AbortSignal.timeout(LARK_TIMEOUT_MS)
+  });
+  const body = await response.json().catch(() => ({})) as {
+    code?: number;
+    msg?: string;
+    data?: { user?: { open_id?: string; user_id?: string; name?: string; email?: string; enterprise_email?: string } };
+  };
+  return { response, body };
+}
+
 async function resolveLarkOpenIdByUserId(
   config: NonNullable<ReturnType<typeof directMessageConfig>>,
   tenantAccessToken: string,
   userId: string
 ) : Promise<string | null> {
-  const response = await fetch(`${config.baseUrl}/open-apis/contact/v3/users/${encodeURIComponent(userId)}?user_id_type=user_id`, {
-    headers: { authorization: `Bearer ${tenantAccessToken}` }
-  });
-  const body = await response.json().catch(() => ({})) as {
-    code?: number;
-    msg?: string;
-    data?: { user?: { open_id?: string; user_id?: string } };
-  };
+  const { response, body } = await fetchLarkContactUser(config, tenantAccessToken, userId);
   if (body.code === 99992351 || body.code === 99992361) return null;
   if (!response.ok || body.code !== 0) {
     throw new BadRequestException(`Không tra được Lark open_id từ user_id người nhận: ${body.msg ?? `HTTP ${response.status}`}`);
@@ -273,14 +284,7 @@ export async function larkDirectoryUser(userId: string) {
   const config = directMessageConfig();
   if (!config) return null;
   try {
-    const tenantAccessToken = await fetchTenantAccessToken(config);
-    const response = await fetch(`${config.baseUrl}/open-apis/contact/v3/users/${encodeURIComponent(userId)}?user_id_type=user_id`, {
-      headers: { authorization: `Bearer ${tenantAccessToken}` }
-    });
-    const body = await response.json().catch(() => ({})) as {
-      code?: number;
-      data?: { user?: { open_id?: string; user_id?: string; name?: string; email?: string; enterprise_email?: string } };
-    };
+    const { response, body } = await fetchLarkContactUser(config, await fetchTenantAccessToken(config), userId);
     const user = response.ok && body.code === 0 ? body.data?.user : undefined;
     if (!user?.open_id) return null;
     const larkUserId = user.user_id ?? userId;

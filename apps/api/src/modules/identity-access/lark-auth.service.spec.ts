@@ -142,7 +142,7 @@ describe("Lark authentication boundary", () => {
   it("lets in someone from another team added in Tổ chức by user ID alone, though Lark gives no company email", async () => {
     const { service, prisma, nativeAuth } = makeService();
     const added = { id: "usr-growth", email: "hn777@lark.local", displayName: "hn777", status: "ACTIVE" };
-    prisma.portalIdentity.findFirst.mockImplementation(async ({ where }: any) => where.providerUserId.mode === "insensitive" && where.providerUserId.equals.toLowerCase() === "hn777" ? { user: added } : null);
+    prisma.portalIdentity.findMany.mockResolvedValue([{ id: "pi-growth", providerUserId: "hn777", user: added }]);
     prisma.user.findMany.mockResolvedValue([]);
     prisma.portalIdentity.upsert.mockResolvedValue({ userId: added.id });
     prisma.user.update.mockResolvedValue(added);
@@ -155,8 +155,69 @@ describe("Lark authentication boundary", () => {
 
     await service.completeCallback({ code: "code", state, redirectUri });
 
-    expect(prisma.user.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "usr-growth" }, data: expect.objectContaining({ displayName: "Growth Person" }) }));
+    // Exact spellings only: an ILIKE would let "_" or "%" in an ID match other people's IDs.
+    expect(prisma.portalIdentity.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { provider: "lark_user_id", tenantKey: "prod", providerUserId: { in: ["HN777", "hn777"] } } }));
+    expect(prisma.portalIdentity.update).toHaveBeenCalledWith({ where: { id: "pi-growth" }, data: { providerUserId: "HN777" } });
+    expect(prisma.user.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "usr-growth" }, data: expect.objectContaining({ displayName: "Growth Person", email: undefined }) }));
     expect(nativeAuth.completeIdentityLogin).toHaveBeenCalledWith("usr-growth", { workspaceId: "twk-growth" }, { authMethod: "lark" });
+  });
+
+  it("replaces the <id>@lark.local placeholder with the address Lark gives at sign-in", async () => {
+    const { service, prisma } = makeService();
+    const added = { id: "usr-growth", email: "hn777@lark.local", displayName: "HN777", status: "ACTIVE" };
+    prisma.portalIdentity.findMany.mockResolvedValue([{ id: "pi-growth", providerUserId: "HN777", user: added }]);
+    prisma.user.findMany.mockResolvedValue([]);
+    prisma.user.findFirst.mockResolvedValue(null);
+    prisma.portalIdentity.upsert.mockResolvedValue({ userId: added.id });
+    prisma.user.update.mockResolvedValue(added);
+    const { state } = await service.createAuthorizeUrl({ redirectUri });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, access_token: "provider-token" }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, data: { open_id: "ou_growth", user_id: "HN777", tenant_key: "tn_test", email: "Growth@UpBase.asia", name: "Growth Person" } }) })
+      .mockResolvedValue({ ok: true, json: async () => ({ code: 41050 }) }));
+
+    await service.completeCallback({ code: "code", state, redirectUri });
+
+    expect(prisma.portalIdentity.update).not.toHaveBeenCalled();
+    expect(prisma.user.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "usr-growth" }, data: expect.objectContaining({ email: "growth@upbase.asia" }) }));
+  });
+
+  describe("one person with two accounts, only one still a member of an organization", () => {
+    const byEmail = { id: "usr-by-email", email: "growth@upbase.asia", displayName: "growth", status: "ACTIVE" };
+    const byId = { id: "usr-by-id", email: "hn777@lark.local", displayName: "HN777", status: "ACTIVE" };
+    async function signIn(memberId: string, larkUser: Record<string, unknown>) {
+      const { service, prisma, nativeAuth } = makeService();
+      prisma.portalIdentity.findMany.mockResolvedValue([{ id: "pi-growth", providerUserId: "HN777", user: byId }]);
+      prisma.user.findUnique.mockImplementation(async ({ where }: any) => (where.email === byEmail.email ? byEmail : null));
+      prisma.user.findMany.mockResolvedValue([byEmail]);
+      prisma.user.findFirst.mockResolvedValue(byEmail);
+      prisma.roleBinding.findFirst.mockImplementation(async ({ where }: any) => (where.userId === memberId ? { id: "rb-member" } : null));
+      prisma.portalIdentity.upsert.mockResolvedValue({ userId: memberId });
+      prisma.user.update.mockImplementation(async ({ where }: any) => (where.id === byEmail.id ? byEmail : byId));
+      const { state } = await service.createAuthorizeUrl({ redirectUri });
+      vi.stubGlobal("fetch", vi.fn()
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, access_token: "provider-token" }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, data: { open_id: "ou_growth", user_id: "HN777", tenant_key: "tn_test", name: "Growth Person", ...larkUser } }) })
+        .mockResolvedValue({ ok: true, json: async () => ({ code: 41050 }) }));
+      await service.completeCallback({ code: "code", state, redirectUri });
+      return { prisma, nativeAuth };
+    }
+
+    it("follows the account added by ID when the email account was removed, instead of refusing", async () => {
+      const { prisma, nativeAuth } = await signIn(byId.id, { enterprise_email: "growth@upbase.asia" });
+      expect(nativeAuth.completeIdentityLogin).toHaveBeenCalledWith(byId.id, expect.anything(), { authMethod: "lark" });
+      // The removed email account does not take the ID over.
+      expect(prisma.portalIdentity.upsert).not.toHaveBeenCalledWith(expect.objectContaining({ where: { provider_providerUserId_tenantKey: expect.objectContaining({ provider: "lark_user_id" }) } }));
+    });
+
+    it("follows the email account when the account added by ID was removed", async () => {
+      const { nativeAuth } = await signIn(byEmail.id, { email: "growth@upbase.asia" });
+      expect(nativeAuth.completeIdentityLogin).toHaveBeenCalledWith(byEmail.id, expect.anything(), { authMethod: "lark" });
+    });
+
+    it("still refuses when neither account is a member", async () => {
+      await expect(signIn("nobody", { enterprise_email: "growth@upbase.asia" })).rejects.toThrow("Active workspace membership is required");
+    });
   });
 
   it("reuses the existing CRM member through stable Lark user id after an app change", async () => {
@@ -164,7 +225,7 @@ describe("Lark authentication boundary", () => {
     const { service, prisma, nativeAuth } = makeService();
     const existingMember = { id: "usr-lark-HCM273", email: "maitns@upbase.asia", displayName: "Trần Ngô Sao Mai", status: "ACTIVE" };
     prisma.portalIdentity.findUnique.mockResolvedValue(null);
-    prisma.portalIdentity.findFirst.mockResolvedValue({ user: existingMember });
+    prisma.portalIdentity.findMany.mockResolvedValue([{ id: "pi-hcm273", providerUserId: "HCM273", user: existingMember }]);
     prisma.portalIdentity.upsert.mockResolvedValue({ userId: existingMember.id });
     prisma.user.update.mockResolvedValue(existingMember);
     const { state } = await service.createAuthorizeUrl({ redirectUri });
@@ -188,7 +249,7 @@ describe("Lark authentication boundary", () => {
     const { service, prisma, nativeAuth } = makeService();
     const existingMember = { id: "usr-lark-HCM273", email: "maitns@upbase.asia", displayName: "Trần Ngô Sao Mai", status: "ACTIVE" };
     prisma.portalIdentity.findUnique.mockResolvedValue(null);
-    prisma.portalIdentity.findFirst.mockResolvedValue(null);
+    prisma.portalIdentity.findMany.mockResolvedValue([]);
     prisma.portalIdentity.upsert.mockResolvedValue({ userId: existingMember.id });
     prisma.user.findMany.mockResolvedValue([existingMember]);
     prisma.user.update.mockResolvedValue(existingMember);
@@ -213,7 +274,7 @@ describe("Lark authentication boundary", () => {
     const { service, prisma, nativeAuth } = makeService();
     const canonicalMember = { id: "usr-lark-HCM273", email: "maitns@upbase.asia", displayName: "Trần Ngô Sao Mai", status: "ACTIVE" };
     prisma.portalIdentity.findUnique.mockResolvedValue({ user: { id: "usr-auto-provisioned", email: "tranngosaomai@gmail.com", displayName: "Trần Ngô Sao Mai", status: "ACTIVE" } });
-    prisma.portalIdentity.findFirst.mockResolvedValue({ user: canonicalMember });
+    prisma.portalIdentity.findMany.mockResolvedValue([{ id: "pi-hcm273", providerUserId: "HCM273", user: canonicalMember }]);
     prisma.portalIdentity.upsert.mockResolvedValue({ userId: canonicalMember.id });
     prisma.user.update.mockResolvedValue(canonicalMember);
     const { state } = await service.createAuthorizeUrl({ redirectUri });
@@ -236,7 +297,7 @@ describe("Lark authentication boundary", () => {
     const { service, prisma, nativeAuth } = makeService();
     const enterpriseMember = { id: "usr-lark-HCM273", email: "maitns@upbase.asia", displayName: "Trần Ngô Sao Mai", status: "ACTIVE" };
     prisma.user.findUnique.mockResolvedValue(enterpriseMember);
-    prisma.portalIdentity.findFirst.mockResolvedValue({ user: { id: "usr-personal", email: "tranngosaomai@gmail.com", displayName: "Trần Ngô Sao Mai", status: "ACTIVE" } });
+    prisma.portalIdentity.findMany.mockResolvedValue([{ id: "pi-hcm273", providerUserId: "HCM273", user: { id: "usr-personal", email: "tranngosaomai@gmail.com", displayName: "Trần Ngô Sao Mai", status: "ACTIVE" } }]);
     prisma.portalIdentity.upsert.mockResolvedValue({ userId: enterpriseMember.id });
     prisma.user.update.mockResolvedValue(enterpriseMember);
     const { state } = await service.createAuthorizeUrl({ redirectUri });
@@ -337,7 +398,7 @@ function makeService() {
   };
   const prisma = {
     authActionToken: { create: vi.fn().mockResolvedValue({}), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
-    portalIdentity: { findUnique: vi.fn().mockResolvedValue(null), findFirst: vi.fn().mockResolvedValue(null), upsert: vi.fn().mockResolvedValue({ userId: "usr-1" }) },
+    portalIdentity: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), update: vi.fn(), upsert: vi.fn().mockResolvedValue({ userId: "usr-1" }) },
     user: { findFirst: vi.fn().mockResolvedValue(user), findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([user]), update: vi.fn().mockResolvedValue(user) },
     roleBinding: { findFirst: vi.fn().mockResolvedValue({ id: "rb-1" }) },
     customerAccessGrant: { findFirst: vi.fn().mockResolvedValue(null) },

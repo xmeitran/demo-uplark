@@ -4,6 +4,7 @@ import { BUSINESS_ROLE_CATALOGUE, SYSTEM_FOUNDER_ROLE_CODE, isBusinessRoleCode, 
 import { PrismaService } from "../../shared/prisma/prisma.service";
 import { nonEmptyString, optionalString, tenantKey, workspaceKey, workspaceName } from "../../shared/http/request-context";
 import { activeMembershipWhere } from "../identity-access/active-membership";
+import { findLarkUserIdIdentity } from "../identity-access/lark-user-id";
 import { keptOnRoleChange, keptRoleFilter, replaceBusinessRole } from "../identity-access/role-change";
 import { larkDirectoryUser } from "../workspace-admin/workspace-admin.service";
 
@@ -206,17 +207,21 @@ export class TenantWorkspaceService {
     const known = email
       ? null
       : await this.prisma.user.findUnique({ where: { id: ref } })
-        ?? (await this.prisma.portalIdentity.findFirst({ where: { provider: "lark_user_id", providerUserId: { equals: ref, mode: "insensitive" }, tenantKey: principal.tenantKey }, include: { user: true } }))?.user
+        ?? (await findLarkUserIdIdentity(this.prisma, ref, principal.tenantKey))?.user
         ?? null;
     // Someone the Lark directory sync never brought in (another team) is added by their Lark user ID alone: Lark does not
     // give the CRM other teams' emails, so their sign-in finds the account by this ID. Lark names them when it can.
     const byLarkId = !email && !known;
     if (byLarkId && !/^[A-Za-z0-9_-]{2,64}$/.test(ref)) throw new BadRequestException(`User ID không hợp lệ: ${ref}`);
     const lark = byLarkId ? await this.larkDirectoryUser(ref) : null;
+    // Someone already in the CRM under another email (e.g. an older DX account) is found by the open_id Lark gave.
+    const byOpenId = lark
+      ? (await this.prisma.portalIdentity.findUnique({ where: { provider_providerUserId_tenantKey: { provider: "lark", providerUserId: lark.openId, tenantKey: principal.tenantKey } }, include: { user: true } }))?.user
+      : undefined;
     const larkUserId = lark?.userId ?? ref;
     const newEmail = email ?? lark?.email ?? `${larkUserId}@lark.local`.toLowerCase();
     return this.prisma.$transaction(async (tx) => {
-      let user = known ?? await tx.user.findUnique({ where: { email: newEmail } });
+      let user = known ?? byOpenId ?? await tx.user.findUnique({ where: { email: newEmail } });
       if (user && user.status !== "ACTIVE") throw new ConflictException("Tài khoản này đang bị khóa");
       if (user && user.subjectType !== "INTERNAL_USER") throw new ConflictException("Đây là tài khoản khách hàng, không thêm vào tổ chức được");
       const created = !user;
