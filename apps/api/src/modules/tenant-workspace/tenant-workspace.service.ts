@@ -5,6 +5,7 @@ import { PrismaService } from "../../shared/prisma/prisma.service";
 import { nonEmptyString, optionalString, tenantKey, workspaceKey, workspaceName } from "../../shared/http/request-context";
 import { activeMembershipWhere } from "../identity-access/active-membership";
 import { keptOnRoleChange, keptRoleFilter, replaceBusinessRole } from "../identity-access/role-change";
+import { larkDirectoryUser } from "../workspace-admin/workspace-admin.service";
 
 /** "Công ty Ánh Dương" → "cong-ty-anh-duong": the organization's workspaceKey. */
 export function organizationKey(name: string) {
@@ -23,6 +24,9 @@ export interface WorkspaceContext {
 @Injectable()
 export class TenantWorkspaceService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+
+  /** Replaced in specs. */
+  larkDirectoryUser = larkDirectoryUser;
 
   async ensureDefaultWorkspace() {
     return this.prisma.tenantWorkspace.upsert({
@@ -199,20 +203,31 @@ export class TenantWorkspaceService {
     // Checked by replaceBusinessRole: a built-in role or one of this organization's own roles.
     const businessRole = input?.businessRole === undefined ? undefined : (optionalString(input.businessRole, "businessRole") || null);
     const now = new Date();
+    const known = email
+      ? null
+      : await this.prisma.user.findUnique({ where: { id: ref } })
+        ?? (await this.prisma.portalIdentity.findFirst({ where: { provider: "lark_user_id", providerUserId: { equals: ref, mode: "insensitive" }, tenantKey: principal.tenantKey }, include: { user: true } }))?.user
+        ?? null;
+    // Someone the Lark directory sync never brought in (another team) is added by their Lark user ID alone: Lark does not
+    // give the CRM other teams' emails, so their sign-in finds the account by this ID. Lark names them when it can.
+    const byLarkId = !email && !known;
+    if (byLarkId && !/^[A-Za-z0-9_-]{2,64}$/.test(ref)) throw new BadRequestException(`User ID không hợp lệ: ${ref}`);
+    const lark = byLarkId ? await this.larkDirectoryUser(ref) : null;
+    const larkUserId = lark?.userId ?? ref;
+    const newEmail = email ?? lark?.email ?? `${larkUserId}@lark.local`.toLowerCase();
     return this.prisma.$transaction(async (tx) => {
-      let user = email
-        ? await tx.user.findUnique({ where: { email } })
-        : await tx.user.findUnique({ where: { id: ref } })
-          ?? (await tx.portalIdentity.findFirst({ where: { provider: "lark_user_id", providerUserId: { equals: ref, mode: "insensitive" }, tenantKey: principal.tenantKey }, include: { user: true } }))?.user
-          ?? null;
-      if (!user && !email) throw new NotFoundException(`Không tìm thấy user ID ${ref}. Người chưa có trong CRM thì nhập email Lark của họ.`);
+      let user = known ?? await tx.user.findUnique({ where: { email: newEmail } });
       if (user && user.status !== "ACTIVE") throw new ConflictException("Tài khoản này đang bị khóa");
       if (user && user.subjectType !== "INTERNAL_USER") throw new ConflictException("Đây là tài khoản khách hàng, không thêm vào tổ chức được");
       const created = !user;
       user ??= await tx.user.create({ data: {
-        email: email!, displayName: optionalString(input?.displayName, "displayName")?.trim().slice(0, 120) || email!.split("@")[0], subjectType: "INTERNAL_USER", status: "ACTIVE"
+        email: newEmail, displayName: optionalString(input?.displayName, "displayName")?.trim().slice(0, 120) || lark?.name || (byLarkId ? larkUserId : newEmail.split("@")[0]), subjectType: "INTERNAL_USER", status: "ACTIVE"
       } });
       const userId = user.id;
+      if (byLarkId) await tx.portalIdentity.createMany({ data: [
+        { userId, provider: "lark_user_id", providerUserId: larkUserId, tenantKey: principal.tenantKey },
+        ...(lark ? [{ userId, provider: "lark", providerUserId: lark.openId, tenantKey: principal.tenantKey }] : [])
+      ], skipDuplicates: true });
       const membership = { userId, workspaceId, tenantKey: principal.tenantKey };
       const held = (await tx.roleBinding.findMany({ where: { ...membership, ...activeMembershipWhere(now) }, select: { role: { select: { code: true } } } })).map((binding) => binding.role.code);
       if (!held.length && !systemRole) systemRole = "WORKSPACE_USER";
@@ -226,7 +241,7 @@ export class TenantWorkspaceService {
       if (businessRole !== undefined) await replaceBusinessRole(tx, membership, businessRole, held, now);
       if (!await tx.roleBinding.count({ where: { ...membership, ...activeMembershipWhere(now) } })) throw new BadRequestException("Thành viên cần ít nhất một vai trò");
       await this.audit(principal, workspaceId, "organization.member.set", "user", userId, undefined, { email: user.email, systemRole, businessRole, created }, tx);
-      return { id: userId, email: user.email, displayName: user.displayName, created };
+      return { id: userId, email: user.email, displayName: user.displayName, created, ...(byLarkId ? { verifiedOnLark: Boolean(lark) } : {}) };
     });
   }
 

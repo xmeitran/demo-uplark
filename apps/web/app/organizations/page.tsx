@@ -70,10 +70,10 @@ export default function OrganizationsPage() {
   const run = async (action: () => Promise<unknown>, done: string) => {
     setBusy(true); setError(""); setNotice("");
     try {
-      await action();
+      const message = await action();
       await loadOrganizations();
       if (selectedId) await loadMembers(selectedId);
-      setNotice(done);
+      setNotice(typeof message === "string" ? message : done);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Không thực hiện được. Thử lại.");
     } finally {
@@ -95,7 +95,12 @@ export default function OrganizationsPage() {
       setError(`${existing.displayName} đã ở trong ${selected?.name}. Đổi quyền của họ ở bảng bên dưới.`);
       return;
     }
-    void run(async () => { await call(`${base}/members`, "PUT", invite); setInvite({ user: "", displayName: "", systemRole: "WORKSPACE_USER", businessRole: "" }); }, `Đã thêm ${invite.user} vào ${selected?.name}.`);
+    const done = `Đã thêm ${invite.user.trim()} vào ${selected?.name}.`;
+    void run(async () => {
+      const added = await call<{ verifiedOnLark?: boolean }>(`${base}/members`, "PUT", invite);
+      setInvite({ user: "", displayName: "", systemRole: "WORKSPACE_USER", businessRole: "" });
+      if (added?.verifiedOnLark === false) return `${done} Lark chưa cho CRM xem hồ sơ của mã này nên hãy chắc mã đúng; tên thật sẽ hiện khi họ đăng nhập Lark lần đầu.`;
+    }, done);
   };
   const setRole = (member: Member, change: { systemRole?: string; businessRole?: string }) =>
     void run(() => call(`${base}/members`, "PUT", { user: member.id, ...change }), `Đã đổi quyền của ${member.displayName}.`);
@@ -168,9 +173,9 @@ export default function OrganizationsPage() {
 
                   <form onSubmit={addMember} className="grid gap-2 border-b border-border p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_180px_160px_auto] xl:items-end">
                     <label className="text-xs font-semibold text-muted-foreground">User ID
-                      <input required placeholder="VD: HN454 — người mới: email Lark" value={invite.user} onChange={(event) => setInvite({ ...invite, user: event.target.value })} className={`${inputClass} mt-1`} />
+                      <input required placeholder="VD: HN454" value={invite.user} onChange={(event) => setInvite({ ...invite, user: event.target.value })} className={`${inputClass} mt-1`} />
                     </label>
-                    <label className="text-xs font-semibold text-muted-foreground">Tên (chỉ khi thêm bằng email)
+                    <label className="text-xs font-semibold text-muted-foreground">Tên (không bắt buộc)
                       <input value={invite.displayName} onChange={(event) => setInvite({ ...invite, displayName: event.target.value })} className={`${inputClass} mt-1`} />
                     </label>
                     <div className="text-xs font-semibold text-muted-foreground">Quyền hệ thống
@@ -207,7 +212,7 @@ export default function OrganizationsPage() {
                       </tbody>
                     </table>
                   </div>
-                  <p className="border-t border-border px-5 py-3 text-xs text-muted-foreground">User ID là mã Lark (VD HN454). Người chưa có trong CRM thì nhập email Lark của họ, họ đăng nhập Lark bằng đúng email đó. Ai thuộc nhiều tổ chức thì đổi tổ chức ở Settings › Your workspaces.</p>
+                  <p className="border-t border-border px-5 py-3 text-xs text-muted-foreground">User ID là mã Lark (VD HN454). Người team khác chưa có trong CRM cũng thêm bằng user ID: họ đăng nhập Lark là vào thẳng tổ chức, CRM nhận họ theo mã này. Không nên thêm bằng email, vì Lark thường không cho CRM biết email của team khác nên họ sẽ không đăng nhập được. Ai thuộc nhiều tổ chức thì đổi tổ chức ở Settings › Your workspaces.</p>
                 </section>
               ) : null}
             </div>

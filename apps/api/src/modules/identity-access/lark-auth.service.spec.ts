@@ -139,6 +139,26 @@ describe("Lark authentication boundary", () => {
     }));
   });
 
+  it("lets in someone from another team added in Tổ chức by user ID alone, though Lark gives no company email", async () => {
+    const { service, prisma, nativeAuth } = makeService();
+    const added = { id: "usr-growth", email: "hn777@lark.local", displayName: "hn777", status: "ACTIVE" };
+    prisma.portalIdentity.findFirst.mockImplementation(async ({ where }: any) => where.providerUserId.mode === "insensitive" && where.providerUserId.equals.toLowerCase() === "hn777" ? { user: added } : null);
+    prisma.user.findMany.mockResolvedValue([]);
+    prisma.portalIdentity.upsert.mockResolvedValue({ userId: added.id });
+    prisma.user.update.mockResolvedValue(added);
+    nativeAuth.memberWorkspaceId.mockResolvedValue("twk-growth");
+    const { state } = await service.createAuthorizeUrl({ redirectUri });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, access_token: "provider-token" }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ code: 0, data: { open_id: "ou_growth", user_id: "HN777", tenant_key: "tn_test", name: "Growth Person" } }) })
+      .mockResolvedValue({ ok: true, json: async () => ({ code: 41050, msg: "no user authority" }) }));
+
+    await service.completeCallback({ code: "code", state, redirectUri });
+
+    expect(prisma.user.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "usr-growth" }, data: expect.objectContaining({ displayName: "Growth Person" }) }));
+    expect(nativeAuth.completeIdentityLogin).toHaveBeenCalledWith("usr-growth", { workspaceId: "twk-growth" }, { authMethod: "lark" });
+  });
+
   it("reuses the existing CRM member through stable Lark user id after an app change", async () => {
     vi.stubEnv("CRM_LARK_AUTO_PROVISION", "true");
     const { service, prisma, nativeAuth } = makeService();

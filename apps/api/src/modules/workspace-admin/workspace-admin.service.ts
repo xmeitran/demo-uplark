@@ -264,6 +264,33 @@ async function resolveLarkOpenIdByUserId(
   return body.data?.user?.open_id ?? null;
 }
 
+/**
+ * A person in the Lark directory by user ID (HN454), to name someone the directory sync never brought in (another team)
+ * when they are added to an organization. Best-effort: null whenever Lark cannot say, since the app's contact range may
+ * not cover other teams. The email falls back like the sync does.
+ */
+export async function larkDirectoryUser(userId: string) {
+  const config = directMessageConfig();
+  if (!config) return null;
+  try {
+    const tenantAccessToken = await fetchTenantAccessToken(config);
+    const response = await fetch(`${config.baseUrl}/open-apis/contact/v3/users/${encodeURIComponent(userId)}?user_id_type=user_id`, {
+      headers: { authorization: `Bearer ${tenantAccessToken}` }
+    });
+    const body = await response.json().catch(() => ({})) as {
+      code?: number;
+      data?: { user?: { open_id?: string; user_id?: string; name?: string; email?: string; enterprise_email?: string } };
+    };
+    const user = response.ok && body.code === 0 ? body.data?.user : undefined;
+    if (!user?.open_id) return null;
+    const larkUserId = user.user_id ?? userId;
+    const email = (user.enterprise_email || user.email || `${larkUserId}@lark.local`).trim().toLowerCase();
+    return { userId: larkUserId, openId: user.open_id, email, name: user.name?.trim() || email.split("@")[0] };
+  } catch {
+    return null;
+  }
+}
+
 const REMINDER_SLOT_TITLES: Record<WorkspaceReminderSlotCode, string> = {
   morning_plan: "Nhắc nhở hoàn tất kế hoạch Task trước 09:00",
   pm_follow_up: "Danh sách nhân sự chưa hoàn tất kế hoạch Task",

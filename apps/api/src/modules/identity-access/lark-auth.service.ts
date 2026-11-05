@@ -490,7 +490,8 @@ export class LarkAuthService {
     const identity = await this.prisma.portalIdentity.findFirst({
       where: {
         provider: "lark_user_id",
-        providerUserId: userId,
+        // Case-insensitive like Tổ chức, where a System Founder may type "hn454" for Lark's HN454.
+        providerUserId: { equals: userId, mode: "insensitive" },
         tenantKey: workspace.tenantKey
       },
       include: { user: true }
